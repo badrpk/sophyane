@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import inspect
 import json
-import os
 import py_compile
 import shutil
 import sqlite3
@@ -22,7 +21,6 @@ from sophyane.config import (
 )
 from sophyane.memory import MemoryStore
 from sophyane.plugin_loader import PluginLoader
-from sophyane.providers.base import Provider
 from sophyane.version import __version__
 
 
@@ -30,177 +28,91 @@ def run_diagnostics() -> tuple[bool, str]:
     ensure_directories()
     checks: list[dict[str, Any]] = []
 
-    def record(
-        name: str,
-        passed: bool,
-        detail: str,
-    ) -> None:
-        checks.append(
-            {
-                "name": name,
-                "passed": passed,
-                "detail": detail,
-            }
-        )
+    def record(name: str, passed: bool, detail: str) -> None:
+        checks.append({"name": name, "passed": passed, "detail": detail})
 
-    record(
-        "Python version",
-        sys.version_info >= (3, 10),
-        sys.version.split()[0],
-    )
+    record("Python version", sys.version_info >= (3, 10), sys.version.split()[0])
 
     loader = PluginLoader()
     providers = loader.discover()
-
     record(
         "Provider discovery",
         bool(providers),
-        ", ".join(sorted(providers))
-        or json.dumps(loader.errors),
+        ", ".join(sorted(providers)) or json.dumps(loader.errors),
     )
 
     timeout_support = True
     timeout_details: list[str] = []
-
     for provider_id, provider_class in providers.items():
         signature = inspect.signature(provider_class.__init__)
-        supports_timeout = (
-            "timeout" in signature.parameters
-            or any(
-                parameter.kind
-                == inspect.Parameter.VAR_KEYWORD
-                for parameter in signature.parameters.values()
-            )
+        supports_timeout = "timeout" in signature.parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
         )
-
         timeout_support = timeout_support and supports_timeout
-        timeout_details.append(
-            f"{provider_id}:{'yes' if supports_timeout else 'no'}"
-        )
+        timeout_details.append(f"{provider_id}:{'yes' if supports_timeout else 'no'}")
 
-    record(
-        "Provider timeout compatibility",
-        timeout_support,
-        ", ".join(timeout_details),
-    )
+    record("Provider timeout compatibility", timeout_support, ", ".join(timeout_details))
 
     try:
         memory = MemoryStore()
-        test_fact = (
-            "__sophyane_doctor_test_memory_do_not_keep__"
-        )
-        memory.remember(
-            test_fact,
-            importance=1,
-            source="doctor",
-        )
-
-        matching = [
-            item
-            for item in memory.list(limit=200)
-            if item["content"] == test_fact
-        ]
-
+        test_fact = "__sophyane_doctor_test_memory_do_not_keep__"
+        memory.remember(test_fact, importance=1, source="doctor")
+        matching = [item for item in memory.list(limit=200) if item["content"] == test_fact]
         if matching:
             memory.forget(int(matching[0]["id"]))
-
-        record(
-            "SQLite memory",
-            bool(matching),
-            str(memory.path),
-        )
+        record("SQLite memory", bool(matching), str(memory.path))
     except (OSError, sqlite3.Error) as error:
         record("SQLite memory", False, str(error))
 
-    writable_paths = [
-        DATA_DIR,
-        WORKSPACE_DIR,
-        LOG_DIR,
-    ]
-
-    for path in writable_paths:
+    for path in (DATA_DIR, WORKSPACE_DIR, LOG_DIR):
         try:
             probe = path / ".doctor-write-test"
             probe.write_text("ok", encoding="utf-8")
             probe.unlink()
-            record(
-                f"Writable: {path.name}",
-                True,
-                str(path),
-            )
+            record(f"Writable: {path.name}", True, str(path))
         except OSError as error:
-            record(
-                f"Writable: {path.name}",
-                False,
-                str(error),
-            )
+            record(f"Writable: {path.name}", False, str(error))
 
     config = load_config()
-
-    record(
-        "Configuration",
-        bool(config.get("provider")),
-        str(CONFIG_FILE),
-    )
+    record("Configuration", bool(config.get("provider")), str(CONFIG_FILE))
 
     package_root = Path(__file__).resolve().parent
     compile_errors: list[str] = []
-
     for path in package_root.rglob("*.py"):
         try:
-            py_compile.compile(
-                str(path),
-                doraise=True,
-            )
+            py_compile.compile(str(path), doraise=True)
         except py_compile.PyCompileError as error:
-            compile_errors.append(
-                f"{path.name}: {error.msg}"
-            )
+            compile_errors.append(f"{path.name}: {error.msg}")
 
     record(
         "Python compilation",
         not compile_errors,
         "; ".join(compile_errors) or "all modules compile",
     )
-
-    cache_files = list(
-        package_root.rglob("__pycache__")
-    )
-
-    record(
-        "Runtime package",
-        package_root.exists(),
-        str(package_root),
-    )
-
-    record(
-        "Git executable",
-        shutil.which("git") is not None,
-        shutil.which("git") or "not installed",
-    )
+    record("Runtime package", package_root.exists(), str(package_root))
+    record("Git executable", shutil.which("git") is not None, shutil.which("git") or "not installed")
 
     passed = all(check["passed"] for check in checks)
-
-    lines = [
-        f"Sophyane {__version__} diagnostics",
-        "=" * 44,
-    ]
-
+    lines = [f"Sophyane {__version__} diagnostics", "=" * 44]
     for check in checks:
         marker = "PASS" if check["passed"] else "FAIL"
-        lines.append(
-            f"[{marker}] {check['name']}: {check['detail']}"
-        )
-
+        lines.append(f"[{marker}] {check['name']}: {check['detail']}")
     lines.extend(
         [
             "=" * 44,
-            (
-                "RESULT: ALL CORE CHECKS PASSED"
-                if passed
-                else "RESULT: ONE OR MORE CHECKS FAILED"
-            ),
+            "RESULT: ALL CORE CHECKS PASSED" if passed else "RESULT: ONE OR MORE CHECKS FAILED",
         ]
     )
-
     return passed, "\n".join(lines)
+
+
+def main() -> int:
+    """Console entry point for ``sophyane-doctor``."""
+    passed, report = run_diagnostics()
+    print(report)
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
