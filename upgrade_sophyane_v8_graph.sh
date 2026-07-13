@@ -159,7 +159,7 @@ def cmd_add(args: argparse.Namespace) -> None:
         known = {r[0] for r in db.execute("SELECT id FROM tasks WHERE project_id=?", (args.project,))}
         missing = [d for d in deps if d not in known]
         if missing: raise SystemExit("missing dependencies: " + ", ".join(missing))
-        db.execute("INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        db.execute("INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                    (tid,args.project,args.title,args.command,json.dumps(deps),"pending",0,args.retries,args.timeout,
                     args.verify or "","","",None,now(),now()))
         rows = task_rows(db, args.project)
