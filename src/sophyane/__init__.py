@@ -1,3 +1,5 @@
-"""Sophyane configurable local agentic harness."""
+"""Sophyane multi-provider local agentic harness."""
 
-__version__ = "5.0.0"
+from sophyane.version import __version__
+
+__all__ = ["__version__"]
