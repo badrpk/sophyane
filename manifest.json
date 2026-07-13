@@ -1,8 +1,8 @@
 {
   "name": "Sophyane",
-  "version": "9.0.1",
-  "entrypoint": "sophyane-9.0.1.py",
-  "sha256": "0cd8a437f4956088a0279f91995c0711be0b4f2e5fa7182074f62590190b77b7",
+  "version": "9.0.2",
+  "entrypoint": "sophyane-9.0.2.py",
+  "sha256": "0ebf451f6524aa5dbf19b1e5d52c3615574873e80885b36ab74342ea7f09238c",
   "minimum_python": "3.11",
   "channel": "stable"
 }
