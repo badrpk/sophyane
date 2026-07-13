@@ -1,32 +1,27 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-RAW="https://raw.githubusercontent.com/badrpk/sophyane/main"
+VERSION="9.0.3"
+RELEASE_COMMIT="4285b2caa3b9f79b6876fc06b010c8459608cf98"
+ENTRY="sophyane-9.0.3.py"
+EXPECTED="7a33f62da3dfc90274170b6aa6c1fef327590d30214d4870e28c3b183b2aaa7c"
+RAW="https://raw.githubusercontent.com/badrpk/sophyane/${RELEASE_COMMIT}"
 BASE="$HOME/.local/share/sophyane"
-OLD_BASE="$HOME/.local/share/sophyane-v8"
 BIN="$HOME/.local/bin"
 APP="$BASE/sophyane.py"
-MANIFEST="$(mktemp)"
 TMP="$(mktemp)"
-STAMP="$(date +%s)"
-mkdir -p "$BASE" "$BIN" "$HOME/.config/sophyane" "$HOME/.local/state/sophyane"
-cleanup(){ rm -f "$MANIFEST" "$TMP"; }
+cleanup(){ rm -f "$TMP"; }
 trap cleanup EXIT
-curl -fsSL "$RAW/manifest.json?ts=$STAMP" -o "$MANIFEST"
-VERSION=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$MANIFEST")
-ENTRY=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["entrypoint"])' "$MANIFEST")
-EXPECTED=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["sha256"])' "$MANIFEST")
-curl -fsSL "$RAW/$ENTRY?ts=$STAMP" -o "$TMP"
+mkdir -p "$BASE" "$BIN" "$HOME/.config/sophyane" "$HOME/.local/state/sophyane"
+curl -fsSL "$RAW/$ENTRY" -o "$TMP"
 ACTUAL=$(sha256sum "$TMP" | awk '{print $1}')
 if [ "$ACTUAL" != "$EXPECTED" ]; then
   echo "Checksum verification failed" >&2
-  echo "Version:  $VERSION" >&2
-  echo "Entrypoint: $ENTRY" >&2
+  echo "Release commit: $RELEASE_COMMIT" >&2
   echo "Expected: $EXPECTED" >&2
   echo "Actual:   $ACTUAL" >&2
   exit 1
 fi
 python3 -m py_compile "$TMP"
-if [ -x "$BIN/sophyane" ] && [ ! -e "$BIN/sophyane-legacy" ]; then cp -a "$BIN/sophyane" "$BIN/sophyane-legacy"; fi
 install -m 0755 "$TMP" "$APP"
 cat > "$BIN/sophyane" <<EOF
 #!/usr/bin/env bash
@@ -34,9 +29,6 @@ exec python3 "$APP" "\$@"
 EOF
 chmod +x "$BIN/sophyane"
 case ":$PATH:" in *":$BIN:"*) ;; *) echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc" ;; esac
-if [ -d "$OLD_BASE" ] && [ "$OLD_BASE" != "$BASE" ]; then
-  mkdir -p "$HOME/.local/share/sophyane-backups"
-  mv "$OLD_BASE" "$HOME/.local/share/sophyane-backups/sophyane-v8-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
-fi
-"$BIN/sophyane" self-test
-printf '\n✅ Sophyane %s installed.\n\nRun:\n  sophyane\n  sophyane build "make a snake game in browser"\n  sophyane web\n  sophyane --version\n' "$VERSION"
+hash -r 2>/dev/null || true
+"$BIN/sophyane" --version
+printf '\n✅ Sophyane %s installed from pinned release %s.\n' "$VERSION" "$RELEASE_COMMIT"
