@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import hashlib,os,shlex,socket,subprocess,sys,threading,time,urllib.request,webbrowser
+import hashlib,os,shlex,shutil,socket,subprocess,sys,threading,time,urllib.request,webbrowser
 from http.server import SimpleHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 VERSION='9.0.5'
@@ -25,7 +25,7 @@ JS='''const rounds=[['The sun rises in the','east',['east','night','ocean','room
 def build_word_game():
  w=Path.home()/'sophyane-projects'/f'guess-next-word-game-{time.strftime("%Y%m%d-%H%M%S")}';w.mkdir(parents=True,exist_ok=True)
  print('✓ Planned Guess-the-Next-Word task graph');(w/'index.html').write_text(HTML);(w/'style.css').write_text(CSS);(w/'game.js').write_text(JS);print('✓ Created index.html, style.css, game.js')
- if subprocess.call(['node','--check',str(w/'game.js')]) if shutil.which('node') else 0:raise RuntimeError('JavaScript validation failed')
+ if shutil.which('node') and subprocess.call(['node','--check',str(w/'game.js')]):raise RuntimeError('JavaScript validation failed')
  print('✓ Tests passed');p=free_port()
  class H(SimpleHTTPRequestHandler):
   def log_message(self,*a):pass
@@ -49,7 +49,7 @@ def repl():
   if s.lower() in {'exit','quit','/exit'}:break
   try:
    if is_word_game(s):build_word_game()
-   else:delegate([s] if s else [])
+   elif s:delegate(shlex.split(s))
   except KeyboardInterrupt:print('\nCancelled. Returning to Sophyane.')
   except Exception as e:print('Error:',e)
 def main():
