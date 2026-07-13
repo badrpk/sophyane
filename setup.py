@@ -3,17 +3,15 @@ from setuptools import find_packages, setup
 
 setup(
     name="sophyane",
-    version="6.0.1",
-    description=(
-        "Multi-provider local agentic harness with persistent "
-        "memory, safe tools, plugins and repository awareness"
-    ),
+    version="6.1.0",
+    description="Cross-platform multi-provider local agentic AI harness",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     entry_points={
         "console_scripts": [
             "sophyane=sophyane.main:main",
-            "sophyane-doctor=sophyane.diagnostics:run_diagnostics",
+            "sophyane-web=sophyane.web:main",
+            "sophyane-doctor=sophyane.diagnostics:main",
         ],
     },
     python_requires=">=3.10",
