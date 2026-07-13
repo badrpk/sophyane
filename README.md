@@ -1,30 +1,226 @@
-# Sophyane — Local Agentic AI Harness
+# Sophyane — Cross-Platform Local Agentic AI Harness
 
-A lightweight, local, self-improving AI agent harness built for developers who want full control.
+Sophyane is a lightweight, multi-provider AI harness with persistent memory, safe local tools, repository awareness, provider plugins, diagnostics, and a mobile-friendly browser interface.
 
-## Features
-- Persistent memory (SQLite)
-- Safe workspace for file operations
-- Self-patching capability
-- Tool calling with safety
-- Daily health checks
-- Planning and mission support
+## Why Sophyane
 
-## Quick Start
+- Works with Google Gemini, OpenAI, Claude, Groq, xAI Grok, DeepSeek, OpenRouter, and local Ollama
+- First-run provider wizard securely asks for the API key
+- Persistent SQLite memory
+- Safe local system and repository tools
+- Plugin-based provider architecture
+- CLI plus browser interface
+- Zero mandatory third-party runtime dependencies
+- Tested on Windows, macOS, and Linux through GitHub Actions
+
+## Fastest installation
+
+### Linux, macOS, ChromeOS Linux, UserLAnd, and Termux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
+```
+
+Then open a new terminal and run:
+
+```bash
+sophyane
+```
+
+Termux users may first install curl:
+
+```bash
+pkg update && pkg install curl
+```
+
+### Windows PowerShell
+
+Open PowerShell and run:
+
+```powershell
+irm https://raw.githubusercontent.com/badrpk/sophyane/main/install.ps1 | iex
+```
+
+Then open a new terminal:
+
+```powershell
+sophyane
+```
+
+### Manual installation
 
 ```bash
 git clone https://github.com/badrpk/sophyane.git
 cd sophyane
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
-sophyane "Hello, who are you?"
-## Community & Contributions
-This is an open project. Feel free to fork, improve tools, add new capabilities, or make it better for everyone.
+python -m pip install --upgrade pip
+python -m pip install .
+sophyane
+```
 
-**How to contribute:**
-1. Fork the repo
-2. Add features or fix bugs
-3. Submit a Pull Request
+Windows activation:
 
-Made for developers who want full control over their local AI agent.
+```powershell
+.venv\Scripts\Activate.ps1
+python -m pip install .
+sophyane
+```
+
+Do not install into Debian's system Python. Sophyane's installer automatically creates an isolated virtual environment and avoids PEP 668 errors.
+
+## Browser and mobile interface
+
+Start the private local browser interface:
+
+```bash
+sophyane-web
+```
+
+It opens at:
+
+```text
+http://127.0.0.1:8765
+```
+
+To access it from an Android phone, iPhone, iPad, or another computer on the same trusted network:
+
+```bash
+sophyane-web --host 0.0.0.0
+```
+
+Then open the host computer's LAN address, for example:
+
+```text
+http://192.168.1.25:8765
+```
+
+Do not expose the built-in web server directly to the public internet. Use a trusted VPN or an authenticated reverse proxy for remote access.
+
+### Platform notes
+
+| Platform | Local CLI | Browser UI |
+|---|---:|---:|
+| Windows 10/11 | Yes | Yes |
+| macOS | Yes | Yes |
+| Linux | Yes | Yes |
+| ChromeOS Linux/Penguin | Yes | Yes |
+| Android Termux | Yes | Yes |
+| Android UserLAnd | Yes | Yes |
+| iPhone/iPad | Not natively | Yes, through Safari connected to a Sophyane host |
+
+Apple does not allow a normal always-on Python CLI installation on stock iOS. The supported iPhone/iPad experience is the responsive browser interface served by Windows, macOS, Linux, Android Termux, a VPS, or a home server.
+
+## First run
+
+Sophyane displays a provider menu:
+
+```text
+1. Anthropic Claude
+2. DeepSeek
+3. Google Gemini
+4. Groq
+5. Ollama (local)
+6. OpenAI
+7. OpenRouter
+8. xAI Grok
+```
+
+Choose a provider, accept or change the model, and enter its API key. The key is stored in the user's private configuration directory, not in the repository.
+
+## Common commands
+
+```bash
+sophyane --version
+sophyane --providers
+sophyane --status
+sophyane --setup
+sophyane --doctor
+sophyane-web
+```
+
+Interactive commands:
+
+```text
+tools
+status
+memory
+/remember My main project is SHMRY.
+/system
+/repo
+/files
+/read path/to/file
+/shell uname -a
+/doctor
+/exit
+```
+
+## Examples
+
+```bash
+sophyane "What is my main project?"
+sophyane "Check my system configuration"
+sophyane "Analyze the src/ directory and map internal imports"
+sophyane "/remember My preferred language is Python."
+```
+
+## Updating
+
+Installer-based installations can be updated by running the same installer again.
+
+Linux/macOS/Termux/UserLAnd:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
+```
+
+Windows:
+
+```powershell
+irm https://raw.githubusercontent.com/badrpk/sophyane/main/install.ps1 | iex
+```
+
+Repository installations:
+
+```bash
+git pull --ff-only
+python -m pip install --upgrade .
+```
+
+## Development
+
+```bash
+git clone https://github.com/badrpk/sophyane.git
+cd sophyane
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+python -m pytest
+sophyane --doctor
+```
+
+Every push and pull request is tested across Windows, macOS, and Linux with Python 3.10 through 3.13.
+
+## Privacy and safety
+
+- API keys are never committed to Git
+- Memory is stored locally in SQLite
+- Destructive shell commands are blocked
+- Approved shell commands require confirmation
+- The web interface binds to localhost by default
+- Sophyane logs failures for diagnostics
+
+## Community
+
+Contributions are welcome:
+
+1. Fork the repository
+2. Create a feature branch
+3. Add tests
+4. Submit a pull request
+
+Please use GitHub Issues for bug reports, platform compatibility problems, feature requests, and provider requests.
+
+## License
+
+MIT License. See `LICENSE`.
