@@ -7,16 +7,24 @@ BIN="$HOME/.local/bin"
 APP="$BASE/sophyane.py"
 MANIFEST="$(mktemp)"
 TMP="$(mktemp)"
+STAMP="$(date +%s)"
 mkdir -p "$BASE" "$BIN" "$HOME/.config/sophyane" "$HOME/.local/state/sophyane"
 cleanup(){ rm -f "$MANIFEST" "$TMP"; }
 trap cleanup EXIT
-curl -fsSL "$RAW/manifest.json" -o "$MANIFEST"
+curl -fsSL "$RAW/manifest.json?ts=$STAMP" -o "$MANIFEST"
 VERSION=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$MANIFEST")
 ENTRY=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["entrypoint"])' "$MANIFEST")
 EXPECTED=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["sha256"])' "$MANIFEST")
-curl -fsSL "$RAW/$ENTRY" -o "$TMP"
+curl -fsSL "$RAW/$ENTRY?ts=$STAMP" -o "$TMP"
 ACTUAL=$(sha256sum "$TMP" | awk '{print $1}')
-[ "$ACTUAL" = "$EXPECTED" ] || { echo "Checksum verification failed" >&2; exit 1; }
+if [ "$ACTUAL" != "$EXPECTED" ]; then
+  echo "Checksum verification failed" >&2
+  echo "Version:  $VERSION" >&2
+  echo "Entrypoint: $ENTRY" >&2
+  echo "Expected: $EXPECTED" >&2
+  echo "Actual:   $ACTUAL" >&2
+  exit 1
+fi
 python3 -m py_compile "$TMP"
 if [ -x "$BIN/sophyane" ] && [ ! -e "$BIN/sophyane-legacy" ]; then cp -a "$BIN/sophyane" "$BIN/sophyane-legacy"; fi
 install -m 0755 "$TMP" "$APP"
