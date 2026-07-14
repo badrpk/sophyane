@@ -9,6 +9,7 @@ from sophyane.agent import SophyaneAgent
 from sophyane.autonomy import AUTONOMOUS_WORKER_POLICY
 from sophyane.config import ensure_directories
 from sophyane.diagnostics import run_diagnostics
+from sophyane.guarded_coding_doer import GuardedCodingDoerRuntime
 from sophyane.logging_config import configure_logging
 from sophyane.main import (
     create_provider,
@@ -26,7 +27,6 @@ from sophyane.structured_output import (
     render_strict_json,
     requests_strict_json,
 )
-from sophyane.v16_doer import CodingDoerRuntime
 from sophyane.version import __version__
 
 
@@ -152,7 +152,7 @@ def main() -> int:
             print(result.final_output)
         return 0 if result.final_output else 2
 
-    runtime = CodingDoerRuntime(
+    runtime = GuardedCodingDoerRuntime(
         backend=backend,
         memory=memory,
         workspace=Path(args.workspace),
