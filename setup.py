@@ -3,8 +3,11 @@ from setuptools import find_packages, setup
 
 setup(
     name="sophyane",
-    version="6.1.0",
-    description="Cross-platform multi-provider local agentic AI harness",
+    version="11.0.0",
+    description=(
+        "Cross-platform autonomous agentic software harness "
+        "with stateful execution graphs"
+    ),
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     entry_points={
