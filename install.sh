@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-VERSION="9.0.7"
-RELEASE_COMMIT="26a391f15c543bdf605d587e782d1b50925c95c0"
-ENTRY="sophyane-9.0.7.py"
-EXPECTED_BLOB="8b44d1985cef534a5ec16faf7a035806fd1c4e02"
+VERSION="10.0.0"
+RELEASE_COMMIT="5f0fd2343199b0fc88fce8ae0797b51e974dd80a"
+ENTRY="sophyane-10.0.0.py"
+EXPECTED_BLOB="2ff60a22bc3b31e9958a1d9c2ae0091a93c98dd7"
 RAW="https://raw.githubusercontent.com/badrpk/sophyane/${RELEASE_COMMIT}"
 BASE="$HOME/.local/share/sophyane"
 BIN="$HOME/.local/bin"
@@ -32,4 +32,5 @@ chmod +x "$BIN/sophyane"
 case ":$PATH:" in *":$BIN:"*) ;; *) echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc" ;; esac
 hash -r 2>/dev/null || true
 "$BIN/sophyane" --version
+"$BIN/sophyane" self-test
 printf '\n✅ Sophyane %s installed from pinned release %s.\n' "$VERSION" "$RELEASE_COMMIT"
