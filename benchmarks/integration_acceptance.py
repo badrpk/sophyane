@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from langchain_core.runnables import RunnableLambda
 
 from sophyane.integrations import InvokeAdapter, probe_integrations
-from sophyane.multiagent import MultiAgentRuntime
+from sophyane.multiagent import MultiAgentRuntime, MultiAgentStore
 
 
 class EchoProvider:
@@ -33,14 +33,23 @@ def main() -> int:
     results["langchain_runnable_adapter"] = adapter.generate("hello", "") == "lc:hello"
 
     with tempfile.TemporaryDirectory() as temp:
-        runtime = MultiAgentRuntime(EchoProvider(), database=Path(temp) / "agents.db")
-        report = runtime.run(
-            "Build an API with database, tests, security and documentation",
-            force_mode="multi",
+        provider = EchoProvider()
+        store = MultiAgentStore(Path(temp) / "agents.db")
+        runtime = MultiAgentRuntime(
+            lambda prompt, system_prompt: provider.generate(prompt, system_prompt),
+            store=store,
             max_workers=5,
         )
+        report = runtime.run(
+            "Build an API with database, tests, security and documentation",
+            mode="multi",
+        )
+        persisted = store.inspect_run(report.run_id)
         results["multiagent_with_adapter_environment"] = (
-            report.mode == "multi_agent" and report.actual_workers_launched > 1
+            report.mode == "multi_agent"
+            and len(report.workers) > 1
+            and persisted is not None
+            and len(persisted["workers"]) == len(report.workers)
         )
 
     app = FastAPI()
@@ -63,12 +72,19 @@ def main() -> int:
             }
     results["live_readiness"] = live
 
-    passed = bool(results["all_imported"]) and bool(results["langchain_runnable_adapter"]) and bool(results["multiagent_with_adapter_environment"]) and bool(results["fastapi_serving"])
+    passed = (
+        bool(results["all_imported"])
+        and bool(results["langchain_runnable_adapter"])
+        and bool(results["multiagent_with_adapter_environment"])
+        and bool(results["fastapi_serving"])
+    )
     results["passed"] = passed
 
     output = Path("benchmark-results/integrations")
     output.mkdir(parents=True, exist_ok=True)
-    (output / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
+    (output / "results.json").write_text(
+        json.dumps(results, indent=2), encoding="utf-8"
+    )
 
     lines = [
         "# Sophyane v13 ecosystem compatibility",
@@ -86,16 +102,18 @@ def main() -> int:
             f"{row.get('version', row.get('error', 'unknown'))} | "
             f"{row.get('live_environment') or 'not required'} |"
         )
-    lines.extend([
-        "",
-        "## Adapter checks",
-        "",
-        f"- LangChain Runnable → Sophyane backend: **{results['langchain_runnable_adapter']}**",
-        f"- Sophyane multi-agent execution in integration environment: **{results['multiagent_with_adapter_environment']}**",
-        f"- FastAPI local serving: **{results['fastapi_serving']}**",
-        "",
-        "PostgreSQL and Redis checks in this offline suite validate installation and public module imports. End-to-end database connectivity requires service containers and is tested separately when URLs are supplied.",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Adapter checks",
+            "",
+            f"- LangChain Runnable → Sophyane backend: **{results['langchain_runnable_adapter']}**",
+            f"- Sophyane multi-agent execution in integration environment: **{results['multiagent_with_adapter_environment']}**",
+            f"- FastAPI local serving: **{results['fastapi_serving']}**",
+            "",
+            "PostgreSQL and Redis checks in this offline suite validate installation and public module imports. End-to-end database connectivity requires service containers and is tested separately when URLs are supplied.",
+        ]
+    )
     (output / "REPORT.md").write_text("\n".join(lines), encoding="utf-8")
     print("\n".join(lines))
     return 0 if passed else 1
