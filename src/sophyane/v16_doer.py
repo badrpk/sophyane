@@ -34,15 +34,18 @@ class CodingDoerRuntime(DoerRuntime):
 
     @staticmethod
     def _system(role: str) -> str:
+        normalized_role = role.strip().lower()
+        role_marker = f"SOPHYANE_ROLE={normalized_role.upper()}. "
         base = (
-            "You are part of Sophyane v16, a repository-aware autonomous coding agent. "
+            role_marker
+            + "You are part of Sophyane v16, a repository-aware autonomous coding agent. "
             "Return exactly one JSON object. Use repository context, symbols, tests and manifests. "
             "Prefer precise patches over whole-file rewrites for existing files. "
             "Batch independent safe actions when this reduces model calls. "
             "Workspace writes, safe commands, tests and local Git inspection are pre-authorized. "
             "Never invent permission rituals. Repair failures from diagnostics automatically."
         )
-        if role == "planner":
+        if normalized_role == "planner":
             return base + (
                 " Allowed actions: answer, write_file, apply_patch, replace_lines, run_command, "
                 "read_file, search_repository, git_checkpoint, verify_checks, create_task_queue, "
@@ -52,7 +55,7 @@ class CodingDoerRuntime(DoerRuntime):
                 "Provide deterministic_checks when completion can be mechanically verified. "
                 "Schema: {objective, success_criteria, deterministic_checks:[...], action:{...}, rationale}."
             )
-        if role == "verifier":
+        if normalized_role == "verifier":
             return base + (
                 " Accept deterministic check failures as authoritative. Do not mark completion when "
                 "required tests, files or expected output are unverified. Return "
@@ -74,7 +77,15 @@ class CodingDoerRuntime(DoerRuntime):
             "search_hits": self.index.search(prompt, limit=30),
             "relevant_context": self.index.context(prompt, max_chars=20_000),
         }
-        parts = [item for item in [base, "Repository intelligence:\n" + json.dumps(repository, ensure_ascii=False)] if item]
+        parts = [
+            item
+            for item in [
+                base,
+                "Repository intelligence:\n"
+                + json.dumps(repository, ensure_ascii=False),
+            ]
+            if item
+        ]
         return "\n\n".join(parts)
 
     def _plan(
@@ -108,11 +119,17 @@ class CodingDoerRuntime(DoerRuntime):
                 "deployment_tools": False,
             },
             "instruction": (
-                "Choose the highest-leverage safe next action or batch. Do not claim browser or deployment "
-                "capabilities that are unavailable. Prefer targeted reads and patches, then run focused tests."
+                "Choose the highest-leverage safe next action or batch. "
+                "Do not claim browser or deployment capabilities that are unavailable. "
+                "Prefer targeted reads and patches, then run focused tests."
             ),
         }
-        return _extract_json(self.backend(json.dumps(request, ensure_ascii=False), self._system("planner")))
+        return _extract_json(
+            self.backend(
+                json.dumps(request, ensure_ascii=False),
+                self._system("planner"),
+            )
+        )
 
     def _read_file(self, action: dict[str, Any]) -> dict[str, Any]:
         relative = str(action.get("path", ""))
@@ -140,8 +157,14 @@ class CodingDoerRuntime(DoerRuntime):
             return {
                 "status": "searched",
                 "query": query,
-                "results": self.index.search(query, limit=int(action.get("limit", 30))),
-                "context": self.index.context(query, max_chars=int(action.get("max_chars", 16_000))),
+                "results": self.index.search(
+                    query,
+                    limit=int(action.get("limit", 30)),
+                ),
+                "context": self.index.context(
+                    query,
+                    max_chars=int(action.get("max_chars", 16_000)),
+                ),
             }
         if kind == "apply_patch":
             evidence = self.patch_engine.replace_exact(
@@ -164,7 +187,9 @@ class CodingDoerRuntime(DoerRuntime):
             self.index.build()
             return {"status": "patched", "evidence": evidence}
         if kind == "git_checkpoint":
-            checkpoint = self.git.checkpoint(str(action.get("label", "sophyane-v16")))
+            checkpoint = self.git.checkpoint(
+                str(action.get("label", "sophyane-v16"))
+            )
             self.checkpoints.append(checkpoint)
             return {"status": "checkpointed", "checkpoint": checkpoint}
         if kind == "verify_checks":
@@ -173,7 +198,9 @@ class CodingDoerRuntime(DoerRuntime):
                 raise ValueError("verify_checks requires checks list")
             result = self.mechanical.verify(
                 checks,
-                command_observations=[asdict(item) for item in self.executor.report.commands],
+                command_observations=[
+                    asdict(item) for item in self.executor.report.commands
+                ],
             )
             return {"status": "mechanically_verified", "result": result}
         if kind == "create_task_queue":
@@ -199,17 +226,34 @@ class CodingDoerRuntime(DoerRuntime):
         if not isinstance(actions, list) or not actions:
             raise ValueError("batch requires non-empty actions list")
         if len(actions) > self.MAX_BATCH_ACTIONS:
-            raise ValueError(f"batch exceeds maximum of {self.MAX_BATCH_ACTIONS} actions")
+            raise ValueError(
+                f"batch exceeds maximum of {self.MAX_BATCH_ACTIONS} actions"
+            )
         observations: list[dict[str, Any]] = []
         for position, child in enumerate(actions, start=1):
             if not isinstance(child, dict):
                 raise ValueError("every batch action must be an object")
             observation = self._execute_one(child)
-            observations.append({"position": position, "action": child, "observation": observation})
-            if observation.get("status") in {"command_failed", "error", "needs_user"}:
+            observations.append(
+                {
+                    "position": position,
+                    "action": child,
+                    "observation": observation,
+                }
+            )
+            if observation.get("status") in {
+                "command_failed",
+                "error",
+                "needs_user",
+            }:
                 break
         failed = next(
-            (item for item in observations if item["observation"].get("status") in {"command_failed", "error", "needs_user"}),
+            (
+                item
+                for item in observations
+                if item["observation"].get("status")
+                in {"command_failed", "error", "needs_user"}
+            ),
             None,
         )
         return {
@@ -230,16 +274,26 @@ class CodingDoerRuntime(DoerRuntime):
         plan_checks: list[dict[str, Any]] = []
         if history:
             prior_action = history[-1].action
-            raw = prior_action.get("deterministic_checks", []) if isinstance(prior_action, dict) else []
+            raw = (
+                prior_action.get("deterministic_checks", [])
+                if isinstance(prior_action, dict)
+                else []
+            )
             if isinstance(raw, list):
                 plan_checks = raw
         latest_action = observation.get("deterministic_checks", [])
         if isinstance(latest_action, list):
             plan_checks.extend(latest_action)
-        mechanical = self.mechanical.verify(
-            plan_checks,
-            command_observations=[asdict(item) for item in self.executor.report.commands],
-        ) if plan_checks else {"passed": None, "results": []}
+        mechanical = (
+            self.mechanical.verify(
+                plan_checks,
+                command_observations=[
+                    asdict(item) for item in self.executor.report.commands
+                ],
+            )
+            if plan_checks
+            else {"passed": None, "results": []}
+        )
         payload = {
             "user_request": prompt,
             "objective": objective,
@@ -251,16 +305,29 @@ class CodingDoerRuntime(DoerRuntime):
             "mechanical_verification": mechanical,
             "git_status": self.git.status(),
             "instruction": (
-                "Mark goal_met true only when all requirements are evidenced. Mechanical failures are authoritative. "
-                "For coding work require successful relevant tests or commands unless the user explicitly requested code only."
+                "Mark goal_met true only when all requirements are evidenced. "
+                "Mechanical failures are authoritative. For coding work require "
+                "successful relevant tests or commands unless the user explicitly "
+                "requested code only."
             ),
         }
-        verdict = _extract_json(self.backend(json.dumps(payload, ensure_ascii=False), self._system("verifier")))
+        verdict = _extract_json(
+            self.backend(
+                json.dumps(payload, ensure_ascii=False),
+                self._system("verifier"),
+            )
+        )
         if mechanical.get("passed") is False:
             verdict["goal_met"] = False
-            failed = [item for item in mechanical["results"] if not item["passed"]]
-            verdict["missing_requirements"] = [f"Mechanical check failed: {item['detail']}" for item in failed]
-            verdict["next_instruction"] = "Satisfy the failed deterministic checks, then rerun verification."
+            failed = [
+                item for item in mechanical["results"] if not item["passed"]
+            ]
+            verdict["missing_requirements"] = [
+                f"Mechanical check failed: {item['detail']}" for item in failed
+            ]
+            verdict["next_instruction"] = (
+                "Satisfy the failed deterministic checks, then rerun verification."
+            )
         verdict.setdefault("goal_met", False)
         verdict.setdefault("missing_requirements", [])
         verdict.setdefault("next_instruction", "Continue toward unmet requirements")
