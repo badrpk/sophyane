@@ -9,10 +9,8 @@ from sophyane.agent import SophyaneAgent
 from sophyane.autonomy import AUTONOMOUS_WORKER_POLICY
 from sophyane.config import ensure_directories
 from sophyane.diagnostics import run_diagnostics
-from sophyane.live_coding_doer import (
-    LiveGuardedCodingDoerRuntime,
-    LiveProgressReporter,
-)
+from sophyane.interactive_coding_doer import InteractiveCodingDoerRuntime
+from sophyane.live_coding_doer import LiveProgressReporter
 from sophyane.logging_config import configure_logging
 from sophyane.main import (
     create_provider,
@@ -170,7 +168,7 @@ def main() -> int:
         enabled=not args.no_progress,
         heartbeat_seconds=args.progress_heartbeat,
     )
-    runtime = LiveGuardedCodingDoerRuntime(
+    runtime = InteractiveCodingDoerRuntime(
         backend=backend,
         memory=memory,
         workspace=Path(args.workspace),
@@ -180,7 +178,6 @@ def main() -> int:
     result = runtime.run(original_prompt)
 
     if args.agent_json:
-        # Live progress goes to stderr, preserving valid JSON on stdout.
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
         return 0 if result.goal_met else 2
 
