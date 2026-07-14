@@ -6,6 +6,7 @@ import argparse
 import json
 
 from sophyane.agent import SophyaneAgent
+from sophyane.autonomy import AUTONOMOUS_WORKER_POLICY
 from sophyane.config import ensure_directories
 from sophyane.diagnostics import run_diagnostics
 from sophyane.logging_config import configure_logging
@@ -48,8 +49,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--inspect-run", metavar="RUN_ID", help="inspect a persisted multi-agent run")
     parser.add_argument("--max-workers", type=int, default=6, help="maximum concurrent worker agents")
     parser.add_argument("--agent-attempts", type=int, default=2, help="attempts per worker")
+    parser.add_argument(
+        "--approval-timeout",
+        type=float,
+        default=10.0,
+        help="seconds before safe scoped actions auto-continue (default: 10)",
+    )
+    parser.add_argument(
+        "--no-auto-continue",
+        action="store_true",
+        help="disable timeout auto-continuation for safe actions",
+    )
     parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
     return parser
+
+
+def _execution_policy(timeout: float, enabled: bool) -> str:
+    if not enabled:
+        return (
+            AUTONOMOUS_WORKER_POLICY
+            + "\nTimeout auto-continuation is disabled for this invocation; "
+            "safe actions still require an explicit response."
+        )
+    return AUTONOMOUS_WORKER_POLICY.replace("10 seconds", f"{max(0.0, timeout):g} seconds")
 
 
 def main() -> int:
@@ -102,8 +124,14 @@ def main() -> int:
         return 0
 
     mode = "multi" if args.multi_agent else "single" if args.single_agent else "auto"
+    policy = _execution_policy(args.approval_timeout, not args.no_auto_continue)
+
+    def autonomous_backend(prompt: str, system: str) -> str:
+        combined_system = (system + "\n\n" + policy).strip()
+        return provider.generate(prompt, combined_system)
+
     runtime = MultiAgentRuntime(
-        backend=lambda prompt, system: provider.generate(prompt, system),
+        backend=autonomous_backend,
         store=store,
         max_workers=args.max_workers,
         max_attempts=args.agent_attempts,
@@ -111,7 +139,13 @@ def main() -> int:
     result = runtime.run(original_prompt, mode=mode)
 
     if args.agent_json:
-        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+        payload = result.to_dict()
+        payload["autonomy"] = {
+            "safe_auto_continue": not args.no_auto_continue,
+            "approval_timeout_seconds": max(0.0, args.approval_timeout),
+            "dangerous_actions_auto_approved": False,
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0 if result.final_output else 2
 
     if requests_strict_json(original_prompt):
@@ -132,6 +166,8 @@ def main() -> int:
         f"ACTUAL_WORKERS_LAUNCHED={len(result.workers)}\n"
         f"SUPERVISOR_ID={result.supervisor_id}\n"
         f"RUN_ID={result.run_id}\n"
+        f"SAFE_AUTO_CONTINUE={'true' if not args.no_auto_continue else 'false'}\n"
+        f"APPROVAL_TIMEOUT_SECONDS={max(0.0, args.approval_timeout):g}\n"
         "AGENT_ROLES=" + ",".join(worker.role for worker in result.workers)
     )
     print()
