@@ -39,7 +39,7 @@ Repository = "https://github.com/badrpk/sophyane"
 Issues = "https://github.com/badrpk/sophyane/issues"
 
 [project.scripts]
-sophyane = "sophyane.v13_cli:main"
+sophyane = "sophyane.cli_entry:main"
 sophyane-web = "sophyane.web:main"
 sophyane-doctor = "sophyane.diagnostics:main"
 
