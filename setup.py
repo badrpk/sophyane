@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="sophyane",
-    version="11.0.0",
+    version="12.0.0",
     description=(
         "Cross-platform autonomous agentic software harness "
         "with stateful execution graphs"
