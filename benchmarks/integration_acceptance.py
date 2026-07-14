@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline acceptance checks for ten common LangGraph companion technologies."""
+"""Offline acceptance checks for Sophyane's 30 ecosystem targets."""
 
 from __future__ import annotations
 
@@ -25,6 +25,9 @@ def main() -> int:
     rows = probe_integrations()
     results: dict[str, object] = {
         "offline_imports": rows,
+        "target_count": len(rows),
+        "base_count": sum(row.get("tier") == "base" for row in rows),
+        "extended_count": sum(row.get("tier") == "extended" for row in rows),
         "all_imported": all(row["installed"] for row in rows),
     }
 
@@ -68,12 +71,13 @@ def main() -> int:
             live[row["key"]] = {
                 "configured": bool(os.environ.get(str(variable))),
                 "executed": False,
-                "reason": "Live network calls are opt-in and require repository secrets.",
+                "reason": "Live network/service calls are opt-in and require credentials or a reachable service.",
             }
     results["live_readiness"] = live
 
     passed = (
         bool(results["all_imported"])
+        and len(rows) == 30
         and bool(results["langchain_runnable_adapter"])
         and bool(results["multiagent_with_adapter_environment"])
         and bool(results["fastapi_serving"])
@@ -90,14 +94,15 @@ def main() -> int:
         "# Sophyane v13 ecosystem compatibility",
         "",
         f"- Offline acceptance: **{'PASS' if passed else 'FAIL'}**",
-        "- Live provider/service calls: **not claimed unless secrets are configured**",
+        f"- Targets tested: **{len(rows)}** (10 base + 20 extended)",
+        "- Live provider/service calls: **not claimed unless credentials or services are configured**",
         "",
-        "| Software | Category | Import | Installed version | Live key/service |",
-        "|---|---|---:|---|---|",
+        "| Software | Tier | Category | Import | Installed version | Live key/service |",
+        "|---|---|---|---:|---|---|",
     ]
     for row in rows:
         lines.append(
-            f"| {row['package']} | {row['category']} | "
+            f"| {row['package']} | {row.get('tier', 'base')} | {row['category']} | "
             f"{'PASS' if row['installed'] else 'FAIL'} | "
             f"{row.get('version', row.get('error', 'unknown'))} | "
             f"{row.get('live_environment') or 'not required'} |"
@@ -108,10 +113,10 @@ def main() -> int:
             "## Adapter checks",
             "",
             f"- LangChain Runnable → Sophyane backend: **{results['langchain_runnable_adapter']}**",
-            f"- Sophyane multi-agent execution in integration environment: **{results['multiagent_with_adapter_environment']}**",
+            f"- Sophyane multi-agent execution in 30-package environment: **{results['multiagent_with_adapter_environment']}**",
             f"- FastAPI local serving: **{results['fastapi_serving']}**",
             "",
-            "PostgreSQL and Redis checks in this offline suite validate installation and public module imports. End-to-end database connectivity requires service containers and is tested separately when URLs are supplied.",
+            "Import checks prove package and public-module compatibility. Hosted providers, vector databases, queues and telemetry backends require separate live tests before live-operation claims are made.",
         ]
     )
     (output / "REPORT.md").write_text("\n".join(lines), encoding="utf-8")
