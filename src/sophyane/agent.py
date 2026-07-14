@@ -6,6 +6,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from sophyane.autonomous_builder import (
+    run_inventory_workflow,
+    supports_request as supports_autonomous_build,
+)
 from sophyane.memory import MemoryStore
 from sophyane.providers.base import Provider, ProviderError
 from sophyane.router import Route, route
@@ -92,10 +96,7 @@ class SophyaneAgent:
         kind = selected_route.kind
 
         if kind == "exit":
-            return AgentResponse(
-                "Goodbye.",
-                should_exit=True,
-            )
+            return AgentResponse("Goodbye.", should_exit=True)
 
         if kind == "tools":
             return AgentResponse(tools_description())
@@ -105,10 +106,7 @@ class SophyaneAgent:
 
         if kind == "remember":
             return AgentResponse(
-                self.memory.remember(
-                    selected_route.argument,
-                    importance=8,
-                )
+                self.memory.remember(selected_route.argument, importance=8)
             )
 
         if kind == "forget":
@@ -116,9 +114,7 @@ class SophyaneAgent:
                 memory_id = int(selected_route.argument)
             except ValueError:
                 return AgentResponse("Usage: /forget <memory-id>")
-
             deleted = self.memory.forget(memory_id)
-
             return AgentResponse(
                 f"Memory {memory_id} deleted."
                 if deleted
@@ -128,66 +124,48 @@ class SophyaneAgent:
         if kind == "system":
             result = system_information()
             return self._summarize_tool(
-                original_message,
-                result.output,
-                result.tool,
+                original_message, result.output, result.tool
             )
 
         if kind == "repository":
             result = repository_information()
             return self._summarize_tool(
-                original_message,
-                result.output,
-                result.tool,
+                original_message, result.output, result.tool
             )
 
         if kind == "files":
-            result = list_directory(
-                selected_route.argument or "."
-            )
+            result = list_directory(selected_route.argument or ".")
             return self._summarize_tool(
-                original_message,
-                result.output,
-                result.tool,
+                original_message, result.output, result.tool
             )
 
         if kind == "read":
             if not selected_route.argument:
                 return AgentResponse("Usage: /read <path>")
-
             result = read_text_file(selected_route.argument)
             return self._summarize_tool(
-                original_message,
-                result.output,
-                result.tool,
+                original_message, result.output, result.tool
             )
 
         if kind == "shell":
             if not selected_route.argument:
-                return AgentResponse(
-                    "Usage: /shell <safe-command>"
-                )
-
+                return AgentResponse("Usage: /shell <safe-command>")
             result = safe_shell(
                 selected_route.argument,
                 require_confirmation=True,
             )
             return AgentResponse(result.output)
 
-        if kind in {
-            "status",
-            "providers",
-            "doctor",
-            "setup",
-        }:
-            return AgentResponse(
-                f"INTERNAL_COMMAND:{kind}"
-            )
+        if kind in {"status", "providers", "doctor", "setup"}:
+            return AgentResponse(f"INTERNAL_COMMAND:{kind}")
 
-        memory_context = self.memory.format_relevant(
-            original_message
-        )
+        # Supported software tasks bypass conversational planning and run a
+        # real state graph that writes files, executes tests, retries bounded
+        # failures, verifies every criterion, and emits immutable evidence.
+        if supports_autonomous_build(original_message):
+            return AgentResponse(run_inventory_workflow(original_message))
 
+        memory_context = self.memory.format_relevant(original_message)
         recent = self.memory.recent_messages(limit=6)
         history_lines = [
             f"{item['role']}: {item['content']}"
@@ -195,20 +173,13 @@ class SophyaneAgent:
         ]
 
         sections = []
-
         if memory_context:
             sections.append(memory_context)
-
         if history_lines:
             sections.append(
-                "Recent conversation:\n"
-                + "\n".join(history_lines)
+                "Recent conversation:\n" + "\n".join(history_lines)
             )
-
-        sections.append(
-            f"Current user request:\n{original_message}"
-        )
-
+        sections.append(f"Current user request:\n{original_message}")
         if captured:
             sections.append(
                 "New memories saved during this request:\n"
@@ -216,16 +187,11 @@ class SophyaneAgent:
             )
 
         prompt = "\n\n".join(sections)
-
         try:
-            text = self.provider.generate(
-                prompt,
-                SYSTEM_PROMPT,
-            )
+            text = self.provider.generate(prompt, SYSTEM_PROMPT)
         except ProviderError:
             self.logger.exception("Provider generation failed")
             raise
-
         return AgentResponse(text)
 
     def _summarize_tool(
@@ -247,20 +213,12 @@ Do not claim completion unless the output proves every requested criterion.
 LOCAL TOOL OUTPUT:
 {output}
 """
-
         try:
-            answer = self.provider.generate(
-                prompt,
-                SYSTEM_PROMPT,
-            )
+            answer = self.provider.generate(prompt, SYSTEM_PROMPT)
         except ProviderError as error:
-            self.logger.exception(
-                "Tool summarization failed"
-            )
-
+            self.logger.exception("Tool summarization failed")
             return AgentResponse(
-                f"Local tool completed, but summarization failed: "
+                "Local tool completed, but summarization failed: "
                 f"{error}\n\n{output}"
             )
-
         return AgentResponse(answer)
