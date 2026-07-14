@@ -3,16 +3,16 @@ from setuptools import find_packages, setup
 
 setup(
     name="sophyane",
-    version="12.0.0",
+    version="13.0.0",
     description=(
-        "Cross-platform autonomous agentic software harness "
-        "with stateful execution graphs"
+        "Cross-platform autonomous multi-agent AI runtime "
+        "with durable stateful execution graphs"
     ),
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     entry_points={
         "console_scripts": [
-            "sophyane=sophyane.main:main",
+            "sophyane=sophyane.v13_cli:main",
             "sophyane-web=sophyane.web:main",
             "sophyane-doctor=sophyane.diagnostics:main",
         ],
