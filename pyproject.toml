@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sophyane"
-version = "15.0.0"
-description = "Self-repairing autonomous AI doer with persistent memory, safe execution and evidence-based verification"
+version = "16.0.0"
+description = "Repository-aware autonomous coding agent with semantic indexing, precise patches, batched execution and deterministic verification"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Badar Uzaman"}]
-keywords = ["ai", "agent", "doer", "self-repair", "multi-agent", "llm", "autonomous", "workflow", "state-graph", "gemini", "openai", "ollama", "cli", "local-ai"]
+keywords = ["ai", "coding-agent", "repository", "semantic-index", "patch", "self-repair", "multi-agent", "llm", "autonomous", "workflow", "gemini", "openai", "ollama", "cli", "local-ai"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",

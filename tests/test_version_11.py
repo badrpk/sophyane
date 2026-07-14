@@ -1,4 +1,4 @@
-"""Release consistency checks for Sophyane v15."""
+"""Release consistency checks for Sophyane v16."""
 
 from pathlib import Path
 
@@ -6,7 +6,7 @@ from sophyane.version import __version__
 
 
 def test_runtime_version_is_current() -> None:
-    assert __version__ == "15.0.0"
+    assert __version__ == "16.0.0"
 
 
 def test_package_metadata_versions_match() -> None:

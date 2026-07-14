@@ -1,4 +1,4 @@
-"""Sophyane v14 CLI: goal-driven execution by default."""
+"""Sophyane v16 CLI: repository-aware coding execution by default."""
 from __future__ import annotations
 
 import argparse
@@ -9,7 +9,6 @@ from sophyane.agent import SophyaneAgent
 from sophyane.autonomy import AUTONOMOUS_WORKER_POLICY
 from sophyane.config import ensure_directories
 from sophyane.diagnostics import run_diagnostics
-from sophyane.doer import DoerRuntime
 from sophyane.logging_config import configure_logging
 from sophyane.main import (
     create_provider,
@@ -27,6 +26,7 @@ from sophyane.structured_output import (
     render_strict_json,
     requests_strict_json,
 )
+from sophyane.v16_doer import CodingDoerRuntime
 from sophyane.version import __version__
 
 
@@ -34,8 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sophyane",
         description=(
-            "Sophyane v14 goal-driven local AI doer with persistent memory, "
-            "safe execution evidence and independent completion verification."
+            "Sophyane v16 repository-aware coding agent with semantic indexing, "
+            "precise patches, batched tools, self-repair and deterministic verification."
         ),
     )
     parser.add_argument("prompt", nargs="*", help="prompt to process")
@@ -50,11 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--inspect-run", metavar="RUN_ID", help="inspect a persisted legacy multi-agent run")
     parser.add_argument("--max-workers", type=int, default=6, help="maximum legacy concurrent workers")
     parser.add_argument("--agent-attempts", type=int, default=2, help="attempts per legacy worker")
-    parser.add_argument("--max-steps", type=int, default=12, help="maximum planner-executor-verifier cycles")
+    parser.add_argument("--max-steps", type=int, default=16, help="maximum planner-executor-verifier cycles")
     parser.add_argument(
         "--workspace",
         default=".",
-        help="directory in which approved file writes and commands execute",
+        help="repository or directory in which approved edits and commands execute",
     )
     parser.add_argument(
         "--approval-timeout",
@@ -132,7 +132,6 @@ def main() -> int:
     def backend(prompt: str, system: str) -> str:
         return provider.generate(prompt, system)
 
-    # Explicit legacy flags preserve v13 behavior. Default execution is the v14 doer loop.
     if args.single_agent or args.multi_agent:
         mode = "multi" if args.multi_agent else "single"
         policy = _execution_policy(args.approval_timeout, not args.no_auto_continue)
@@ -153,7 +152,7 @@ def main() -> int:
             print(result.final_output)
         return 0 if result.final_output else 2
 
-    runtime = DoerRuntime(
+    runtime = CodingDoerRuntime(
         backend=backend,
         memory=memory,
         workspace=Path(args.workspace),
@@ -174,12 +173,15 @@ def main() -> int:
             print('{"status":"failed","error":"strict_json_contract"}')
             return 2
 
+    repository = result.execution.get("repository", {})
+    files = repository.get("files", []) if isinstance(repository, dict) else []
     print(
-        f"EXECUTION_MODE=goal_driven_doer\n"
+        f"EXECUTION_MODE=repository_coding_agent\n"
         f"RUN_ID={result.run_id}\n"
         f"GOAL_MET={'true' if result.goal_met else 'false'}\n"
         f"LOOP_STEPS={len(result.steps)}\n"
         f"STOPPED_REASON={result.stopped_reason}\n"
+        f"INDEXED_FILES={len(files)}\n"
         f"WORKSPACE={result.execution.get('workspace', str(Path(args.workspace).resolve()))}"
     )
     print()
