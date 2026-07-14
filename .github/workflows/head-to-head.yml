@@ -1,0 +1,52 @@
+name: Sophyane vs LangGraph
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "benchmarks/**"
+      - "src/sophyane/graph_runtime.py"
+      - ".github/workflows/head-to-head.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install identical test environment
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install . "langgraph==1.2.9"
+
+      - name: Show installed versions
+        run: |
+          python - <<'PY'
+          import importlib.metadata
+          import platform
+          print("Python", platform.python_version())
+          print("Sophyane", importlib.metadata.version("sophyane"))
+          print("LangGraph", importlib.metadata.version("langgraph"))
+          PY
+
+      - name: Run correctness and performance benchmark
+        env:
+          BENCH_ITERATIONS: "2000"
+          BENCH_WARMUP: "200"
+        run: python benchmarks/head_to_head.py
+
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: sophyane-vs-langgraph
+          path: benchmark-results/
+          if-no-files-found: error
