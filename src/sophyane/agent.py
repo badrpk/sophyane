@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
 
 from sophyane.autonomous_builder import (
     run_inventory_workflow,
@@ -66,6 +65,22 @@ class SophyaneAgent:
 
         if not message:
             return AgentResponse("Please enter a request.")
+
+        # v11 invariant: supported autonomous workflows run before normal
+        # conversational routing. This prevents the LLM from replacing real
+        # execution with plans or code snippets.
+        if supports_autonomous_build(message):
+            self.memory.record_message("user", message)
+            try:
+                result = run_inventory_workflow(message)
+            except Exception as error:
+                self.logger.exception("Autonomous software workflow failed")
+                result = (
+                    "Autonomous workflow failed without claiming success: "
+                    f"{error}"
+                )
+            self.memory.record_message("assistant", result)
+            return AgentResponse(result)
 
         self.memory.record_message("user", message)
         captured = self.memory.auto_capture(message)
@@ -158,12 +173,6 @@ class SophyaneAgent:
 
         if kind in {"status", "providers", "doctor", "setup"}:
             return AgentResponse(f"INTERNAL_COMMAND:{kind}")
-
-        # Supported software tasks bypass conversational planning and run a
-        # real state graph that writes files, executes tests, retries bounded
-        # failures, verifies every criterion, and emits immutable evidence.
-        if supports_autonomous_build(original_message):
-            return AgentResponse(run_inventory_workflow(original_message))
 
         memory_context = self.memory.format_relevant(original_message)
         recent = self.memory.recent_messages(limit=6)
