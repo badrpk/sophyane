@@ -16,7 +16,7 @@ classifiers = [
   "Environment :: Console",
   "Environment :: Web Environment",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT",
+  "License :: OSI Approved :: MIT License",
   "Operating System :: Android",
   "Operating System :: MacOS",
   "Operating System :: Microsoft :: Windows",
