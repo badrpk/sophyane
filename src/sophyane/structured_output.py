@@ -48,6 +48,15 @@ def _balanced_json_candidates(text: str) -> list[str]:
     return candidates
 
 
+def _best_candidate(candidates: list[str]) -> Any:
+    """Prefer the complete outer contract instead of a nested list/object."""
+    if not candidates:
+        raise StructuredOutputError("provider returned no parseable JSON")
+    objects = [candidate for candidate in candidates if candidate.lstrip().startswith("{")]
+    pool = objects or candidates
+    return json.loads(max(pool, key=len))
+
+
 def requests_strict_json(prompt: str) -> bool:
     lowered = prompt.lower()
     return (
@@ -70,10 +79,7 @@ def parse_json_response(text: str) -> Any:
         except json.JSONDecodeError:
             continue
 
-    candidates = _balanced_json_candidates(text)
-    if candidates:
-        return json.loads(candidates[-1])
-    raise StructuredOutputError("provider returned no parseable JSON")
+    return _best_candidate(_balanced_json_candidates(text))
 
 
 def contract_example(prompt: str) -> Any | None:
@@ -83,7 +89,6 @@ def contract_example(prompt: str) -> Any | None:
     complete desired JSON object. It makes CLI automation deterministic, but it
     must not be treated as proof that an underlying workflow was executed.
     """
-
     markers = ["return only", "expected:"]
     lowered = prompt.lower()
     starts = [lowered.rfind(marker) for marker in markers]
@@ -93,7 +98,7 @@ def contract_example(prompt: str) -> Any | None:
     candidates = _balanced_json_candidates(prompt[start:])
     if not candidates:
         return None
-    return json.loads(candidates[-1])
+    return _best_candidate(candidates)
 
 
 def render_strict_json(prompt: str, provider_text: str) -> str:
@@ -103,7 +108,6 @@ def render_strict_json(prompt: str, provider_text: str) -> str:
     complete explicit JSON contract, the contract is returned as a deterministic
     fallback. The fallback is formatting assistance, not execution evidence.
     """
-
     try:
         value = parse_json_response(provider_text)
     except StructuredOutputError:
