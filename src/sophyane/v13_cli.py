@@ -1,14 +1,15 @@
-"""Sophyane v13 CLI with automatic supervisor-worker routing."""
-
+"""Sophyane v14 CLI: goal-driven execution by default."""
 from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from sophyane.agent import SophyaneAgent
 from sophyane.autonomy import AUTONOMOUS_WORKER_POLICY
 from sophyane.config import ensure_directories
 from sophyane.diagnostics import run_diagnostics
+from sophyane.doer import DoerRuntime
 from sophyane.logging_config import configure_logging
 from sophyane.main import (
     create_provider,
@@ -33,8 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sophyane",
         description=(
-            "Sophyane v13 local AI runtime with durable graphs, memory and "
-            "real supervisor-worker multi-agent execution."
+            "Sophyane v14 goal-driven local AI doer with persistent memory, "
+            "safe execution evidence and independent completion verification."
         ),
     )
     parser.add_argument("prompt", nargs="*", help="prompt to process")
@@ -43,22 +44,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--providers", action="store_true")
     parser.add_argument("--doctor", action="store_true")
     parser.add_argument("--verbose", action="store_true")
-    parser.add_argument("--single-agent", action="store_true", help="force one worker")
-    parser.add_argument("--multi-agent", action="store_true", help="force supervisor-worker execution")
+    parser.add_argument("--single-agent", action="store_true", help="use legacy one-worker runtime")
+    parser.add_argument("--multi-agent", action="store_true", help="use legacy supervisor-worker runtime")
     parser.add_argument("--agent-json", action="store_true", help="print complete machine-readable run metadata")
-    parser.add_argument("--inspect-run", metavar="RUN_ID", help="inspect a persisted multi-agent run")
-    parser.add_argument("--max-workers", type=int, default=6, help="maximum concurrent worker agents")
-    parser.add_argument("--agent-attempts", type=int, default=2, help="attempts per worker")
+    parser.add_argument("--inspect-run", metavar="RUN_ID", help="inspect a persisted legacy multi-agent run")
+    parser.add_argument("--max-workers", type=int, default=6, help="maximum legacy concurrent workers")
+    parser.add_argument("--agent-attempts", type=int, default=2, help="attempts per legacy worker")
+    parser.add_argument("--max-steps", type=int, default=12, help="maximum planner-executor-verifier cycles")
+    parser.add_argument(
+        "--workspace",
+        default=".",
+        help="directory in which approved file writes and commands execute",
+    )
     parser.add_argument(
         "--approval-timeout",
         type=float,
         default=10.0,
-        help="seconds before safe scoped actions auto-continue (default: 10)",
+        help="seconds before safe scoped actions auto-continue (legacy runtime)",
     )
     parser.add_argument(
         "--no-auto-continue",
         action="store_true",
-        help="disable timeout auto-continuation for safe actions",
+        help="disable timeout auto-continuation for legacy safe actions",
     )
     parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
     return parser
@@ -111,7 +118,6 @@ def main() -> int:
     memory = MemoryStore()
     provider = create_provider(config)
 
-    # Preserve internal commands and strict compatibility behavior.
     agent = SophyaneAgent(provider, memory, logger)
     if original_prompt.startswith("/"):
         response = agent.ask(original_prompt)
@@ -123,56 +129,62 @@ def main() -> int:
             print(response.text)
         return 0
 
-    mode = "multi" if args.multi_agent else "single" if args.single_agent else "auto"
-    policy = _execution_policy(args.approval_timeout, not args.no_auto_continue)
+    def backend(prompt: str, system: str) -> str:
+        return provider.generate(prompt, system)
 
-    def autonomous_backend(prompt: str, system: str) -> str:
-        combined_system = (system + "\n\n" + policy).strip()
-        return provider.generate(prompt, combined_system)
+    # Explicit legacy flags preserve v13 behavior. Default execution is the v14 doer loop.
+    if args.single_agent or args.multi_agent:
+        mode = "multi" if args.multi_agent else "single"
+        policy = _execution_policy(args.approval_timeout, not args.no_auto_continue)
 
-    runtime = MultiAgentRuntime(
-        backend=autonomous_backend,
-        store=store,
-        max_workers=args.max_workers,
-        max_attempts=args.agent_attempts,
+        def legacy_backend(prompt: str, system: str) -> str:
+            return provider.generate(prompt, (system + "\n\n" + policy).strip())
+
+        runtime = MultiAgentRuntime(
+            backend=legacy_backend,
+            store=store,
+            max_workers=args.max_workers,
+            max_attempts=args.agent_attempts,
+        )
+        result = runtime.run(original_prompt, mode=mode)
+        if args.agent_json:
+            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+        else:
+            print(result.final_output)
+        return 0 if result.final_output else 2
+
+    runtime = DoerRuntime(
+        backend=backend,
+        memory=memory,
+        workspace=Path(args.workspace),
+        max_steps=args.max_steps,
     )
-    result = runtime.run(original_prompt, mode=mode)
+    result = runtime.run(original_prompt)
 
     if args.agent_json:
-        payload = result.to_dict()
-        payload["autonomy"] = {
-            "safe_auto_continue": not args.no_auto_continue,
-            "approval_timeout_seconds": max(0.0, args.approval_timeout),
-            "dangerous_actions_auto_approved": False,
-        }
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
-        return 0 if result.final_output else 2
+        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+        return 0 if result.goal_met else 2
 
     if requests_strict_json(original_prompt):
         try:
             print(render_strict_json(original_prompt, result.final_output))
-            return 0
+            return 0 if result.goal_met else 2
         except StructuredOutputError as error:
             logger.error("Strict JSON contract failed: %s", error)
-            print(
-                '{"status":"failed","error":"strict_json_contract",'
-                '"message":"workers returned no valid JSON"}'
-            )
+            print('{"status":"failed","error":"strict_json_contract"}')
             return 2
 
     print(
-        f"EXECUTION_MODE={result.mode}\n"
-        f"AGENT_COUNT={len(result.workers)}\n"
-        f"ACTUAL_WORKERS_LAUNCHED={len(result.workers)}\n"
-        f"SUPERVISOR_ID={result.supervisor_id}\n"
+        f"EXECUTION_MODE=goal_driven_doer\n"
         f"RUN_ID={result.run_id}\n"
-        f"SAFE_AUTO_CONTINUE={'true' if not args.no_auto_continue else 'false'}\n"
-        f"APPROVAL_TIMEOUT_SECONDS={max(0.0, args.approval_timeout):g}\n"
-        "AGENT_ROLES=" + ",".join(worker.role for worker in result.workers)
+        f"GOAL_MET={'true' if result.goal_met else 'false'}\n"
+        f"LOOP_STEPS={len(result.steps)}\n"
+        f"STOPPED_REASON={result.stopped_reason}\n"
+        f"WORKSPACE={result.execution.get('workspace', str(Path(args.workspace).resolve()))}"
     )
     print()
     print(result.final_output)
-    return 0 if result.final_output else 2
+    return 0 if result.goal_met else 2
 
 
 if __name__ == "__main__":
