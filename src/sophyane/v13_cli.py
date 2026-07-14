@@ -9,7 +9,6 @@ from sophyane.agent import SophyaneAgent
 from sophyane.autonomy import AUTONOMOUS_WORKER_POLICY
 from sophyane.config import ensure_directories
 from sophyane.diagnostics import run_diagnostics
-from sophyane.interactive_coding_doer import InteractiveCodingDoerRuntime
 from sophyane.live_coding_doer import LiveProgressReporter
 from sophyane.logging_config import configure_logging
 from sophyane.main import (
@@ -23,6 +22,7 @@ from sophyane.main import (
 from sophyane.memory import MemoryStore
 from sophyane.multiagent import MultiAgentRuntime, MultiAgentStore
 from sophyane.setup_wizard import run_setup_wizard
+from sophyane.strict_interactive_doer import StrictInteractiveCodingDoerRuntime
 from sophyane.structured_output import (
     StructuredOutputError,
     render_strict_json,
@@ -67,6 +67,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=5.0,
         help="seconds between progress heartbeats during slow provider calls",
+    )
+    parser.add_argument(
+        "--protocol-attempts",
+        type=int,
+        default=3,
+        help="maximum strict JSON regeneration attempts for malformed planner output",
     )
     parser.add_argument(
         "--approval-timeout",
@@ -168,11 +174,12 @@ def main() -> int:
         enabled=not args.no_progress,
         heartbeat_seconds=args.progress_heartbeat,
     )
-    runtime = InteractiveCodingDoerRuntime(
+    runtime = StrictInteractiveCodingDoerRuntime(
         backend=backend,
         memory=memory,
         workspace=Path(args.workspace),
         max_steps=args.max_steps,
+        protocol_attempts=args.protocol_attempts,
         progress=progress,
     )
     result = runtime.run(original_prompt)
