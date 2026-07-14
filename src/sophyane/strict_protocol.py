@@ -2,12 +2,71 @@
 from __future__ import annotations
 
 import json
+import shlex
 from typing import Any
 
 from sophyane.doer import ProtocolError, _extract_json
 
 
 REQUIRED_PLAN_FIELDS = ("objective", "success_criteria", "action")
+SUPPORTED_CHECKS = {
+    "file_exists", "contains", "command_exit_zero", "stdout_contains",
+    "no_uncommitted_changes",
+}
+
+
+def _normalize_check(check: Any) -> dict[str, Any] | None:
+    if not isinstance(check, dict):
+        return None
+    normalized = dict(check)
+    kind = str(normalized.get("type", "")).strip().lower()
+    if kind in SUPPORTED_CHECKS:
+        normalized["type"] = kind
+        return normalized
+    command = str(normalized.get("command", "")).strip()
+    if command:
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            tokens = []
+        if len(tokens) >= 4 and tokens[0] == "grep" and "-q" in tokens and tokens[-1] == "stdout":
+            index = tokens.index("-q") + 1
+            if index < len(tokens) - 1:
+                return {"type": "stdout_contains", "text": tokens[index]}
+        if normalized.get("expected_exit_code") == 0 and tokens:
+            return {"type": "command_exit_zero", "executable": tokens[0].rsplit("/", 1)[-1]}
+    return None
+
+
+def _normalize_checks(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    return [item for check in raw if (item := _normalize_check(check)) is not None]
+
+
+def _normalize_action(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    action = dict(raw)
+    if not action.get("type") and isinstance(action.get("action"), str):
+        action["type"] = action.pop("action")
+    kind = str(action.get("type", "")).strip().lower()
+    action["type"] = kind
+    if kind == "run_command" and not isinstance(action.get("argv"), list):
+        command = action.pop("command", "")
+        if isinstance(command, str) and command.strip():
+            try:
+                action["argv"] = shlex.split(command)
+            except ValueError as error:
+                raise ProtocolError(f"invalid run_command string: {error}") from error
+    if kind == "batch" and isinstance(action.get("actions"), list):
+        action["actions"] = [_normalize_action(item) for item in action["actions"]]
+    checks = _normalize_checks(action.get("deterministic_checks"))
+    if checks:
+        action["deterministic_checks"] = checks
+    else:
+        action.pop("deterministic_checks", None)
+    return action
 
 
 def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
@@ -17,14 +76,29 @@ def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(plan.get("objective"), str) or not plan["objective"].strip():
         raise ProtocolError("planner objective must be a non-empty string")
     criteria = plan.get("success_criteria")
-    if not isinstance(criteria, list) or not criteria or not all(isinstance(x, str) and x.strip() for x in criteria):
+    if not isinstance(criteria, list) or not criteria or not all(
+        isinstance(item, str) and item.strip() for item in criteria
+    ):
         raise ProtocolError("planner success_criteria must be a non-empty string array")
-    action = plan.get("action")
-    if not isinstance(action, dict) or not isinstance(action.get("type"), str) or not action["type"].strip():
+    plan["action"] = _normalize_action(plan.get("action"))
+    action = plan["action"]
+    if not isinstance(action.get("type"), str) or not action["type"].strip():
         raise ProtocolError("planner action must be an object with a non-empty type")
+    if action["type"] == "run_command" and not isinstance(action.get("argv"), list):
+        raise ProtocolError("run_command requires argv array")
+    top_checks = _normalize_checks(plan.get("deterministic_checks"))
+    action_checks = _normalize_checks(action.get("deterministic_checks"))
+    merged = top_checks + [item for item in action_checks if item not in top_checks]
+    plan["deterministic_checks"] = merged
+    if merged:
+        action["deterministic_checks"] = merged
     candidates = plan.get("candidates")
-    if candidates is not None and not isinstance(candidates, list):
-        raise ProtocolError("planner candidates must be an array when present")
+    if candidates is not None:
+        if not isinstance(candidates, list):
+            raise ProtocolError("planner candidates must be an array when present")
+        for candidate in candidates:
+            if isinstance(candidate, dict):
+                candidate["action"] = _normalize_action(candidate.get("action"))
     return plan
 
 
@@ -42,17 +116,18 @@ def strict_repair_request(original_request: dict[str, Any], bad_output: str, err
         "required_schema": {
             "objective": "non-empty string",
             "success_criteria": ["one or more measurable strings"],
-            "candidates": [
-                {"label": "string", "action": {"type": "allowed action"}, "reason": "string"}
-            ],
+            "deterministic_checks": [{"type": "stdout_contains", "text": "expected text"}],
+            "candidates": [{"label": "string", "action": {"type": "allowed action"}, "reason": "string"}],
             "selected_index": 0,
             "selection_reason": "string",
-            "action": {"type": "must equal selected candidate action"},
-            "rationale": "string"
+            "action": {"type": "run_command", "argv": ["python", "-m", "pytest", "-q"]},
+            "rationale": "string",
         },
         "instruction": (
-            "Return exactly one valid JSON object and nothing else. Do not use markdown, prose, XML tool tags, "
-            "code fences, <execute_bash>, or <tool_code>. Select and encode a concrete safe action."
-        )
+            "Return exactly one valid JSON object and nothing else. Use action.type, never action.action. "
+            "For run_command use argv as an array, never a shell command string. Use only typed deterministic "
+            "checks: file_exists, contains, command_exit_zero, stdout_contains, no_uncommitted_changes. "
+            "Do not use markdown, prose, XML tool tags, code fences, <execute_bash>, or <tool_code>."
+        ),
     }
     return json.dumps(payload, ensure_ascii=False)
