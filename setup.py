@@ -15,7 +15,7 @@ setup(
             "sophyane=sophyane.v13_cli:main",
             "sophyane-web=sophyane.web:main",
             "sophyane-doctor=sophyane.diagnostics:main",
-        ],
+        ]
     },
     python_requires=">=3.10",
 )

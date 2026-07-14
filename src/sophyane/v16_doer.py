@@ -336,6 +336,7 @@ class CodingDoerRuntime(DoerRuntime):
 
     def run(self, prompt: str):
         result = super().run(prompt)
+        self.repository_snapshot = self.index.build()
         result.execution["repository"] = self.repository_snapshot.to_dict()
         result.execution["git_checkpoints"] = self.checkpoints
         result.execution["task_queue"] = self.task_queue.to_dict()
