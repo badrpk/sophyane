@@ -9,7 +9,10 @@ from sophyane.agent import SophyaneAgent
 from sophyane.autonomy import AUTONOMOUS_WORKER_POLICY
 from sophyane.config import ensure_directories
 from sophyane.diagnostics import run_diagnostics
-from sophyane.guarded_coding_doer import GuardedCodingDoerRuntime
+from sophyane.live_coding_doer import (
+    LiveGuardedCodingDoerRuntime,
+    LiveProgressReporter,
+)
 from sophyane.logging_config import configure_logging
 from sophyane.main import (
     create_provider,
@@ -55,6 +58,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--workspace",
         default=".",
         help="repository or directory in which approved edits and commands execute",
+    )
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="disable live operational progress messages",
+    )
+    parser.add_argument(
+        "--progress-heartbeat",
+        type=float,
+        default=5.0,
+        help="seconds between progress heartbeats during slow provider calls",
     )
     parser.add_argument(
         "--approval-timeout",
@@ -152,15 +166,21 @@ def main() -> int:
             print(result.final_output)
         return 0 if result.final_output else 2
 
-    runtime = GuardedCodingDoerRuntime(
+    progress = LiveProgressReporter(
+        enabled=not args.no_progress,
+        heartbeat_seconds=args.progress_heartbeat,
+    )
+    runtime = LiveGuardedCodingDoerRuntime(
         backend=backend,
         memory=memory,
         workspace=Path(args.workspace),
         max_steps=args.max_steps,
+        progress=progress,
     )
     result = runtime.run(original_prompt)
 
     if args.agent_json:
+        # Live progress goes to stderr, preserving valid JSON on stdout.
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
         return 0 if result.goal_met else 2
 
