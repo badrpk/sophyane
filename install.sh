@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-VERSION="9.0.6"
-RELEASE_COMMIT="9fb0a9f5b2c656a5086e3989719bad328896b8b6"
-ENTRY="sophyane-9.0.6.py"
-EXPECTED_BLOB="8adcb5b3c5003546d23dd977cb51aadb1a4e3728"
+VERSION="9.0.7"
+RELEASE_COMMIT="26a391f15c543bdf605d587e782d1b50925c95c0"
+ENTRY="sophyane-9.0.7.py"
+EXPECTED_BLOB="8b44d1985cef534a5ec16faf7a035806fd1c4e02"
 RAW="https://raw.githubusercontent.com/badrpk/sophyane/${RELEASE_COMMIT}"
 BASE="$HOME/.local/share/sophyane"
 BIN="$HOME/.local/bin"
