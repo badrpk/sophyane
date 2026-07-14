@@ -3,10 +3,10 @@ from setuptools import find_packages, setup
 
 setup(
     name="sophyane",
-    version="13.0.0",
+    version="15.0.0",
     description=(
-        "Cross-platform autonomous multi-agent AI runtime "
-        "with durable stateful execution graphs"
+        "Self-repairing autonomous AI doer with persistent memory, "
+        "safe execution and evidence-based verification"
     ),
     packages=find_packages(where="src"),
     package_dir={"": "src"},
