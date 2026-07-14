@@ -1,4 +1,4 @@
-"""Release-level regression tests retained for Sophyane v13."""
+"""Release-level regression tests retained for Sophyane v15."""
 
 from pathlib import Path
 
@@ -6,8 +6,8 @@ import sophyane.autonomous_builder as builder
 from sophyane.version import __version__
 
 
-def test_version_is_13() -> None:
-    assert __version__ == "13.0.0"
+def test_version_is_15() -> None:
+    assert __version__ == "15.0.0"
 
 
 def test_supported_request_detection() -> None:
