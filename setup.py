@@ -12,7 +12,7 @@ setup(
     package_dir={"": "src"},
     entry_points={
         "console_scripts": [
-            "sophyane=sophyane.v13_cli:main",
+            "sophyane=sophyane.cli_entry:main",
             "sophyane-web=sophyane.web:main",
             "sophyane-doctor=sophyane.diagnostics:main",
         ]
