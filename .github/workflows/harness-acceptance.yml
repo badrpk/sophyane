@@ -1,0 +1,41 @@
+name: Harness acceptance
+
+on:
+  pull_request:
+    paths:
+      - "src/sophyane/harness.py"
+      - "tests/test_harness.py"
+      - "benchmarks/harness_acceptance.py"
+      - ".github/workflows/harness-acceptance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  harness:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - run: python -m pytest tests/test_harness.py tests/test_multiagent.py
+      - run: python benchmarks/harness_acceptance.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: harness-${{ matrix.os }}-py${{ matrix.python }}
+          path: benchmark-results/harness
+          if-no-files-found: error
+          retention-days: 90
