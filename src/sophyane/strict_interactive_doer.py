@@ -12,11 +12,12 @@ from sophyane.strict_protocol import parse_and_validate_plan, strict_repair_requ
 
 
 class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
-    """Require schema-valid JSON plans and retry malformed model output locally."""
+    """Require valid plans, normalize common model mistakes, and trust evidence."""
 
     def __init__(self, *args: Any, protocol_attempts: int = 3, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.protocol_attempts = max(1, min(int(protocol_attempts), 5))
+        self._current_checks: list[dict[str, Any]] = []
 
     def _planner_request(
         self,
@@ -51,6 +52,8 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
             "instruction": (
                 "Return exactly one JSON object matching the planner schema. Generate 2 or 3 safe candidates "
                 "when possible, select the best one yourself, and encode the selected concrete action. "
+                "Use action.type and run_command.argv as an array. Use only typed deterministic checks: "
+                "file_exists, contains, command_exit_zero, stdout_contains, no_uncommitted_changes. "
                 "Do not emit markdown, prose, code fences, XML tool tags, <execute_bash>, or <tool_code>."
             ),
         }
@@ -86,9 +89,7 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
         verifier_instruction: str,
     ) -> dict[str, Any]:
         self._visible_step = len(history) + 1
-        request = self._planner_request(
-            prompt, context, objective, criteria, history, verifier_instruction
-        )
+        request = self._planner_request(prompt, context, objective, criteria, history, verifier_instruction)
         current_prompt = json.dumps(request, ensure_ascii=False)
         last_error: Exception | None = None
 
@@ -102,6 +103,7 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
                 with self.progress.waiting("🧠", label):
                     raw = self.backend(current_prompt, self._system("planner"))
                 plan = parse_and_validate_plan(raw)
+                self._current_checks = list(plan.get("deterministic_checks", []))
                 self._show_decision(plan)
                 return plan
             except Exception as error:
@@ -109,20 +111,42 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
                     raise
                 last_error = error
                 preview = raw[-1200:].replace("\n", " | ") if "raw" in locals() else "<no response>"
-                self.progress.emit(
-                    "⚠",
-                    f"Planner protocol rejected: {type(error).__name__}: {error}",
-                )
+                self.progress.emit("⚠", f"Planner protocol rejected: {type(error).__name__}: {error}")
                 self.progress.emit("↳", f"Invalid response preview: {preview}")
                 if attempt < self.protocol_attempts:
                     self.progress.emit("↻", "Requesting strict JSON regeneration automatically")
                     current_prompt = strict_repair_request(
-                        request,
-                        raw if "raw" in locals() else "",
-                        error,
-                        attempt + 1,
+                        request, raw if "raw" in locals() else "", error, attempt + 1
                     )
 
         raise ProtocolError(
             f"planner failed strict JSON protocol after {self.protocol_attempts} attempts: {last_error}"
         )
+
+    def _verify(
+        self,
+        prompt: str,
+        objective: str,
+        criteria: list[str],
+        history: list[StepRecord],
+        observation: dict[str, Any],
+    ) -> dict[str, Any]:
+        observation = dict(observation)
+        if self._current_checks:
+            observation["deterministic_checks"] = self._current_checks
+        verdict = super()._verify(prompt, objective, criteria, history, observation)
+
+        mechanical = self.mechanical.verify(
+            self._current_checks,
+            command_observations=[asdict(item) for item in self.executor.report.commands],
+        ) if self._current_checks else {"passed": None, "results": []}
+
+        # Typed mechanical checks plus the hard execution contract are stronger than
+        # a hesitant or inconsistent LLM verifier response.
+        if mechanical.get("passed") is True and self._execution_contract_satisfied():
+            verdict["goal_met"] = True
+            verdict["confidence"] = 1
+            verdict["missing_requirements"] = []
+            verdict["next_instruction"] = ""
+            verdict["final_answer"] = verdict.get("final_answer") or "Objective completed with verified execution evidence."
+        return verdict

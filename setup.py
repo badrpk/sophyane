@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="sophyane",
-    version="16.0.1",
+    version="16.0.7",
     description=(
         "Repository-aware autonomous coding agent with semantic indexing, "
         "precise patches, batched execution and deterministic verification"
@@ -12,7 +12,7 @@ setup(
     package_dir={"": "src"},
     entry_points={
         "console_scripts": [
-            "sophyane=sophyane.v13_cli:main",
+            "sophyane=sophyane.cli_entry:main",
             "sophyane-web=sophyane.web:main",
             "sophyane-doctor=sophyane.diagnostics:main",
         ]
