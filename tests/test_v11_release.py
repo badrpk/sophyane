@@ -1,14 +1,13 @@
-"""Release-level regression tests for Sophyane 11."""
+"""Release-level regression tests retained for Sophyane v13."""
 
 from pathlib import Path
 
 import sophyane.autonomous_builder as builder
-from sophyane.agent import SophyaneAgent
 from sophyane.version import __version__
 
 
-def test_version_is_11() -> None:
-    assert __version__ == "11.0.0"
+def test_version_is_13() -> None:
+    assert __version__ == "13.0.0"
 
 
 def test_supported_request_detection() -> None:
@@ -17,14 +16,13 @@ def test_supported_request_detection() -> None:
     )
 
 
-def test_v11_builder_report_contract(tmp_path: Path, monkeypatch) -> None:
+def test_builder_report_contract(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(builder, "PROJECTS_DIR", tmp_path)
     report = builder.run_inventory_workflow(
         "Build a minimal inventory REST API using Python, SQLite and automated tests. "
         "Do not create index.html. Show acceptance criteria, created files, exact "
         "test command, exit code and test summary."
     )
-
     project = tmp_path / "inventory_api"
     assert "=== SOPHYANE AUTONOMOUS BUILD REPORT ===" in report
     assert "Test exit code: 0" in report
