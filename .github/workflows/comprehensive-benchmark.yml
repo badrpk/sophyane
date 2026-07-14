@@ -1,0 +1,61 @@
+name: Comprehensive benchmark
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Benchmark scale
+        required: true
+        default: standard
+        type: choice
+        options: [quick, standard, heavy]
+  schedule:
+    - cron: '17 3 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: comprehensive-benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.profile || github.event_name == 'schedule' && 'standard' || 'quick' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - name: Install both runtimes
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install 'langgraph==1.2.9' 'langgraph-checkpoint-sqlite>=3,<4'
+      - name: Environment
+        run: |
+          python --version
+          python -m pip show sophyane langgraph langgraph-checkpoint-sqlite
+          lscpu || true
+          free -h || true
+      - name: Run comprehensive comparison
+        run: python benchmarks/comprehensive.py --profile "$PROFILE" --output benchmark-results/comprehensive
+      - name: Add report to job summary
+        if: always()
+        run: |
+          if [ -f benchmark-results/comprehensive/REPORT.md ]; then
+            cat benchmark-results/comprehensive/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload reproducible results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sophyane-vs-langgraph-${{ env.PROFILE }}-${{ github.run_id }}
+          path: benchmark-results/comprehensive
+          if-no-files-found: error
+          retention-days: 90
