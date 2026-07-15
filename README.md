@@ -44,6 +44,34 @@ Useful slash commands:
 | `/session-info` | Hardware + session stats |
 | `/quit` | Exit |
 
+## Portability (PC · phone · cloud · IoT)
+
+Sophyane adapts by **equipment class** — from constrained edge gateways to full workstations:
+
+| Surface | How |
+|---------|-----|
+| Linux / macOS | `install.sh` |
+| Windows | `install.ps1` |
+| Android | Termux + `install.sh` (mobile profile) |
+| iOS | Web UI or SSH companion host |
+| Cloud VM | install + systemd daemon timer |
+| PLC / meter gateway | Linux edge host + edge profile |
+
+```bash
+sophyane --platform      # OS, RAM, equipment class, recommended profile
+sophyane --edge-health   # JSON health for edge/IoT deployments
+```
+
+See [docs/PORTABILITY.md](docs/PORTABILITY.md) for phone→PC→cloud→IoT architecture and industrial safety notes.
+
+## Competitive exams
+
+```bash
+python benchmarks/competitive_matrix.py
+python benchmarks/harness_acceptance.py
+cat docs/COMPETITIVE_EXAM.md
+```
+
 ## Automatic local open models
 
 When every configured cloud provider fails with quota, billing, or auth errors, Sophyane:

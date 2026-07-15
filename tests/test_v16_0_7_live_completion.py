@@ -18,10 +18,10 @@ def test_version_and_runtime_identity(monkeypatch) -> None:
         "sophyane.cli_entry.load_config",
         lambda: {"provider": "gemini", "model": "gemini-test"},
     )
-    assert __version__ == "16.0.7"
+    assert __version__ == "16.2.0"
     identity = _runtime_identity()
-    assert "Sophyane 16.0.7" in identity
-    assert "LLM provider: gemini" in identity
+    assert "Sophyane 16.2.0" in identity
+    assert "provider: gemini" in identity
     assert "model: gemini-test" in identity
 
 

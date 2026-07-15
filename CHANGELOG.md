@@ -1,5 +1,19 @@
 # Changelog
 
+## 16.2.0 — 2026-07-15
+
+### Added
+- Cross-platform `platform_probe` (Windows/macOS/Linux/Android/iOS/edge/cloud)
+- Edge/IoT agent profile for constrained chips (PLC gateways, meters, phones)
+- CLI: `--platform`, `--edge-health`
+- Portability guide `docs/PORTABILITY.md`
+- Competitive matrix vs 14 agent/harness ecosystems (`benchmarks/competitive_matrix.py`)
+- Full capability exam report for GitHub consumers
+
+### Changed
+- Version 16.2.0; equipment-class adaptive profiles
+
+
 ## 16.1.1 — 2026-07-15
 
 ### Added

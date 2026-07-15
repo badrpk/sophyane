@@ -44,6 +44,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--providers", action="store_true")
     parser.add_argument("--doctor", action="store_true")
+    parser.add_argument(
+        "--platform",
+        action="store_true",
+        help="probe OS/hardware/equipment class (Windows/macOS/Linux/Android/edge)",
+    )
+    parser.add_argument(
+        "--edge-health",
+        action="store_true",
+        help="print edge/IoT health JSON for constrained chips and gateways",
+    )
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--single-agent", action="store_true", help="use legacy one-worker runtime")
     parser.add_argument("--multi-agent", action="store_true", help="use legacy supervisor-worker runtime")
@@ -121,6 +131,22 @@ def main() -> int:
         passed, report = run_diagnostics()
         print(report)
         return 0 if passed else 1
+    if args.platform:
+        from sophyane.platform_probe import format_platform_report
+
+        print(format_platform_report())
+        return 0
+    if args.edge_health:
+        from sophyane.config import load_config
+        from sophyane.edge_agent import build_edge_health
+
+        cfg = load_config()
+        health = build_edge_health(
+            provider=str(cfg.get("provider", "")),
+            model=str(cfg.get("model", "")),
+        )
+        print(health.to_json())
+        return 0 if health.ok else 1
     if args.providers:
         print(list_providers())
         return 0
