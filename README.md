@@ -422,3 +422,7 @@ Please use GitHub Issues for bug reports, platform compatibility problems, featu
 ## License
 
 MIT License. See `LICENSE`.
+
+## Full portfolio
+
+See [PORTFOLIO_INDEX.md](PORTFOLIO_INDEX.md) for all public badrpk products.
