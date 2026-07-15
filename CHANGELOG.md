@@ -1,5 +1,15 @@
 # Changelog
 
+## 16.4.0 — 2026-07-15
+
+### Added
+- **Sophyane AI Kernel** (userspace control plane): bus, modules, hardware/software services
+- App factory: web, Android, HarmonyOS, iOS, desktop Python, API scaffolds
+- ERP connectors: Oracle, SAP, Odoo, Dynamics, NetSuite, ERPNext
+- CLI: `--kernel`, `--kernel-status`, `--create-app`, `--erp`
+- API: `/v1/kernel`, `/v1/apps/create`, `/v1/erp`, `/v1/erp/query`
+- Docs: `docs/AI_KERNEL.md`
+
 ## 16.3.0 — 2026-07-15
 
 ### Added

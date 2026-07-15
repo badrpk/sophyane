@@ -17,6 +17,9 @@ from sophyane.hardware_registry import (
     hardware_compatibility_report,
     recommended_backends,
 )
+from sophyane.kernel import boot_kernel
+from sophyane.kernel.app_factory import create_app
+from sophyane.kernel.erp import erp_query, list_erp_systems, probe_all_erp, probe_erp
 from sophyane.platform_probe import format_platform_report, probe_platform
 from sophyane.version import __version__
 
@@ -71,6 +74,33 @@ class HardwareAPI:
             )
         return {"ok": True, "message": message, "reply": text, "edge": edge}
 
+    def kernel(self) -> dict[str, Any]:
+        return boot_kernel().status().to_dict()
+
+    def create_app(self, params: dict[str, Any]) -> dict[str, Any]:
+        return create_app(
+            str(params.get("target") or "web"),
+            str(params.get("name") or "SophyaneApp"),
+            output_dir=params.get("output_dir"),
+            description=str(params.get("description") or ""),
+        ).to_dict()
+
+    def erp(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        params = params or {}
+        system = str(params.get("system") or "").strip()
+        if system:
+            return probe_erp(system).to_dict()
+        return {"catalog": list_erp_systems(), "status": probe_all_erp()}
+
+    def erp_call(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        params = params or {}
+        return erp_query(
+            str(params.get("system") or ""),
+            str(params.get("path") or ""),
+            method=str(params.get("method") or "GET"),
+            body=params.get("body") if isinstance(params.get("body"), dict) else None,
+        )
+
     def dispatch(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         params = params or {}
         table: dict[str, Callable[[], dict[str, Any]]] = {
@@ -79,12 +109,19 @@ class HardwareAPI:
             "hardware": self.hardware,
             "backends": self.backends,
             "software": self.software,
+            "kernel": self.kernel,
         }
         if method == "chat":
             return self.chat(
                 str(params.get("message") or params.get("prompt") or ""),
                 edge=bool(params.get("edge")),
             )
+        if method == "create_app":
+            return {"ok": True, "result": self.create_app(params)}
+        if method == "erp":
+            return {"ok": True, "result": self.erp(params)}
+        if method == "erp_query":
+            return self.erp_call(params)
         if method == "report_text":
             return {
                 "platform": format_platform_report(),
@@ -149,6 +186,9 @@ class _Handler(BaseHTTPRequestHandler):
             "/v1/hardware/backends": "backends",
             "/v1/hardware/software": "software",
             "/v1/hardware/report": "report_text",
+            "/v1/kernel": "kernel",
+            "/v1/kernel/status": "kernel",
+            "/v1/erp": "erp",
         }
         method = routes.get(path)
         if not method:
@@ -167,6 +207,15 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path in {"/v1/hardware/chat", "/v1/chat"}:
             self._send(200, self.api.dispatch("chat", params if isinstance(params, dict) else {}))
+            return
+        if path in {"/v1/apps/create", "/v1/kernel/create_app"}:
+            self._send(200, self.api.dispatch("create_app", params if isinstance(params, dict) else {}))
+            return
+        if path in {"/v1/erp/query", "/v1/erp/call"}:
+            self._send(200, self.api.dispatch("erp_query", params if isinstance(params, dict) else {}))
+            return
+        if path == "/v1/erp":
+            self._send(200, self.api.dispatch("erp", params if isinstance(params, dict) else {}))
             return
         if path == "/v1/hardware/rpc":
             method = str((params or {}).get("method") or "")

@@ -80,6 +80,38 @@ def build_parser() -> argparse.ArgumentParser:
         default=8770,
         help="bind port for --hardware-api (default 8770)",
     )
+    parser.add_argument(
+        "--kernel",
+        action="store_true",
+        help="boot Sophyane AI Kernel and print status JSON",
+    )
+    parser.add_argument(
+        "--kernel-status",
+        action="store_true",
+        help="print AI Kernel status without full reboot noise",
+    )
+    parser.add_argument(
+        "--create-app",
+        metavar="TARGET",
+        help="create app scaffold: web|android|harmony|ios|desktop_python|api_python",
+    )
+    parser.add_argument(
+        "--app-name",
+        default="SophyaneApp",
+        help="application name for --create-app",
+    )
+    parser.add_argument(
+        "--app-out",
+        default="",
+        help="output directory for --create-app",
+    )
+    parser.add_argument(
+        "--erp",
+        metavar="SYSTEM",
+        nargs="?",
+        const="all",
+        help="probe ERP connectors (oracle|sap|odoo|dynamics|netsuite|erpnext|all)",
+    )
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--single-agent", action="store_true", help="use legacy one-worker runtime")
     parser.add_argument("--multi-agent", action="store_true", help="use legacy supervisor-worker runtime")
@@ -203,6 +235,30 @@ def main() -> int:
             server.serve_forever()
         except KeyboardInterrupt:
             print("\nHardware API stopped.")
+        return 0
+    if args.kernel or args.kernel_status:
+        from sophyane.kernel import boot_kernel, kernel_status
+
+        status = boot_kernel().status() if args.kernel else kernel_status()
+        print(status.to_json())
+        return 0 if status.ok else 1
+    if args.create_app:
+        from sophyane.kernel import boot_kernel
+
+        kernel = boot_kernel()
+        result = kernel.create_application(
+            str(args.create_app),
+            str(args.app_name),
+            output_dir=str(args.app_out) or None,
+        )
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("ok") else 1
+    if args.erp is not None:
+        from sophyane.kernel import boot_kernel
+
+        kernel = boot_kernel()
+        system = None if args.erp in {"", "all"} else str(args.erp)
+        print(json.dumps(kernel.erp_status(system), indent=2))
         return 0
     if args.providers:
         print(list_providers())

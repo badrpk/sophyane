@@ -44,6 +44,20 @@ Useful slash commands:
 | `/session-info` | Hardware + session stats |
 | `/quit` | Exit |
 
+## AI Kernel (intelligence control plane)
+
+Sophyane includes a **userspace AI Kernel** that coordinates hardware adapters,
+open-source stacks (CUDA/llama.cpp/…), app factories, and ERP connectors:
+
+```bash
+sophyane --kernel
+sophyane --create-app web --app-name "My Site"
+sophyane --create-app android --app-name "FieldApp"
+sophyane --erp oracle   # set ORACLE_ERP_BASE_URL + token
+```
+
+See [docs/AI_KERNEL.md](docs/AI_KERNEL.md).
+
 ## Hardware & multi-language API
 
 Sophyane integrates with major chip ecosystems **at the host/gateway layer** and
