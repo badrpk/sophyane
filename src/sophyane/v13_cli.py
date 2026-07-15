@@ -130,6 +130,7 @@ def main() -> int:
         print(show_status(config))
         return 0
     if not args.prompt:
+        # Grok-style full interactive CLI (slash commands, spinner, auto-local).
         return interactive(config, args.verbose)
 
     original_prompt = " ".join(args.prompt)

@@ -104,33 +104,40 @@ def load_runtime_config() -> dict[str, Any]:
 
 
 def create_provider(config: dict[str, Any]):
+    """Create a provider with multi-backend fallback when available."""
     loader = PluginLoader()
-    providers = loader.discover()
-    provider_id = str(config["provider"])
-    provider_class = providers[provider_id]
-    metadata = provider_class.metadata
+    try:
+        from sophyane.providers.fallback import build_fallback_provider
 
-    api_key = (
-        get_secret(
-            provider_id,
-            metadata.environment_variable,
+        return build_fallback_provider(loader, config)
+    except Exception:
+        # Hard fallback to single configured provider for bootstrap safety.
+        providers = loader.discover()
+        provider_id = str(config["provider"])
+        provider_class = providers[provider_id]
+        metadata = provider_class.metadata
+
+        api_key = (
+            get_secret(
+                provider_id,
+                metadata.environment_variable,
+            )
+            if metadata.requires_api_key
+            else ""
         )
-        if metadata.requires_api_key
-        else ""
-    )
 
-    return loader.create(
-        provider_id,
-        api_key=api_key,
-        model=str(config["model"]),
-        timeout=int(config.get("timeout", 180)),
-        temperature=float(
-            config.get("temperature", 0.3)
-        ),
-        max_tokens=int(
-            config.get("max_tokens", 4096)
-        ),
-    )
+        return loader.create(
+            provider_id,
+            api_key=api_key,
+            model=str(config["model"]),
+            timeout=int(config.get("timeout", 180)),
+            temperature=float(
+                config.get("temperature", 0.3)
+            ),
+            max_tokens=int(
+                config.get("max_tokens", 4096)
+            ),
+        )
 
 
 def show_status(config: dict[str, Any]) -> str:
@@ -147,12 +154,27 @@ def show_status(config: dict[str, Any]) -> str:
         provider_name = provider_id or "not configured"
 
     memory = MemoryStore()
+    fallback_chain = "n/a"
+    try:
+        from sophyane.providers.fallback import (
+            build_fallback_provider,
+            resolve_provider_order,
+        )
+
+        order = resolve_provider_order(provider_id)
+        fallback_chain = " -> ".join(order)
+        # Probe which keys actually instantiate without generating.
+        chain_provider = build_fallback_provider(loader, config)
+        fallback_chain = " -> ".join(chain_provider.chain) + " (ready)"
+    except Exception as error:  # noqa: BLE001
+        fallback_chain = f"unavailable ({error})"
 
     return "\n".join(
         [
             f"Sophyane {__version__}",
             f"Provider: {provider_name}",
             f"Model: {config.get('model', 'not configured')}",
+            f"Fallback chain: {fallback_chain}",
             f"Timeout: {config.get('timeout', 180)} seconds",
             f"Memories: {memory.count()}",
             f"Plugins: {len(providers)}",
@@ -215,58 +237,10 @@ def handle_internal_command(
 
 
 def interactive(config: dict[str, Any], verbose: bool) -> int:
-    logger = configure_logging(verbose)
-    memory = MemoryStore()
-    provider = create_provider(config)
-    agent = SophyaneAgent(provider, memory, logger)
+    """Launch the Grok-style interactive CLI."""
+    from sophyane.tui import run_grok_style_tui
 
-    print()
-    print(f"🧠 Sophyane {__version__}")
-    print(show_status(config).splitlines()[1])
-    print(show_status(config).splitlines()[2])
-    print("Commands: tools, status, memory, /doctor, /exit")
-    print()
-
-    while True:
-        try:
-            message = input("sophyane> ").strip()
-        except EOFError:
-            print()
-            return 0
-        except KeyboardInterrupt:
-            print("\nUse /exit to close Sophyane.")
-            continue
-
-        if not message:
-            continue
-
-        response = agent.ask(message)
-
-        if response.text.startswith("INTERNAL_COMMAND:"):
-            command = response.text.split(":", 1)[1]
-            text, config = handle_internal_command(
-                command,
-                config,
-            )
-
-            print(text)
-
-            if command == "setup":
-                provider = create_provider(config)
-                agent = SophyaneAgent(
-                    provider,
-                    memory,
-                    logger,
-                )
-
-            print()
-            continue
-
-        print(response.text)
-        print()
-
-        if response.should_exit:
-            return 0
+    return run_grok_style_tui(config=config, verbose=verbose)
 
 
 def main() -> int:

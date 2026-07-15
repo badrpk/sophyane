@@ -1,4 +1,4 @@
-"""Public CLI entry point with explicit runtime identity."""
+"""Public CLI entry point with explicit runtime identity (Grok-style)."""
 from __future__ import annotations
 
 import sys
@@ -14,7 +14,7 @@ def _runtime_identity() -> str:
         config = {}
     provider = str(config.get("provider") or "not configured")
     model = str(config.get("model") or "not configured")
-    return f"🧠 Sophyane {__version__} | LLM provider: {provider} | model: {model}"
+    return f"◆ Sophyane {__version__} | provider: {provider} | model: {model}"
 
 
 def main() -> int:

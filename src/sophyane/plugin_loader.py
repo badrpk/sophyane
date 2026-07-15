@@ -28,6 +28,7 @@ class PluginLoader:
             "base",
             "http",
             "openai_compatible",
+            "fallback",  # composite wrapper, not a leaf plugin
         }
 
         for module_info in pkgutil.iter_modules(

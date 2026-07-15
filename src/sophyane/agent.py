@@ -66,6 +66,12 @@ class SophyaneAgent:
         if not message:
             return AgentResponse("Please enter a request.")
 
+        # Persistent timer ticks must not pollute conversation memory or call LLMs.
+        if message.lower() in {"/daemon-tick", "daemon-tick", "/daemon"}:
+            from sophyane.daemon_runtime import run_daemon_tick
+
+            return AgentResponse(run_daemon_tick().to_text())
+
         # v11 invariant: supported autonomous workflows run before normal
         # conversational routing. This prevents the LLM from replacing real
         # execution with plans or code snippets.
@@ -171,6 +177,12 @@ class SophyaneAgent:
             )
             return AgentResponse(result.output)
 
+        if kind == "daemon":
+            from sophyane.daemon_runtime import run_daemon_tick
+
+            report = run_daemon_tick()
+            return AgentResponse(report.to_text())
+
         if kind in {"status", "providers", "doctor", "setup"}:
             return AgentResponse(f"INTERNAL_COMMAND:{kind}")
 
@@ -198,9 +210,20 @@ class SophyaneAgent:
         prompt = "\n\n".join(sections)
         try:
             text = self.provider.generate(prompt, SYSTEM_PROMPT)
-        except ProviderError:
+        except ProviderError as error:
             self.logger.exception("Provider generation failed")
-            raise
+            chain = getattr(self.provider, "chain", None)
+            chain_note = (
+                f"\nTried providers: {' -> '.join(chain)}"
+                if chain
+                else ""
+            )
+            return AgentResponse(
+                "Sophyane could not reach any working LLM provider.\n"
+                f"{error}{chain_note}\n"
+                "Fix: top up OpenAI/Gemini/xAI credits, or install+start Ollama "
+                "(`ollama serve` + `ollama pull llama3.2`), then run /doctor."
+            )
         return AgentResponse(text)
 
     def _summarize_tool(

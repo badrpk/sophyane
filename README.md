@@ -4,14 +4,67 @@ Sophyane is a lightweight, multi-provider AI harness with persistent memory, saf
 
 ## Why Sophyane
 
+- **Grok-style CLI** — banner, slash commands (`/help`, `/model`, `/status`, `/doctor`, `/new`, `/quit`, …), spinner, session scrollback
+- **Automatic open-model rescue** — if frontier API keys hit quota/credit/auth failures, Sophyane profiles your hardware, installs Ollama when needed, pulls a RAM-fit open model, starts serving, and continues the session
 - Works with Google Gemini, OpenAI, Claude, Groq, xAI Grok, DeepSeek, OpenRouter, and local Ollama
+- Multi-provider fallback chain driven by `~/.config/sophyane/llm.json`
 - First-run provider wizard securely asks for the API key
 - Persistent SQLite memory
-- Safe local system and repository tools
+- Safe local system and repository tools + sandboxed harness execution
 - Plugin-based provider architecture
 - CLI plus browser interface
 - Zero mandatory third-party runtime dependencies
 - Tested on Windows, macOS, and Linux through GitHub Actions
+
+## Grok-style interactive CLI
+
+```bash
+sophyane
+```
+
+```
+  ◆ Sophyane 16.1.0
+  Terminal agentic harness  ·  Grok-style CLI
+  provider openai  model gpt-5-mini  hw nano/2700MB
+  Type a message · /help for commands · /local for open models · /quit to exit
+
+❯ refactor the auth module
+```
+
+Useful slash commands:
+
+| Command | Action |
+|---------|--------|
+| `/help` | Command palette |
+| `/status` | Provider, model, fallback chain |
+| `/model [name]` | Show recommendations or switch model |
+| `/local` | Force hardware-fit open model install + serve |
+| `/doctor` | Diagnostics |
+| `/new` | Clear session scrollback |
+| `/session-info` | Hardware + session stats |
+| `/quit` | Exit |
+
+## Automatic local open models
+
+When every configured cloud provider fails with quota, billing, or auth errors, Sophyane:
+
+1. Profiles CPU / RAM / free disk (tiers: `nano`, `micro`, `small`, `standard`)
+2. **Tries Ollama** — install into `~/.local/bin`, `ollama serve`, pull a tier-fit model
+3. **If Ollama fails** (download too large, no space, binary broken) → **Hugging Face GGUF**
+   - Picks a hardware-fit GGUF (e.g. Qwen2.5-0.5B / TinyLlama / SmolLM2 on thin Chromebooks)
+   - Downloads from Hugging Face (`huggingface.co/.../resolve/main/*.gguf`)
+   - Optional GitHub release mirrors when configured
+4. Installs **llama.cpp** `llama-server` + `llama-cli` from GitHub releases (`ggml-org/llama.cpp`)
+5. Starts a local OpenAI-compatible server on `127.0.0.1:8765`
+6. Switches config to `provider=local_gguf` (or `ollama`) and retries the request
+
+Force it any time:
+
+```bash
+sophyane /local
+# or inside the TUI:
+/local
+```
 
 ## Fastest installation
 
