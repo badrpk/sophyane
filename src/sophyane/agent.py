@@ -42,6 +42,13 @@ Operating rules:
 15. For multi-step work, report: assumptions, acceptance criteria, executed steps, evidence, verification, and remaining limitations.
 """
 
+# Compact system prompt for tiny local models (GGUF / Ollama on low-RAM hosts).
+LOCAL_CHAT_SYSTEM_PROMPT = (
+    "You are Sophyane, a helpful local AI assistant. "
+    "Answer clearly and briefly. Do not invent tool runs or file edits. "
+    "If you lack information, say so."
+)
+
 
 @dataclass
 class AgentResponse:
@@ -186,30 +193,57 @@ class SophyaneAgent:
         if kind in {"status", "providers", "doctor", "setup"}:
             return AgentResponse(f"INTERNAL_COMMAND:{kind}")
 
-        memory_context = self.memory.format_relevant(original_message)
-        recent = self.memory.recent_messages(limit=6)
-        history_lines = [
-            f"{item['role']}: {item['content']}"
-            for item in recent[:-1]
-        ]
+        # Bound prompt size so tiny local models (1k–4k ctx) still answer chat.
+        provider_name = getattr(
+            getattr(self.provider, "metadata", None),
+            "provider_id",
+            "",
+        ) or getattr(self.provider, "last_provider", "") or ""
+        # FallbackProvider exposes .primary / .chain
+        if not provider_name:
+            provider_name = getattr(self.provider, "primary", "") or ""
+        local_mode = str(provider_name).lower() in {
+            "local_gguf",
+            "ollama",
+            "fallback",
+        } or "local_gguf" in str(getattr(self.provider, "chain", ()))
 
-        sections = []
-        if memory_context:
-            sections.append(memory_context)
-        if history_lines:
-            sections.append(
-                "Recent conversation:\n" + "\n".join(history_lines)
-            )
-        sections.append(f"Current user request:\n{original_message}")
-        if captured:
-            sections.append(
-                "New memories saved during this request:\n"
-                + "\n".join(f"- {item}" for item in captured)
-            )
+        if local_mode:
+            # Skip bulky memory dumps — they drown 0.5B–1B models.
+            sections = [f"User: {original_message}"]
+            prompt = "\n".join(sections)
+            system = LOCAL_CHAT_SYSTEM_PROMPT
+        else:
+            memory_context = self.memory.format_relevant(original_message)
+            if len(memory_context) > 1200:
+                memory_context = memory_context[:1200] + "\n…"
+            recent = self.memory.recent_messages(limit=4)
+            history_lines = []
+            for item in recent[:-1]:
+                content = str(item.get("content") or "")
+                if len(content) > 400:
+                    content = content[:400] + "…"
+                history_lines.append(f"{item['role']}: {content}")
 
-        prompt = "\n\n".join(sections)
+            sections = []
+            if memory_context:
+                sections.append(memory_context)
+            if history_lines:
+                sections.append(
+                    "Recent conversation:\n" + "\n".join(history_lines)
+                )
+            sections.append(f"Current user request:\n{original_message}")
+            if captured:
+                sections.append(
+                    "New memories saved during this request:\n"
+                    + "\n".join(f"- {item}" for item in captured)
+                )
+            prompt = "\n\n".join(sections)
+            if len(prompt) > 6000:
+                prompt = prompt[-6000:]
+            system = SYSTEM_PROMPT
         try:
-            text = self.provider.generate(prompt, SYSTEM_PROMPT)
+            text = self.provider.generate(prompt, system)
         except ProviderError as error:
             self.logger.exception("Provider generation failed")
             chain = getattr(self.provider, "chain", None)

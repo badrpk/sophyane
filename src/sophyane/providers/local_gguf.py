@@ -49,11 +49,17 @@ class LocalGgufProvider(Provider):
         self.cli_path = cli_path or os.environ.get("SOPHYANE_LLAMA_CLI", "")
 
     def generate(self, prompt: str, system_prompt: str) -> str:
-        # Prefer OpenAI-compatible server when running.
+        # Keep prompts tiny on constrained devices (Crostini / 2–3GB RAM).
+        system_prompt = (system_prompt or "")[:800]
+        prompt = (prompt or "")[:4000]
+
+        # Prefer OpenAI-compatible server. Only fall back to llama-cli for
+        # short prompts — long CLI invocations thrash low-RAM machines.
         try:
             return self._generate_via_server(prompt, system_prompt)
         except Exception as server_error:  # noqa: BLE001
-            if self.cli_path and self.gguf_path:
+            combined_len = len(prompt) + len(system_prompt)
+            if self.cli_path and self.gguf_path and combined_len <= 2500:
                 try:
                     return self._generate_via_cli(prompt, system_prompt)
                 except Exception as cli_error:  # noqa: BLE001
@@ -63,7 +69,8 @@ class LocalGgufProvider(Provider):
                     ) from cli_error
             raise ProviderError(
                 f"local_gguf server unavailable: {server_error}. "
-                "Run `sophyane /local` to bootstrap a Hugging Face GGUF model."
+                "Run `sophyane /local` to bootstrap a Hugging Face GGUF model, "
+                "or free RAM and ensure llama-server is listening on :8766."
             ) from server_error
 
     def _generate_via_server(self, prompt: str, system_prompt: str) -> str:

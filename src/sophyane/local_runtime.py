@@ -1072,8 +1072,15 @@ def start_llama_server(
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     _progress(progress, f"Starting llama-server on {host}:{port} with {gguf_path.name} …")
     threads = max(1, min(4, os.cpu_count() or 1))
-    # Low context on nano/micro machines.
-    ctx = 1024 if profile_hardware().ram_mb < 3500 else 2048
+    # Context budget: small models still need headroom for chat system prompts.
+    # Keep conservative on very low RAM; coding planner should not run here.
+    ram = profile_hardware().ram_mb
+    if ram < 2000:
+        ctx = 2048
+    elif ram < 3500:
+        ctx = 4096
+    else:
+        ctx = 8192
     cmd = [
         server,
         "-m",

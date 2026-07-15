@@ -148,6 +148,42 @@ def main() -> int:
             print(response.text)
         return 0
 
+    # Small local models (GGUF / tiny Ollama) cannot run the full repository coding
+    # planner prompt (often 5k–20k tokens). Route conversational prompts through
+    # the lightweight chat agent instead of the strict coding doer.
+    provider_id = str(config.get("provider") or "").lower()
+    lower_prompt = original_prompt.lower()
+    coding_markers = (
+        "implement",
+        "refactor",
+        "apply patch",
+        "write a function",
+        "write a class",
+        "create a file",
+        "edit the file",
+        "pytest",
+        "unit test",
+        "test suite",
+        "debug this",
+        "repository",
+        "codebase",
+        "pull request",
+        "git commit",
+    )
+    looks_like_coding = any(token in lower_prompt for token in coding_markers)
+    force_chat = provider_id in {"local_gguf", "ollama"} and not looks_like_coding
+    if not force_chat and len(original_prompt) < 240:
+        stripped = lower_prompt.strip()
+        if stripped.endswith("?") or stripped.startswith(
+            ("hi", "hello", "hey", "say ", "what ", "who ", "how ", "why ", "thanks")
+        ):
+            force_chat = True
+
+    if force_chat and not args.single_agent and not args.multi_agent:
+        response = agent.ask(original_prompt)
+        print(response.text)
+        return 0 if response.text else 2
+
     def backend(prompt: str, system: str) -> str:
         return provider.generate(prompt, system)
 
