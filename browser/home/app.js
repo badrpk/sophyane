@@ -588,6 +588,294 @@
     }
   }
 
+  // —— Voice: speech → editable text → send; hands-free talk mode; YouTube ——
+  let talkMode = localStorage.getItem("sophyane_talk_mode") === "1";
+  let recognition = null;
+  let listening = false;
+  let voiceFinal = "";
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  function setVoiceStatus(msg) {
+    const el = $("voiceStatus");
+    if (el) el.textContent = msg || "";
+  }
+
+  function ttsEnabled() {
+    const el = $("ttsMode");
+    return el ? !!el.checked : true;
+  }
+
+  function speakText(text, onDone) {
+    try {
+      window.speechSynthesis.cancel();
+    } catch (_) {}
+    if (!ttsEnabled() || !window.speechSynthesis) {
+      if (onDone) onDone();
+      return;
+    }
+    const clean = String(text || "")
+      .replace(/\*\*/g, "")
+      .replace(/`+/g, "")
+      .replace(/https?:\/\/\S+/g, "link")
+      .replace(/\n+/g, ". ")
+      .slice(0, 1200);
+    if (!clean.trim()) {
+      if (onDone) onDone();
+      return;
+    }
+    const u = new SpeechSynthesisUtterance(clean);
+    u.rate = 1.02;
+    u.pitch = 1;
+    u.onend = () => {
+      if (onDone) onDone();
+    };
+    u.onerror = () => {
+      if (onDone) onDone();
+    };
+    window.speechSynthesis.speak(u);
+  }
+
+  function stopSpeaking() {
+    try {
+      window.speechSynthesis.cancel();
+    } catch (_) {}
+    setVoiceStatus(talkMode ? "Talk mode on — tap Speak or wait" : "Voice ready");
+  }
+
+  function playYouTube(play, title) {
+    const box = $("ytPlayer");
+    const frame = $("ytFrame");
+    const titleEl = $("ytTitle");
+    if (!box || !frame) {
+      if (play && play.url) window.open(play.url, "_blank", "noopener");
+      return;
+    }
+    const embed = (play && (play.embed_url || play.url)) || "";
+    if (!embed) return;
+    box.hidden = false;
+    if (titleEl) titleEl.textContent = title || play.title || "YouTube";
+    // Use embed with autoplay when possible
+    let src = embed;
+    if (play.video_id) {
+      src = "https://www.youtube.com/embed/" + play.video_id + "?autoplay=1&rel=0";
+    } else if (play.url && play.url.includes("watch")) {
+      const m = play.url.match(/v=([A-Za-z0-9_-]+)/);
+      if (m) src = "https://www.youtube.com/embed/" + m[1] + "?autoplay=1&rel=0";
+    }
+    frame.src = src;
+    // Also open full YouTube for mobile / autoplay policies
+    try {
+      window.open(play.url || src, "_blank", "noopener");
+    } catch (_) {}
+  }
+
+  function closeYouTube() {
+    const box = $("ytPlayer");
+    const frame = $("ytFrame");
+    if (frame) frame.src = "";
+    if (box) box.hidden = true;
+  }
+  if ($("ytClose")) $("ytClose").onclick = closeYouTube;
+
+  async function handleVoiceIntent(text) {
+    try {
+      const data = await jpost(CLOUD + "/api/v1/voice/intent", { text }, authHeaders());
+      if (!data || !data.ok) return null;
+      if (data.intent === "youtube_play") {
+        const yt = data.youtube || {};
+        const play = yt.play || (yt.results && yt.results[0]);
+        const speak =
+          data.speak ||
+          (play
+            ? "Playing " + (play.title || data.query) + " on YouTube."
+            : "Opening YouTube search for " + data.query);
+        if (play) playYouTube(play, play.title);
+        else if (yt.search_page) window.open(yt.search_page, "_blank", "noopener");
+        return { handled: true, reply: speak, speak };
+      }
+      if (data.intent === "web_search") {
+        // Force search path through chat with web_search true
+        return {
+          handled: false,
+          forceSearch: true,
+          message: data.query || text,
+          speak: data.speak || "Searching.",
+        };
+      }
+    } catch (_) {}
+    // Client-side fallback intents
+    const low = text.toLowerCase().trim();
+    const playM = low.match(
+      /^(?:play|watch|put on|youtube)\s+(?:the\s+)?(?:song\s+|music\s+|video\s+)?(.+?)(?:\s+on\s+youtube)?$/i
+    );
+    if (playM) {
+      const q = playM[1].trim();
+      try {
+        const yt = await jpost(CLOUD + "/api/v1/media/youtube", { query: q }, authHeaders());
+        const play = yt.play || (yt.results && yt.results[0]);
+        if (play) playYouTube(play, play.title);
+        else if (yt.search_page) window.open(yt.search_page, "_blank", "noopener");
+        return {
+          handled: true,
+          reply: play
+            ? "Playing " + (play.title || q) + " on YouTube."
+            : "Opened YouTube search for " + q,
+        };
+      } catch (e) {
+        window.open(
+          "https://www.youtube.com/results?search_query=" + encodeURIComponent(q),
+          "_blank",
+          "noopener"
+        );
+        return { handled: true, reply: "Opened YouTube for " + q };
+      }
+    }
+    return null;
+  }
+
+  function updateTalkUi() {
+    const b1 = $("btnTalkToggle");
+    const b2 = $("btnTalkMode");
+    const label = talkMode ? "Talk mode: On" : "Talk mode: Off";
+    if (b1) {
+      b1.textContent = label;
+      b1.classList.toggle("active-talk", talkMode);
+    }
+    if (b2) {
+      b2.textContent = talkMode ? "🎙 Talk ON" : "🎙 Talk mode";
+      b2.classList.toggle("active-talk", talkMode);
+    }
+  }
+
+  function setListeningUi(on) {
+    listening = on;
+    ["btnMic", "btnMicInline"].forEach((id) => {
+      const b = $(id);
+      if (b) b.classList.toggle("listening", on);
+    });
+  }
+
+  function ensureRecognition() {
+    if (!SpeechRecognition) {
+      setVoiceStatus("Speech not supported in this browser — try Chrome/Edge");
+      return null;
+    }
+    if (recognition) return recognition;
+    recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = navigator.language || "en-US";
+    recognition.onstart = () => {
+      setListeningUi(true);
+      setVoiceStatus("Listening… speak now (text will appear for edit)");
+    };
+    recognition.onerror = (ev) => {
+      setListeningUi(false);
+      setVoiceStatus("Mic: " + (ev.error || "error") + " — allow microphone permission");
+    };
+    recognition.onend = () => {
+      setListeningUi(false);
+      if (voiceFinal.trim()) {
+        els.input.value = voiceFinal.trim();
+        autoGrow();
+        setVoiceStatus("Review text, edit if needed, then Send — or wait in Talk mode");
+        if (talkMode && !busy) {
+          // Auto-send after short pause so user can correct (1.2s)
+          setTimeout(() => {
+            if (talkMode && els.input.value.trim() && !busy) {
+              els.composer.requestSubmit();
+            }
+          }, 1200);
+        }
+      } else {
+        setVoiceStatus(talkMode ? "Didn't catch that — listening again…" : "No speech captured");
+        if (talkMode) setTimeout(() => startListening(), 600);
+      }
+    };
+    recognition.onresult = (event) => {
+      let interim = "";
+      let final = "";
+      for (let i = 0; i < event.results.length; i++) {
+        const r = event.results[i];
+        if (r.isFinal) final += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      if (final) voiceFinal = (voiceFinal + " " + final).trim();
+      const show = (voiceFinal + (interim ? " " + interim : "")).trim();
+      els.input.value = show;
+      autoGrow();
+    };
+    return recognition;
+  }
+
+  function startListening() {
+    if (!auth) {
+      showAuth();
+      setVoiceStatus("Sign in first, then use voice");
+      return;
+    }
+    stopSpeaking();
+    const rec = ensureRecognition();
+    if (!rec) return;
+    voiceFinal = "";
+    try {
+      rec.start();
+    } catch (_) {
+      try {
+        rec.stop();
+        setTimeout(() => {
+          try {
+            rec.start();
+          } catch (e2) {
+            setVoiceStatus("Could not start mic: " + e2);
+          }
+        }, 250);
+      } catch (e) {
+        setVoiceStatus("Mic busy: " + e);
+      }
+    }
+  }
+
+  function stopListening() {
+    try {
+      if (recognition) recognition.stop();
+    } catch (_) {}
+    setListeningUi(false);
+  }
+
+  function toggleTalkMode() {
+    talkMode = !talkMode;
+    localStorage.setItem("sophyane_talk_mode", talkMode ? "1" : "0");
+    updateTalkUi();
+    if (talkMode) {
+      setVoiceStatus("Talk mode on — hands-free listen → type → send → speak");
+      speakText("Talk mode on. I'm listening.", () => startListening());
+    } else {
+      stopListening();
+      stopSpeaking();
+      setVoiceStatus("Talk mode off");
+    }
+  }
+
+  if ($("btnMic")) $("btnMic").onclick = () => (listening ? stopListening() : startListening());
+  if ($("btnMicInline")) $("btnMicInline").onclick = () => (listening ? stopListening() : startListening());
+  if ($("btnTalkToggle")) $("btnTalkToggle").onclick = toggleTalkMode;
+  if ($("btnTalkMode")) $("btnTalkMode").onclick = toggleTalkMode;
+  if ($("btnStopSpeak")) $("btnStopSpeak").onclick = () => {
+    stopSpeaking();
+    stopListening();
+  };
+  if ($("ttsMode")) {
+    const pref = localStorage.getItem("sophyane_tts");
+    if (pref === "0") $("ttsMode").checked = false;
+    $("ttsMode").addEventListener("change", () => {
+      localStorage.setItem("sophyane_tts", $("ttsMode").checked ? "1" : "0");
+      if (!$("ttsMode").checked) stopSpeaking();
+    });
+  }
+  updateTalkUi();
+  if (!SpeechRecognition) setVoiceStatus("Use Chrome/Edge for voice on this device");
+
   els.composer.onsubmit = async (e) => {
     e.preventDefault();
     if (!auth) {
@@ -597,6 +885,7 @@
     const text = els.input.value.trim();
     if (!text || busy) return;
 
+    stopListening();
     const s = ensureSession();
     if (s.messages.length === 0) {
       s.title = text.slice(0, 48) + (text.length > 48 ? "…" : "");
@@ -620,42 +909,54 @@
     busy = true;
     els.btnSend.disabled = true;
     const edge = !!els.edgeMode.checked;
-    // Prior turns only (current user message is `message` field)
     const history = historyPayload(s, true);
+    let replyText = "";
 
     try {
-      let prompt = text;
-      let sources = [];
-      const page = await maybeFetchSource(text);
-      if (page && page.text) {
-        sources.push({ url: page.url, title: page.title });
-        prompt =
-          `Use this page content when answering.\nURL: ${page.url}\nTitle: ${page.title}\n\n` +
-          `${page.text}\n\nQuestion: ${text}`;
+      // Voice intents: YouTube play / search before normal chat
+      const intent = await handleVoiceIntent(text);
+      if (intent && intent.handled) {
+        replyText = intent.reply || "Done.";
+        s.messages[typingIdx] = { role: "assistant", content: replyText };
+      } else {
+        let prompt = (intent && intent.message) || text;
+        let sources = [];
+        if (intent && intent.speak) setVoiceStatus(intent.speak);
+        const page = await maybeFetchSource(prompt);
+        if (page && page.text) {
+          sources.push({ url: page.url, title: page.title });
+          prompt =
+            `Use this page content when answering.\nURL: ${page.url}\nTitle: ${page.title}\n\n` +
+            `${page.text}\n\nQuestion: ${prompt}`;
+        }
+        // If user said "search …", force web search on for this turn
+        if (intent && intent.forceSearch) {
+          const ws = $("webSearchMode");
+          if (ws) ws.checked = true;
+        }
+        const out = await chatApi(prompt, edge, history);
+        const reply = out.reply;
+        replyText = reply || "(empty reply)";
+        const webSources = Array.isArray(out.sources) ? out.sources : [];
+        const allSources = [...sources, ...webSources].filter((x, i, arr) => {
+          if (!x || !x.url) return false;
+          return arr.findIndex((y) => y.url === x.url) === i;
+        });
+        s.messages[typingIdx] = {
+          role: "assistant",
+          content: replyText,
+          sources: allSources,
+        };
       }
-      const out = await chatApi(prompt, edge, history);
-      const reply = out.reply;
-      const webSources = Array.isArray(out.sources) ? out.sources : [];
-      // Merge URL-fetch chips + web research sources
-      const allSources = [...sources, ...webSources].filter((x, i, arr) => {
-        if (!x || !x.url) return false;
-        return arr.findIndex((y) => y.url === x.url) === i;
-      });
-      s.messages[typingIdx] = {
-        role: "assistant",
-        content: reply || "(empty reply)",
-        sources: allSources,
-      };
     } catch (err) {
+      replyText =
+        "Could not complete request while signed in as " +
+        auth.email +
+        ".\n\n" +
+        String(err);
       s.messages[typingIdx] = {
         role: "assistant",
-        content:
-          "Could not complete request while signed in as " +
-          auth.email +
-          ".\n\n" +
-          "• Ensure cloud portal: sophyane --cloud-serve (:8780)\n" +
-          "• Or hardware API: sophyane --hardware-api / sophyane-browser\n\n" +
-          String(err),
+        content: replyText,
       };
     }
 
@@ -664,7 +965,16 @@
     renderSidebar();
     renderThread();
     autoGrow();
-    els.input.focus();
+
+    // Speak reply then continue listening in talk mode (hands-free loop)
+    speakText(replyText, () => {
+      if (talkMode) {
+        setVoiceStatus("Your turn — listening…");
+        startListening();
+      } else {
+        els.input.focus();
+      }
+    });
   };
 
   // —— Drawers (ChatGPT-style sidebar options) ——

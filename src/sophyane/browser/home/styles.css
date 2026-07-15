@@ -661,6 +661,90 @@ a:hover { text-decoration: underline; }
 }
 
 /* Composer — bottom fixed style like ChatGPT */
+/* Voice controls */
+.voice-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 48rem;
+  margin: 0 auto 0.45rem;
+  width: 100%;
+}
+.voice-btn {
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.05);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.voice-btn:hover { background: rgba(255,255,255,0.1); }
+.voice-btn.talk { border-color: rgba(74,222,128,0.4); color: var(--ok); }
+.voice-btn.listening {
+  border-color: #f87171;
+  color: #fecaca;
+  animation: pulse-mic 1.1s ease infinite;
+}
+.voice-btn.active-talk {
+  background: rgba(74,222,128,0.15);
+  border-color: var(--ok);
+}
+@keyframes pulse-mic {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(248,113,113,0.35); }
+  50% { box-shadow: 0 0 0 8px rgba(248,113,113,0); }
+}
+.voice-status {
+  font-size: 0.75rem;
+  color: var(--muted);
+  flex: 1;
+  min-width: 8rem;
+}
+.mic-send {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.95rem;
+  flex-shrink: 0;
+}
+.mic-send.listening {
+  border-color: #f87171;
+  color: #fecaca;
+  animation: pulse-mic 1.1s ease infinite;
+}
+.yt-player {
+  position: fixed;
+  right: 0.75rem;
+  bottom: calc(5.5rem + var(--safe-b));
+  width: min(380px, 94vw);
+  background: #111;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  z-index: 60;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+}
+.yt-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.8rem;
+  border-bottom: 1px solid var(--border);
+}
+.yt-player iframe {
+  width: 100%;
+  height: 214px;
+  border: 0;
+  display: block;
+  background: #000;
+}
 .composer-wrap {
   flex-shrink: 0;
   padding: 0.5rem 1rem calc(0.75rem + var(--safe-b));

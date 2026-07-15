@@ -346,6 +346,55 @@ class PortalApp:
             _json(handler, 200, {"ok": True, "usage": summary, "estimate": cost, "plan": principal.get("plan")})
             return True
 
+        # —— Voice / media (YouTube play by spoken query) ——
+        if path in {"/api/v1/media/youtube", "/api/v1/youtube"} and method == "POST":
+            body = _read_json(handler)
+            query = str(body.get("query") or body.get("q") or body.get("message") or "").strip()
+            if not query:
+                _json(handler, 400, {"ok": False, "error": "query required"})
+                return True
+            from sophyane.media_voice import youtube_search
+
+            result = youtube_search(query, limit=int(body.get("limit") or 5))
+            _json(handler, 200, result)
+            return True
+
+        if path == "/api/v1/voice/intent" and method == "POST":
+            body = _read_json(handler)
+            text = str(body.get("text") or body.get("message") or "").strip()
+            from sophyane.media_voice import parse_voice_media_intent, youtube_search
+
+            intent = parse_voice_media_intent(text)
+            if not intent:
+                _json(handler, 200, {"ok": True, "intent": "chat", "text": text})
+                return True
+            if intent.get("intent") == "youtube_play":
+                yt = youtube_search(str(intent.get("query") or ""), limit=5)
+                _json(
+                    handler,
+                    200,
+                    {
+                        "ok": True,
+                        **intent,
+                        "youtube": yt,
+                        "speak": f"Playing {intent.get('query')} on YouTube.",
+                    },
+                )
+                return True
+            if intent.get("intent") == "web_search":
+                _json(
+                    handler,
+                    200,
+                    {
+                        "ok": True,
+                        **intent,
+                        "speak": f"Searching for {intent.get('query')}.",
+                    },
+                )
+                return True
+            _json(handler, 200, {"ok": True, **intent})
+            return True
+
         # —— Hardware-fit local LLM (recommend → approve → download) ——
         if path in {"/api/v1/local", "/api/v1/local/status", "/api/v1/hardware-fit"} and method == "GET":
             from sophyane.hardware_fit import hardware_fit_status
