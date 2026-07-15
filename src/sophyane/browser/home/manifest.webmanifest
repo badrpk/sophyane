@@ -1,10 +1,20 @@
 {
-  "name": "Sophyane Browser",
+  "name": "Sophyane",
   "short_name": "Sophyane",
-  "description": "AI agent browser with search, sources, mesh, and local tools",
+  "description": "ChatGPT-style Sophyane agent chat for computer and mobile",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#0b0f17",
-  "theme_color": "#6b8cff",
-  "icons": []
+  "orientation": "any",
+  "background_color": "#212121",
+  "theme_color": "#212121",
+  "lang": "en",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect fill='%23212121' width='512' height='512' rx='96'/%3E%3Ctext x='50%25' y='54%25' dominant-baseline='middle' text-anchor='middle' font-size='280' fill='%233dffc4'%3E%E2%97%86%3C/text%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
 }

@@ -1,111 +1,133 @@
-/* Sophyane Browser — Perplexity-style ask + sources + agent tools */
+/* Sophyane Browser — ChatGPT-format chat (browser app · new tab · mobile) */
 (function () {
+  "use strict";
+
   const HW = localStorage.getItem("sophyane_hw") || "http://127.0.0.1:8770";
   const MESH = localStorage.getItem("sophyane_mesh") || "http://127.0.0.1:8777";
   const CLOUD = localStorage.getItem("sophyane_cloud") || "";
+  const STORAGE_KEY = "sophyane_chatgpt_sessions_v1";
 
-  const qEl = document.getElementById("q");
-  const answerCard = document.getElementById("answerCard");
-  const answerBody = document.getElementById("answerBody");
-  const answerMode = document.getElementById("answerMode");
-  const answerTime = document.getElementById("answerTime");
-  const sourcesRow = document.getElementById("sourcesRow");
-  const sourcesList = document.getElementById("sourcesList");
-  const histList = document.getElementById("histList");
-  const connDot = document.getElementById("connDot");
-  const statusOut = document.getElementById("statusOut");
-  const meshOut = document.getElementById("meshOut");
-  const agentOut = document.getElementById("agentOut");
+  const els = {
+    sidebar: document.getElementById("sidebar"),
+    overlay: document.getElementById("overlay"),
+    btnMenu: document.getElementById("btnMenu"),
+    btnNew: document.getElementById("btnNewChat"),
+    chatList: document.getElementById("chatList"),
+    empty: document.getElementById("emptyState"),
+    thread: document.getElementById("thread"),
+    threadInner: document.getElementById("threadInner"),
+    composer: document.getElementById("composer"),
+    input: document.getElementById("input"),
+    btnSend: document.getElementById("btnSend"),
+    edgeMode: document.getElementById("edgeMode"),
+    drawer: document.getElementById("drawer"),
+    btnTools: document.getElementById("btnTools"),
+    btnCloseDrawer: document.getElementById("btnCloseDrawer"),
+    toolOut: document.getElementById("toolOut"),
+    btnShare: document.getElementById("btnShare"),
+  };
 
-  let mode = "answer";
-  let history = JSON.parse(localStorage.getItem("sophyane_browser_hist") || "[]");
-  let lastSources = [];
+  /** @type {{id:string,title:string,messages:{role:string,content:string,sources?:any[]}[]}[]} */
+  let sessions = loadSessions();
+  let activeId = sessions[0]?.id || null;
+  let busy = false;
 
-  function isUrl(s) {
-    return /^https?:\/\//i.test(s.trim());
+  function loadSessions() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      return Array.isArray(raw) ? raw : [];
+    } catch {
+      return [];
+    }
   }
 
-  async function jget(url) {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.json();
+  function saveSessions() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.slice(0, 50)));
   }
 
-  async function jpost(url, body) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body || {}),
+  function uid() {
+    return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  }
+
+  function active() {
+    return sessions.find((s) => s.id === activeId) || null;
+  }
+
+  function ensureSession() {
+    let s = active();
+    if (!s) {
+      s = { id: uid(), title: "New chat", messages: [] };
+      sessions.unshift(s);
+      activeId = s.id;
+      saveSessions();
+    }
+    return s;
+  }
+
+  function renderSidebar() {
+    els.chatList.innerHTML = sessions
+      .map((s) => {
+        const title = escapeHtml(s.title || "New chat");
+        const cls = s.id === activeId ? "active" : "";
+        return `<li class="${cls}" data-id="${s.id}">${title}</li>`;
+      })
+      .join("");
+    els.chatList.querySelectorAll("li").forEach((li) => {
+      li.onclick = () => {
+        activeId = li.dataset.id;
+        renderSidebar();
+        renderThread();
+        closeSidebarMobile();
+      };
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.json();
   }
 
-  function setView(name) {
-    document.querySelectorAll(".nav-btn").forEach((b) => {
-      b.classList.toggle("active", b.dataset.view === name);
-    });
-    document.getElementById("view-search").classList.toggle("hidden", name !== "search");
-    ["agent", "sources", "mesh", "status", "history"].forEach((v) => {
-      const el = document.getElementById("view-" + v);
-      if (el) el.classList.toggle("hidden", name !== v);
-    });
-  }
-
-  document.querySelectorAll(".nav-btn").forEach((b) => {
-    b.onclick = () => setView(b.dataset.view);
-  });
-
-  document.querySelectorAll(".chip").forEach((c) => {
-    c.onclick = () => {
-      document.querySelectorAll(".chip").forEach((x) => x.classList.remove("active"));
-      c.classList.add("active");
-      mode = c.dataset.mode;
-    };
-  });
-
-  document.querySelectorAll(".sug").forEach((b) => {
-    b.onclick = () => {
-      qEl.value = b.textContent;
-      ask(qEl.value);
-    };
-  });
-
-  document.querySelectorAll(".follow-btn").forEach((b) => {
-    b.onclick = () => {
-      const base = qEl.value.trim() || "Continue";
-      qEl.value = base + " — " + b.dataset.f;
-      ask(qEl.value);
-    };
-  });
-
-  function renderSources(sources) {
-    lastSources = sources || [];
-    sourcesRow.innerHTML = "";
-    if (!lastSources.length) {
-      sourcesList.innerHTML = '<p class="muted">No sources yet for this answer.</p>';
+  function renderThread() {
+    const s = active();
+    const has = s && s.messages.length > 0;
+    els.empty.hidden = !!has;
+    els.thread.hidden = !has;
+    if (!has) {
+      els.threadInner.innerHTML = "";
       return;
     }
-    lastSources.forEach((s, i) => {
-      const chip = document.createElement("div");
-      chip.className = "source-chip";
-      const a = document.createElement("a");
-      a.href = s.url || "#";
-      a.target = "_blank";
-      a.rel = "noopener";
-      a.textContent = s.title || s.url || "source " + (i + 1);
-      chip.appendChild(document.createTextNode((i + 1) + ". "));
-      chip.appendChild(a);
-      sourcesRow.appendChild(chip);
-    });
-    sourcesList.innerHTML = lastSources
-      .map(
-        (s, i) =>
-          `<div class="source-card"><strong>${i + 1}. ${escapeHtml(s.title || "Source")}</strong><br/>` +
-          `<a href="${escapeAttr(s.url || "#")}" target="_blank" rel="noopener">${escapeHtml(s.url || "")}</a>` +
-          `<p class="muted">${escapeHtml((s.snippet || "").slice(0, 280))}</p></div>`
-      )
+    els.threadInner.innerHTML = s.messages
+      .map((m) => {
+        const role = m.role === "user" ? "user" : "assistant";
+        const label = role === "user" ? "You" : "Sophyane";
+        const av = role === "user" ? "Y" : "S";
+        let sources = "";
+        if (m.sources && m.sources.length) {
+          sources =
+            `<div class="sources">` +
+            m.sources
+              .map(
+                (src, i) =>
+                  `<a class="source-chip" href="${escapeAttr(src.url || "#")}" target="_blank" rel="noopener">${i + 1}. ${escapeHtml(
+                    src.title || src.url || "source"
+                  )}</a>`
+              )
+              .join("") +
+            `</div>`;
+        }
+        return (
+          `<div class="msg ${role}">` +
+          `<div class="msg-avatar">${av}</div>` +
+          `<div class="msg-col">` +
+          `<div class="msg-role">${label}</div>` +
+          `<div class="msg-body">${formatBody(m.content)}${sources}</div>` +
+          `</div></div>`
+        );
+      })
       .join("");
+    els.thread.scrollTop = els.thread.scrollHeight;
+  }
+
+  function formatBody(text) {
+    // lightweight: escape then allow simple newlines; wrap `code`
+    let t = escapeHtml(String(text || ""));
+    t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
+    return t;
   }
 
   function escapeHtml(s) {
@@ -118,194 +140,243 @@
     return escapeHtml(s).replace(/"/g, "&quot;");
   }
 
-  function pushHistory(q, answer) {
-    history.unshift({ q, answer: String(answer).slice(0, 500), ts: Date.now() });
-    history = history.slice(0, 40);
-    localStorage.setItem("sophyane_browser_hist", JSON.stringify(history));
-    renderHistory();
+  function autoGrow() {
+    const ta = els.input;
+    ta.style.height = "auto";
+    ta.style.height = Math.min(200, ta.scrollHeight) + "px";
+    els.btnSend.disabled = busy || !ta.value.trim();
   }
 
-  function renderHistory() {
-    histList.innerHTML = history
-      .map(
-        (h, i) =>
-          `<li data-i="${i}"><strong>${escapeHtml(h.q)}</strong><br/><span class="muted">${escapeHtml(
-            (h.answer || "").slice(0, 120)
-          )}</span></li>`
-      )
-      .join("");
-    histList.querySelectorAll("li").forEach((li) => {
-      li.onclick = () => {
-        const h = history[Number(li.dataset.i)];
-        if (!h) return;
-        qEl.value = h.q;
-        answerBody.textContent = h.answer;
-        answerCard.classList.remove("hidden");
-        setView("search");
-      };
-    });
-  }
-
-  async function fetchUrl(url) {
-    try {
-      return await jpost(HW + "/v1/hardware/rpc", { method: "web_fetch", params: { url } });
-    } catch (e) {
-      return { ok: false, error: String(e) };
+  els.input.addEventListener("input", autoGrow);
+  els.input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (!els.btnSend.disabled) els.composer.requestSubmit();
     }
+  });
+
+  function openSidebarMobile() {
+    els.sidebar.classList.add("open");
+    els.overlay.hidden = false;
+  }
+  function closeSidebarMobile() {
+    els.sidebar.classList.remove("open");
+    els.overlay.hidden = true;
+  }
+  els.btnMenu.onclick = openSidebarMobile;
+  els.overlay.onclick = closeSidebarMobile;
+
+  els.btnNew.onclick = () => {
+    const s = { id: uid(), title: "New chat", messages: [] };
+    sessions.unshift(s);
+    activeId = s.id;
+    saveSessions();
+    renderSidebar();
+    renderThread();
+    closeSidebarMobile();
+    els.input.focus();
+  };
+
+  document.querySelectorAll(".sug").forEach((b) => {
+    b.onclick = () => {
+      els.input.value = b.dataset.q || b.textContent;
+      autoGrow();
+      els.composer.requestSubmit();
+    };
+  });
+
+  async function jget(url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  }
+  async function jpost(url, body) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
   }
 
-  async function chat(message, edge) {
-    // Prefer hardware chat, then cloud portal if key set
+  function isUrl(s) {
+    return /^https?:\/\//i.test(s.trim());
+  }
+
+  async function chatApi(message, edge) {
     try {
-      return await jpost(HW + "/v1/hardware/chat", { message, edge: !!edge });
+      const data = await jpost(HW + "/v1/hardware/chat", { message, edge: !!edge });
+      const reply =
+        data.reply ||
+        data.result?.reply ||
+        (typeof data.result === "string" ? data.result : null) ||
+        data.error ||
+        JSON.stringify(data);
+      return { reply: String(reply), sources: [] };
     } catch (e1) {
       const key = localStorage.getItem("sophyane_api_key");
       if (CLOUD && key) {
-        try {
-          const res = await fetch(CLOUD.replace(/\/$/, "") + "/api/v1/chat", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: "Bearer " + key,
-            },
-            body: JSON.stringify({ message, edge: !!edge }),
-          });
-          return await res.json();
-        } catch (e2) {
-          return { ok: false, error: String(e1) + " / " + String(e2) };
-        }
-      }
-      return { ok: false, error: String(e1) };
-    }
-  }
-
-  async function ask(raw) {
-    const q = (raw || qEl.value || "").trim();
-    if (!q) return;
-    answerCard.classList.remove("hidden");
-    answerBody.textContent = "Thinking…";
-    answerMode.textContent = mode;
-    answerTime.textContent = new Date().toLocaleTimeString();
-    sourcesRow.innerHTML = "";
-    setView("search");
-
-    let sources = [];
-    let answer = "";
-
-    try {
-      if (mode === "search" || mode === "learn" || isUrl(q)) {
-        const url = isUrl(q) ? q.split(/\s+/)[0] : null;
-        if (url) {
-          const fetched = await fetchUrl(url);
-          const result = fetched.result || fetched;
-          const title = result.title || url;
-          const text = result.text || result.content || JSON.stringify(result).slice(0, 2000);
-          sources.push({ url, title, snippet: String(text).slice(0, 240) });
-          if (mode === "learn") {
-            try {
-              await jpost(HW + "/v1/hardware/rpc", {
-                method: "improve_from_url",
-                params: { url },
-              });
-            } catch (_) {}
-          }
-          const chatRes = await chat(
-            `Summarize and answer using this page content.\nURL: ${url}\nTitle: ${title}\n\n${String(text).slice(0, 3500)}\n\nUser question: ${q}`,
-            mode === "edge"
-          );
-          answer =
-            (chatRes.reply || chatRes.result?.reply || chatRes.result || chatRes.error || JSON.stringify(chatRes)).toString();
-        } else {
-          // Web-style answer without URL: AI + optional note
-          const chatRes = await chat(
-            `You are Sophyane Browser (AI search mode). Answer clearly with bullet points when helpful. Question: ${q}`,
-            mode === "edge"
-          );
-          answer =
-            (chatRes.reply || chatRes.result?.reply || chatRes.result || chatRes.error || JSON.stringify(chatRes)).toString();
-          sources.push({
-            url: "https://github.com/badrpk/sophyane",
-            title: "Sophyane knowledge / local model",
-            snippet: "Answer generated via Sophyane agent APIs",
-          });
-        }
-      } else {
-        const chatRes = await chat(q, mode === "edge" || mode === "answer");
-        answer =
-          (chatRes.reply || chatRes.result?.reply || chatRes.result || chatRes.error || JSON.stringify(chatRes)).toString();
-        sources.push({
-          url: "https://github.com/badrpk/sophyane",
-          title: "Sophyane agent",
-          snippet: mode === "edge" ? "Hybrid edge / expert path" : "Cloud or local provider",
+        const res = await fetch(CLOUD.replace(/\/$/, "") + "/api/v1/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + key,
+          },
+          body: JSON.stringify({ message, edge: !!edge }),
         });
+        const data = await res.json();
+        return {
+          reply: String(data.reply || data.error || JSON.stringify(data)),
+          sources: [],
+        };
       }
-    } catch (e) {
-      answer = "Request failed: " + e + "\n\nStart local APIs: sophyane-browser  or  sophyane --hardware-api";
+      throw e1;
     }
-
-    answerBody.textContent = typeof answer === "string" ? answer : JSON.stringify(answer, null, 2);
-    renderSources(sources);
-    pushHistory(q, answerBody.textContent);
   }
 
-  document.getElementById("askForm").onsubmit = (e) => {
+  async function maybeFetchSource(message) {
+    const m = message.trim().match(/https?:\/\/[^\s]+/i);
+    if (!m) return null;
+    const url = m[0];
+    try {
+      const data = await jpost(HW + "/v1/hardware/rpc", {
+        method: "web_fetch",
+        params: { url },
+      });
+      const r = data.result || data;
+      return {
+        url,
+        title: r.title || url,
+        text: String(r.text || r.content || "").slice(0, 3500),
+      };
+    } catch {
+      return { url, title: url, text: "" };
+    }
+  }
+
+  els.composer.onsubmit = async (e) => {
     e.preventDefault();
-    ask(qEl.value);
+    const text = els.input.value.trim();
+    if (!text || busy) return;
+
+    const s = ensureSession();
+    if (s.messages.length === 0) {
+      s.title = text.slice(0, 48) + (text.length > 48 ? "…" : "");
+    }
+    s.messages.push({ role: "user", content: text });
+    els.input.value = "";
+    autoGrow();
+    saveSessions();
+    renderSidebar();
+    renderThread();
+
+    // typing indicator
+    s.messages.push({ role: "assistant", content: "…" });
+    const typingIdx = s.messages.length - 1;
+    renderThread();
+    const typingEl = els.threadInner.querySelectorAll(".msg.assistant .msg-body");
+    if (typingEl.length) {
+      typingEl[typingEl.length - 1].classList.add("typing");
+      typingEl[typingEl.length - 1].textContent = "Thinking…";
+    }
+
+    busy = true;
+    els.btnSend.disabled = true;
+    const edge = !!els.edgeMode.checked;
+
+    try {
+      let prompt = text;
+      let sources = [];
+      const page = await maybeFetchSource(text);
+      if (page && page.text) {
+        sources.push({ url: page.url, title: page.title });
+        prompt =
+          `Use this page content when answering.\nURL: ${page.url}\nTitle: ${page.title}\n\n` +
+          `${page.text}\n\nUser: ${text}`;
+      }
+      const { reply } = await chatApi(prompt, edge);
+      s.messages[typingIdx] = {
+        role: "assistant",
+        content: reply || "(empty reply)",
+        sources,
+      };
+    } catch (err) {
+      s.messages[typingIdx] = {
+        role: "assistant",
+        content:
+          "Could not reach Sophyane APIs.\n\n" +
+          "• Start: `sophyane-browser` or `sophyane --hardware-api`\n" +
+          "• Or set localStorage sophyane_api_key + sophyane_cloud for portal chat\n\n" +
+          String(err),
+      };
+    }
+
+    busy = false;
+    saveSessions();
+    renderSidebar();
+    renderThread();
+    autoGrow();
+    els.input.focus();
   };
 
-  async function refreshStatus() {
+  // Tools drawer
+  function openDrawer() {
+    els.drawer.hidden = false;
+  }
+  function closeDrawer() {
+    els.drawer.hidden = true;
+  }
+  els.btnTools.onclick = openDrawer;
+  els.btnCloseDrawer.onclick = closeDrawer;
+
+  document.querySelectorAll(".tool").forEach((btn) => {
+    btn.onclick = async () => {
+      const t = btn.dataset.tool;
+      els.toolOut.textContent = "Loading…";
+      try {
+        if (t === "platform") {
+          els.toolOut.textContent = JSON.stringify(await jget(HW + "/v1/hardware/platform"), null, 2);
+        } else if (t === "hardware") {
+          els.toolOut.textContent = JSON.stringify(await jget(HW + "/v1/hardware/compat"), null, 2);
+        } else if (t === "mesh") {
+          els.toolOut.textContent = JSON.stringify(await jget(MESH + "/v1/mesh/hello"), null, 2);
+        } else if (t === "train") {
+          els.toolOut.textContent = JSON.stringify(await jget(HW + "/v1/train/status"), null, 2);
+        }
+      } catch (e) {
+        els.toolOut.textContent = String(e);
+      }
+    };
+  });
+
+  els.btnShare.onclick = async () => {
+    const s = active();
+    if (!s || !s.messages.length) return;
+    const text = s.messages.map((m) => `${m.role === "user" ? "You" : "Sophyane"}: ${m.content}`).join("\n\n");
     try {
-      const health = await jget(HW + "/v1/hardware/health");
-      statusOut.textContent = JSON.stringify(health, null, 2);
-      connDot.classList.add("on");
-      connDot.classList.remove("off");
-    } catch (e) {
-      statusOut.textContent = "Hardware API offline on :8770\n" + e;
-      connDot.classList.remove("on");
-      connDot.classList.add("off");
+      await navigator.clipboard.writeText(text);
+      els.btnShare.textContent = "✓";
+      setTimeout(() => {
+        els.btnShare.textContent = "⤴";
+      }, 1200);
+    } catch {
+      /* ignore */
     }
-    try {
-      const mesh = await jget(MESH + "/v1/mesh/hello");
-      meshOut.textContent = JSON.stringify(mesh, null, 2);
-    } catch (e) {
-      meshOut.textContent = "Mesh offline on :8777\n" + e;
-    }
+  };
+
+  // PWA: register nothing heavy; just ready for add-to-home-screen
+  if ("serviceWorker" in navigator) {
+    // optional no-op — keep offline simple
   }
 
-  document.getElementById("btnPlatform").onclick = async () => {
-    agentOut.textContent = "…";
-    try {
-      agentOut.textContent = JSON.stringify(await jget(HW + "/v1/hardware/platform"), null, 2);
-    } catch (e) {
-      agentOut.textContent = String(e);
-    }
-  };
-  document.getElementById("btnHardware").onclick = async () => {
-    agentOut.textContent = "…";
-    try {
-      agentOut.textContent = JSON.stringify(await jget(HW + "/v1/hardware/compat"), null, 2);
-    } catch (e) {
-      agentOut.textContent = String(e);
-    }
-  };
-  document.getElementById("btnKernel").onclick = async () => {
-    agentOut.textContent = "…";
-    try {
-      agentOut.textContent = JSON.stringify(await jget(HW + "/v1/kernel/status"), null, 2);
-    } catch (e) {
-      agentOut.textContent = String(e);
-    }
-  };
-  document.getElementById("btnTrain").onclick = async () => {
-    agentOut.textContent = "…";
-    try {
-      agentOut.textContent = JSON.stringify(await jget(HW + "/v1/train/status"), null, 2);
-    } catch (e) {
-      agentOut.textContent = String(e);
-    }
-  };
-
-  renderHistory();
-  refreshStatus();
-  setInterval(refreshStatus, 20000);
+  // Init
+  if (!sessions.length) {
+    sessions = [];
+    activeId = null;
+  }
+  renderSidebar();
+  renderThread();
+  autoGrow();
+  els.input.focus();
 })();

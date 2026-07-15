@@ -26,11 +26,14 @@ irm https://raw.githubusercontent.com/badrpk/sophyane/main/browser/install.ps1 |
 
 ### What you get
 
-- **Ask / Search** — big query box, AI answers, follow-ups  
+- **ChatGPT-format UI** — same layout for desktop app, mobile PWA, and new browser tab  
+  - Sidebar: New chat + history  
+  - Center: “What can I help with?” empty state  
+  - Message thread (You / Sophyane bubbles)  
+  - Bottom composer: “Message Sophyane…” + send  
 - **Sources** — URL fetch + source chips when you paste links  
-- **Agent tools** — platform, hardware, kernel, train status  
-- **Mesh / Status** — live local APIs `:8770` / `:8777`  
-- **History** — local browser history (this device)  
+- **Agent tools** — platform, hardware, mesh, train (drawer)  
+- **Edge toggle** — prefer local/hybrid answers  
 - **New-tab mode** — always available without Chromium:
 
 ```bash

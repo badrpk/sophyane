@@ -2,104 +2,112 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Sophyane Browser</title>
-  <meta name="description" content="Sophyane Browser — AI search, agent tools, sources, and mesh-aware control plane." />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#212121" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Sophyane</title>
+  <meta name="description" content="Sophyane — ChatGPT-style agent chat for browser, new tab, and mobile app." />
   <link rel="stylesheet" href="styles.css" />
   <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◆</text></svg>" />
 </head>
 <body>
-  <div class="app">
-    <aside class="sidebar">
-      <div class="logo">◆ Sophyane</div>
-      <p class="tag">AI Browser</p>
-      <nav>
-        <button class="nav-btn active" data-view="search">Ask / Search</button>
-        <button class="nav-btn" data-view="agent">Agent</button>
-        <button class="nav-btn" data-view="sources">Sources</button>
-        <button class="nav-btn" data-view="mesh">Mesh</button>
-        <button class="nav-btn" data-view="status">Status</button>
-        <button class="nav-btn" data-view="history">History</button>
-      </nav>
-      <div class="side-foot">
-        <a href="#" id="openTabHint" title="Also works as a new tab in any browser">New-tab mode ✓</a>
-        <span id="connDot" class="dot off"></span>
+  <div class="shell">
+    <!-- Sidebar (ChatGPT-like) -->
+    <aside class="sidebar" id="sidebar">
+      <button type="button" class="btn-new" id="btnNewChat">
+        <span class="plus">＋</span> New chat
+      </button>
+      <div class="sidebar-scroll">
+        <div class="sidebar-label">Today</div>
+        <ul class="chat-list" id="chatList"></ul>
+      </div>
+      <div class="sidebar-bottom">
+        <button type="button" class="side-link" id="btnTools">Tools &amp; status</button>
+        <a class="side-link" href="https://github.com/badrpk/sophyane" target="_blank" rel="noopener">GitHub</a>
+        <div class="user-pill">
+          <span class="avatar">S</span>
+          <span>Sophyane</span>
+        </div>
       </div>
     </aside>
 
-    <main class="main">
-      <header class="top">
-        <div class="modes">
-          <button class="chip active" data-mode="answer">Answer</button>
-          <button class="chip" data-mode="search">Search web</button>
-          <button class="chip" data-mode="learn">Learn</button>
-          <button class="chip" data-mode="edge">Edge / local</button>
+    <div class="overlay" id="overlay" hidden></div>
+
+    <!-- Main chat column -->
+    <div class="main">
+      <header class="topbar">
+        <button type="button" class="icon-btn" id="btnMenu" aria-label="Menu">☰</button>
+        <div class="model-select" title="Sophyane agent">
+          Sophyane <span class="chev">▾</span>
         </div>
-        <div class="top-links">
-          <a href="https://github.com/badrpk/sophyane/releases" target="_blank" rel="noopener">GitHub releases</a>
+        <div class="top-actions">
+          <button type="button" class="icon-btn" id="btnShare" title="Copy chat">⤴</button>
         </div>
       </header>
 
-      <section class="hero-ask" id="view-search">
-        <h1>Ask anything. Get answers with sources.</h1>
-        <p class="sub">Sophyane Browser — agent-grade search, tools, and local/edge compute. Built for flexibility like modern AI browsers.</p>
-        <form id="askForm" class="ask-box">
-          <input id="q" type="search" autocomplete="off" placeholder="Ask a question or paste a URL…" autofocus />
-          <button type="submit" id="askBtn">Ask</button>
+      <!-- Empty state (ChatGPT home) -->
+      <section class="empty" id="emptyState">
+        <div class="empty-inner">
+          <div class="empty-logo">◆</div>
+          <h1>What can I help with?</h1>
+          <div class="suggestions" id="suggestions">
+            <button type="button" class="sug" data-q="Explain Sophyane hybrid edge compute in simple terms">Explain hybrid edge</button>
+            <button type="button" class="sug" data-q="How do I install Sophyane and open the browser?">Install Sophyane</button>
+            <button type="button" class="sug" data-q="Write a plan-act-verify agent loop in Python">Agent loop code</button>
+            <button type="button" class="sug" data-q="Summarize https://example.com">Summarize a URL</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Messages (ChatGPT thread) -->
+      <section class="thread" id="thread" hidden>
+        <div class="thread-inner" id="threadInner"></div>
+      </section>
+
+      <!-- Composer (bottom, ChatGPT style) -->
+      <footer class="composer-wrap">
+        <form class="composer" id="composer">
+          <textarea
+            id="input"
+            rows="1"
+            placeholder="Message Sophyane…"
+            enterkeyhint="send"
+            autofocus
+          ></textarea>
+          <div class="composer-bar">
+            <div class="composer-left">
+              <label class="toggle" title="Prefer local / edge answer">
+                <input type="checkbox" id="edgeMode" checked />
+                <span>Edge</span>
+              </label>
+            </div>
+            <button type="submit" class="send" id="btnSend" aria-label="Send" disabled>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+              </svg>
+            </button>
+          </div>
         </form>
-        <div class="suggest">
-          <button type="button" class="sug">What is hybrid edge compute?</button>
-          <button type="button" class="sug">Summarize https://example.com</button>
-          <button type="button" class="sug">How do I install Sophyane on a Raspberry Pi?</button>
-        </div>
+        <p class="disclaimer">Sophyane can make mistakes. Verify important info. Local tools use APIs on this device when available.</p>
+      </footer>
+    </div>
 
-        <div id="answerCard" class="answer-card hidden">
-          <div class="answer-meta">
-            <span id="answerMode">Answer</span>
-            <span id="answerTime"></span>
-          </div>
-          <div id="answerBody" class="answer-body"></div>
-          <div id="sourcesRow" class="sources-row"></div>
-          <div class="follow">
-            <button type="button" class="follow-btn" data-f="Explain more simply">Explain more simply</button>
-            <button type="button" class="follow-btn" data-f="Give me code examples">Code examples</button>
-            <button type="button" class="follow-btn" data-f="What are the risks?">Risks</button>
-          </div>
-        </div>
-      </section>
-
-      <section id="view-agent" class="panel hidden">
-        <h2>Agent tools</h2>
-        <p class="muted">Run harness-oriented actions against local Sophyane APIs.</p>
-        <div class="tool-grid">
-          <button id="btnPlatform">Platform probe</button>
-          <button id="btnHardware">Hardware report</button>
-          <button id="btnKernel">Kernel status</button>
-          <button id="btnTrain">Train status</button>
-        </div>
-        <pre id="agentOut" class="out">Ready.</pre>
-      </section>
-
-      <section id="view-sources" class="panel hidden">
-        <h2>Sources</h2>
-        <div id="sourcesList" class="sources-list muted">Ask something with a URL or search to collect sources.</div>
-      </section>
-
-      <section id="view-mesh" class="panel hidden">
-        <h2>Mesh</h2>
-        <pre id="meshOut" class="out">Loading…</pre>
-      </section>
-
-      <section id="view-status" class="panel hidden">
-        <h2>System status</h2>
-        <pre id="statusOut" class="out">Loading…</pre>
-      </section>
-
-      <section id="view-history" class="panel hidden">
-        <h2>History</h2>
-        <ul id="histList" class="hist"></ul>
-      </section>
-    </main>
+    <!-- Tools drawer -->
+    <div class="drawer" id="drawer" hidden>
+      <div class="drawer-head">
+        <strong>Tools &amp; status</strong>
+        <button type="button" class="icon-btn" id="btnCloseDrawer">✕</button>
+      </div>
+      <div class="drawer-body">
+        <button type="button" class="tool" data-tool="platform">Platform</button>
+        <button type="button" class="tool" data-tool="hardware">Hardware</button>
+        <button type="button" class="tool" data-tool="mesh">Mesh</button>
+        <button type="button" class="tool" data-tool="train">Train</button>
+        <pre id="toolOut" class="tool-out">Select a tool…</pre>
+      </div>
+    </div>
   </div>
   <script src="app.js"></script>
 </body>
