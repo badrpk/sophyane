@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Get API Key — Sophyane Cloud</title>
+  <title>Login / Signup — Sophyane Cloud</title>
   <link rel="stylesheet" href="/css/site.css" />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 </head>
@@ -11,22 +11,48 @@
   <header class="nav">
     <a class="logo" href="/">◆ Sophyane</a>
     <nav>
+      <a href="/start.html">Start guide</a>
       <a href="/pricing.html">Pricing</a>
       <a href="/docs.html">Docs</a>
     </nav>
   </header>
   <main class="section">
-    <p class="eyebrow">Public API</p>
-    <h2>Get your Sophyane API key</h2>
-    <p class="lede">Signup is instant. Keys start with <code>sph_</code>. Use Hybrid Edge to keep cloud cheap and push heavy work to your own hardware.</p>
-    <form class="form" id="signup">
-      <label>Email
-        <input name="email" type="email" required placeholder="you@company.com" />
+    <p class="eyebrow">Email login</p>
+    <h2>Sign up or log in with email OTP</h2>
+    <p class="lede">
+      New users verify <strong>once at signup</strong> with a 6-digit code emailed from
+      <code>badrpk@gmail.com</code>. Returning users log in with a fresh email OTP.
+      API keys start with <code>sph_</code>.
+    </p>
+    <div class="card" style="margin-bottom:1.2rem;border-color:rgba(91,140,255,0.35)">
+      <h3 style="margin-top:0">What you get after verify</h3>
+      <ul class="checks">
+        <li><strong>API key</strong> <code>sph_…</code> — use as <code>Authorization: Bearer sph_…</code></li>
+        <li><strong>Chat API</strong> <code>POST /api/v1/chat</code> · usage at <code>GET /api/v1/usage</code></li>
+        <li><strong>Plans</strong> free / hybrid ($0 + free device compute) / builder $1 / scale $9</li>
+        <li><strong>Local agent</strong> optional: <code>curl …/install.sh | sh</code> then <code>sophyane --boot</code></li>
+      </ul>
+      <p style="margin:0.6rem 0 0;color:var(--muted);font-size:0.92rem">
+        Full details for new users: <a href="/start.html">Start guide</a> ·
+        <a href="/docs.html">API docs</a> ·
+        <a href="/static/Sophyane_Complete_Handbook.pdf">PDF handbook</a>
+      </p>
+    </div>
+
+    <form class="form" id="auth">
+      <label>Mode
+        <select name="purpose" id="purpose">
+          <option value="signup" selected>Sign up (new user — OTP once)</option>
+          <option value="login">Log in (existing user)</option>
+        </select>
       </label>
-      <label>Name
+      <label>Email
+        <input name="email" id="email" type="email" required placeholder="you@company.com" />
+      </label>
+      <label>Name (signup)
         <input name="name" type="text" placeholder="Ada" />
       </label>
-      <label>Plan
+      <label>Plan (signup)
         <select name="plan">
           <option value="free">Free Explorer — $0</option>
           <option value="hybrid" selected>Hybrid Edge — $0 + free device compute</option>
@@ -34,8 +60,13 @@
           <option value="scale">Scale — $9/mo</option>
         </select>
       </label>
-      <button class="btn btn-primary" type="submit">Create key</button>
-      <p class="alert">Copy the key once — full secret is only shown at creation.</p>
+      <button class="btn btn-primary" type="button" id="btn-otp">Send OTP to email</button>
+
+      <label style="margin-top:1rem">OTP code (check inbox / spam)
+        <input name="otp" id="otp" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="8" placeholder="6-digit code" />
+      </label>
+      <button class="btn btn-primary" type="button" id="btn-verify">Verify OTP &amp; get API key</button>
+      <p class="alert">Copy the API key once — full secret is only shown after verification.</p>
     </form>
     <div class="out" id="out"></div>
 
@@ -54,30 +85,64 @@
   </main>
   <script src="/js/site.js"></script>
   <script>
-    const out=document.getElementById('out');
-    const chatOut=document.getElementById('chat-out');
-    document.getElementById('signup').onsubmit=async(e)=>{
-      e.preventDefault();
-      const fd=new FormData(e.target);
-      const body=Object.fromEntries(fd.entries());
-      const r=await fetch('/api/v1/signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-      const j=await r.json();
-      out.classList.add('show');
-      out.textContent=JSON.stringify(j,null,2);
-      if(j.api_key){ document.querySelector('#chat [name=key]').value=j.api_key; }
-    };
-    document.getElementById('chat').onsubmit=async(e)=>{
-      e.preventDefault();
-      const fd=new FormData(e.target);
-      const key=fd.get('key');
-      const r=await fetch('/api/v1/chat',{
-        method:'POST',
-        headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
-        body:JSON.stringify({message:fd.get('message'), edge: !!fd.get('edge')})
+    const out = document.getElementById('out');
+    const chatOut = document.getElementById('chat-out');
+    function show(el, obj) {
+      el.classList.add('show');
+      el.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+    }
+    document.getElementById('btn-otp').onclick = async () => {
+      const f = document.getElementById('auth');
+      const fd = new FormData(f);
+      const body = {
+        email: fd.get('email'),
+        name: fd.get('name'),
+        plan: fd.get('plan'),
+        purpose: fd.get('purpose'),
+      };
+      const r = await fetch('/api/v1/auth/request-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
       });
-      const j=await r.json();
-      chatOut.classList.add('show');
-      chatOut.textContent=JSON.stringify(j,null,2);
+      const j = await r.json();
+      show(out, j);
+    };
+    document.getElementById('btn-verify').onclick = async () => {
+      const f = document.getElementById('auth');
+      const fd = new FormData(f);
+      const body = {
+        email: fd.get('email'),
+        otp: fd.get('otp'),
+        purpose: fd.get('purpose'),
+        name: fd.get('name'),
+        plan: fd.get('plan'),
+      };
+      const r = await fetch('/api/v1/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      show(out, j);
+      if (j.api_key) {
+        document.querySelector('#chat [name=key]').value = j.api_key;
+      }
+    };
+    document.getElementById('chat').onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const key = fd.get('key');
+      const r = await fetch('/api/v1/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + key,
+        },
+        body: JSON.stringify({ message: fd.get('message'), edge: !!fd.get('edge') }),
+      });
+      const j = await r.json();
+      show(chatOut, j);
     };
   </script>
 </body>

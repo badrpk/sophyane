@@ -11,16 +11,30 @@
   <header class="nav">
     <a class="logo" href="/">◆ Sophyane</a>
     <nav>
-      <a href="/get-api.html">Get API</a>
+      <a href="/start.html">Start</a>
+      <a href="/get-api.html">Login / API</a>
       <a href="/pricing.html">Pricing</a>
     </nav>
   </header>
   <main class="section">
+    <div class="card" style="margin-bottom:1.2rem">
+      <strong>New users:</strong> open <a href="/start.html">/start.html</a> first — OTP login, pricing, install, ports, and all essentials in one place.
+    </div>
     <h2>API reference</h2>
     <div class="code-panel wide">
-<pre><code>POST /api/v1/signup
-{"email":"you@x.com","name":"You","plan":"hybrid"}
-→ { api_key, user, endpoint }
+<pre><code># 1) Request OTP (sent from badrpk@gmail.com) — signup once for new users
+POST /api/v1/auth/request-otp
+{"email":"you@x.com","name":"You","plan":"hybrid","purpose":"signup"}
+→ { ok, message: "OTP sent..." }
+
+# 2) Verify OTP → API key issued
+POST /api/v1/auth/verify-otp
+{"email":"you@x.com","otp":"123456","purpose":"signup"}
+→ { api_key, user, auth: "signup" }
+
+# Login (existing user)
+POST /api/v1/auth/request-otp {"email":"you@x.com","purpose":"login"}
+POST /api/v1/auth/verify-otp  {"email":"you@x.com","otp":"123456","purpose":"login"}
 
 POST /api/v1/chat
 Authorization: Bearer sph_...

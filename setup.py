@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="sophyane",
-    version="17.1.0",
+    version="17.2.0",
     description=(
         "Repository-aware autonomous coding agent with semantic indexing, "
         "precise patches, batched execution and deterministic verification"

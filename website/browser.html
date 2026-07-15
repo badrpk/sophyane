@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Download Sophyane Browser — GitHub</title>
+  <meta name="description" content="Download Sophyane Browser from GitHub — AI search, sources, agent tools. Open in new tab still works." />
+  <link rel="stylesheet" href="/css/site.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="bg-glow"></div>
+  <header class="nav">
+    <a class="logo" href="/">◆ Sophyane</a>
+    <nav>
+      <a href="/start.html">Start</a>
+      <a href="/browser.html"><strong>Browser</strong></a>
+      <a href="/get-api.html">Login / API</a>
+      <a href="/docs.html">Docs</a>
+    </nav>
+  </header>
+
+  <main class="section" style="max-width:920px">
+    <p class="eyebrow">Sophyane Browser · AI browser shell</p>
+    <h2>As flexible as modern AI browsers — open source on GitHub</h2>
+    <p class="lede">
+      Sophyane Browser gives you <strong>Ask / Search with sources</strong>, follow-ups, agent tools,
+      mesh &amp; hardware status, and history — a Perplexity-style flow for agent work.
+      Download from the <strong>official GitHub repository</strong>. Opening the UI in a
+      <strong>new tab of your current browser</strong> remains fully supported.
+    </p>
+
+    <div class="card" style="margin-bottom:1.2rem;border-color:rgba(61,255,196,0.4)">
+      <h3 style="margin-top:0">Download from GitHub</h3>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/badrpk/sophyane/releases" target="_blank" rel="noopener">GitHub Releases</a>
+        <a class="btn btn-ghost" href="https://github.com/badrpk/sophyane/tree/main/browser" target="_blank" rel="noopener">browser/ folder on main</a>
+        <a class="btn btn-ghost" href="https://github.com/badrpk/sophyane/raw/main/dist/sophyane-browser-17.2.0.tar.gz">Latest tarball (raw)</a>
+      </div>
+      <p style="color:var(--muted);margin:0.8rem 0 0;font-size:0.92rem">
+        Source of truth: <code>github.com/badrpk/sophyane</code> → <code>browser/</code> and Releases assets.
+      </p>
+    </div>
+
+    <div class="grid-2">
+      <article class="card">
+        <h3>1 · Install (Linux / macOS / ChromeOS)</h3>
+        <div class="code-panel" style="margin:0.5rem 0">
+<pre><code>curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/browser/install.sh | sh
+sophyane-browser</code></pre>
+        </div>
+        <a class="btn btn-sm" href="https://raw.githubusercontent.com/badrpk/sophyane/main/browser/install.sh" download>install.sh</a>
+        <a class="btn btn-sm" href="/download/sophyane-browser.tar.gz" download>Mirror tarball</a>
+      </article>
+      <article class="card">
+        <h3>2 · Windows (PowerShell)</h3>
+        <div class="code-panel" style="margin:0.5rem 0">
+<pre><code>irm https://raw.githubusercontent.com/badrpk/sophyane/main/browser/install.ps1 | iex</code></pre>
+        </div>
+        <a class="btn btn-sm" href="https://raw.githubusercontent.com/badrpk/sophyane/main/browser/install.ps1" download>install.ps1</a>
+      </article>
+    </div>
+
+    <div class="card" style="margin-top:1.2rem">
+      <h3 style="margin-top:0">Or open without installing</h3>
+      <p style="color:var(--muted)">Same home UI in a <strong>new tab</strong> of this browser — no download required.</p>
+      <a class="btn btn-primary" href="/browser-home/" target="_blank" rel="noopener">Open Sophyane Browser UI in new tab →</a>
+      <p style="color:var(--muted);font-size:0.85rem;margin:0.8rem 0 0">
+        CLI new-tab force: <code>SOPHYANE_BROWSER_MODE=tab sophyane-browser</code>
+      </p>
+    </div>
+
+    <h2>Features</h2>
+    <div class="grid-3">
+      <article class="card"><h3>Ask + sources</h3><p>Perplexity-style query box, AI answers, source chips, follow-ups.</p></article>
+      <article class="card"><h3>Agent tools</h3><p>Platform, hardware, kernel, train status via local APIs.</p></article>
+      <article class="card"><h3>Mesh &amp; edge</h3><p>Live mesh hello + hybrid/local answer modes.</p></article>
+      <article class="card"><h3>Isolated profile</h3><p>Chromium user-data dir under Sophyane state when available.</p></article>
+      <article class="card"><h3>New-tab fallback</h3><p>Always works in your existing browser if no Chromium.</p></article>
+      <article class="card"><h3>Open source</h3><p>Fully on GitHub — audit, fork, self-host.</p></article>
+    </div>
+
+    <h2>After install</h2>
+    <div class="code-panel wide">
+<pre><code>sophyane-browser
+# dedicated Chromium window when Chrome/Chromium is installed
+
+SOPHYANE_BROWSER_MODE=tab sophyane-browser
+# force new tab in your default browser
+
+# Optional: install Chromium for app-window mode
+# Debian/Ubuntu: sudo apt install chromium
+</code></pre>
+    </div>
+
+    <p style="margin-top:1.5rem"><a href="/start.html">← Start guide</a> · <a href="https://github.com/badrpk/sophyane" target="_blank" rel="noopener">Repository</a></p>
+  </main>
+  <footer class="footer">
+    <div>Sophyane Browser · github.com/badrpk/sophyane</div>
+    <div class="footer-links">
+      <a href="/start.html">Start</a>
+      <a href="https://github.com/badrpk/sophyane/releases">Releases</a>
+    </div>
+  </footer>
+</body>
+</html>

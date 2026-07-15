@@ -1,5 +1,15 @@
 # Changelog
 
+## 17.2.0 — 2026-07-15
+
+### Added
+- **Sophyane Browser** Perplexity-style ask/sources UI (home app)
+- GitHub download package under `browser/` + `dist/sophyane-browser-*.tar.gz`
+- `browser/install.sh` / `install.ps1` install from GitHub
+- Start/cloud pages link to GitHub Releases; new-tab open remains
+- Workflow: `.github/workflows/sophyane-browser-release.yml`
+
+
 ## 17.1.0 — 2026-07-15
 
 ### Added

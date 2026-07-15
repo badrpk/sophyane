@@ -13,6 +13,21 @@ sophyane --cloud-serve --cloud-port 8780
 
 See [docs/CLOUD_PORTAL.md](docs/CLOUD_PORTAL.md).
 
+
+## Sophyane Browser (download from GitHub)
+
+AI browser shell (ask + sources + agent tools) — open source and **downloadable from this repository**.
+
+```bash
+# Linux / macOS / ChromeOS Linux
+curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/browser/install.sh | sh
+sophyane-browser
+```
+
+- Folder: [`browser/`](browser/)
+- Releases: https://github.com/badrpk/sophyane/releases
+- New-tab mode (no Chromium required): `SOPHYANE_BROWSER_MODE=tab sophyane-browser`
+
 ## Full agent capabilities (v17+)
 
 ```bash

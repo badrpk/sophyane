@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Start here — Sophyane</title>
+  <meta name="description" content="Everything you need to start using Sophyane: email OTP login, API keys, pricing, install, ports, and hybrid compute." />
+  <link rel="stylesheet" href="/css/site.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    .steps { counter-reset: step; list-style: none; padding: 0; }
+    .steps li {
+      counter-increment: step; position: relative;
+      padding: 1rem 1rem 1rem 3.2rem; margin: 0.6rem 0;
+      background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    }
+    .steps li::before {
+      content: counter(step); position: absolute; left: 0.85rem; top: 1rem;
+      width: 1.6rem; height: 1.6rem; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), #7a5cff); color: #fff;
+      font-weight: 700; font-size: 0.85rem; display: flex; align-items: center; justify-content: center;
+    }
+    .pill-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
+    .pill {
+      border: 1px solid var(--border); border-radius: 999px; padding: 0.35rem 0.8rem;
+      font-size: 0.85rem; color: var(--muted); background: rgba(255,255,255,0.03);
+    }
+    .pill strong { color: var(--accent2); }
+    .callout {
+      border: 1px solid rgba(61,255,196,0.35); border-radius: 16px; padding: 1.1rem 1.3rem;
+      margin: 1.2rem 0; background: rgba(61,255,196,0.06);
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-glow"></div>
+  <header class="nav">
+    <a class="logo" href="/">◆ Sophyane</a>
+    <nav>
+      <a href="/start.html"><strong>Start</strong></a>
+      <a href="/browser.html">Browser</a>
+      <a href="/get-api.html">Login / API</a>
+      <a href="/pricing.html">Pricing</a>
+      <a href="/docs.html">Docs</a>
+      <a class="btn btn-sm" href="/get-api.html">Get key</a>
+    </nav>
+  </header>
+
+  <main class="section" style="max-width:900px">
+    <p class="eyebrow">Welcome · read this first</p>
+    <h2>Start using Sophyane</h2>
+    <p class="lede">
+      Everything important is listed here so new users see it immediately:
+      email login with OTP, API keys, pricing, local install, ports, and hybrid free edge compute.
+    </p>
+
+    <div class="callout">
+      <strong>Account rule:</strong> New users verify email <em>once at signup</em> with a 6-digit OTP
+      sent from <code>badrpk@gmail.com</code>. Returning users log in with a fresh email OTP.
+      No password required.
+    </div>
+
+    <div class="card" style="margin:1rem 0;border-color:rgba(91,140,255,0.4)">
+      <h3 style="margin-top:0">Sophyane Browser (more flexibility)</h3>
+      <p style="color:var(--muted);margin:0 0 0.8rem">
+        Download the <strong>Sophyane Browser</strong> launcher for an isolated Chromium agent shell,
+        mesh/hardware UI, and local profile. You can still open the home UI in a
+        <strong>new tab of your current browser</strong> anytime — both options stay available.
+      </p>
+      <div class="cta-row" style="margin:0">
+        <a class="btn btn-primary" href="https://github.com/badrpk/sophyane/releases" target="_blank" rel="noopener">Download from GitHub</a>
+        <a class="btn btn-ghost" href="/browser.html">Browser page</a>
+        <a class="btn btn-ghost" href="/browser-home/" target="_blank" rel="noopener">Open UI in new tab →</a>
+        <a class="btn btn-ghost" href="https://raw.githubusercontent.com/badrpk/sophyane/main/browser/install.sh">install.sh</a>
+      </div>
+    </div>
+
+    <div class="pill-row" id="live-pills">
+      <span class="pill">Loading live status…</span>
+    </div>
+
+    <h2>1 · Create account / log in (2 minutes)</h2>
+    <ol class="steps">
+      <li>
+        Open <a href="/get-api.html"><strong>Login / Get API key</strong></a>.
+      </li>
+      <li>
+        Choose <strong>Sign up</strong> (new) or <strong>Log in</strong> (existing).
+        Enter your email (and plan for signup).
+      </li>
+      <li>
+        Click <strong>Send OTP to email</strong>. Check inbox / spam for
+        “Sophyane verification code” from <strong>badrpk@gmail.com</strong>.
+      </li>
+      <li>
+        Enter the 6-digit code → <strong>Verify OTP &amp; get API key</strong>.
+        Your key starts with <code>sph_</code> — <strong>copy it once</strong>; it is not shown again in full.
+      </li>
+      <li>
+        Test chat on the same page, or call the API (below).
+      </li>
+    </ol>
+    <p><a class="btn btn-primary" href="/get-api.html">Go to Login / Signup →</a></p>
+
+    <h2>2 · Call the API</h2>
+    <div class="code-panel wide">
+<pre><code># Request OTP (signup once for new users)
+curl -s https://HOST/api/v1/auth/request-otp \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@mail.com","plan":"hybrid","purpose":"signup"}'
+
+# Verify OTP → receive sph_ API key
+curl -s https://HOST/api/v1/auth/verify-otp \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@mail.com","otp":"123456","purpose":"signup"}'
+
+# Chat
+curl -s https://HOST/api/v1/chat \
+  -H "Authorization: Bearer sph_YOUR_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"Hello Sophyane","edge":true}'
+</code></pre>
+    </div>
+    <p class="alert">Replace <code>HOST</code> with this site’s domain (e.g. xerus.biz or your tunnel URL). Local dev: <code>http://127.0.0.1:8780</code>.</p>
+
+    <h2>3 · Pricing (ultra-low)</h2>
+    <div class="grid-3" id="plans">
+      <article class="card"><h3>Free</h3><p><strong>$0</strong> · 0.5M tokens · $0.05/1M over</p></article>
+      <article class="card"><h3>Hybrid Edge</h3><p><strong>$0</strong> · 2M tokens + <em>free device compute</em> · $0.02/1M over</p></article>
+      <article class="card"><h3>Builder</h3><p><strong>$1/mo</strong> · 10M tokens · $0.03/1M over</p></article>
+    </div>
+    <p>Heavy agent work can run on <strong>your own hardware</strong> via Sophyane mesh / local GGUF — free extra FLOPs. See <a href="/pricing.html">full pricing</a>.</p>
+
+    <h2>4 · What Sophyane includes</h2>
+    <div class="grid-2">
+      <article class="card"><h3>Agent harness</h3><p>Plan → tools → verify → self-repair. Multi-provider + local open models.</p></article>
+      <article class="card"><h3>Mesh & train</h3><p>Device federation; C++ PEFT continual training (opt-in).</p></article>
+      <article class="card"><h3>Skills · RAG · REPL · MCP</h3><p>Reusable skills, local knowledge, sandboxed Python, tool bridge.</p></article>
+      <article class="card"><h3>Safety</h3><p>HITL approvals, budgets, permission profiles, guardrails, traces.</p></article>
+      <article class="card"><h3>Kernel / ERP / apps</h3><p>Hardware API, Oracle/SAP/… connectors, mobile/web scaffolds.</p></article>
+      <article class="card"><h3>Appliance boot</h3><p>OS-like boot on Linux SoCs with Ethernet / Wi‑Fi paths.</p></article>
+    </div>
+
+    <h2>5 · Install on your machine (local agent)</h2>
+    <div class="code-panel wide">
+<pre><code>curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
+sophyane --doctor
+sophyane --capabilities
+sophyane --boot
+sophyane --train-opt-in   # optional: contribute free edge training
+</code></pre>
+    </div>
+
+    <h2>6 · Important ports (local stack)</h2>
+    <table class="price-table">
+      <thead><tr><th>Service</th><th>Port</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td>Cloud portal</td><td><strong>8780</strong></td><td>Website + public API + OTP auth</td></tr>
+        <tr><td>Hardware API</td><td>8770</td><td>Python/C++/JS hardware bridge</td></tr>
+        <tr><td>Mesh peer</td><td>8777</td><td>Device federation</td></tr>
+        <tr><td>Local GGUF LLM</td><td>8766</td><td>llama-server open model</td></tr>
+      </tbody>
+    </table>
+
+    <h2>7 · Key commands</h2>
+    <div class="code-panel wide">
+<pre><code>sophyane --doctor              # health
+sophyane --audit               # full feature audit
+sophyane --capabilities        # capability matrix
+sophyane --cloud-serve         # run this website + API
+sophyane --mesh-serve          # join device mesh
+sophyane --train-step          # local C++ PEFT step
+sophyane --exam-tough100 --expert-only
+</code></pre>
+    </div>
+
+    <h2>8 · Links</h2>
+    <ul class="checks">
+      <li><a href="/get-api.html">Login / Signup (email OTP)</a></li>
+      <li><a href="/browser.html"><strong>Download Sophyane Browser</strong></a> · <a href="/browser-home/" target="_blank" rel="noopener">Open UI in new tab</a></li>
+      <li><a href="/pricing.html">Pricing</a></li>
+      <li><a href="/docs.html">API docs</a></li>
+      <li><a href="/static/Sophyane_Complete_Handbook.pdf">PDF handbook</a></li>
+      <li><a href="https://github.com/badrpk/sophyane" target="_blank" rel="noopener">GitHub</a></li>
+    </ul>
+
+    <div class="callout" style="margin-top:2rem">
+      <strong>Support email / OTP sender:</strong> badrpk@gmail.com<br />
+      <strong>Repository:</strong> https://github.com/badrpk/sophyane
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div>© Sophyane · Start guide</div>
+    <div class="footer-links">
+      <a href="/">Home</a>
+      <a href="/get-api.html">API</a>
+      <a href="/docs.html">Docs</a>
+    </div>
+  </footer>
+  <script>
+    fetch('/api/v1/onboarding').then(r=>r.json()).then(d=>{
+      const el=document.getElementById('live-pills');
+      if(!d.ok){ el.innerHTML='<span class="pill">Status unavailable</span>'; return; }
+      el.innerHTML = [
+        ['Version', d.version],
+        ['Auth', 'Email OTP'],
+        ['Users', d.stats && d.stats.users],
+        ['Active keys', d.stats && d.stats.active_keys],
+        ['OTP sender', d.otp_from],
+        ['Plans', (d.plans||[]).map(p=>p.id).join(', ')],
+      ].map(([k,v]) => `<span class="pill"><strong>${k}:</strong> ${v??'—'}</span>`).join('');
+    }).catch(()=>{});
+  </script>
+</body>
+</html>

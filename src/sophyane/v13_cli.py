@@ -679,14 +679,22 @@ def main() -> int:
         host = str(args.cloud_host)
         port = int(args.cloud_port)
         server = serve_portal(host, port)
+        base = f"http://{host}:{port}"
         print(
             json.dumps(
                 {
                     "ok": True,
-                    "url": f"http://{host}:{port}/",
-                    "api": f"http://{host}:{port}/api/v1/health",
-                    "signup": f"http://{host}:{port}/get-api.html",
-                    "message": "Sophyane Cloud portal serving. Point domain DNS here and reverse-proxy with Caddy/nginx.",
+                    "url": f"{base}/",
+                    "start_guide": f"{base}/start.html",
+                    "login_signup": f"{base}/get-api.html",
+                    "onboarding_api": f"{base}/api/v1/onboarding",
+                    "api": f"{base}/api/v1/health",
+                    "auth": "email_otp_from_badrpk@gmail.com",
+                    "message": (
+                        "Sophyane Cloud portal serving. "
+                        "Users should open /start.html first for OTP login, pricing, install, and ports. "
+                        "Reverse-proxy with Caddy/nginx for your domain."
+                    ),
                 },
                 indent=2,
             ),

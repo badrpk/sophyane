@@ -108,7 +108,15 @@ def launch_sophyane_browser(
     chromium = find_chromium()
     launched: list[str] = []
     pid = None
-    if chromium and open_home:
+    # SOPHYANE_BROWSER_MODE=tab forces new-tab in the user's default browser
+    # (keeps flexibility even when Chromium is installed).
+    force_tab = os.environ.get("SOPHYANE_BROWSER_MODE", "").lower() in {
+        "tab",
+        "new-tab",
+        "webbrowser",
+        "default",
+    }
+    if chromium and open_home and not force_tab:
         args = [
             chromium,
             f"--user-data-dir={BROWSER_PROFILE}",
@@ -133,11 +141,14 @@ def launch_sophyane_browser(
             launched.append(f"chromium:{chromium}")
         except Exception as error:  # noqa: BLE001
             launched.append(f"chromium-failed:{error}")
-            webbrowser.open(home_url)
-            launched.append("webbrowser-fallback")
+            webbrowser.open(home_url, new=2)  # new tab when possible
+            launched.append("webbrowser-new-tab-fallback")
     else:
-        webbrowser.open(home_url)
-        launched.append("webbrowser-fallback")
+        # Always preserve open-in-user-browser (new tab) path
+        webbrowser.open(home_url, new=2)
+        launched.append("webbrowser-new-tab")
+        if force_tab:
+            launched.append("mode-forced-tab")
         if not chromium:
             launched.append("chromium-not-found")
 
@@ -151,9 +162,16 @@ def launch_sophyane_browser(
         "pid": pid,
         "launched": launched,
         "apis": api_threads,
+        "modes": {
+            "download_install": "sophyane-browser / sophyane --browser (Chromium profile when available)",
+            "new_tab": "Default browser new tab (always available; SOPHYANE_BROWSER_MODE=tab to force)",
+            "web_download": "/browser.html on cloud portal",
+            "web_open_tab": "/browser-home/ on cloud portal (target=_blank)",
+        },
         "note": (
-            "Sophyane Browser uses system Chromium/Chrome when installed; "
-            "otherwise opens the default browser to the Sophyane home UI."
+            "Sophyane Browser uses system Chromium/Chrome when installed for a dedicated shell; "
+            "opening the home UI in a new tab of the user's default browser remains intact "
+            "(fallback and SOPHYANE_BROWSER_MODE=tab)."
         ),
     }
 
