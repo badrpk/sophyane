@@ -306,26 +306,48 @@ def send_whatsapp(to: str, text: str) -> dict[str, Any]:
         except Exception as err:  # noqa: BLE001
             return {"ok": False, "error": str(err), "channel": "whatsapp", "mode": "cloud_api"}
 
-    # 2) Local command bridge (wacli / custom)
+    # 2) Local command bridge (wacli / custom / Sophyane wa_send.sh)
     cmd = (e.get("WHATSAPP_SEND_CMD") or "").strip()
     if cmd:
         import shlex
         import subprocess
 
         try:
-            # {to} and {msg} placeholders
-            full = cmd.replace("{to}", to_clean).replace("{msg}", text)
-            # safer: if command uses args
-            if "{to}" not in cmd and "{msg}" not in cmd:
-                args = shlex.split(cmd) + [to_clean, text]
+            # Prefer explicit placeholders with argv (spaces-safe)
+            if "{to}" in cmd and "{msg}" in cmd:
+                # e.g. "/path/wa_send.sh {to} {msg}" → [script, phone, text]
+                prefix = cmd.split("{to}")[0].strip()
+                script = shlex.split(prefix)[0] if prefix else cmd
+                args = [script, to_clean, text]
             else:
-                args = shlex.split(full)
+                args = shlex.split(cmd) + [to_clean, text]
             r = subprocess.run(args, capture_output=True, text=True, timeout=60)
             if r.returncode == 0:
                 return {"ok": True, "channel": "whatsapp", "mode": "local_cmd", "to": to_clean, "stdout": (r.stdout or "")[:300]}
             return {"ok": False, "error": (r.stderr or r.stdout or f"exit {r.returncode}")[:400], "channel": "whatsapp"}
         except Exception as err:  # noqa: BLE001
             return {"ok": False, "error": str(err), "channel": "whatsapp", "mode": "local_cmd"}
+
+    # 2b) Built-in HTTP bridge (Sophyane messaging-bridge on :8791)
+    try:
+        payload = json.dumps({"to": to_clean, "text": text}).encode()
+        req = urllib.request.Request(
+            "http://127.0.0.1:8791/send",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode())
+        if data.get("ok"):
+            return {"ok": True, "channel": "whatsapp", "mode": "http_bridge", "to": to_clean, "result": data}
+        # if not ready, fall through to outbox
+        if "not linked" in str(data.get("error") or "").lower() or "scan" in str(data.get("error") or "").lower():
+            pass
+        else:
+            return {"ok": False, "error": str(data.get("error") or data), "channel": "whatsapp", "mode": "http_bridge"}
+    except Exception:
+        pass
 
     # 3) Queue outbox for later drain when bridge is linked
     WA_OUTBOX.parent.mkdir(parents=True, exist_ok=True)
