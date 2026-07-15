@@ -206,6 +206,281 @@ def search_scrapes(query: str, *, limit: int = 10) -> list[dict[str, Any]]:
     return hits
 
 
+def _http_json(url: str, *, timeout: float = 12.0) -> dict[str, Any] | list[Any] | None:
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            raw = response.read(2_000_000)
+            return json.loads(raw.decode("utf-8", errors="replace"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _wikipedia_search(query: str, *, limit: int = 3) -> list[dict[str, Any]]:
+    """Live Wikipedia OpenSearch + summary (no API key)."""
+    hits: list[dict[str, Any]] = []
+    q = query.strip()
+    if not q:
+        return hits
+    # Prefer direct summary for person/entity-like queries
+    title_guess = q
+    for prefix in ("who is ", "who was ", "what is ", "what are ", "tell me about "):
+        low = q.lower()
+        if low.startswith(prefix):
+            title_guess = q[len(prefix) :].strip(" ?.")
+            break
+    summary_url = (
+        "https://en.wikipedia.org/api/rest_v1/page/summary/"
+        + urllib.parse.quote(title_guess.replace(" ", "_"), safe="")
+    )
+    summary = _http_json(summary_url)
+    if isinstance(summary, dict) and summary.get("extract") and summary.get("type") != "disambiguation":
+        hits.append(
+            {
+                "title": str(summary.get("title") or title_guess),
+                "snippet": str(summary.get("extract") or "")[:900],
+                "url": str(
+                    (summary.get("content_urls") or {}).get("desktop", {}).get("page")
+                    or summary.get("content_urls", {}).get("desktop", {}).get("page")
+                    or f"https://en.wikipedia.org/wiki/{urllib.parse.quote(title_guess.replace(' ', '_'))}"
+                ),
+                "source": "wikipedia",
+            }
+        )
+    # OpenSearch for more hits
+    search_url = "https://en.wikipedia.org/w/api.php?" + urllib.parse.urlencode(
+        {
+            "action": "opensearch",
+            "search": q,
+            "limit": str(limit),
+            "namespace": "0",
+            "format": "json",
+        }
+    )
+    data = _http_json(search_url)
+    if isinstance(data, list) and len(data) >= 4:
+        titles, descs, urls = data[1], data[2], data[3]
+        for i, title in enumerate(titles):
+            url = urls[i] if i < len(urls) else ""
+            snippet = descs[i] if i < len(descs) else ""
+            if any(h.get("url") == url for h in hits):
+                continue
+            # Enrich first open-search hit with summary if needed
+            if not snippet and title:
+                s2 = _http_json(
+                    "https://en.wikipedia.org/api/rest_v1/page/summary/"
+                    + urllib.parse.quote(str(title).replace(" ", "_"), safe="")
+                )
+                if isinstance(s2, dict):
+                    snippet = str(s2.get("extract") or "")[:700]
+            hits.append(
+                {
+                    "title": str(title),
+                    "snippet": str(snippet)[:700],
+                    "url": str(url),
+                    "source": "wikipedia",
+                }
+            )
+            if len(hits) >= limit + 1:
+                break
+    return hits[: max(limit, 1) + 1]
+
+
+def _duckduckgo_search(query: str, *, limit: int = 5) -> list[dict[str, Any]]:
+    """DuckDuckGo Instant Answer API (no API key)."""
+    hits: list[dict[str, Any]] = []
+    url = "https://api.duckduckgo.com/?" + urllib.parse.urlencode(
+        {
+            "q": query,
+            "format": "json",
+            "no_html": "1",
+            "skip_disambig": "1",
+        }
+    )
+    data = _http_json(url)
+    if not isinstance(data, dict):
+        return hits
+    abstract = str(data.get("AbstractText") or "").strip()
+    heading = str(data.get("Heading") or query).strip()
+    abs_url = str(data.get("AbstractURL") or data.get("AbstractSource") or "").strip()
+    if abstract:
+        hits.append(
+            {
+                "title": heading or query,
+                "snippet": abstract[:900],
+                "url": abs_url or "https://duckduckgo.com/?" + urllib.parse.urlencode({"q": query}),
+                "source": "duckduckgo",
+            }
+        )
+    for topic in data.get("RelatedTopics") or []:
+        if len(hits) >= limit:
+            break
+        if not isinstance(topic, dict):
+            continue
+        # Nested topics
+        if "Topics" in topic and isinstance(topic["Topics"], list):
+            for sub in topic["Topics"]:
+                if not isinstance(sub, dict):
+                    continue
+                text = str(sub.get("Text") or "").strip()
+                first_url = str(sub.get("FirstURL") or "").strip()
+                if text and first_url:
+                    hits.append(
+                        {
+                            "title": text.split(" - ")[0][:120],
+                            "snippet": text[:500],
+                            "url": first_url,
+                            "source": "duckduckgo",
+                        }
+                    )
+                if len(hits) >= limit:
+                    break
+            continue
+        text = str(topic.get("Text") or "").strip()
+        first_url = str(topic.get("FirstURL") or "").strip()
+        if text and first_url:
+            hits.append(
+                {
+                    "title": text.split(" - ")[0][:120],
+                    "snippet": text[:500],
+                    "url": first_url,
+                    "source": "duckduckgo",
+                }
+            )
+    return hits[:limit]
+
+
+def web_search(query: str, *, limit: int = 6) -> dict[str, Any]:
+    """Live internet search for agent/chat grounding (Wikipedia + DuckDuckGo)."""
+    q = (query or "").strip()
+    if not q:
+        return {"ok": False, "query": q, "results": [], "error": "empty query"}
+    results: list[dict[str, Any]] = []
+    errors: list[str] = []
+    try:
+        results.extend(_wikipedia_search(q, limit=3))
+    except Exception as error:  # noqa: BLE001
+        errors.append(f"wikipedia: {error}")
+    try:
+        for hit in _duckduckgo_search(q, limit=limit):
+            if any(h.get("url") == hit.get("url") for h in results):
+                continue
+            results.append(hit)
+    except Exception as error:  # noqa: BLE001
+        errors.append(f"duckduckgo: {error}")
+    # Local scrape store as last resort
+    if len(results) < 2:
+        for hit in search_scrapes(q, limit=3):
+            results.append(
+                {
+                    "title": hit.get("title") or hit.get("url"),
+                    "snippet": hit.get("snippet") or "",
+                    "url": hit.get("url") or "",
+                    "source": "local_scrape",
+                }
+            )
+    results = results[:limit]
+    return {
+        "ok": bool(results),
+        "query": q,
+        "results": results,
+        "errors": errors,
+        "count": len(results),
+    }
+
+
+def needs_web_research(message: str) -> bool:
+    """Heuristic: factual / current-events / entity questions benefit from live search."""
+    text = (message or "").strip().lower()
+    if not text or len(text) < 3:
+        return False
+    # Explicit search intent
+    if any(
+        text.startswith(p)
+        for p in (
+            "search ",
+            "google ",
+            "look up ",
+            "lookup ",
+            "find online ",
+            "who is ",
+            "who was ",
+            "who are ",
+            "what is ",
+            "what are ",
+            "what was ",
+            "when did ",
+            "when was ",
+            "where is ",
+            "where was ",
+            "which ",
+            "tell me about ",
+            "define ",
+            "latest ",
+            "news about ",
+            "current ",
+        )
+    ):
+        return True
+    # Short person/entity style questions
+    if text.endswith("?") and len(text.split()) <= 12:
+        if any(k in text for k in ("who", "what", "when", "where", "which", "why", "how many")):
+            return True
+    # URLs already handled elsewhere
+    if "http://" in text or "https://" in text:
+        return False
+    return False
+
+
+def format_search_context(search: dict[str, Any], *, max_chars: int = 3500) -> str:
+    """Compact source block for LLM system/user prompts."""
+    results = search.get("results") if isinstance(search, dict) else None
+    if not results:
+        return ""
+    lines = ["LIVE INTERNET RESEARCH (use these facts; prefer them over stale model memory):"]
+    for i, hit in enumerate(results, 1):
+        title = str(hit.get("title") or "source")
+        snippet = str(hit.get("snippet") or "").strip()
+        url = str(hit.get("url") or "")
+        lines.append(f"[{i}] {title}\n{snippet}\nURL: {url}")
+    text = "\n\n".join(lines)
+    return text[:max_chars]
+
+
+def grounded_answer_from_search(query: str, search: dict[str, Any]) -> str:
+    """Fallback answer when the small local LLM is weak or wrong."""
+    results = (search or {}).get("results") or []
+    if not results:
+        return ""
+    primary = results[0]
+    title = str(primary.get("title") or query).strip()
+    snippet = str(primary.get("snippet") or "").strip()
+    url = str(primary.get("url") or "").strip()
+    lines = [
+        f"**{title}**",
+        "",
+        snippet or "No detailed extract available.",
+    ]
+    if url:
+        lines.extend(["", f"Source: {url}"])
+    if len(results) > 1:
+        lines.append("")
+        lines.append("Also see:")
+        for hit in results[1:4]:
+            t = str(hit.get("title") or "source")
+            u = str(hit.get("url") or "")
+            if u:
+                lines.append(f"- {t}: {u}")
+    return "\n".join(lines)
+
+
 def scrape_for_improvement(urls: list[str]) -> dict[str, Any]:
     """Fetch several URLs and return compact improvement-oriented notes."""
     results = []
