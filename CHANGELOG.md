@@ -1,5 +1,15 @@
 # Changelog
 
+## 16.3.0 — 2026-07-15
+
+### Added
+- Hardware vendor registry (20+ chip makers: NVIDIA, Intel, AMD, Qualcomm, Micron, …)
+- Open-source/freeware integration probe (llama.cpp, ONNX Runtime, MQTT, Modbus, …)
+- Unified Hardware API for Python / C++ / JavaScript (`sophyane --hardware-api`)
+- CLI: `--hardware`, `--hardware-json`, `--hardware-api`
+- SDK: `sdk/cpp`, `sdk/js`, `sdk/python` examples
+- Docs: `docs/HARDWARE_SOFTWARE_API.md`
+
 ## 16.2.0 — 2026-07-15
 
 ### Added

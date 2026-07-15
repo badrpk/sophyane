@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.14)
+project(sophyane_cpp_client LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+find_package(CURL REQUIRED)
+add_executable(hello_sophyane examples/hello_sophyane.cpp)
+target_include_directories(hello_sophyane PRIVATE include)
+target_link_libraries(hello_sophyane PRIVATE CURL::libcurl)

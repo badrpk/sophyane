@@ -54,6 +54,32 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print edge/IoT health JSON for constrained chips and gateways",
     )
+    parser.add_argument(
+        "--hardware",
+        action="store_true",
+        help="print hardware vendor compatibility report (NVIDIA/Intel/AMD/…)",
+    )
+    parser.add_argument(
+        "--hardware-json",
+        action="store_true",
+        help="print hardware compatibility report as JSON",
+    )
+    parser.add_argument(
+        "--hardware-api",
+        action="store_true",
+        help="serve multi-language Hardware API (Python/C++/JS clients)",
+    )
+    parser.add_argument(
+        "--hardware-host",
+        default="127.0.0.1",
+        help="bind host for --hardware-api (default 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--hardware-port",
+        type=int,
+        default=8770,
+        help="bind port for --hardware-api (default 8770)",
+    )
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--single-agent", action="store_true", help="use legacy one-worker runtime")
     parser.add_argument("--multi-agent", action="store_true", help="use legacy supervisor-worker runtime")
@@ -147,6 +173,37 @@ def main() -> int:
         )
         print(health.to_json())
         return 0 if health.ok else 1
+    if args.hardware or args.hardware_json:
+        from sophyane.hardware_registry import (
+            format_hardware_report,
+            hardware_compatibility_report,
+        )
+
+        if args.hardware_json:
+            print(json.dumps(hardware_compatibility_report(), indent=2))
+        else:
+            print(format_hardware_report())
+        return 0
+    if args.hardware_api:
+        from sophyane.hardware_api import create_default_api, serve_hardware_api
+
+        api = create_default_api()
+        server = serve_hardware_api(
+            host=str(args.hardware_host),
+            port=int(args.hardware_port),
+            api=api,
+        )
+        print(
+            f"Sophyane Hardware API listening on "
+            f"http://{args.hardware_host}:{args.hardware_port} "
+            f"(Python/C++/JS clients)",
+            flush=True,
+        )
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print("\nHardware API stopped.")
+        return 0
     if args.providers:
         print(list_providers())
         return 0

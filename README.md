@@ -44,6 +44,19 @@ Useful slash commands:
 | `/session-info` | Hardware + session stats |
 | `/quit` | Exit |
 
+## Hardware & multi-language API
+
+Sophyane integrates with major chip ecosystems **at the host/gateway layer** and
+exposes one API for **Python, C++, and JavaScript**:
+
+```bash
+sophyane --hardware           # vendor + open-source compatibility report
+sophyane --hardware-json
+sophyane --hardware-api       # HTTP API on :8770 for C++/JS/Python clients
+```
+
+See [docs/HARDWARE_SOFTWARE_API.md](docs/HARDWARE_SOFTWARE_API.md) and `sdk/`.
+
 ## Portability (PC · phone · cloud · IoT)
 
 Sophyane adapts by **equipment class** — from constrained edge gateways to full workstations:
