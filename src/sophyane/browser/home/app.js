@@ -813,30 +813,46 @@
     };
   }
 
+  /** Prefer same-origin portal tools (avoids Failed to fetch when :8770 drops connections). */
+  async function fetchTool(name) {
+    const portalUrl = CLOUD + "/api/v1/tools/" + name;
+    try {
+      const data = await jget(portalUrl, name === "usage" ? authHeaders() : {});
+      return data;
+    } catch (portalErr) {
+      // Fall back to local hardware / mesh APIs
+      if (name === "platform") return jget(HW + "/v1/hardware/platform");
+      if (name === "hardware") return jget(HW + "/v1/hardware/compat");
+      if (name === "mesh") return jget(MESH + "/v1/mesh/hello");
+      if (name === "train") return jget(HW + "/v1/train/status");
+      if (name === "usage") {
+        if (!auth?.api_key) throw new Error("Sign in required");
+        return jget(CLOUD + "/api/v1/usage", authHeaders());
+      }
+      throw portalErr;
+    }
+  }
+
   document.querySelectorAll(".tool").forEach((btn) => {
     btn.onclick = async () => {
       const t = btn.dataset.tool;
       if (!els.toolOut) return;
       els.toolOut.textContent = "Loading…";
       try {
-        if (t === "platform") {
-          els.toolOut.textContent = JSON.stringify(await jget(HW + "/v1/hardware/platform"), null, 2);
-        } else if (t === "hardware") {
-          els.toolOut.textContent = JSON.stringify(await jget(HW + "/v1/hardware/compat"), null, 2);
-        } else if (t === "mesh") {
-          els.toolOut.textContent = JSON.stringify(await jget(MESH + "/v1/mesh/hello"), null, 2);
-        } else if (t === "train") {
-          els.toolOut.textContent = JSON.stringify(await jget(HW + "/v1/train/status"), null, 2);
-        } else if (t === "usage") {
-          if (!auth?.api_key) throw new Error("Sign in required");
-          els.toolOut.textContent = JSON.stringify(
-            await jget(CLOUD + "/api/v1/usage", authHeaders()),
-            null,
-            2
-          );
-        }
+        const data = await fetchTool(t);
+        els.toolOut.textContent = JSON.stringify(data, null, 2);
       } catch (e) {
-        els.toolOut.textContent = String(e);
+        const msg = String(e && e.message ? e.message : e);
+        els.toolOut.textContent =
+          "Could not load " +
+          t +
+          ".\n\n" +
+          msg +
+          "\n\nTips:\n" +
+          "• Use Tools while signed in on the portal (same tab origin)\n" +
+          "• Ensure cloud: sophyane --cloud-serve (:8780)\n" +
+          "• Optional hardware: sophyane --hardware-api (:8770)\n" +
+          "• Optional mesh: sophyane --mesh-serve (:8777)";
       }
     };
   });

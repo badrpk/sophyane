@@ -345,6 +345,63 @@ class PortalApp:
             _json(handler, 200, {"ok": True, "usage": summary, "estimate": cost, "plan": principal.get("plan")})
             return True
 
+        # Same-origin tool proxies for browser-home (avoids Failed to fetch on :8770/:8777)
+        if path.startswith("/api/v1/tools/") and method == "GET":
+            tool = path.rsplit("/", 1)[-1].strip().lower()
+            try:
+                if tool == "train":
+                    from sophyane.continual.engine import train_status
+
+                    _json(handler, 200, {"ok": True, "tool": "train", "result": train_status()})
+                    return True
+                if tool == "platform":
+                    from sophyane.platform_probe import probe_platform
+
+                    _json(handler, 200, {"ok": True, "tool": "platform", "result": probe_platform().to_dict()})
+                    return True
+                if tool == "hardware":
+                    from sophyane.hardware_registry import hardware_compatibility_report
+
+                    _json(handler, 200, {"ok": True, "tool": "hardware", "result": hardware_compatibility_report()})
+                    return True
+                if tool == "mesh":
+                    try:
+                        import urllib.request
+
+                        with urllib.request.urlopen("http://127.0.0.1:8777/v1/mesh/hello", timeout=3.0) as resp:
+                            mesh_body = json.loads(resp.read().decode("utf-8"))
+                        _json(handler, 200, {"ok": True, "tool": "mesh", "result": mesh_body})
+                    except Exception as mesh_err:  # noqa: BLE001
+                        _json(
+                            handler,
+                            200,
+                            {
+                                "ok": False,
+                                "tool": "mesh",
+                                "error": str(mesh_err),
+                                "hint": "Start mesh: sophyane --mesh-serve (port 8777)",
+                            },
+                        )
+                    return True
+                if tool == "usage":
+                    key = _auth_key(handler)
+                    principal = self.store.resolve_key(key) if key else None
+                    if not principal:
+                        _json(handler, 401, {"ok": False, "error": "invalid API key — sign in first"})
+                        return True
+                    summary = self.store.usage_summary(principal["user_id"])
+                    cost = estimate_cost(summary["tokens"], principal.get("plan") or "free")
+                    _json(
+                        handler,
+                        200,
+                        {"ok": True, "tool": "usage", "result": {"usage": summary, "estimate": cost, "plan": principal.get("plan")}},
+                    )
+                    return True
+                _json(handler, 404, {"ok": False, "error": f"unknown tool: {tool}"})
+            except Exception as error:  # noqa: BLE001
+                _json(handler, 200, {"ok": False, "tool": tool, "error": str(error)})
+            return True
+
         if path == "/api/v1/account/me" and method == "GET":
             key = _auth_key(handler)
             principal = self.store.resolve_key(key) if key else None

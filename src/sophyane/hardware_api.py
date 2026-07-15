@@ -231,19 +231,31 @@ class _Handler(BaseHTTPRequestHandler):
         return
 
     def _send(self, code: int, payload: dict[str, Any]) -> None:
-        body = json.dumps(payload).encode("utf-8")
+        try:
+            body = json.dumps(payload, default=str).encode("utf-8")
+        except Exception as error:  # noqa: BLE001
+            body = json.dumps({"ok": False, "error": f"json encode failed: {error}"}).encode("utf-8")
+            code = 500
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
         self.wfile.write(body)
+
+    def _safe_dispatch(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        try:
+            return self.api.dispatch(method, params if isinstance(params, dict) else {})
+        except Exception as error:  # noqa: BLE001
+            return {"ok": False, "error": str(error), "method": method}
 
     def do_OPTIONS(self) -> None:  # noqa: N802
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
@@ -265,7 +277,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not method:
             self._send(404, {"ok": False, "error": "not found", "path": path})
             return
-        self._send(200, self.api.dispatch(method))
+        self._send(200, self._safe_dispatch(method))
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path.rstrip("/") or "/"
@@ -277,28 +289,28 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(400, {"ok": False, "error": "invalid json"})
             return
         if path in {"/v1/hardware/chat", "/v1/chat"}:
-            self._send(200, self.api.dispatch("chat", params if isinstance(params, dict) else {}))
+            self._send(200, self._safe_dispatch("chat", params if isinstance(params, dict) else {}))
             return
         if path in {"/v1/apps/create", "/v1/kernel/create_app"}:
-            self._send(200, self.api.dispatch("create_app", params if isinstance(params, dict) else {}))
+            self._send(200, self._safe_dispatch("create_app", params if isinstance(params, dict) else {}))
             return
         if path in {"/v1/erp/query", "/v1/erp/call"}:
-            self._send(200, self.api.dispatch("erp_query", params if isinstance(params, dict) else {}))
+            self._send(200, self._safe_dispatch("erp_query", params if isinstance(params, dict) else {}))
             return
         if path == "/v1/erp":
-            self._send(200, self.api.dispatch("erp", params if isinstance(params, dict) else {}))
+            self._send(200, self._safe_dispatch("erp", params if isinstance(params, dict) else {}))
             return
         if path == "/v1/hardware/rpc":
             method = str((params or {}).get("method") or "")
             p = (params or {}).get("params") or {}
-            self._send(200, self.api.dispatch(method, p if isinstance(p, dict) else {}))
+            self._send(200, self._safe_dispatch(method, p if isinstance(p, dict) else {}))
             return
         if path in {"/v1/train/step", "/v1/train/round", "/v1/train/opt_in", "/v1/train/contribute", "/v1/train/aggregate"}:
             method = "train." + path.rsplit("/", 1)[-1]
-            self._send(200, self.api.dispatch(method, params if isinstance(params, dict) else {}))
+            self._send(200, self._safe_dispatch(method, params if isinstance(params, dict) else {}))
             return
-        if path == "/v1/train":
-            self._send(200, self.api.dispatch("train.status", params if isinstance(params, dict) else {}))
+        if path in {"/v1/train", "/v1/train/status"}:
+            self._send(200, self._safe_dispatch("train.status", params if isinstance(params, dict) else {}))
             return
         self._send(404, {"ok": False, "error": "not found", "path": path})
 
