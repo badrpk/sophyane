@@ -86,7 +86,7 @@ def public_status() -> dict[str, Any]:
             "bot_username": e.get("TELEGRAM_BOT_USERNAME") or "",
             "owner_chat_id": m["telegram_chat_id"],
             "status": "live" if tg_token else "needs_bot_token",
-            "hint": "Message @BotFather → /newbot → put token in messaging.env TELEGRAM_BOT_TOKEN",
+            "hint": ("Users message @" + (e.get("TELEGRAM_BOT_USERNAME") or "sophyanebot") + " for chat + alerts") if tg_token else "Set TELEGRAM_BOT_TOKEN in messaging.env",
         },
         "whatsapp": {
             "enabled": wa_cloud or wa_cmd,

@@ -1031,6 +1031,35 @@ class PortalApp:
                     )
                     return True
 
+            # Product / session knowledge (payments, channels, plans) — instant
+            try:
+                from sophyane.cloud.product_knowledge import product_answer
+
+                pa = product_answer(message)
+                if pa:
+                    tokens = max(1, (len(message) + len(pa)) // 4)
+                    self.store.record_usage(
+                        principal["user_id"], tokens, key_id=principal["key_id"], endpoint="/api/v1/chat"
+                    )
+                    _json(
+                        handler,
+                        200,
+                        {
+                            "ok": True,
+                            "reply": pa,
+                            "usage": {"tokens_estimate": tokens},
+                            "plan": principal.get("plan"),
+                            "model": "product-knowledge",
+                            "user": principal.get("email"),
+                            "version": __version__,
+                            "sources": [{"title": "Sophyane live config", "url": "/api/v1/billing/rails"}],
+                            "web_search": False,
+                        },
+                    )
+                    return True
+            except Exception:
+                pass
+
             try:
                 from sophyane.config import load_config
                 from sophyane.main import create_provider

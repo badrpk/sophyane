@@ -241,7 +241,7 @@ def notify_all_channels(text: str, *, subject: str = "Sophyane") -> dict[str, An
 
 
 def _chat_reply(message: str, *, email: str = "", plan: str = "free") -> str:
-    """Generate assistant reply (shared with portal intelligence)."""
+    """Generate assistant reply — product knowledge → web → fast LLM (no 300s hang)."""
     message = (message or "").strip()
     if not message:
         return "Send a message, or /help for commands."
@@ -257,6 +257,16 @@ def _chat_reply(message: str, *, email: str = "", plan: str = "free") -> str:
         val = ops.get(op)
         if val is not None:
             return str(int(val) if isinstance(val, float) and val == int(val) else val)
+
+    # Product / session knowledge (instant, accurate)
+    try:
+        from sophyane.cloud.product_knowledge import product_answer
+
+        pa = product_answer(message)
+        if pa:
+            return pa[:3500]
+    except Exception as err:  # noqa: BLE001
+        _log(f"product_knowledge: {err}")
 
     # Prefer web-grounded when possible
     try:
@@ -278,26 +288,36 @@ def _chat_reply(message: str, *, email: str = "", plan: str = "free") -> str:
     except Exception as err:  # noqa: BLE001
         _log(f"web_intel: {err}")
 
+    # LLM with hard timeout — never block Telegram for minutes
     try:
+        import concurrent.futures
+
+        from sophyane.cloud.product_knowledge import inject_system_context
         from sophyane.config import load_config
         from sophyane.main import create_provider
 
         cfg = load_config()
         provider = create_provider(cfg)
         system = (
-            "You are Sophyane, a helpful AI assistant on Telegram. "
-            "Be concise and useful. Merchant channels: email, WhatsApp, Telegram. "
-            f"User plan: {plan or 'free'}. Email: {email or 'guest'}."
+            inject_system_context()
+            + f" User plan: {plan or 'free'}. Email: {email or 'guest'}. Keep answers under 120 words."
         )
-        out = provider.generate(message, system)
-        return (out or "").strip()[:3500] or "I could not generate a reply. Try again."
+
+        def _gen() -> str:
+            return (provider.generate(message, system) or "").strip()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            fut = pool.submit(_gen)
+            out = fut.result(timeout=25)
+        return out[:3500] or "I could not generate a reply. Try /help or rephrase."
     except Exception as err:  # noqa: BLE001
         _log(f"llm: {err}")
         return (
-            "Sophyane Telegram is online. "
-            "I could not reach a cloud model just now. "
-            "Try again, or open the cloud browser chat. "
-            f"({type(err).__name__})"
+            "Sophyane is online (Telegram · Email · WhatsApp).\n"
+            "I timed out on the heavy model. Try:\n"
+            "· /pay — payment options\n"
+            "· /channels — how to reach us\n"
+            "· a shorter question, or web chat for long tasks."
         )
 
 
@@ -371,25 +391,30 @@ def handle_command(chat_id: str, text: str, user_row: dict[str, Any]) -> str:
         )
 
     if cmd == "/pay":
-        m = merchant_contacts()
-        return (
-            "Sophyane payment options:\n"
-            "• Card — Stripe (Monzo-linked)\n"
-            "• Monero (XMR) — local wallet invoices\n"
-            "• JazzCash / EasyPaisa / UPaisa — PKR to "
-            f"{m['phone_local']}\n"
-            "• KuCoin / Coinbase / Binance — when deposit addresses set\n\n"
-            "Open Upgrade in the Sophyane cloud browser, or ask me for a plan quote."
-        )
+        try:
+            from sophyane.cloud.product_knowledge import payment_methods_answer
+
+            return payment_methods_answer()
+        except Exception:
+            m = merchant_contacts()
+            return (
+                "Sophyane payment options:\n"
+                "• Card — Stripe\n"
+                "• Monero (XMR)\n"
+                f"• JazzCash / EasyPaisa / UPaisa → {m['phone_local']}\n"
+                "Open Upgrade in the cloud browser."
+            )
 
     if cmd == "/channels":
-        return (
-            "Sophyane reaches users on:\n"
-            "1. Telegram — this bot (@sophyanebot)\n"
-            "2. Email — OTP + notifications from badrpk@gmail.com\n"
-            "3. WhatsApp — linked device bridge\n\n"
-            "Admins can broadcast alerts on all three."
-        )
+        try:
+            from sophyane.cloud.product_knowledge import channels_answer
+
+            return channels_answer()
+        except Exception:
+            return (
+                "Channels: Telegram @sophyanebot · Email badrpk@gmail.com · "
+                "WhatsApp +923212558089 · Web app."
+            )
 
     return ""
 
