@@ -1,5 +1,15 @@
 # Changelog
 
+## 17.5.0 — 2026-07-15
+
+### Highlights
+- Multi-rail payments: Stripe, Monero, JazzCash/EasyPaisa/UPaisa, exchange hooks
+- Multi-channel messaging: Telegram @sophyanebot, Email, WhatsApp
+- Product knowledge for instant payment/channel answers
+- Community docs: CONTRIBUTING.md, COMMUNITY.md
+
+
+
 ## 17.2.0 — 2026-07-15
 
 ### Added

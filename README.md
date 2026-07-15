@@ -1,5 +1,7 @@
 # Sophyane — Cross-Platform Local Agentic AI Harness
 
+**Version: 17.5.0** · Public open source — [download / contribute](COMMUNITY.md)
+
 Sophyane is a lightweight, multi-provider AI harness with persistent memory, safe local tools, repository awareness, provider plugins, diagnostics, and a mobile-friendly browser interface.
 
 
