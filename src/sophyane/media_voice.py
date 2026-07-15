@@ -112,13 +112,42 @@ def youtube_search(query: str, *, limit: int = 5) -> dict[str, Any]:
         except Exception as error:  # noqa: BLE001
             errors.append(f"web_search: {error}")
 
-    # 3) Always provide a search page fallback for the client to open
+    # 3) Scrape YouTube results HTML for video IDs (best-effort)
+    if not results:
+        try:
+            page_url = "https://www.youtube.com/results?" + urllib.parse.urlencode(
+                {"search_query": q}
+            )
+            html = _http_text(page_url, timeout=12.0)
+            ids = re.findall(r'"videoId":"([A-Za-z0-9_-]{11})"', html)
+            # preserve order, unique
+            seen: set[str] = set()
+            for vid in ids:
+                if vid in seen:
+                    continue
+                seen.add(vid)
+                results.append(
+                    {
+                        "video_id": vid,
+                        "title": q,
+                        "author": "",
+                        "url": f"https://www.youtube.com/watch?v={vid}",
+                        "embed_url": f"https://www.youtube.com/embed/{vid}?autoplay=1",
+                        "source": "youtube_html",
+                    }
+                )
+                if len(results) >= limit:
+                    break
+        except Exception as error:  # noqa: BLE001
+            errors.append(f"youtube_html: {error}")
+
+    # 4) Always provide a search page fallback for the client to open
     search_page = "https://www.youtube.com/results?" + urllib.parse.urlencode(
         {"search_query": q}
     )
     top = results[0] if results else None
     return {
-        "ok": bool(results) or True,
+        "ok": True,
         "query": q,
         "results": results[:limit],
         "play": top,
