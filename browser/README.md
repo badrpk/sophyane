@@ -27,7 +27,9 @@ irm https://raw.githubusercontent.com/badrpk/sophyane/main/browser/install.ps1 |
 ### What you get
 
 - **ChatGPT-format UI** — same layout for desktop app, mobile PWA, and new browser tab  
-  - Sidebar: New chat + history  
+  - **Email OTP authentication** (from badrpk@gmail.com) — required before chat  
+  - **Shows logged-in user** (name, email, plan) in sidebar + header  
+  - Sidebar: New chat + history + Log out  
   - Center: “What can I help with?” empty state  
   - Message thread (You / Sophyane bubbles)  
   - Bottom composer: “Message Sophyane…” + send  

@@ -7,51 +7,98 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Sophyane</title>
-  <meta name="description" content="Sophyane — ChatGPT-style agent chat for browser, new tab, and mobile app." />
+  <meta name="description" content="Sophyane — ChatGPT-style agent chat with email login for browser, new tab, and mobile app." />
   <link rel="stylesheet" href="styles.css" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◆</text></svg>" />
 </head>
 <body>
-  <div class="shell">
-    <!-- Sidebar (ChatGPT-like) -->
+  <!-- Auth gate (required before chat) -->
+  <div class="auth-gate" id="authGate">
+    <div class="auth-card">
+      <div class="auth-logo">◆</div>
+      <h1>Sign in to Sophyane</h1>
+      <p class="auth-sub">Email OTP · code sent from <strong>badrpk@gmail.com</strong></p>
+
+      <div class="auth-tabs">
+        <button type="button" class="auth-tab active" data-purpose="login">Log in</button>
+        <button type="button" class="auth-tab" data-purpose="signup">Sign up</button>
+      </div>
+
+      <label class="field">Email
+        <input type="email" id="authEmail" placeholder="you@company.com" autocomplete="email" required />
+      </label>
+      <label class="field" id="authNameWrap" hidden>Name
+        <input type="text" id="authName" placeholder="Your name" autocomplete="name" />
+      </label>
+      <label class="field" id="authPlanWrap" hidden>Plan
+        <select id="authPlan">
+          <option value="free">Free</option>
+          <option value="hybrid" selected>Hybrid Edge</option>
+          <option value="builder">Builder ($1/mo)</option>
+          <option value="scale">Scale ($9/mo)</option>
+        </select>
+      </label>
+
+      <button type="button" class="btn-primary" id="btnSendOtp">Send OTP</button>
+
+      <label class="field" style="margin-top:0.85rem">OTP code
+        <input type="text" id="authOtp" inputmode="numeric" maxlength="8" placeholder="6-digit code" autocomplete="one-time-code" />
+      </label>
+      <button type="button" class="btn-primary" id="btnVerifyOtp">Verify &amp; continue</button>
+      <p class="auth-msg" id="authMsg"></p>
+      <p class="auth-hint">New users: Sign up once with OTP. Returning users: Log in with a new OTP.</p>
+    </div>
+  </div>
+
+  <div class="shell" id="appShell" hidden>
     <aside class="sidebar" id="sidebar">
       <button type="button" class="btn-new" id="btnNewChat">
         <span class="plus">＋</span> New chat
       </button>
       <div class="sidebar-scroll">
-        <div class="sidebar-label">Today</div>
+        <div class="sidebar-label">Chats</div>
         <ul class="chat-list" id="chatList"></ul>
       </div>
       <div class="sidebar-bottom">
         <button type="button" class="side-link" id="btnTools">Tools &amp; status</button>
         <a class="side-link" href="https://github.com/badrpk/sophyane" target="_blank" rel="noopener">GitHub</a>
-        <div class="user-pill">
-          <span class="avatar">S</span>
-          <span>Sophyane</span>
+        <!-- Logged-in user (always visible when signed in) -->
+        <div class="user-pill" id="userPill" title="Signed-in account">
+          <span class="avatar" id="userAvatar">?</span>
+          <div class="user-meta">
+            <span class="user-name" id="userName">—</span>
+            <span class="user-email" id="userEmail">Not signed in</span>
+            <span class="user-plan" id="userPlan"></span>
+          </div>
         </div>
+        <button type="button" class="side-link danger" id="btnLogout">Log out</button>
       </div>
     </aside>
 
     <div class="overlay" id="overlay" hidden></div>
 
-    <!-- Main chat column -->
     <div class="main">
       <header class="topbar">
         <button type="button" class="icon-btn" id="btnMenu" aria-label="Menu">☰</button>
         <div class="model-select" title="Sophyane agent">
           Sophyane <span class="chev">▾</span>
         </div>
+        <!-- Header shows who is logged in -->
+        <div class="logged-in-badge" id="headerUser" title="Logged-in user">
+          <span class="avatar sm" id="headerAvatar">?</span>
+          <span id="headerEmail">Sign in required</span>
+        </div>
         <div class="top-actions">
           <button type="button" class="icon-btn" id="btnShare" title="Copy chat">⤴</button>
         </div>
       </header>
 
-      <!-- Empty state (ChatGPT home) -->
       <section class="empty" id="emptyState">
         <div class="empty-inner">
           <div class="empty-logo">◆</div>
           <h1>What can I help with?</h1>
+          <p class="signed-as" id="emptySignedAs"></p>
           <div class="suggestions" id="suggestions">
             <button type="button" class="sug" data-q="Explain Sophyane hybrid edge compute in simple terms">Explain hybrid edge</button>
             <button type="button" class="sug" data-q="How do I install Sophyane and open the browser?">Install Sophyane</button>
@@ -61,21 +108,13 @@
         </div>
       </section>
 
-      <!-- Messages (ChatGPT thread) -->
       <section class="thread" id="thread" hidden>
         <div class="thread-inner" id="threadInner"></div>
       </section>
 
-      <!-- Composer (bottom, ChatGPT style) -->
       <footer class="composer-wrap">
         <form class="composer" id="composer">
-          <textarea
-            id="input"
-            rows="1"
-            placeholder="Message Sophyane…"
-            enterkeyhint="send"
-            autofocus
-          ></textarea>
+          <textarea id="input" rows="1" placeholder="Message Sophyane…" enterkeyhint="send"></textarea>
           <div class="composer-bar">
             <div class="composer-left">
               <label class="toggle" title="Prefer local / edge answer">
@@ -90,17 +129,17 @@
             </button>
           </div>
         </form>
-        <p class="disclaimer">Sophyane can make mistakes. Verify important info. Local tools use APIs on this device when available.</p>
+        <p class="disclaimer">Signed-in chats use your account. Sophyane can make mistakes — verify important info.</p>
       </footer>
     </div>
 
-    <!-- Tools drawer -->
     <div class="drawer" id="drawer" hidden>
       <div class="drawer-head">
         <strong>Tools &amp; status</strong>
         <button type="button" class="icon-btn" id="btnCloseDrawer">✕</button>
       </div>
       <div class="drawer-body">
+        <div class="account-box" id="accountBox"></div>
         <button type="button" class="tool" data-tool="platform">Platform</button>
         <button type="button" class="tool" data-tool="hardware">Hardware</button>
         <button type="button" class="tool" data-tool="mesh">Mesh</button>
