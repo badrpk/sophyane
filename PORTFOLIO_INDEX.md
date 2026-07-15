@@ -30,3 +30,8 @@ All repositories are **public**. Please **download, use, fork, and improve**.
 git clone https://github.com/badrpk/sophyane.git
 git checkout v17.5.0
 ```
+
+
+## Competitive parity upgrades (2026-07)
+
+Each canonical product now includes a `COMPETITIVE_PARITY.md` and runnable service APIs aimed at domain leaders (Foodpanda, DVAGO, DigitalOcean, Datadog, TikTok, Claude Code, etc.).
