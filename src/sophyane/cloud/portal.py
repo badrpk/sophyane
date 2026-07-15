@@ -625,6 +625,40 @@ class PortalApp:
             model_used = "unknown"
             sources: list[dict[str, Any]] = []
             search_meta: dict[str, Any] = {}
+
+            # Instant answers for trivial math (avoid slow local LLM hangs)
+            trivial = re.search(
+                r"(?:what\s+is|calculate|compute)?\s*(\d+)\s*([+\-*/x×])\s*(\d+)",
+                message.lower(),
+            )
+            if trivial:
+                a, op, b = int(trivial.group(1)), trivial.group(2), int(trivial.group(3))
+                ops = {"+": a + b, "-": a - b, "*": a * b, "x": a * b, "×": a * b, "/": (a / b if b else "undefined")}
+                val = ops.get(op)
+                if val is not None:
+                    reply = str(int(val) if isinstance(val, float) and val == int(val) else val)
+                    model_used = "instant"
+                    tokens = max(1, (len(message) + len(reply)) // 4)
+                    self.store.record_usage(
+                        principal["user_id"], tokens, key_id=principal["key_id"], endpoint="/api/v1/chat"
+                    )
+                    _json(
+                        handler,
+                        200,
+                        {
+                            "ok": True,
+                            "reply": reply,
+                            "usage": {"tokens_estimate": tokens},
+                            "plan": principal.get("plan"),
+                            "model": model_used,
+                            "user": principal.get("email"),
+                            "version": __version__,
+                            "sources": [],
+                            "web_search": False,
+                        },
+                    )
+                    return True
+
             try:
                 from sophyane.config import load_config
                 from sophyane.main import create_provider
@@ -952,6 +986,8 @@ class PortalApp:
                         reply = tools_help()
                 else:
                     # Plan → research → answer (agent loop)
+                    from sophyane.web_intel import needs_web_research
+
                     steps.append({"step": "plan", "ok": True, "plan": "research + answer + cite"})
                     search = web_search(message, limit=6)
                     steps.append(
@@ -962,32 +998,42 @@ class PortalApp:
                         }
                     )
                     research = format_search_context(search)
-                    try:
-                        from sophyane.config import load_config
-                        from sophyane.main import create_provider
+                    grounded_fast = grounded_answer_from_search(message, search)
+                    # Prefer web extract for factual Qs — avoid hanging on local GGUF
+                    if grounded_fast and needs_web_research(message):
+                        reply = grounded_fast
+                        model_used = "web-grounded"
+                        steps.append({"step": "generate", "ok": True, "model": model_used, "path": "web-first"})
+                    else:
+                        try:
+                            from sophyane.config import load_config
+                            from sophyane.main import create_provider
+                            import concurrent.futures
 
-                        provider = create_provider(load_config())
-                        system = (
-                            "You are Sophyane Agent Harness (CLI agent). "
-                            "Plan briefly, use research facts, answer the user, cite sources. "
-                            "Prefer tool/research facts over model memory."
-                        )
-                        prompt = (research + "\n\n" if research else "") + f"USER: {message}"
-                        reply = provider.generate(prompt, system)
-                        model_used = str(getattr(provider, "model", None) or "provider")
-                        if search.get("ok") and len((reply or "").strip()) < 40:
-                            reply = grounded_answer_from_search(message, search) or reply
-                            model_used = f"{model_used}+web-grounded"
-                        steps.append({"step": "generate", "ok": True, "model": model_used})
-                    except Exception as gen_err:  # noqa: BLE001
-                        grounded = grounded_answer_from_search(message, search)
-                        if grounded:
-                            reply = grounded
-                            model_used = "web-grounded"
-                            steps.append({"step": "generate", "ok": True, "fallback": "web-grounded"})
-                        else:
-                            reply = f"Agent could not complete generation: {gen_err}"
-                            steps.append({"step": "generate", "ok": False, "error": str(gen_err)})
+                            provider = create_provider(load_config())
+                            system = (
+                                "You are Sophyane Agent Harness (CLI agent). "
+                                "Plan briefly, use research facts, answer the user, cite sources. "
+                                "Prefer tool/research facts over model memory."
+                            )
+                            prompt = (research + "\n\n" if research else "") + f"USER: {message}"
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                                fut = pool.submit(provider.generate, prompt, system)
+                                reply = fut.result(timeout=20)
+                            model_used = str(getattr(provider, "model", None) or "provider")
+                            if search.get("ok") and len((reply or "").strip()) < 40:
+                                reply = grounded_fast or reply
+                                model_used = f"{model_used}+web-grounded"
+                            steps.append({"step": "generate", "ok": True, "model": model_used})
+                        except Exception as gen_err:  # noqa: BLE001
+                            grounded = grounded_fast or grounded_answer_from_search(message, search)
+                            if grounded:
+                                reply = grounded
+                                model_used = "web-grounded"
+                                steps.append({"step": "generate", "ok": True, "fallback": "web-grounded"})
+                            else:
+                                reply = f"Agent could not complete generation: {gen_err}"
+                                steps.append({"step": "generate", "ok": False, "error": str(gen_err)})
                     # Attach sources
                     sources = [
                         {"title": h.get("title"), "url": h.get("url")}
