@@ -1,5 +1,19 @@
 # Changelog
 
+## 16.8.0 — 2026-07-15
+
+### Added
+- **Continual federated training** over existing local LLM (GGUF) weights
+- Pure **C++17** train core: `sophyane-train-core` (local PEFT step + FedAvg)
+- Opt-in multi-device contribution via mesh (`/v1/mesh/train/*`)
+- CLI: `--train-status`, `--train-opt-in`, `--train-step`, `--train-round`, `--train-build-core`
+- Docs: `docs/CONTINUAL_FEDERATED.md`
+
+### Design
+- Base GGUF stays on device; only small adapter deltas are federated
+- Training hot path is C++ only for hardware efficiency on edge chips
+- Privacy: digests by default; contribution requires explicit opt-in
+
 ## 16.7.0 — 2026-07-15
 
 ### Added

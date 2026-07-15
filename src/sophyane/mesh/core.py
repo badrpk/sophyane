@@ -231,6 +231,19 @@ class MeshNode:
             return self._storage_get(params)
         if method == "storage.list":
             return {"ok": True, "result": local_share_stats(SHARE_DIR)}
+        if method.startswith("train.") or method in {
+            "train",
+            "train.status",
+            "train.opt_in",
+            "train.record",
+            "train.step",
+            "train.contribute",
+            "train.aggregate",
+            "train.round",
+        }:
+            from sophyane.continual.engine import handle_train_rpc
+
+            return handle_train_rpc(method if method.startswith("train.") else f"train.{method}", params)
         return {"ok": False, "error": f"unknown mesh method: {method}"}
 
     def _check_token(self, token: str) -> bool:
@@ -323,6 +336,8 @@ class MeshNode:
                     "/v1/mesh/capabilities": "capabilities",
                     "/v1/mesh/status": "status",
                     "/v1/mesh/storage": "storage.list",
+                    "/v1/mesh/train": "train.status",
+                    "/v1/mesh/train/status": "train.status",
                 }
                 method = mapping.get(path)
                 if not method:
@@ -357,6 +372,12 @@ class MeshNode:
                     "/v1/mesh/storage/get": "storage.get",
                     "/v1/mesh/exec": "exec",
                     "/v1/mesh/rpc": "rpc",
+                    "/v1/mesh/train/contribute": "train.contribute",
+                    "/v1/mesh/train/step": "train.step",
+                    "/v1/mesh/train/aggregate": "train.aggregate",
+                    "/v1/mesh/train/round": "train.round",
+                    "/v1/mesh/train/opt_in": "train.opt_in",
+                    "/v1/mesh/train/record": "train.record",
                 }
                 method = mapping.get(path)
                 if path == "/v1/mesh/rpc":

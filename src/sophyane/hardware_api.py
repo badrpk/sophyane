@@ -178,6 +178,19 @@ class HardwareAPI:
             return self.improve_propose(params)
         if method == "improve_export":
             return {"ok": True, "result": self.improve_export(params)}
+        if method.startswith("train.") or method in {
+            "train",
+            "train_status",
+            "train_step",
+            "train_round",
+            "train_opt_in",
+        }:
+            from sophyane.continual.engine import handle_train_rpc
+
+            key = method if method.startswith("train.") else method.replace("train_", "train.")
+            if key == "train":
+                key = "train.status"
+            return handle_train_rpc(key, params)
         if method == "report_text":
             return {
                 "platform": format_platform_report(),
@@ -245,6 +258,8 @@ class _Handler(BaseHTTPRequestHandler):
             "/v1/kernel": "kernel",
             "/v1/kernel/status": "kernel",
             "/v1/erp": "erp",
+            "/v1/train": "train.status",
+            "/v1/train/status": "train.status",
         }
         method = routes.get(path)
         if not method:
@@ -277,6 +292,13 @@ class _Handler(BaseHTTPRequestHandler):
             method = str((params or {}).get("method") or "")
             p = (params or {}).get("params") or {}
             self._send(200, self.api.dispatch(method, p if isinstance(p, dict) else {}))
+            return
+        if path in {"/v1/train/step", "/v1/train/round", "/v1/train/opt_in", "/v1/train/contribute", "/v1/train/aggregate"}:
+            method = "train." + path.rsplit("/", 1)[-1]
+            self._send(200, self.api.dispatch(method, params if isinstance(params, dict) else {}))
+            return
+        if path == "/v1/train":
+            self._send(200, self.api.dispatch("train.status", params if isinstance(params, dict) else {}))
             return
         self._send(404, {"ok": False, "error": "not found", "path": path})
 

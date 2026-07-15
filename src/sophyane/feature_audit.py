@@ -50,6 +50,7 @@ def run_full_audit() -> dict[str, Any]:
         "sophyane.appliance",
         "sophyane.daemon_runtime",
         "sophyane.harness",
+        "sophyane.continual",
     ]
     for mod in modules:
         try:
@@ -217,8 +218,35 @@ def run_full_audit() -> dict[str, Any]:
             bool(sdk and (sdk / "cpp").exists() and (sdk / "js").exists()),
             str(sdk),
         )
+        add(
+            "sdk",
+            "cpp_continual_core",
+            bool(sdk and (sdk / "cpp" / "continual" / "src" / "train_core.cpp").exists()),
+            str((sdk / "cpp" / "continual") if sdk else ""),
+        )
     except Exception as error:  # noqa: BLE001
         add("sdk", "paths", False, str(error))
+
+    # Continual federated training (C++ core)
+    try:
+        from sophyane.continual.engine import (
+            ensure_train_core,
+            record_experience,
+            run_local_train_step,
+            train_opt_in,
+            train_status,
+        )
+
+        core_path, ms = _timed(lambda: ensure_train_core())
+        add("train", "cpp_core_build", Path(core_path).exists(), str(core_path), ms)
+        st, ms = _timed(train_status)
+        add("train", "status", st.get("ok") is True, st.get("core_path", ""), ms)
+        train_opt_in(True)
+        record_experience("audit continual probe", "ok", source="audit")
+        step, ms = _timed(run_local_train_step)
+        add("train", "local_cpp_step", step.get("ok") is True, str(step.get("meta", {}))[:120], ms)
+    except Exception as error:  # noqa: BLE001
+        add("train", "continual", False, str(error))
 
     passed = sum(1 for c in checks if c.ok)
     return {

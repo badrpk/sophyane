@@ -1,6 +1,6 @@
 {
   "name": "sophyane-client",
-  "version": "16.7.0",
+  "version": "16.8.0",
   "description": "JavaScript client for Sophyane Hardware/Software API",
   "main": "sophyane-client.js",
   "type": "module",

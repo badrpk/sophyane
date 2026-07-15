@@ -360,6 +360,22 @@ def boot_appliance(
     except Exception as error:  # noqa: BLE001
         steps.append({"step": "improve_heartbeat", "ok": False, "error": str(error)})
 
+    # 8) Continual federated train tick (opt-in only; C++ PEFT on existing weights)
+    if os.environ.get("SOPHYANE_TRAIN_ON_BOOT", "").lower() in {"1", "true", "yes"}:
+        try:
+            from sophyane.continual.engine import contribute_round, is_opted_in
+
+            if is_opted_in():
+                tr = contribute_round(publish_mesh=True)
+                steps.append({"step": "continual_train", "ok": bool(tr.get("ok")), "detail": {
+                    "local_ok": (tr.get("local") or {}).get("ok"),
+                    "aggregate_ok": (tr.get("aggregate") or {}).get("ok"),
+                }})
+            else:
+                steps.append({"step": "continual_train", "ok": True, "skipped": True, "reason": "not opted in"})
+        except Exception as error:  # noqa: BLE001
+            steps.append({"step": "continual_train", "ok": False, "error": str(error)})
+
     core_steps = {"platform", "kernel", "hardware_api", "mesh", "network"}
     ok = all(s.get("ok", True) for s in steps if s.get("step") in core_steps)
     report = BootReport(

@@ -230,6 +230,41 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="run integrated feature audit (all major subsystems)",
     )
+    parser.add_argument(
+        "--train-status",
+        action="store_true",
+        help="continual federated training status (C++ core + base GGUF)",
+    )
+    parser.add_argument(
+        "--train-opt-in",
+        action="store_true",
+        help="opt this device into continuous federated PEFT training",
+    )
+    parser.add_argument(
+        "--train-opt-out",
+        action="store_true",
+        help="disable federated training contribution on this device",
+    )
+    parser.add_argument(
+        "--train-step",
+        action="store_true",
+        help="run one local C++ continual train step on existing LLM weights",
+    )
+    parser.add_argument(
+        "--train-round",
+        action="store_true",
+        help="full federated round: local C++ step + mesh publish + FedAvg",
+    )
+    parser.add_argument(
+        "--train-build-core",
+        action="store_true",
+        help="build the pure C++ sophyane-train-core binary",
+    )
+    parser.add_argument(
+        "--train-record",
+        default="",
+        help="record experience text for continual training (privacy-digest by default)",
+    )
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--single-agent", action="store_true", help="use legacy one-worker runtime")
     parser.add_argument("--multi-agent", action="store_true", help="use legacy supervisor-worker runtime")
@@ -384,6 +419,45 @@ def main() -> int:
         report = run_full_audit()
         print(json.dumps(report, indent=2))
         return 0 if report.get("ok") else 1
+
+    if args.train_build_core:
+        from sophyane.continual.engine import ensure_train_core
+
+        path = ensure_train_core(force_rebuild=True)
+        print(json.dumps({"ok": True, "core": str(path), "language": "C++17"}, indent=2))
+        return 0
+    if args.train_opt_in or args.train_opt_out:
+        from sophyane.continual.engine import train_opt_in
+
+        print(json.dumps(train_opt_in(enabled=bool(args.train_opt_in)), indent=2))
+        return 0
+    if args.train_record:
+        from sophyane.continual.engine import record_experience
+
+        print(json.dumps(record_experience(str(args.train_record), source="cli"), indent=2))
+        return 0
+    if args.train_status:
+        from sophyane.continual.engine import train_status
+
+        st = train_status()
+        print(json.dumps(st, indent=2))
+        return 0 if st.get("ok") else 1
+    if args.train_step:
+        from sophyane.continual.engine import run_local_train_step, train_opt_in
+
+        if not __import__("sophyane.continual.engine", fromlist=["is_opted_in"]).is_opted_in():
+            train_opt_in(True)
+        result = run_local_train_step()
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("ok") else 1
+    if args.train_round:
+        from sophyane.continual.engine import contribute_round, is_opted_in, train_opt_in
+
+        if not is_opted_in():
+            train_opt_in(True)
+        result = contribute_round(publish_mesh=True)
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("ok") else 1
 
     if args.install_appliance_unit:
         from sophyane.appliance import write_systemd_unit

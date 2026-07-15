@@ -53,6 +53,12 @@ sophyane --boot                          # ethernet + kernel + mesh + API
 sophyane --boot --wifi-ssid MYWIFI --wifi-psk 'secret'
 sophyane --install-chip && sophyane --install-appliance-unit
 sophyane --audit                         # verify every major feature
+
+# Continual federated training (C++ core, existing GGUF weights, user-device compute)
+sophyane --train-opt-in
+sophyane --train-step                    # local C++ PEFT step
+sophyane --train-round                   # step + mesh + FedAvg
+sophyane --train-status
 ```
 
 See [docs/APPLIANCE_BOOT.md](docs/APPLIANCE_BOOT.md).

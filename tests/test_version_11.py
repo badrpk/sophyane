@@ -6,7 +6,7 @@ from sophyane.version import __version__
 
 
 def test_runtime_version_is_current() -> None:
-    assert __version__ == "16.7.0"
+    assert __version__ == "16.8.0"
 
 
 def test_package_metadata_versions_match() -> None:
