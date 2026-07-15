@@ -1,5 +1,28 @@
 # Changelog
 
+## 17.0.0 — 2026-07-15
+
+### Added — future-complete agent surface
+- **Capability matrix** (`--capabilities`) covering modern agent features
+- **Skills** packs (`--skills`, `--skill`)
+- **Local RAG** (`--rag-add`, `--rag-query`)
+- **Scheduler** cron-like jobs (`--schedule`, `--schedule-run`)
+- **Budgets** token/cost (`--budget-status`)
+- **HITL** approvals (`--hitl-request`, `--approve`, `--deny`)
+- **Observability** traces (`--trace-list`)
+- **Sandboxed Python REPL** (`--repl`)
+- **MCP-lite** tool bridge (`--mcp-list`, `--mcp-call`)
+- **Permissions** profiles (`--permissions`)
+- **Checkpoints** (`--checkpoint-list`)
+- **Notifications** (`--notify-test`)
+- **Multimodal hooks** (`--image`, `--voice-status`)
+- Docs: `docs/AGENT_CAPABILITIES.md`
+- Hardened `install.sh` always picks latest release/tag + deps/venv/C++ core
+
+### Also includes (16.9 work)
+- Tough-100 harness exam + expert hybrid answers
+
+
 ## 16.8.0 — 2026-07-15
 
 ### Added

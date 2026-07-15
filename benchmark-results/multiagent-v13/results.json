@@ -1,0 +1,573 @@
+{
+  "classification": "B",
+  "label": "true coordinated multi-agent runtime",
+  "checks": {
+    "simple_routes_single": true,
+    "complex_routes_multi": true,
+    "forced_multi": true,
+    "unique_worker_ids": true,
+    "parallel_threads": true,
+    "supervisor_present": true,
+    "workers_persisted": true,
+    "lifecycle_events": true,
+    "reviewer_completed": true,
+    "final_output": true
+  },
+  "simple": {
+    "run_id": "run-23d7f779a1b0",
+    "mode": "single_agent",
+    "supervisor_id": "supervisor-cbf23234cd48",
+    "assessment": {
+      "score": 0,
+      "mode": "single_agent",
+      "reasons": [
+        "single narrow deliverable"
+      ],
+      "roles": [
+        "executor"
+      ]
+    },
+    "workers": [
+      {
+        "worker_id": "agent-executor-30d6bc7e9287",
+        "role": "executor",
+        "status": "completed",
+        "attempts": 1,
+        "output": "PASS: role completed objective and validation",
+        "error": "",
+        "started_at": 1784119287.0610168,
+        "finished_at": 1784119287.0932195
+      }
+    ],
+    "final_output": "PASS: role completed objective and validation",
+    "started_at": 1784119287.0547922,
+    "finished_at": 1784119287.0977817,
+    "trace": [
+      {
+        "actor_id": "supervisor-cbf23234cd48",
+        "event_type": "route_decided",
+        "payload": {
+          "mode": "single_agent",
+          "reasons": [
+            "single narrow deliverable"
+          ],
+          "roles": [
+            "executor"
+          ],
+          "score": 0
+        },
+        "created_at": 1784119287.0580895
+      },
+      {
+        "actor_id": "agent-executor-30d6bc7e9287",
+        "event_type": "worker_started",
+        "payload": {
+          "attempt": 1,
+          "role": "executor"
+        },
+        "created_at": 1784119287.0627437
+      },
+      {
+        "actor_id": "agent-executor-30d6bc7e9287",
+        "event_type": "worker_completed",
+        "payload": {
+          "attempt": 1,
+          "output_chars": 45
+        },
+        "created_at": 1784119287.0968425
+      }
+    ]
+  },
+  "complex": {
+    "run_id": "run-f07e26973551",
+    "mode": "multi_agent",
+    "supervisor_id": "supervisor-ef2ce93f1687",
+    "assessment": {
+      "score": 11,
+      "mode": "multi_agent",
+      "reasons": [
+        "multiple specialist domains: api, authentication, backend, database, deployment, docker, documentation, security",
+        "large deliverable scope",
+        "independent verification requested"
+      ],
+      "roles": [
+        "planner",
+        "coder",
+        "database",
+        "security",
+        "tester",
+        "documentation",
+        "operations",
+        "reviewer"
+      ]
+    },
+    "workers": [
+      {
+        "worker_id": "agent-planner-ac0aa83ccbc8",
+        "role": "planner",
+        "status": "completed",
+        "attempts": 1,
+        "output": "PASS: role completed objective and validation",
+        "error": "",
+        "started_at": 1784119287.1177518,
+        "finished_at": 1784119287.1505523
+      },
+      {
+        "worker_id": "agent-security-62c0962e9a78",
+        "role": "security",
+        "status": "completed",
+        "attempts": 1,
+        "output": "PASS: role completed objective and validation",
+        "error": "",
+        "started_at": 1784119287.1206179,
+        "finished_at": 1784119287.153888
+      },
+      {
+        "worker_id": "agent-tester-ebc72c92f324",
+        "role": "tester",
+        "status": "completed",
+        "attempts": 1,
+        "output": "PASS: role completed objective and validation",
+        "error": "",
+        "started_at": 1784119287.1260777,
+        "finished_at": 1784119287.1602602
+      },
+      {
+        "worker_id": "agent-documentation-2068f511be5c",
+        "role": "documentation",
+        "status": "completed",
+        "attempts": 1,
+        "output": "PASS: role completed objective and validation",
+        "error": "",
+        "started_at": 1784119287.1320577,
+        "finished_at": 1784119287.1670814
+      },
+      {
+        "worker_id": "agent-coder-975d201599f1",
+        "role": "coder",
+        "status": "completed",
+        "attempts": 1,
+        "output": "PASS: role completed objective and validation",
+        "error": "",
+        "started_at": 1784119287.1240122,
+        "finished_at": 1784119287.1620483
+      },
+      {
+        "worker_id": "agent-database-6b30999058fe",
+        "role": "database",
+        "status": "completed",
+        "attempts": 1,
+        "output": "PASS: role completed objective and validation",
+        "error": "",
+        "started_at": 1784119287.1344168,
+        "finished_at": 1784119287.1678317
+      },
+      {
+        "worker_id": "agent-operations-a8da2a696f97",
+        "role": "operations",
+        "status": "completed",
+        "attempts": 1,
+        "output": "PASS: role completed objective and validation",
+        "error": "",
+        "started_at": 1784119287.15697,
+        "finished_at": 1784119287.189112
+      },
+      {
+        "worker_id": "agent-reviewer-7574f42e6a5d",
+        "role": "reviewer",
+        "status": "completed",
+        "attempts": 1,
+        "output": "PASS: role completed objective and validation",
+        "error": "",
+        "started_at": 1784119287.194597,
+        "finished_at": 1784119287.2268414
+      }
+    ],
+    "final_output": "PASS: role completed objective and validation",
+    "started_at": 1784119287.0986106,
+    "finished_at": 1784119287.2303033,
+    "trace": [
+      {
+        "actor_id": "supervisor-ef2ce93f1687",
+        "event_type": "route_decided",
+        "payload": {
+          "mode": "multi_agent",
+          "reasons": [
+            "multiple specialist domains: api, authentication, backend, database, deployment, docker, documentation, security",
+            "large deliverable scope",
+            "independent verification requested"
+          ],
+          "roles": [
+            "planner",
+            "coder",
+            "database",
+            "security",
+            "tester",
+            "documentation",
+            "operations",
+            "reviewer"
+          ],
+          "score": 11
+        },
+        "created_at": 1784119287.1011865
+      },
+      {
+        "actor_id": "supervisor-ef2ce93f1687",
+        "event_type": "workers_launched",
+        "payload": {
+          "count": 7,
+          "worker_ids": [
+            "agent-planner-ac0aa83ccbc8",
+            "agent-coder-975d201599f1",
+            "agent-database-6b30999058fe",
+            "agent-security-62c0962e9a78",
+            "agent-tester-ebc72c92f324",
+            "agent-documentation-2068f511be5c",
+            "agent-operations-a8da2a696f97"
+          ]
+        },
+        "created_at": 1784119287.1087663
+      },
+      {
+        "actor_id": "agent-planner-ac0aa83ccbc8",
+        "event_type": "worker_started",
+        "payload": {
+          "attempt": 1,
+          "role": "planner"
+        },
+        "created_at": 1784119287.1194043
+      },
+      {
+        "actor_id": "agent-security-62c0962e9a78",
+        "event_type": "worker_started",
+        "payload": {
+          "attempt": 1,
+          "role": "security"
+        },
+        "created_at": 1784119287.12249
+      },
+      {
+        "actor_id": "agent-tester-ebc72c92f324",
+        "event_type": "worker_started",
+        "payload": {
+          "attempt": 1,
+          "role": "tester"
+        },
+        "created_at": 1784119287.1281211
+      },
+      {
+        "actor_id": "agent-coder-975d201599f1",
+        "event_type": "worker_started",
+        "payload": {
+          "attempt": 1,
+          "role": "coder"
+        },
+        "created_at": 1784119287.1307125
+      },
+      {
+        "actor_id": "agent-documentation-2068f511be5c",
+        "event_type": "worker_started",
+        "payload": {
+          "attempt": 1,
+          "role": "documentation"
+        },
+        "created_at": 1784119287.1366582
+      },
+      {
+        "actor_id": "agent-database-6b30999058fe",
+        "event_type": "worker_started",
+        "payload": {
+          "attempt": 1,
+          "role": "database"
+        },
+        "created_at": 1784119287.1375582
+      },
+      {
+        "actor_id": "agent-planner-ac0aa83ccbc8",
+        "event_type": "worker_completed",
+        "payload": {
+          "attempt": 1,
+          "output_chars": 45
+        },
+        "created_at": 1784119287.1554458
+      },
+      {
+        "actor_id": "agent-operations-a8da2a696f97",
+        "event_type": "worker_started",
+        "payload": {
+          "attempt": 1,
+          "role": "operations"
+        },
+        "created_at": 1784119287.1586044
+      },
+      {
+        "actor_id": "agent-security-62c0962e9a78",
+        "event_type": "worker_completed",
+        "payload": {
+          "attempt": 1,
+          "output_chars": 45
+        },
+        "created_at": 1784119287.161515
+      },
+      {
+        "actor_id": "agent-tester-ebc72c92f324",
+        "event_type": "worker_completed",
+        "payload": {
+          "attempt": 1,
+          "output_chars": 45
+        },
+        "created_at": 1784119287.171713
+      },
+      {
+        "actor_id": "agent-documentation-2068f511be5c",
+        "event_type": "worker_completed",
+        "payload": {
+          "attempt": 1,
+          "output_chars": 45
+        },
+        "created_at": 1784119287.1774855
+      },
+      {
+        "actor_id": "agent-coder-975d201599f1",
+        "event_type": "worker_completed",
+        "payload": {
+          "attempt": 1,
+          "output_chars": 45
+        },
+        "created_at": 1784119287.1810222
+      },
+      {
+        "actor_id": "agent-database-6b30999058fe",
+        "event_type": "worker_completed",
+        "payload": {
+          "attempt": 1,
+          "output_chars": 45
+        },
+        "created_at": 1784119287.1843624
+      },
+      {
+        "actor_id": "agent-operations-a8da2a696f97",
+        "event_type": "worker_completed",
+        "payload": {
+          "attempt": 1,
+          "output_chars": 45
+        },
+        "created_at": 1784119287.1920235
+      },
+      {
+        "actor_id": "agent-reviewer-7574f42e6a5d",
+        "event_type": "worker_started",
+        "payload": {
+          "attempt": 1,
+          "role": "reviewer"
+        },
+        "created_at": 1784119287.195588
+      },
+      {
+        "actor_id": "agent-reviewer-7574f42e6a5d",
+        "event_type": "worker_completed",
+        "payload": {
+          "attempt": 1,
+          "output_chars": 45
+        },
+        "created_at": 1784119287.228815
+      },
+      {
+        "actor_id": "supervisor-ef2ce93f1687",
+        "event_type": "run_completed",
+        "payload": {
+          "failed_workers": [],
+          "status": "completed"
+        },
+        "created_at": 1784119287.2301302
+      }
+    ]
+  },
+  "forced_multi": {
+    "run_id": "run-5ea323f5598e",
+    "mode": "multi_agent",
+    "supervisor_id": "supervisor-5dcdfed3991c",
+    "assessment": {
+      "score": 99,
+      "mode": "multi_agent",
+      "reasons": [
+        "forced multi-agent mode"
+      ],
+      "roles": [
+        "planner",
+        "coder",
+        "tester",
+        "reviewer"
+      ]
+    },
+    "workers": [
+      {
+        "worker_id": "agent-planner-4c79c478dadf",
+        "role": "planner",
+        "status": "completed",
+        "attempts": 1,
+        "output": "PASS: role completed objective and validation",
+        "error": "",
+        "started_at": 1784119287.2376761,
+        "finished_at": 1784119287.2763116
+      },
+      {
+        "worker_id": "agent-tester-dc8a5eb52a65",
+        "role": "tester",
+        "status": "completed",
+        "attempts": 1,
+        "output": "PASS: role completed objective and validation",
+        "error": "",
+        "started_at": 1784119287.2483623,
+        "finished_at": 1784119287.2809796
+      },
+      {
+        "worker_id": "agent-coder-493e71359b12",
+        "role": "coder",
+        "status": "completed",
+        "attempts": 1,
+        "output": "PASS: role completed objective and validation",
+        "error": "",
+        "started_at": 1784119287.24736,
+        "finished_at": 1784119287.282821
+      },
+      {
+        "worker_id": "agent-reviewer-777be46805f9",
+        "role": "reviewer",
+        "status": "completed",
+        "attempts": 1,
+        "output": "PASS: role completed objective and validation",
+        "error": "",
+        "started_at": 1784119287.2910876,
+        "finished_at": 1784119287.322596
+      }
+    ],
+    "final_output": "PASS: role completed objective and validation",
+    "started_at": 1784119287.2311952,
+    "finished_at": 1784119287.3269641,
+    "trace": [
+      {
+        "actor_id": "supervisor-5dcdfed3991c",
+        "event_type": "route_decided",
+        "payload": {
+          "mode": "multi_agent",
+          "reasons": [
+            "forced multi-agent mode"
+          ],
+          "roles": [
+            "planner",
+            "coder",
+            "tester",
+            "reviewer"
+          ],
+          "score": 99
+        },
+        "created_at": 1784119287.2323892
+      },
+      {
+        "actor_id": "supervisor-5dcdfed3991c",
+        "event_type": "workers_launched",
+        "payload": {
+          "count": 3,
+          "worker_ids": [
+            "agent-planner-4c79c478dadf",
+            "agent-coder-493e71359b12",
+            "agent-tester-dc8a5eb52a65"
+          ]
+        },
+        "created_at": 1784119287.2361934
+      },
+      {
+        "actor_id": "agent-planner-4c79c478dadf",
+        "event_type": "worker_started",
+        "payload": {
+          "attempt": 1,
+          "role": "planner"
+        },
+        "created_at": 1784119287.2443984
+      },
+      {
+        "actor_id": "agent-tester-dc8a5eb52a65",
+        "event_type": "worker_started",
+        "payload": {
+          "attempt": 1,
+          "role": "tester"
+        },
+        "created_at": 1784119287.2505245
+      },
+      {
+        "actor_id": "agent-coder-493e71359b12",
+        "event_type": "worker_started",
+        "payload": {
+          "attempt": 1,
+          "role": "coder"
+        },
+        "created_at": 1784119287.25252
+      },
+      {
+        "actor_id": "agent-planner-4c79c478dadf",
+        "event_type": "worker_completed",
+        "payload": {
+          "attempt": 1,
+          "output_chars": 45
+        },
+        "created_at": 1784119287.2805612
+      },
+      {
+        "actor_id": "agent-tester-dc8a5eb52a65",
+        "event_type": "worker_completed",
+        "payload": {
+          "attempt": 1,
+          "output_chars": 45
+        },
+        "created_at": 1784119287.2836227
+      },
+      {
+        "actor_id": "agent-coder-493e71359b12",
+        "event_type": "worker_completed",
+        "payload": {
+          "attempt": 1,
+          "output_chars": 45
+        },
+        "created_at": 1784119287.2890007
+      },
+      {
+        "actor_id": "agent-reviewer-777be46805f9",
+        "event_type": "worker_started",
+        "payload": {
+          "attempt": 1,
+          "role": "reviewer"
+        },
+        "created_at": 1784119287.2920737
+      },
+      {
+        "actor_id": "agent-reviewer-777be46805f9",
+        "event_type": "worker_completed",
+        "payload": {
+          "attempt": 1,
+          "output_chars": 45
+        },
+        "created_at": 1784119287.3250124
+      },
+      {
+        "actor_id": "supervisor-5dcdfed3991c",
+        "event_type": "run_completed",
+        "payload": {
+          "failed_workers": [],
+          "status": "completed"
+        },
+        "created_at": 1784119287.3267262
+      }
+    ]
+  },
+  "backend_thread_ids": [
+    140536732169920,
+    140536740562624,
+    140536748955328,
+    140536757348032,
+    140536765740736,
+    140536845571776,
+    140536858322816
+  ],
+  "database": "/tmp/sophyane-v13-acceptance-icyjb2cc/multiagent.db"
+}

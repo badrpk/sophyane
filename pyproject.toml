@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sophyane"
-version = "16.8.0"
+version = "17.0.0"
 description = "Repository-aware autonomous coding agent with semantic indexing, precise patches, batched execution and deterministic verification"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -52,12 +52,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-sophyane = ["browser/home/*"]
+sophyane = ["browser/home/*", "expert/data/*"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-q"
+# Ship exam questions next to install tree via data files if present
 
-[tool.ruff]
-line-length = 88
-target-version = "py310"

@@ -265,6 +265,64 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="record experience text for continual training (privacy-digest by default)",
     )
+    parser.add_argument(
+        "--exam-tough100",
+        action="store_true",
+        help="run 100 tough harness/coding exam questions and score replies",
+    )
+    parser.add_argument(
+        "--exam-mode",
+        choices=["expert", "llm", "hybrid"],
+        default="hybrid",
+        help="tough exam answer mode (default hybrid = expert pack + LLM)",
+    )
+    parser.add_argument(
+        "--exam-limit",
+        type=int,
+        default=100,
+        help="limit tough exam questions (default 100)",
+    )
+    parser.add_argument(
+        "--expert-only",
+        action="store_true",
+        help="with --exam-tough100, use curated expert pack only",
+    )
+    parser.add_argument(
+        "--ask",
+        default="",
+        help="answer a hard harness/coding question via expert+LLM hybrid",
+    )
+    # Future-complete agent surface
+    parser.add_argument("--capabilities", action="store_true", help="show full modern-agent capability matrix")
+    parser.add_argument("--skills", action="store_true", help="list reusable agent skills")
+    parser.add_argument("--skill", default="", help="apply named skill to --skill-prompt")
+    parser.add_argument("--skill-prompt", default="", help="user prompt for --skill")
+    parser.add_argument("--rag-add", default="", help="ingest a file into local RAG index")
+    parser.add_argument("--rag-query", default="", help="query local RAG knowledge base")
+    parser.add_argument("--rag-status", action="store_true", help="RAG index status")
+    parser.add_argument("--schedule", default="", help="schedule job name (with --schedule-prompt)")
+    parser.add_argument("--schedule-prompt", default="", help="prompt for scheduled job")
+    parser.add_argument("--schedule-every", type=int, default=3600, help="seconds between scheduled runs")
+    parser.add_argument("--schedule-list", action="store_true", help="list scheduled jobs")
+    parser.add_argument("--schedule-run", action="store_true", help="run due scheduled jobs now")
+    parser.add_argument("--budget-status", action="store_true", help="token/cost budget status")
+    parser.add_argument("--budget-reset", action="store_true", help="reset budget usage counters")
+    parser.add_argument("--hitl-list", action="store_true", help="list pending human approvals")
+    parser.add_argument("--approve", default="", help="approve HITL request id")
+    parser.add_argument("--deny", default="", help="deny HITL request id")
+    parser.add_argument("--hitl-request", default="", help="create HITL approval request for action")
+    parser.add_argument("--trace-list", action="store_true", help="list observability run traces")
+    parser.add_argument("--repl", default="", help="run sandboxed Python (code string)")
+    parser.add_argument("--eval", default="", help="alias for --repl")
+    parser.add_argument("--mcp-list", action="store_true", help="list MCP-lite tools")
+    parser.add_argument("--mcp-call", default="", help="call MCP-lite tool by name")
+    parser.add_argument("--mcp-args", default="{}", help="JSON args for --mcp-call")
+    parser.add_argument("--permissions", default="", help="set permission profile: readonly|workspace|network|strict|full")
+    parser.add_argument("--permissions-status", action="store_true", help="show permission profile")
+    parser.add_argument("--checkpoint-list", action="store_true", help="list task checkpoints")
+    parser.add_argument("--notify-test", action="store_true", help="send a test notification")
+    parser.add_argument("--voice-status", action="store_true", help="voice STT/TTS capability status")
+    parser.add_argument("--image", default="", help="describe an image path (multimodal hook)")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--single-agent", action="store_true", help="use legacy one-worker runtime")
     parser.add_argument("--multi-agent", action="store_true", help="use legacy supervisor-worker runtime")
@@ -419,6 +477,208 @@ def main() -> int:
         report = run_full_audit()
         print(json.dumps(report, indent=2))
         return 0 if report.get("ok") else 1
+
+    if args.capabilities:
+        from sophyane.capabilities import capability_matrix, format_capability_report
+
+        if args.agent_json:
+            print(json.dumps(capability_matrix(), indent=2))
+        else:
+            print(format_capability_report())
+        return 0
+
+    if args.skills:
+        from sophyane.skills import list_skills
+
+        print(json.dumps({"ok": True, "skills": list_skills()}, indent=2))
+        return 0
+    if args.skill:
+        from sophyane.skills import apply_skill_prompt
+
+        print(json.dumps(apply_skill_prompt(str(args.skill), str(args.skill_prompt or args.ask or "help")), indent=2))
+        return 0
+
+    if args.rag_status:
+        from sophyane.rag import status as rag_status
+
+        print(json.dumps(rag_status(), indent=2))
+        return 0
+    if args.rag_add:
+        from sophyane.rag import add_document
+
+        print(json.dumps(add_document(str(args.rag_add)), indent=2))
+        return 0
+    if args.rag_query:
+        from sophyane.rag import query as rag_query
+
+        print(json.dumps(rag_query(str(args.rag_query)), indent=2))
+        return 0
+
+    if args.schedule_list:
+        from sophyane.scheduler import list_jobs
+
+        print(json.dumps(list_jobs(), indent=2))
+        return 0
+    if args.schedule_run:
+        from sophyane.scheduler import run_due
+
+        print(json.dumps(run_due(execute=True), indent=2))
+        return 0
+    if args.schedule:
+        from sophyane.scheduler import schedule_job
+
+        print(
+            json.dumps(
+                schedule_job(
+                    str(args.schedule),
+                    str(args.schedule_prompt or "heartbeat"),
+                    every_sec=int(args.schedule_every),
+                ),
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.budget_reset:
+        from sophyane.budget import reset_usage
+
+        print(json.dumps(reset_usage(), indent=2))
+        return 0
+    if args.budget_status:
+        from sophyane.budget import status as budget_status
+
+        print(json.dumps(budget_status(), indent=2))
+        return 0
+
+    if args.hitl_list:
+        from sophyane.hitl import list_pending
+
+        print(json.dumps(list_pending(), indent=2))
+        return 0
+    if args.hitl_request:
+        from sophyane.hitl import request_approval
+
+        print(json.dumps(request_approval(str(args.hitl_request), detail=str(args.skill_prompt or "")), indent=2))
+        return 0
+    if args.approve:
+        from sophyane.hitl import resolve
+
+        print(json.dumps(resolve(str(args.approve), approve=True), indent=2))
+        return 0
+    if args.deny:
+        from sophyane.hitl import resolve
+
+        print(json.dumps(resolve(str(args.deny), approve=False), indent=2))
+        return 0
+
+    if args.trace_list:
+        from sophyane.observability import list_traces
+
+        print(json.dumps(list_traces(), indent=2))
+        return 0
+
+    if args.repl or args.eval:
+        from sophyane.interpreter import run_python
+
+        print(json.dumps(run_python(str(args.repl or args.eval)), indent=2))
+        return 0
+
+    if args.mcp_list:
+        from sophyane.mcp_bridge import list_tools
+
+        print(json.dumps(list_tools(), indent=2))
+        return 0
+    if args.mcp_call:
+        from sophyane.mcp_bridge import call_tool
+
+        try:
+            params = json.loads(args.mcp_args or "{}")
+        except json.JSONDecodeError:
+            params = {}
+        print(json.dumps(call_tool(str(args.mcp_call), params if isinstance(params, dict) else {}), indent=2))
+        return 0
+
+    if args.permissions_status:
+        from sophyane.permissions import get_profile
+
+        print(json.dumps(get_profile(), indent=2))
+        return 0
+    if args.permissions:
+        from sophyane.permissions import set_profile
+
+        print(json.dumps(set_profile(str(args.permissions)), indent=2))
+        return 0
+
+    if args.checkpoint_list:
+        from sophyane.checkpoint import list_checkpoints
+
+        print(json.dumps(list_checkpoints(), indent=2))
+        return 0
+
+    if args.notify_test:
+        from sophyane.notifications import notify
+
+        print(json.dumps(notify("Sophyane ready", "Notification channel test"), indent=2))
+        return 0
+
+    if args.voice_status:
+        from sophyane.multimodal import voice_status
+
+        print(json.dumps(voice_status(), indent=2))
+        return 0
+    if args.image:
+        from sophyane.multimodal import describe_image
+
+        print(json.dumps(describe_image(str(args.image)), indent=2))
+        return 0
+
+    if args.ask:
+        from sophyane.expert.answer import answer_tough_question
+
+        generate = None
+        try:
+            from sophyane.config import load_config
+            from sophyane.main import create_provider
+
+            provider = create_provider(load_config())
+
+            def generate(prompt: str, system: str) -> str:
+                return provider.generate(prompt, system)
+        except Exception:  # noqa: BLE001
+            generate = None
+        result = answer_tough_question(
+            str(args.ask),
+            generate=generate,
+            mode="hybrid" if generate else "expert",
+        )
+        print(result["answer"])
+        return 0
+
+    if args.exam_tough100:
+        from sophyane.expert.exam import run_exam
+
+        report = run_exam(
+            mode="expert" if args.expert_only else str(args.exam_mode),
+            limit=int(args.exam_limit),
+            with_llm=not args.expert_only and args.exam_mode != "expert",
+        )
+        summary = {
+            k: report[k]
+            for k in (
+                "ok",
+                "version",
+                "mode",
+                "total",
+                "passed",
+                "pass_rate",
+                "avg_score",
+                "elapsed_sec",
+                "by_category",
+                "failures",
+            )
+        }
+        print(json.dumps(summary, indent=2))
+        return 0 if float(report.get("pass_rate") or 0) >= 80 else 1
 
     if args.train_build_core:
         from sophyane.continual.engine import ensure_train_core

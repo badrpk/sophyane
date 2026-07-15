@@ -1,0 +1,30 @@
+{
+  "passed": true,
+  "verification_reasons": [],
+  "execution": {
+    "workspace": "/tmp/tmp9laopj50",
+    "files": [
+      {
+        "path": "/tmp/tmp9laopj50/demo.py",
+        "size": 28,
+        "sha256": "cae8cfa6f86cb112f69b0b746cb4df98f0c0075822242b5a29491f87df1089c1"
+      }
+    ],
+    "commands": [
+      {
+        "argv": [
+          "/home/badrpk/.local/share/sophyane/venv/bin/python",
+          "demo.py"
+        ],
+        "cwd": "/tmp/tmp9laopj50",
+        "exit_code": 0,
+        "stdout": "verified-execution\n",
+        "stderr": "",
+        "started_at": 1784119287.5123415,
+        "finished_at": 1784119287.5482795,
+        "timed_out": false
+      }
+    ],
+    "verified": true
+  }
+}

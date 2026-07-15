@@ -2,6 +2,25 @@
 
 Sophyane is a lightweight, multi-provider AI harness with persistent memory, safe local tools, repository awareness, provider plugins, diagnostics, and a mobile-friendly browser interface.
 
+
+## Full agent capabilities (v17+)
+
+```bash
+# Always-latest public install
+curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
+
+sophyane --capabilities   # full modern-agent matrix
+sophyane --skills
+sophyane --rag-add README.md && sophyane --rag-query "agent"
+sophyane --repl 'print(2+2)'
+sophyane --mcp-list
+sophyane --schedule-list
+sophyane --budget-status
+sophyane --hitl-list
+```
+
+See [docs/AGENT_CAPABILITIES.md](docs/AGENT_CAPABILITIES.md).
+
 ## Why Sophyane
 
 - **Grok-style CLI** — banner, slash commands (`/help`, `/model`, `/status`, `/doctor`, `/new`, `/quit`, …), spinner, session scrollback

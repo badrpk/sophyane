@@ -1,0 +1,42 @@
+{
+  "passed": true,
+  "checks": {
+    "tool_registry": true,
+    "model_registry_and_fallback": true,
+    "context_management": true,
+    "guardrails": true,
+    "agent_loop": true,
+    "verification_steps": true
+  },
+  "result": {
+    "verified": true,
+    "iterations": 2,
+    "model": "fallback",
+    "trace": [
+      {
+        "step": "model",
+        "iteration": 1,
+        "model": "fallback",
+        "duration_ms": 0.02617499922052957
+      },
+      {
+        "step": "verify",
+        "iteration": 1,
+        "passed": false,
+        "feedback": "output must contain verified-answer=42"
+      },
+      {
+        "step": "model",
+        "iteration": 2,
+        "model": "fallback",
+        "duration_ms": 0.01073099974746583
+      },
+      {
+        "step": "verify",
+        "iteration": 2,
+        "passed": true,
+        "feedback": "output must contain verified-answer=42"
+      }
+    ]
+  }
+}

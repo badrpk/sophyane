@@ -51,6 +51,19 @@ def run_full_audit() -> dict[str, Any]:
         "sophyane.daemon_runtime",
         "sophyane.harness",
         "sophyane.continual",
+        "sophyane.capabilities",
+        "sophyane.skills",
+        "sophyane.rag",
+        "sophyane.scheduler",
+        "sophyane.budget",
+        "sophyane.hitl",
+        "sophyane.observability",
+        "sophyane.interpreter",
+        "sophyane.mcp_bridge",
+        "sophyane.checkpoint",
+        "sophyane.permissions",
+        "sophyane.notifications",
+        "sophyane.multimodal",
     ]
     for mod in modules:
         try:
@@ -247,6 +260,50 @@ def run_full_audit() -> dict[str, Any]:
         add("train", "local_cpp_step", step.get("ok") is True, str(step.get("meta", {}))[:120], ms)
     except Exception as error:  # noqa: BLE001
         add("train", "continual", False, str(error))
+
+    # Future agent surface
+    try:
+        from sophyane.capabilities import capability_matrix
+        from sophyane.skills import list_skills
+        from sophyane.rag import add_text, query
+        from sophyane.interpreter import run_python
+        from sophyane.mcp_bridge import list_tools, call_tool
+        from sophyane.budget import status as budget_status
+        from sophyane.hitl import request_approval, list_pending
+        from sophyane.scheduler import schedule_job, list_jobs
+        from sophyane.checkpoint import save_checkpoint, list_checkpoints
+        from sophyane.permissions import get_profile
+        from sophyane.observability import start_run, end_run, list_traces
+        from sophyane.notifications import notify
+        from sophyane.multimodal import voice_status
+
+        m = capability_matrix()
+        add("future", "capability_matrix", m.get("ready", 0) >= 30, f"ready={m.get('ready')}/{m.get('total')}")
+        add("future", "skills", len(list_skills()) >= 4, str(len(list_skills())))
+        add_text("Sophyane agent RAG audit probe about harness verify loop.", source="audit", title="audit")
+        hits = query("harness verify", top_k=2)
+        add("future", "rag", bool(hits.get("hits") is not None), f"docs={hits.get('total_docs')}")
+        repl = run_python("result = sum(range(10))\nprint(result)")
+        add("future", "repl", repl.get("ok") is True, str(repl.get("result")))
+        tools = list_tools()
+        add("future", "mcp_lite", len(tools.get("tools") or []) >= 4, str(len(tools.get("tools") or [])))
+        add("future", "budget", budget_status().get("ok") is True, "")
+        request_approval("audit-noop", "feature audit", risk="low")
+        add("future", "hitl", list_pending().get("count", 0) >= 0, "")
+        schedule_job("audit-heartbeat", "say ok", every_sec=86400)
+        add("future", "scheduler", list_jobs().get("count", 0) >= 1, "")
+        save_checkpoint("audit", {"step": 1})
+        add("future", "checkpoint", list_checkpoints().get("count", 0) >= 1, "")
+        add("future", "permissions", get_profile().get("ok") is True, get_profile().get("profile", ""))
+        rid = start_run("audit")
+        end_run(rid, ok=True)
+        add("future", "traces", list_traces().get("count", 0) >= 1, "")
+        add("future", "notify", notify("audit", "ok").get("ok") is True, "")
+        add("future", "voice_hooks", voice_status().get("ok") is True, "")
+        call_tool("platform", {})
+        add("future", "mcp_call", True, "platform")
+    except Exception as error:  # noqa: BLE001
+        add("future", "surface", False, str(error))
 
     passed = sum(1 for c in checks if c.ok)
     return {

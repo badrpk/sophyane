@@ -1,0 +1,2134 @@
+{
+  "ok": true,
+  "version": "17.0.0",
+  "mode": "expert",
+  "total": 100,
+  "passed": 100,
+  "pass_rate": 100.0,
+  "avg_score": 0.852,
+  "elapsed_sec": 0.01,
+  "by_category": {
+    "harness": {
+      "n": 10,
+      "pass": 10,
+      "avg_score": 0.732,
+      "pass_rate": 100.0
+    },
+    "tools": {
+      "n": 10,
+      "pass": 10,
+      "avg_score": 0.805,
+      "pass_rate": 100.0
+    },
+    "providers": {
+      "n": 10,
+      "pass": 10,
+      "avg_score": 0.85,
+      "pass_rate": 100.0
+    },
+    "memory": {
+      "n": 10,
+      "pass": 10,
+      "avg_score": 0.91,
+      "pass_rate": 100.0
+    },
+    "verify": {
+      "n": 10,
+      "pass": 10,
+      "avg_score": 0.805,
+      "pass_rate": 100.0
+    },
+    "multiagent": {
+      "n": 10,
+      "pass": 10,
+      "avg_score": 0.82,
+      "pass_rate": 100.0
+    },
+    "coding": {
+      "n": 10,
+      "pass": 10,
+      "avg_score": 0.835,
+      "pass_rate": 100.0
+    },
+    "systems": {
+      "n": 10,
+      "pass": 10,
+      "avg_score": 0.895,
+      "pass_rate": 100.0
+    },
+    "ops": {
+      "n": 10,
+      "pass": 10,
+      "avg_score": 0.88,
+      "pass_rate": 100.0
+    },
+    "hardcode": {
+      "n": 10,
+      "pass": 10,
+      "avg_score": 0.985,
+      "pass_rate": 100.0
+    }
+  },
+  "failures": [],
+  "results": [
+    {
+      "id": 1,
+      "cat": "harness",
+      "q": "Design an agent harness loop with plan\u2192act\u2192observe\u2192verify. What state must persist across iterations and how do you prevent infinite loops?",
+      "used": "expert",
+      "scoring": {
+        "score": 0.875,
+        "passed": true,
+        "keys_hit": [
+          "plan",
+          "verify",
+          "max",
+          "iteration",
+          "trace"
+        ],
+        "keys_miss": [
+          "state"
+        ],
+        "length": 1026
+      },
+      "answer_preview": "Loop: plan (JSON) \u2192 act (tools) \u2192 observe \u2192 verify \u2192 repair/stop. Persist: goal, scratchpad, tool_trace, file digests, budgets. Cap with max_iterations, no-progress stop, and nested timeouts. Emit a full trace for post-mortems.\n\nAgent harness core loop: (1) plan with a strict JSON schema, (2) act via registered tools only, (3) observe structured tool results, (4) verify with deterministic checks ("
+    },
+    {
+      "id": 2,
+      "cat": "harness",
+      "q": "How should a harness implement tool-call approval for destructive shell commands without blocking safe reads?",
+      "used": "expert",
+      "scoring": {
+        "score": 0.55,
+        "passed": true,
+        "keys_hit": [
+          "approval",
+          "destructive"
+        ],
+        "keys_miss": [
+          "allowlist",
+          "sandbox",
+          "policy"
+        ],
+        "length": 797
+      },
+      "answer_preview": "Agent harness core loop: (1) plan with a strict JSON schema, (2) act via registered tools only, (3) observe structured tool results, (4) verify with deterministic checks (tests/lint/patterns), (5) repair or stop. Persist across iterations: run_id, goal, scratchpad, tool_trace[], open_todos, file digests, budget counters (iterations, tokens, wall time). Prevent infinite loops with max_iterations, n"
+    },
+    {
+      "id": 3,
+      "cat": "harness",
+      "q": "Explain ContextManager with a hard char budget: eviction policy, pin messages, and summarization strategy.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "budget",
+          "evict",
+          "summar",
+          "pin",
+          "priority"
+        ],
+        "keys_miss": [],
+        "length": 797
+      },
+      "answer_preview": "Agent harness core loop: (1) plan with a strict JSON schema, (2) act via registered tools only, (3) observe structured tool results, (4) verify with deterministic checks (tests/lint/patterns), (5) repair or stop. Persist across iterations: run_id, goal, scratchpad, tool_trace[], open_todos, file digests, budget counters (iterations, tokens, wall time). Prevent infinite loops with max_iterations, n"
+    },
+    {
+      "id": 4,
+      "cat": "harness",
+      "q": "ModelRegistry with priorities: how do you fail over from a primary API to local GGUF mid-request?",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "priority",
+          "provider",
+          "error"
+        ],
+        "keys_miss": [
+          "fallback",
+          "retry"
+        ],
+        "length": 1017
+      },
+      "answer_preview": "ModelRegistry orders providers by priority. On ProviderError (quota/credit/timeout), mark primary failed for this run and continue to next. Local GGUF is last-resort always-available backend after open-model bootstrap.\n\nAgent harness core loop: (1) plan with a strict JSON schema, (2) act via registered tools only, (3) observe structured tool results, (4) verify with deterministic checks (tests/lin"
+    },
+    {
+      "id": 5,
+      "cat": "harness",
+      "q": "What is a VerificationResult and why must verification be deterministic for coding agents?",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "verify",
+          "determin",
+          "test"
+        ],
+        "keys_miss": [
+          "assert",
+          "pass"
+        ],
+        "length": 797
+      },
+      "answer_preview": "Agent harness core loop: (1) plan with a strict JSON schema, (2) act via registered tools only, (3) observe structured tool results, (4) verify with deterministic checks (tests/lint/patterns), (5) repair or stop. Persist across iterations: run_id, goal, scratchpad, tool_trace[], open_todos, file digests, budget counters (iterations, tokens, wall time). Prevent infinite loops with max_iterations, n"
+    },
+    {
+      "id": 6,
+      "cat": "harness",
+      "q": "Design guardrails that block `rm -rf /` and path escape outside workspace root.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.55,
+        "passed": true,
+        "keys_hit": [
+          "guardrail",
+          "path"
+        ],
+        "keys_miss": [
+          "workspace",
+          "block",
+          "normalize"
+        ],
+        "length": 797
+      },
+      "answer_preview": "Agent harness core loop: (1) plan with a strict JSON schema, (2) act via registered tools only, (3) observe structured tool results, (4) verify with deterministic checks (tests/lint/patterns), (5) repair or stop. Persist across iterations: run_id, goal, scratchpad, tool_trace[], open_todos, file digests, budget counters (iterations, tokens, wall time). Prevent infinite loops with max_iterations, n"
+    },
+    {
+      "id": 7,
+      "cat": "harness",
+      "q": "How do you structure harness traces for post-mortem of a failed multi-step coding task?",
+      "used": "expert",
+      "scoring": {
+        "score": 0.55,
+        "passed": true,
+        "keys_hit": [
+          "trace",
+          "tool"
+        ],
+        "keys_miss": [
+          "step",
+          "timestamp",
+          "error"
+        ],
+        "length": 797
+      },
+      "answer_preview": "Agent harness core loop: (1) plan with a strict JSON schema, (2) act via registered tools only, (3) observe structured tool results, (4) verify with deterministic checks (tests/lint/patterns), (5) repair or stop. Persist across iterations: run_id, goal, scratchpad, tool_trace[], open_todos, file digests, budget counters (iterations, tokens, wall time). Prevent infinite loops with max_iterations, n"
+    },
+    {
+      "id": 8,
+      "cat": "harness",
+      "q": "Compare ReAct vs plan-and-execute harness topologies for long coding tasks.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "react",
+          "plan",
+          "execute",
+          "long"
+        ],
+        "keys_miss": [
+          "trade"
+        ],
+        "length": 797
+      },
+      "answer_preview": "Agent harness core loop: (1) plan with a strict JSON schema, (2) act via registered tools only, (3) observe structured tool results, (4) verify with deterministic checks (tests/lint/patterns), (5) repair or stop. Persist across iterations: run_id, goal, scratchpad, tool_trace[], open_todos, file digests, budget counters (iterations, tokens, wall time). Prevent infinite loops with max_iterations, n"
+    },
+    {
+      "id": 9,
+      "cat": "harness",
+      "q": "How should timeouts be applied at tool, model, and whole-run levels?",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "timeout",
+          "tool",
+          "model",
+          "budget"
+        ],
+        "keys_miss": [
+          "cancel"
+        ],
+        "length": 797
+      },
+      "answer_preview": "Agent harness core loop: (1) plan with a strict JSON schema, (2) act via registered tools only, (3) observe structured tool results, (4) verify with deterministic checks (tests/lint/patterns), (5) repair or stop. Persist across iterations: run_id, goal, scratchpad, tool_trace[], open_todos, file digests, budget counters (iterations, tokens, wall time). Prevent infinite loops with max_iterations, n"
+    },
+    {
+      "id": 10,
+      "cat": "harness",
+      "q": "Specify a JSON contract for planner output that a strict parser can validate before tools run.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "json",
+          "schema",
+          "plan"
+        ],
+        "keys_miss": [
+          "action",
+          "valid"
+        ],
+        "length": 797
+      },
+      "answer_preview": "Agent harness core loop: (1) plan with a strict JSON schema, (2) act via registered tools only, (3) observe structured tool results, (4) verify with deterministic checks (tests/lint/patterns), (5) repair or stop. Persist across iterations: run_id, goal, scratchpad, tool_trace[], open_todos, file digests, budget counters (iterations, tokens, wall time). Prevent infinite loops with max_iterations, n"
+    },
+    {
+      "id": 11,
+      "cat": "tools",
+      "q": "Implement a safe file_write tool: atomic write, size caps, binary rejection, path jail.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "atomic",
+          "path",
+          "size",
+          "jail",
+          "temp"
+        ],
+        "keys_miss": [],
+        "length": 813
+      },
+      "answer_preview": "Resolve path under workspace; reject escapes. Refuse binary/huge payloads. Write to *.tmp, fsync, os.replace for atomicity. Return {ok,path,bytes}.\n\nTools must be schema-typed, path-jailed to workspace, size-capped, and timeout-bounded. Prefer allowlists for shell; never default-enable force-push. file_write uses temp+fsync+rename (atomic). search_code uses ripgrep with max matches and secret reda"
+    },
+    {
+      "id": 12,
+      "cat": "tools",
+      "q": "Design shell tool with allowlisted commands and argument sanitization for a coding agent.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "allowlist",
+          "shell",
+          "timeout"
+        ],
+        "keys_miss": [
+          "sanitize",
+          "escape"
+        ],
+        "length": 664
+      },
+      "answer_preview": "Tools must be schema-typed, path-jailed to workspace, size-capped, and timeout-bounded. Prefer allowlists for shell; never default-enable force-push. file_write uses temp+fsync+rename (atomic). search_code uses ripgrep with max matches and secret redaction. Network fetch blocks link-local/metadata SSRF (169.254.169.254, localhost unless allowed). Return structured JSON for machine-critical results"
+    },
+    {
+      "id": 13,
+      "cat": "tools",
+      "q": "How do you expose git status/diff/commit tools without allowing force-push by default?",
+      "used": "expert",
+      "scoring": {
+        "score": 0.55,
+        "passed": true,
+        "keys_hit": [
+          "force",
+          "diff"
+        ],
+        "keys_miss": [
+          "git",
+          "deny",
+          "commit"
+        ],
+        "length": 664
+      },
+      "answer_preview": "Tools must be schema-typed, path-jailed to workspace, size-capped, and timeout-bounded. Prefer allowlists for shell; never default-enable force-push. file_write uses temp+fsync+rename (atomic). search_code uses ripgrep with max matches and secret redaction. Network fetch blocks link-local/metadata SSRF (169.254.169.254, localhost unless allowed). Return structured JSON for machine-critical results"
+    },
+    {
+      "id": 14,
+      "cat": "tools",
+      "q": "Tool registry design: typed args, schema, error taxonomy, idempotency keys.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.55,
+        "passed": true,
+        "keys_hit": [
+          "schema",
+          "type"
+        ],
+        "keys_miss": [
+          "error",
+          "idempot",
+          "registry"
+        ],
+        "length": 664
+      },
+      "answer_preview": "Tools must be schema-typed, path-jailed to workspace, size-capped, and timeout-bounded. Prefer allowlists for shell; never default-enable force-push. file_write uses temp+fsync+rename (atomic). search_code uses ripgrep with max matches and secret redaction. Network fetch blocks link-local/metadata SSRF (169.254.169.254, localhost unless allowed). Return structured JSON for machine-critical results"
+    },
+    {
+      "id": 15,
+      "cat": "tools",
+      "q": "When should a tool return structured JSON vs free text to the model?",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "json",
+          "structure",
+          "parse",
+          "model"
+        ],
+        "keys_miss": [
+          "text"
+        ],
+        "length": 664
+      },
+      "answer_preview": "Tools must be schema-typed, path-jailed to workspace, size-capped, and timeout-bounded. Prefer allowlists for shell; never default-enable force-push. file_write uses temp+fsync+rename (atomic). search_code uses ripgrep with max matches and secret redaction. Network fetch blocks link-local/metadata SSRF (169.254.169.254, localhost unless allowed). Return structured JSON for machine-critical results"
+    },
+    {
+      "id": 16,
+      "cat": "tools",
+      "q": "Design a search_code tool using ripgrep with max matches and secret redaction.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "ripgrep",
+          "secret",
+          "max",
+          "redact",
+          "path"
+        ],
+        "keys_miss": [],
+        "length": 664
+      },
+      "answer_preview": "Tools must be schema-typed, path-jailed to workspace, size-capped, and timeout-bounded. Prefer allowlists for shell; never default-enable force-push. file_write uses temp+fsync+rename (atomic). search_code uses ripgrep with max matches and secret redaction. Network fetch blocks link-local/metadata SSRF (169.254.169.254, localhost unless allowed). Return structured JSON for machine-critical results"
+    },
+    {
+      "id": 17,
+      "cat": "tools",
+      "q": "How do you sandbox network tools (fetch URL) to prevent SSRF to link-local metadata?",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "ssrf",
+          "block",
+          "169.254",
+          "allow"
+        ],
+        "keys_miss": [
+          "dns"
+        ],
+        "length": 664
+      },
+      "answer_preview": "Tools must be schema-typed, path-jailed to workspace, size-capped, and timeout-bounded. Prefer allowlists for shell; never default-enable force-push. file_write uses temp+fsync+rename (atomic). search_code uses ripgrep with max matches and secret redaction. Network fetch blocks link-local/metadata SSRF (169.254.169.254, localhost unless allowed). Return structured JSON for machine-critical results"
+    },
+    {
+      "id": 18,
+      "cat": "tools",
+      "q": "Batching N independent tool calls: concurrency limits and partial failure handling.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "batch",
+          "concurr",
+          "partial",
+          "fail",
+          "limit"
+        ],
+        "keys_miss": [],
+        "length": 664
+      },
+      "answer_preview": "Tools must be schema-typed, path-jailed to workspace, size-capped, and timeout-bounded. Prefer allowlists for shell; never default-enable force-push. file_write uses temp+fsync+rename (atomic). search_code uses ripgrep with max matches and secret redaction. Network fetch blocks link-local/metadata SSRF (169.254.169.254, localhost unless allowed). Return structured JSON for machine-critical results"
+    },
+    {
+      "id": 19,
+      "cat": "tools",
+      "q": "Explain apply_patch format (unified diff) and how to verify patch application.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.55,
+        "passed": true,
+        "keys_hit": [
+          "diff",
+          "patch"
+        ],
+        "keys_miss": [
+          "hunk",
+          "verify",
+          "apply"
+        ],
+        "length": 664
+      },
+      "answer_preview": "Tools must be schema-typed, path-jailed to workspace, size-capped, and timeout-bounded. Prefer allowlists for shell; never default-enable force-push. file_write uses temp+fsync+rename (atomic). search_code uses ripgrep with max matches and secret redaction. Network fetch blocks link-local/metadata SSRF (169.254.169.254, localhost unless allowed). Return structured JSON for machine-critical results"
+    },
+    {
+      "id": 20,
+      "cat": "tools",
+      "q": "Design test_runner tool that maps pytest failures back to file:line for the agent.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "pytest",
+          "fail",
+          "line",
+          "map",
+          "output"
+        ],
+        "keys_miss": [],
+        "length": 664
+      },
+      "answer_preview": "Tools must be schema-typed, path-jailed to workspace, size-capped, and timeout-bounded. Prefer allowlists for shell; never default-enable force-push. file_write uses temp+fsync+rename (atomic). search_code uses ripgrep with max matches and secret redaction. Network fetch blocks link-local/metadata SSRF (169.254.169.254, localhost unless allowed). Return structured JSON for machine-critical results"
+    },
+    {
+      "id": 21,
+      "cat": "providers",
+      "q": "Design multi-provider fallback chain: OpenAI\u2192xAI\u2192local_gguf with credit/quota detection.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "fallback",
+          "quota",
+          "credit",
+          "local",
+          "chain"
+        ],
+        "keys_miss": [],
+        "length": 776
+      },
+      "answer_preview": "FallbackProvider walks chain; classify HTTP 401/402/429 and billing strings as failover. After APIs fail, local_runtime ensures GGUF+llama-server then answers.\n\nMulti-provider chain: try frontier APIs, detect quota/credit/auth errors, fall back by priority to OpenRouter/local_gguf. Normalize messages to role/content. Coding mode uses low temperature and moderate max_tokens; chat can be higher. Ret"
+    },
+    {
+      "id": 22,
+      "cat": "providers",
+      "q": "How do you normalize chat completions across OpenAI-compatible and Anthropic messages APIs?",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "message",
+          "role",
+          "normalize",
+          "content",
+          "api"
+        ],
+        "keys_miss": [],
+        "length": 615
+      },
+      "answer_preview": "Multi-provider chain: try frontier APIs, detect quota/credit/auth errors, fall back by priority to OpenRouter/local_gguf. Normalize messages to role/content. Coding mode uses low temperature and moderate max_tokens; chat can be higher. Retry 429/503 with exponential backoff + full jitter; do not retry 4xx auth. Validate tool names against registry before invoke. Local GGUF: health-check llama-serv"
+    },
+    {
+      "id": 23,
+      "cat": "providers",
+      "q": "Streaming vs non-streaming: how should a harness surface tokens and still support tool calls?",
+      "used": "expert",
+      "scoring": {
+        "score": 0.55,
+        "passed": true,
+        "keys_hit": [
+          "token",
+          "tool"
+        ],
+        "keys_miss": [
+          "stream",
+          "buffer",
+          "delta"
+        ],
+        "length": 615
+      },
+      "answer_preview": "Multi-provider chain: try frontier APIs, detect quota/credit/auth errors, fall back by priority to OpenRouter/local_gguf. Normalize messages to role/content. Coding mode uses low temperature and moderate max_tokens; chat can be higher. Retry 429/503 with exponential backoff + full jitter; do not retry 4xx auth. Validate tool names against registry before invoke. Local GGUF: health-check llama-serv"
+    },
+    {
+      "id": 24,
+      "cat": "providers",
+      "q": "Local GGUF via llama-server: health check, context length, and OOM recovery strategy.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "gguf",
+          "context",
+          "oom",
+          "health",
+          "llama"
+        ],
+        "keys_miss": [],
+        "length": 615
+      },
+      "answer_preview": "Multi-provider chain: try frontier APIs, detect quota/credit/auth errors, fall back by priority to OpenRouter/local_gguf. Normalize messages to role/content. Coding mode uses low temperature and moderate max_tokens; chat can be higher. Retry 429/503 with exponential backoff + full jitter; do not retry 4xx auth. Validate tool names against registry before invoke. Local GGUF: health-check llama-serv"
+    },
+    {
+      "id": 25,
+      "cat": "providers",
+      "q": "Temperature and max_tokens policy for coding vs chat modes.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "temperature",
+          "max_tokens",
+          "coding",
+          "low"
+        ],
+        "keys_miss": [
+          "determin"
+        ],
+        "length": 615
+      },
+      "answer_preview": "Multi-provider chain: try frontier APIs, detect quota/credit/auth errors, fall back by priority to OpenRouter/local_gguf. Normalize messages to role/content. Coding mode uses low temperature and moderate max_tokens; chat can be higher. Retry 429/503 with exponential backoff + full jitter; do not retry 4xx auth. Validate tool names against registry before invoke. Local GGUF: health-check llama-serv"
+    },
+    {
+      "id": 26,
+      "cat": "providers",
+      "q": "Secure API key storage: env vars, keyring, never logging secrets.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "env",
+          "keyring",
+          "log"
+        ],
+        "keys_miss": [
+          "secret",
+          "redact"
+        ],
+        "length": 615
+      },
+      "answer_preview": "Multi-provider chain: try frontier APIs, detect quota/credit/auth errors, fall back by priority to OpenRouter/local_gguf. Normalize messages to role/content. Coding mode uses low temperature and moderate max_tokens; chat can be higher. Retry 429/503 with exponential backoff + full jitter; do not retry 4xx auth. Validate tool names against registry before invoke. Local GGUF: health-check llama-serv"
+    },
+    {
+      "id": 27,
+      "cat": "providers",
+      "q": "Retry with exponential backoff and jitter for 429/503; when not to retry.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "retry",
+          "backoff",
+          "429",
+          "jitter"
+        ],
+        "keys_miss": [
+          "idempot"
+        ],
+        "length": 615
+      },
+      "answer_preview": "Multi-provider chain: try frontier APIs, detect quota/credit/auth errors, fall back by priority to OpenRouter/local_gguf. Normalize messages to role/content. Coding mode uses low temperature and moderate max_tokens; chat can be higher. Retry 429/503 with exponential backoff + full jitter; do not retry 4xx auth. Validate tool names against registry before invoke. Local GGUF: health-check llama-serv"
+    },
+    {
+      "id": 28,
+      "cat": "providers",
+      "q": "How do you detect model hallucinated tool names not in the registry?",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "tool",
+          "registry",
+          "valid"
+        ],
+        "keys_miss": [
+          "hallucin",
+          "reject"
+        ],
+        "length": 615
+      },
+      "answer_preview": "Multi-provider chain: try frontier APIs, detect quota/credit/auth errors, fall back by priority to OpenRouter/local_gguf. Normalize messages to role/content. Coding mode uses low temperature and moderate max_tokens; chat can be higher. Retry 429/503 with exponential backoff + full jitter; do not retry 4xx auth. Validate tool names against registry before invoke. Local GGUF: health-check llama-serv"
+    },
+    {
+      "id": 29,
+      "cat": "providers",
+      "q": "Prompt caching / system prompt reuse across turns for cost and latency.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "cache",
+          "system",
+          "prompt",
+          "cost",
+          "reuse"
+        ],
+        "keys_miss": [],
+        "length": 615
+      },
+      "answer_preview": "Multi-provider chain: try frontier APIs, detect quota/credit/auth errors, fall back by priority to OpenRouter/local_gguf. Normalize messages to role/content. Coding mode uses low temperature and moderate max_tokens; chat can be higher. Retry 429/503 with exponential backoff + full jitter; do not retry 4xx auth. Validate tool names against registry before invoke. Local GGUF: health-check llama-serv"
+    },
+    {
+      "id": 30,
+      "cat": "providers",
+      "q": "Hardware-tier model selection: nano/micro/small RAM constraints for open models.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "tier",
+          "model",
+          "hardware",
+          "gguf"
+        ],
+        "keys_miss": [
+          "ram"
+        ],
+        "length": 615
+      },
+      "answer_preview": "Multi-provider chain: try frontier APIs, detect quota/credit/auth errors, fall back by priority to OpenRouter/local_gguf. Normalize messages to role/content. Coding mode uses low temperature and moderate max_tokens; chat can be higher. Retry 429/503 with exponential backoff + full jitter; do not retry 4xx auth. Validate tool names against registry before invoke. Local GGUF: health-check llama-serv"
+    },
+    {
+      "id": 31,
+      "cat": "memory",
+      "q": "SQLite memory store schema for sessions, messages, and embeddings-optional notes.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "sqlite",
+          "session",
+          "message",
+          "index"
+        ],
+        "keys_miss": [
+          "schema"
+        ],
+        "length": 659
+      },
+      "answer_preview": "Working memory = current context window (budgeted, pin system+goal, summarize old turns). Long-term = SQLite sessions/messages/notes. RepositoryIndex maps symbols, imports, tests, digests for planning. File digests use content hash to detect drift when files change without re-reading everything. Session isolation uses namespaces per tenant/user with wipe semantics for reset. Store tool outcome rec"
+    },
+    {
+      "id": 32,
+      "cat": "memory",
+      "q": "Working memory vs long-term memory: what goes where for a coding agent?",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "working",
+          "long",
+          "term",
+          "context"
+        ],
+        "keys_miss": [
+          "persist"
+        ],
+        "length": 659
+      },
+      "answer_preview": "Working memory = current context window (budgeted, pin system+goal, summarize old turns). Long-term = SQLite sessions/messages/notes. RepositoryIndex maps symbols, imports, tests, digests for planning. File digests use content hash to detect drift when files change without re-reading everything. Session isolation uses namespaces per tenant/user with wipe semantics for reset. Store tool outcome rec"
+    },
+    {
+      "id": 33,
+      "cat": "memory",
+      "q": "How to compress a 50-turn session into a brief that preserves open tasks and decisions?",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "summar",
+          "decision",
+          "task",
+          "compress",
+          "open"
+        ],
+        "keys_miss": [],
+        "length": 659
+      },
+      "answer_preview": "Working memory = current context window (budgeted, pin system+goal, summarize old turns). Long-term = SQLite sessions/messages/notes. RepositoryIndex maps symbols, imports, tests, digests for planning. File digests use content hash to detect drift when files change without re-reading everything. Session isolation uses namespaces per tenant/user with wipe semantics for reset. Store tool outcome rec"
+    },
+    {
+      "id": 34,
+      "cat": "memory",
+      "q": "Prevent prompt injection stored in memory from escalating on later turns.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "injection",
+          "sanitize",
+          "memory"
+        ],
+        "keys_miss": [
+          "trust",
+          "boundary"
+        ],
+        "length": 659
+      },
+      "answer_preview": "Working memory = current context window (budgeted, pin system+goal, summarize old turns). Long-term = SQLite sessions/messages/notes. RepositoryIndex maps symbols, imports, tests, digests for planning. File digests use content hash to detect drift when files change without re-reading everything. Session isolation uses namespaces per tenant/user with wipe semantics for reset. Store tool outcome rec"
+    },
+    {
+      "id": 35,
+      "cat": "memory",
+      "q": "Repository index: symbol map, imports, tests list \u2014 how does it feed coding plans?",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "index",
+          "symbol",
+          "import",
+          "test",
+          "plan"
+        ],
+        "keys_miss": [],
+        "length": 659
+      },
+      "answer_preview": "Working memory = current context window (budgeted, pin system+goal, summarize old turns). Long-term = SQLite sessions/messages/notes. RepositoryIndex maps symbols, imports, tests, digests for planning. File digests use content hash to detect drift when files change without re-reading everything. Session isolation uses namespaces per tenant/user with wipe semantics for reset. Store tool outcome rec"
+    },
+    {
+      "id": 36,
+      "cat": "memory",
+      "q": "Design digests for file content so the agent can detect drift without re-reading all files.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "hash",
+          "digest",
+          "drift",
+          "file",
+          "change"
+        ],
+        "keys_miss": [],
+        "length": 659
+      },
+      "answer_preview": "Working memory = current context window (budgeted, pin system+goal, summarize old turns). Long-term = SQLite sessions/messages/notes. RepositoryIndex maps symbols, imports, tests, digests for planning. File digests use content hash to detect drift when files change without re-reading everything. Session isolation uses namespaces per tenant/user with wipe semantics for reset. Store tool outcome rec"
+    },
+    {
+      "id": 37,
+      "cat": "memory",
+      "q": "Session isolation multi-tenant CLI: namespaces and wipe semantics.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "session",
+          "isolat",
+          "namespace",
+          "wipe",
+          "tenant"
+        ],
+        "keys_miss": [],
+        "length": 659
+      },
+      "answer_preview": "Working memory = current context window (budgeted, pin system+goal, summarize old turns). Long-term = SQLite sessions/messages/notes. RepositoryIndex maps symbols, imports, tests, digests for planning. File digests use content hash to detect drift when files change without re-reading everything. Session isolation uses namespaces per tenant/user with wipe semantics for reset. Store tool outcome rec"
+    },
+    {
+      "id": 38,
+      "cat": "memory",
+      "q": "When is vector search useful vs plain keyword/ripgrep in a small repo agent?",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "vector",
+          "ripgrep",
+          "small",
+          "semantic"
+        ],
+        "keys_miss": [
+          "keyword"
+        ],
+        "length": 659
+      },
+      "answer_preview": "Working memory = current context window (budgeted, pin system+goal, summarize old turns). Long-term = SQLite sessions/messages/notes. RepositoryIndex maps symbols, imports, tests, digests for planning. File digests use content hash to detect drift when files change without re-reading everything. Session isolation uses namespaces per tenant/user with wipe semantics for reset. Store tool outcome rec"
+    },
+    {
+      "id": 39,
+      "cat": "memory",
+      "q": "Store tool outcomes in memory: success/fail, side effects, rollback info.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "tool",
+          "outcome",
+          "rollback",
+          "side",
+          "effect"
+        ],
+        "keys_miss": [],
+        "length": 659
+      },
+      "answer_preview": "Working memory = current context window (budgeted, pin system+goal, summarize old turns). Long-term = SQLite sessions/messages/notes. RepositoryIndex maps symbols, imports, tests, digests for planning. File digests use content hash to detect drift when files change without re-reading everything. Session isolation uses namespaces per tenant/user with wipe semantics for reset. Store tool outcome rec"
+    },
+    {
+      "id": 40,
+      "cat": "memory",
+      "q": "GDPR-ish local memory: export and delete user data commands.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "export",
+          "delete",
+          "privacy",
+          "user"
+        ],
+        "keys_miss": [
+          "data"
+        ],
+        "length": 659
+      },
+      "answer_preview": "Working memory = current context window (budgeted, pin system+goal, summarize old turns). Long-term = SQLite sessions/messages/notes. RepositoryIndex maps symbols, imports, tests, digests for planning. File digests use content hash to detect drift when files change without re-reading everything. Session isolation uses namespaces per tenant/user with wipe semantics for reset. Store tool outcome rec"
+    },
+    {
+      "id": 41,
+      "cat": "verify",
+      "q": "Self-repair loop: run tests \u2192 parse failures \u2192 patch \u2192 retest with max iterations.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "test",
+          "repair",
+          "patch",
+          "iteration",
+          "fail"
+        ],
+        "keys_miss": [],
+        "length": 729
+      },
+      "answer_preview": "Run pytest \u2192 parse node ids/errors \u2192 scoped patch only failing files \u2192 retest. Stop at max_iterations or when verify passes. Never delete tests to pass.\n\nVerification must be deterministic: compile/import smoke, ruff/typecheck, unit tests, contract checks. Self-repair: parse failures \u2192 scoped patch \u2192 retest up to N times. Forbid deleting tests to greenwash. Cheap gates before expensive e2e. Prove "
+    },
+    {
+      "id": 42,
+      "cat": "verify",
+      "q": "Mechanical acceptance checks without LLM: compile, lint, unit tests, import smoke.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "compile",
+          "unit",
+          "import",
+          "smoke"
+        ],
+        "keys_miss": [
+          "lint"
+        ],
+        "length": 575
+      },
+      "answer_preview": "Verification must be deterministic: compile/import smoke, ruff/typecheck, unit tests, contract checks. Self-repair: parse failures \u2192 scoped patch \u2192 retest up to N times. Forbid deleting tests to greenwash. Cheap gates before expensive e2e. Prove minimal diffs and scan for secrets. Quarantine flaky tests with seeds/retries rather than infinite agent loops. Use verified-answer= patterns for closed-f"
+    },
+    {
+      "id": 43,
+      "cat": "verify",
+      "q": "How do you avoid reward hacking where the agent deletes failing tests?",
+      "used": "expert",
+      "scoring": {
+        "score": 0.55,
+        "passed": true,
+        "keys_hit": [
+          "test",
+          "diff"
+        ],
+        "keys_miss": [
+          "delete",
+          "guard",
+          "policy"
+        ],
+        "length": 575
+      },
+      "answer_preview": "Verification must be deterministic: compile/import smoke, ruff/typecheck, unit tests, contract checks. Self-repair: parse failures \u2192 scoped patch \u2192 retest up to N times. Forbid deleting tests to greenwash. Cheap gates before expensive e2e. Prove minimal diffs and scan for secrets. Quarantine flaky tests with seeds/retries rather than infinite agent loops. Use verified-answer= patterns for closed-f"
+    },
+    {
+      "id": 44,
+      "cat": "verify",
+      "q": "Property-based tests vs example tests for agent-generated code.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "property",
+          "example",
+          "generat",
+          "invariant",
+          "test"
+        ],
+        "keys_miss": [],
+        "length": 575
+      },
+      "answer_preview": "Verification must be deterministic: compile/import smoke, ruff/typecheck, unit tests, contract checks. Self-repair: parse failures \u2192 scoped patch \u2192 retest up to N times. Forbid deleting tests to greenwash. Cheap gates before expensive e2e. Prove minimal diffs and scan for secrets. Quarantine flaky tests with seeds/retries rather than infinite agent loops. Use verified-answer= patterns for closed-f"
+    },
+    {
+      "id": 45,
+      "cat": "verify",
+      "q": "Golden file / snapshot testing risks in autonomous coding agents.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "snapshot",
+          "golden",
+          "risk",
+          "drift",
+          "review"
+        ],
+        "keys_miss": [],
+        "length": 575
+      },
+      "answer_preview": "Verification must be deterministic: compile/import smoke, ruff/typecheck, unit tests, contract checks. Self-repair: parse failures \u2192 scoped patch \u2192 retest up to N times. Forbid deleting tests to greenwash. Cheap gates before expensive e2e. Prove minimal diffs and scan for secrets. Quarantine flaky tests with seeds/retries rather than infinite agent loops. Use verified-answer= patterns for closed-f"
+    },
+    {
+      "id": 46,
+      "cat": "verify",
+      "q": "Design a verifier that requires `verified-answer=` pattern for math tasks.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "verified",
+          "answer",
+          "pattern",
+          "check"
+        ],
+        "keys_miss": [
+          "output"
+        ],
+        "length": 575
+      },
+      "answer_preview": "Verification must be deterministic: compile/import smoke, ruff/typecheck, unit tests, contract checks. Self-repair: parse failures \u2192 scoped patch \u2192 retest up to N times. Forbid deleting tests to greenwash. Cheap gates before expensive e2e. Prove minimal diffs and scan for secrets. Quarantine flaky tests with seeds/retries rather than infinite agent loops. Use verified-answer= patterns for closed-f"
+    },
+    {
+      "id": 47,
+      "cat": "verify",
+      "q": "Flaky tests: quarantine strategy when agent loops on nondeterminism.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "flaky",
+          "quarantine",
+          "seed"
+        ],
+        "keys_miss": [
+          "retry",
+          "nondetermin"
+        ],
+        "length": 575
+      },
+      "answer_preview": "Verification must be deterministic: compile/import smoke, ruff/typecheck, unit tests, contract checks. Self-repair: parse failures \u2192 scoped patch \u2192 retest up to N times. Forbid deleting tests to greenwash. Cheap gates before expensive e2e. Prove minimal diffs and scan for secrets. Quarantine flaky tests with seeds/retries rather than infinite agent loops. Use verified-answer= patterns for closed-f"
+    },
+    {
+      "id": 48,
+      "cat": "verify",
+      "q": "Static analysis gates: typecheck, bandit, ruff \u2014 order of cheap vs expensive checks.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "ruff",
+          "type",
+          "cheap"
+        ],
+        "keys_miss": [
+          "static",
+          "order"
+        ],
+        "length": 575
+      },
+      "answer_preview": "Verification must be deterministic: compile/import smoke, ruff/typecheck, unit tests, contract checks. Self-repair: parse failures \u2192 scoped patch \u2192 retest up to N times. Forbid deleting tests to greenwash. Cheap gates before expensive e2e. Prove minimal diffs and scan for secrets. Quarantine flaky tests with seeds/retries rather than infinite agent loops. Use verified-answer= patterns for closed-f"
+    },
+    {
+      "id": 49,
+      "cat": "verify",
+      "q": "Contract tests for HTTP APIs generated by the agent.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.55,
+        "passed": true,
+        "keys_hit": [
+          "contract",
+          "test"
+        ],
+        "keys_miss": [
+          "http",
+          "schema",
+          "api"
+        ],
+        "length": 575
+      },
+      "answer_preview": "Verification must be deterministic: compile/import smoke, ruff/typecheck, unit tests, contract checks. Self-repair: parse failures \u2192 scoped patch \u2192 retest up to N times. Forbid deleting tests to greenwash. Cheap gates before expensive e2e. Prove minimal diffs and scan for secrets. Quarantine flaky tests with seeds/retries rather than infinite agent loops. Use verified-answer= patterns for closed-f"
+    },
+    {
+      "id": 50,
+      "cat": "verify",
+      "q": "Prove a patch is minimal: only intended files changed, no secrets committed.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "minimal",
+          "diff",
+          "secret",
+          "scope"
+        ],
+        "keys_miss": [
+          "file"
+        ],
+        "length": 575
+      },
+      "answer_preview": "Verification must be deterministic: compile/import smoke, ruff/typecheck, unit tests, contract checks. Self-repair: parse failures \u2192 scoped patch \u2192 retest up to N times. Forbid deleting tests to greenwash. Cheap gates before expensive e2e. Prove minimal diffs and scan for secrets. Quarantine flaky tests with seeds/retries rather than infinite agent loops. Use verified-answer= patterns for closed-f"
+    },
+    {
+      "id": 51,
+      "cat": "multiagent",
+      "q": "Supervisor-worker multi-agent: task graph, max workers, attempt limits.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "supervisor",
+          "worker",
+          "graph",
+          "attempt"
+        ],
+        "keys_miss": [
+          "max"
+        ],
+        "length": 492
+      },
+      "answer_preview": "Supervisor assigns workers with attempt limits and a task graph. Partition files or use locks/merge queues to avoid clobber. Roles: planner \u2192 coder \u2192 reviewer with artifact handoffs. Message bus for kernel modules. Detect deadlock via wait-for graphs and timeouts. Budget tokens per role. Map-reduce over files then aggregate. Human gates for deploy. Correlation IDs for attribution. Debate/consensus"
+    },
+    {
+      "id": 52,
+      "cat": "multiagent",
+      "q": "How do agents share a file workspace without clobbering each other's edits?",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "lock",
+          "merge",
+          "partition"
+        ],
+        "keys_miss": [
+          "workspace",
+          "conflict"
+        ],
+        "length": 492
+      },
+      "answer_preview": "Supervisor assigns workers with attempt limits and a task graph. Partition files or use locks/merge queues to avoid clobber. Roles: planner \u2192 coder \u2192 reviewer with artifact handoffs. Message bus for kernel modules. Detect deadlock via wait-for graphs and timeouts. Budget tokens per role. Map-reduce over files then aggregate. Human gates for deploy. Correlation IDs for attribution. Debate/consensus"
+    },
+    {
+      "id": 53,
+      "cat": "multiagent",
+      "q": "Debate/consensus pattern for architecture decisions between two agents.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "debate",
+          "consensus",
+          "architect",
+          "vote",
+          "critiq"
+        ],
+        "keys_miss": [],
+        "length": 492
+      },
+      "answer_preview": "Supervisor assigns workers with attempt limits and a task graph. Partition files or use locks/merge queues to avoid clobber. Roles: planner \u2192 coder \u2192 reviewer with artifact handoffs. Message bus for kernel modules. Detect deadlock via wait-for graphs and timeouts. Budget tokens per role. Map-reduce over files then aggregate. Human gates for deploy. Correlation IDs for attribution. Debate/consensus"
+    },
+    {
+      "id": 54,
+      "cat": "multiagent",
+      "q": "Message bus design for kernel modules (hardware, mesh, erp, agents).",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "bus",
+          "module",
+          "message",
+          "kernel"
+        ],
+        "keys_miss": [
+          "event"
+        ],
+        "length": 492
+      },
+      "answer_preview": "Supervisor assigns workers with attempt limits and a task graph. Partition files or use locks/merge queues to avoid clobber. Roles: planner \u2192 coder \u2192 reviewer with artifact handoffs. Message bus for kernel modules. Detect deadlock via wait-for graphs and timeouts. Budget tokens per role. Map-reduce over files then aggregate. Human gates for deploy. Correlation IDs for attribution. Debate/consensus"
+    },
+    {
+      "id": 55,
+      "cat": "multiagent",
+      "q": "Deadlock risks in multi-agent tool use and detection strategies.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "deadlock",
+          "timeout",
+          "detect",
+          "wait"
+        ],
+        "keys_miss": [
+          "cycle"
+        ],
+        "length": 492
+      },
+      "answer_preview": "Supervisor assigns workers with attempt limits and a task graph. Partition files or use locks/merge queues to avoid clobber. Roles: planner \u2192 coder \u2192 reviewer with artifact handoffs. Message bus for kernel modules. Detect deadlock via wait-for graphs and timeouts. Budget tokens per role. Map-reduce over files then aggregate. Human gates for deploy. Correlation IDs for attribution. Debate/consensus"
+    },
+    {
+      "id": 56,
+      "cat": "multiagent",
+      "q": "Role specialization: planner, coder, reviewer \u2014 handoff artifacts.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "planner",
+          "coder",
+          "reviewer",
+          "handoff",
+          "artifact"
+        ],
+        "keys_miss": [],
+        "length": 492
+      },
+      "answer_preview": "Supervisor assigns workers with attempt limits and a task graph. Partition files or use locks/merge queues to avoid clobber. Roles: planner \u2192 coder \u2192 reviewer with artifact handoffs. Message bus for kernel modules. Detect deadlock via wait-for graphs and timeouts. Budget tokens per role. Map-reduce over files then aggregate. Human gates for deploy. Correlation IDs for attribution. Debate/consensus"
+    },
+    {
+      "id": 57,
+      "cat": "multiagent",
+      "q": "Cost control: budget tokens per agent role on a PR-sized task.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "budget",
+          "token",
+          "role",
+          "limit"
+        ],
+        "keys_miss": [
+          "cost"
+        ],
+        "length": 492
+      },
+      "answer_preview": "Supervisor assigns workers with attempt limits and a task graph. Partition files or use locks/merge queues to avoid clobber. Roles: planner \u2192 coder \u2192 reviewer with artifact handoffs. Message bus for kernel modules. Detect deadlock via wait-for graphs and timeouts. Budget tokens per role. Map-reduce over files then aggregate. Human gates for deploy. Correlation IDs for attribution. Debate/consensus"
+    },
+    {
+      "id": 58,
+      "cat": "multiagent",
+      "q": "Fan-out map-reduce over many files: how to aggregate results safely.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "map",
+          "reduce",
+          "aggregat",
+          "file"
+        ],
+        "keys_miss": [
+          "fan"
+        ],
+        "length": 492
+      },
+      "answer_preview": "Supervisor assigns workers with attempt limits and a task graph. Partition files or use locks/merge queues to avoid clobber. Roles: planner \u2192 coder \u2192 reviewer with artifact handoffs. Message bus for kernel modules. Detect deadlock via wait-for graphs and timeouts. Budget tokens per role. Map-reduce over files then aggregate. Human gates for deploy. Correlation IDs for attribution. Debate/consensus"
+    },
+    {
+      "id": 59,
+      "cat": "multiagent",
+      "q": "Human-in-the-loop checkpoints for multi-agent production deploys.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "human",
+          "deploy",
+          "gate"
+        ],
+        "keys_miss": [
+          "approv",
+          "checkpoint"
+        ],
+        "length": 492
+      },
+      "answer_preview": "Supervisor assigns workers with attempt limits and a task graph. Partition files or use locks/merge queues to avoid clobber. Roles: planner \u2192 coder \u2192 reviewer with artifact handoffs. Message bus for kernel modules. Detect deadlock via wait-for graphs and timeouts. Budget tokens per role. Map-reduce over files then aggregate. Human gates for deploy. Correlation IDs for attribution. Debate/consensus"
+    },
+    {
+      "id": 60,
+      "cat": "multiagent",
+      "q": "Observability: per-agent spans, correlation IDs, failure attribution.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.55,
+        "passed": true,
+        "keys_hit": [
+          "correlat",
+          "attribut"
+        ],
+        "keys_miss": [
+          "span",
+          "observ",
+          "trace"
+        ],
+        "length": 492
+      },
+      "answer_preview": "Supervisor assigns workers with attempt limits and a task graph. Partition files or use locks/merge queues to avoid clobber. Roles: planner \u2192 coder \u2192 reviewer with artifact handoffs. Message bus for kernel modules. Detect deadlock via wait-for graphs and timeouts. Budget tokens per role. Map-reduce over files then aggregate. Human gates for deploy. Correlation IDs for attribution. Debate/consensus"
+    },
+    {
+      "id": 61,
+      "cat": "coding",
+      "q": "Write a Python function that applies a unified diff to a file with fuzzy context matching risks explained.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "diff",
+          "apply",
+          "context",
+          "fuzzy",
+          "fail"
+        ],
+        "keys_miss": [],
+        "length": 631
+      },
+      "answer_preview": "Coding agents: index repo \u2192 plan scoped edits \u2192 apply_patch \u2192 run tests \u2192 repair. Path jail with resolve()+relative_to(root). Unified diff apply risks fuzzy context mismatch \u2014 fail closed if hunks do not match. LRU caches need ordered dict + lock. SQLite: BEGIN IMMEDIATE for writers. C++17 RAII file mutex locks for concurrent mesh peers writing adapter.bin. Prefer asyncio for many HTTP waits; thre"
+    },
+    {
+      "id": 62,
+      "cat": "coding",
+      "q": "Implement a thread-safe LRU cache with max size and O(1) get/put sketch.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "lru",
+          "thread",
+          "lock",
+          "dict",
+          "order"
+        ],
+        "keys_miss": [],
+        "length": 760
+      },
+      "answer_preview": "Thread-safe LRU: OrderedDict + Lock; on get move_to_end; on put setitem+move; while len>max: popitem(last=False). O(1) average.\n\nCoding agents: index repo \u2192 plan scoped edits \u2192 apply_patch \u2192 run tests \u2192 repair. Path jail with resolve()+relative_to(root). Unified diff apply risks fuzzy context mismatch \u2014 fail closed if hunks do not match. LRU caches need ordered dict + lock. SQLite: BEGIN IMMEDIATE"
+    },
+    {
+      "id": 63,
+      "cat": "coding",
+      "q": "Design a transactional SQLite write pattern with BEGIN IMMEDIATE for agents.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.55,
+        "passed": true,
+        "keys_hit": [
+          "sqlite",
+          "begin"
+        ],
+        "keys_miss": [
+          "transaction",
+          "commit",
+          "rollback"
+        ],
+        "length": 631
+      },
+      "answer_preview": "Coding agents: index repo \u2192 plan scoped edits \u2192 apply_patch \u2192 run tests \u2192 repair. Path jail with resolve()+relative_to(root). Unified diff apply risks fuzzy context mismatch \u2014 fail closed if hunks do not match. LRU caches need ordered dict + lock. SQLite: BEGIN IMMEDIATE for writers. C++17 RAII file mutex locks for concurrent mesh peers writing adapter.bin. Prefer asyncio for many HTTP waits; thre"
+    },
+    {
+      "id": 64,
+      "cat": "coding",
+      "q": "C++17 RAII file lock for concurrent mesh peers writing adapter.bin.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "raii",
+          "lock",
+          "file",
+          "c++",
+          "mutex"
+        ],
+        "keys_miss": [],
+        "length": 631
+      },
+      "answer_preview": "Coding agents: index repo \u2192 plan scoped edits \u2192 apply_patch \u2192 run tests \u2192 repair. Path jail with resolve()+relative_to(root). Unified diff apply risks fuzzy context mismatch \u2014 fail closed if hunks do not match. LRU caches need ordered dict + lock. SQLite: BEGIN IMMEDIATE for writers. C++17 RAII file mutex locks for concurrent mesh peers writing adapter.bin. Prefer asyncio for many HTTP waits; thre"
+    },
+    {
+      "id": 65,
+      "cat": "coding",
+      "q": "Python asyncio vs threads for many slow HTTP provider calls in a harness.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "asyncio",
+          "thread",
+          "http",
+          "io",
+          "concurr"
+        ],
+        "keys_miss": [],
+        "length": 631
+      },
+      "answer_preview": "Coding agents: index repo \u2192 plan scoped edits \u2192 apply_patch \u2192 run tests \u2192 repair. Path jail with resolve()+relative_to(root). Unified diff apply risks fuzzy context mismatch \u2014 fail closed if hunks do not match. LRU caches need ordered dict + lock. SQLite: BEGIN IMMEDIATE for writers. C++17 RAII file mutex locks for concurrent mesh peers writing adapter.bin. Prefer asyncio for many HTTP waits; thre"
+    },
+    {
+      "id": 66,
+      "cat": "coding",
+      "q": "Implement exponential backoff in pure Python with full jitter.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.55,
+        "passed": true,
+        "keys_hit": [
+          "backoff",
+          "jitter"
+        ],
+        "keys_miss": [
+          "sleep",
+          "retry",
+          "random"
+        ],
+        "length": 631
+      },
+      "answer_preview": "Coding agents: index repo \u2192 plan scoped edits \u2192 apply_patch \u2192 run tests \u2192 repair. Path jail with resolve()+relative_to(root). Unified diff apply risks fuzzy context mismatch \u2014 fail closed if hunks do not match. LRU caches need ordered dict + lock. SQLite: BEGIN IMMEDIATE for writers. C++17 RAII file mutex locks for concurrent mesh peers writing adapter.bin. Prefer asyncio for many HTTP waits; thre"
+    },
+    {
+      "id": 67,
+      "cat": "coding",
+      "q": "Secure temp directory creation and cleanup for coding workspaces.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "temp",
+          "mkdtemp",
+          "cleanup",
+          "permission",
+          "secure"
+        ],
+        "keys_miss": [],
+        "length": 631
+      },
+      "answer_preview": "Coding agents: index repo \u2192 plan scoped edits \u2192 apply_patch \u2192 run tests \u2192 repair. Path jail with resolve()+relative_to(root). Unified diff apply risks fuzzy context mismatch \u2014 fail closed if hunks do not match. LRU caches need ordered dict + lock. SQLite: BEGIN IMMEDIATE for writers. C++17 RAII file mutex locks for concurrent mesh peers writing adapter.bin. Prefer asyncio for many HTTP waits; thre"
+    },
+    {
+      "id": 68,
+      "cat": "coding",
+      "q": "Parse pytest -q output to extract failed test node ids programmatically.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "pytest",
+          "parse",
+          "fail",
+          "node"
+        ],
+        "keys_miss": [
+          "regex"
+        ],
+        "length": 631
+      },
+      "answer_preview": "Coding agents: index repo \u2192 plan scoped edits \u2192 apply_patch \u2192 run tests \u2192 repair. Path jail with resolve()+relative_to(root). Unified diff apply risks fuzzy context mismatch \u2014 fail closed if hunks do not match. LRU caches need ordered dict + lock. SQLite: BEGIN IMMEDIATE for writers. C++17 RAII file mutex locks for concurrent mesh peers writing adapter.bin. Prefer asyncio for many HTTP waits; thre"
+    },
+    {
+      "id": 69,
+      "cat": "coding",
+      "q": "Design a content-addressed blob store for mesh shared storage.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "blob",
+          "content",
+          "address"
+        ],
+        "keys_miss": [
+          "hash",
+          "store"
+        ],
+        "length": 631
+      },
+      "answer_preview": "Coding agents: index repo \u2192 plan scoped edits \u2192 apply_patch \u2192 run tests \u2192 repair. Path jail with resolve()+relative_to(root). Unified diff apply risks fuzzy context mismatch \u2014 fail closed if hunks do not match. LRU caches need ordered dict + lock. SQLite: BEGIN IMMEDIATE for writers. C++17 RAII file mutex locks for concurrent mesh peers writing adapter.bin. Prefer asyncio for many HTTP waits; thre"
+    },
+    {
+      "id": 70,
+      "cat": "coding",
+      "q": "Write a pure-function pure Python JSON Schema-lite validator for planner actions.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "schema",
+          "valid",
+          "json"
+        ],
+        "keys_miss": [
+          "type",
+          "required"
+        ],
+        "length": 631
+      },
+      "answer_preview": "Coding agents: index repo \u2192 plan scoped edits \u2192 apply_patch \u2192 run tests \u2192 repair. Path jail with resolve()+relative_to(root). Unified diff apply risks fuzzy context mismatch \u2014 fail closed if hunks do not match. LRU caches need ordered dict + lock. SQLite: BEGIN IMMEDIATE for writers. C++17 RAII file mutex locks for concurrent mesh peers writing adapter.bin. Prefer asyncio for many HTTP waits; thre"
+    },
+    {
+      "id": 71,
+      "cat": "systems",
+      "q": "Why is PEFT/LoRA preferred over full fine-tune on edge devices for continual training?",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "lora",
+          "peft",
+          "edge",
+          "adapter"
+        ],
+        "keys_miss": [
+          "memory"
+        ],
+        "length": 734
+      },
+      "answer_preview": "LoRA/PEFT trains tiny A/B adapters; freezes base GGUF. Fits edge RAM/CPU; deltas federate cheaply via FedAvg without shipping full weights.\n\nEdge continual training uses PEFT/LoRA adapters, not full fine-tunes. FedAvg merges adapter deltas weighted by samples; reject base_hash mismatches. C++ train core for hot math; Python for orchestration. Mesh discovers LAN/USB peers. Appliance boot is idempot"
+    },
+    {
+      "id": 72,
+      "cat": "systems",
+      "q": "FedAvg over adapter deltas: weight by sample counts and detect base_hash mismatch.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "fedavg",
+          "weight",
+          "base_hash",
+          "mismatch",
+          "sample"
+        ],
+        "keys_miss": [],
+        "length": 593
+      },
+      "answer_preview": "Edge continual training uses PEFT/LoRA adapters, not full fine-tunes. FedAvg merges adapter deltas weighted by samples; reject base_hash mismatches. C++ train core for hot math; Python for orchestration. Mesh discovers LAN/USB peers. Appliance boot is idempotent when :8770/:8777 already listen. Network: DHCP ethernet + nmcli Wi-Fi. Q4_K_M GGUF trades quality for RAM. Hash-chain ledger for self-imp"
+    },
+    {
+      "id": 73,
+      "cat": "systems",
+      "q": "Hardware-efficient C++ train core vs Python numpy for edge SoCs \u2014 tradeoffs.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "c++",
+          "python",
+          "edge"
+        ],
+        "keys_miss": [
+          "memory",
+          "binary"
+        ],
+        "length": 593
+      },
+      "answer_preview": "Edge continual training uses PEFT/LoRA adapters, not full fine-tunes. FedAvg merges adapter deltas weighted by samples; reject base_hash mismatches. C++ train core for hot math; Python for orchestration. Mesh discovers LAN/USB peers. Appliance boot is idempotent when :8770/:8777 already listen. Network: DHCP ethernet + nmcli Wi-Fi. Q4_K_M GGUF trades quality for RAM. Hash-chain ledger for self-imp"
+    },
+    {
+      "id": 74,
+      "cat": "systems",
+      "q": "Mesh peer discovery on LAN + USB/ADB inventory for clone install.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "mesh",
+          "discover",
+          "usb",
+          "lan"
+        ],
+        "keys_miss": [
+          "adb"
+        ],
+        "length": 593
+      },
+      "answer_preview": "Edge continual training uses PEFT/LoRA adapters, not full fine-tunes. FedAvg merges adapter deltas weighted by samples; reject base_hash mismatches. C++ train core for hot math; Python for orchestration. Mesh discovers LAN/USB peers. Appliance boot is idempotent when :8770/:8777 already listen. Network: DHCP ethernet + nmcli Wi-Fi. Q4_K_M GGUF trades quality for RAM. Hash-chain ledger for self-imp"
+    },
+    {
+      "id": 75,
+      "cat": "systems",
+      "q": "Idempotent appliance boot when ports 8770/8777 already bound.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "idempot",
+          "port",
+          "reuse",
+          "eaddrinuse",
+          "boot"
+        ],
+        "keys_miss": [],
+        "length": 729
+      },
+      "answer_preview": "On EADDRINUSE, probe /health or /mesh/hello; if healthy, mark service reused=true instead of failing boot. Idempotent appliance start.\n\nEdge continual training uses PEFT/LoRA adapters, not full fine-tunes. FedAvg merges adapter deltas weighted by samples; reject base_hash mismatches. C++ train core for hot math; Python for orchestration. Mesh discovers LAN/USB peers. Appliance boot is idempotent w"
+    },
+    {
+      "id": 76,
+      "cat": "systems",
+      "q": "Ethernet DHCP and Wi-Fi bring-up sequence for headless SoC appliance.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "dhcp",
+          "ethernet",
+          "nmcli",
+          "network"
+        ],
+        "keys_miss": [
+          "wifi"
+        ],
+        "length": 593
+      },
+      "answer_preview": "Edge continual training uses PEFT/LoRA adapters, not full fine-tunes. FedAvg merges adapter deltas weighted by samples; reject base_hash mismatches. C++ train core for hot math; Python for orchestration. Mesh discovers LAN/USB peers. Appliance boot is idempotent when :8770/:8777 already listen. Network: DHCP ethernet + nmcli Wi-Fi. Q4_K_M GGUF trades quality for RAM. Hash-chain ledger for self-imp"
+    },
+    {
+      "id": 77,
+      "cat": "systems",
+      "q": "Quantization Q4_K_M GGUF: quality vs RAM and when to step up quant.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "q4",
+          "ram",
+          "quality",
+          "gguf"
+        ],
+        "keys_miss": [
+          "quant"
+        ],
+        "length": 593
+      },
+      "answer_preview": "Edge continual training uses PEFT/LoRA adapters, not full fine-tunes. FedAvg merges adapter deltas weighted by samples; reject base_hash mismatches. C++ train core for hot math; Python for orchestration. Mesh discovers LAN/USB peers. Appliance boot is idempotent when :8770/:8777 already listen. Network: DHCP ethernet + nmcli Wi-Fi. Q4_K_M GGUF trades quality for RAM. Hash-chain ledger for self-imp"
+    },
+    {
+      "id": 78,
+      "cat": "systems",
+      "q": "Process model: daemon threads for HTTP APIs in long-lived appliance process.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "daemon",
+          "thread",
+          "http",
+          "process",
+          "serve"
+        ],
+        "keys_miss": [],
+        "length": 593
+      },
+      "answer_preview": "Edge continual training uses PEFT/LoRA adapters, not full fine-tunes. FedAvg merges adapter deltas weighted by samples; reject base_hash mismatches. C++ train core for hot math; Python for orchestration. Mesh discovers LAN/USB peers. Appliance boot is idempotent when :8770/:8777 already listen. Network: DHCP ethernet + nmcli Wi-Fi. Q4_K_M GGUF trades quality for RAM. Hash-chain ledger for self-imp"
+    },
+    {
+      "id": 79,
+      "cat": "systems",
+      "q": "Hash-chained self-improvement ledger: append-only integrity checks.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "hash",
+          "chain",
+          "ledger",
+          "integrity"
+        ],
+        "keys_miss": [
+          "append"
+        ],
+        "length": 593
+      },
+      "answer_preview": "Edge continual training uses PEFT/LoRA adapters, not full fine-tunes. FedAvg merges adapter deltas weighted by samples; reject base_hash mismatches. C++ train core for hot math; Python for orchestration. Mesh discovers LAN/USB peers. Appliance boot is idempotent when :8770/:8777 already listen. Network: DHCP ethernet + nmcli Wi-Fi. Q4_K_M GGUF trades quality for RAM. Hash-chain ledger for self-imp"
+    },
+    {
+      "id": 80,
+      "cat": "systems",
+      "q": "Zero-dependency philosophy vs optional heavy ML stacks for installability.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "depend",
+          "optional",
+          "stdlib",
+          "install",
+          "portable"
+        ],
+        "keys_miss": [],
+        "length": 593
+      },
+      "answer_preview": "Edge continual training uses PEFT/LoRA adapters, not full fine-tunes. FedAvg merges adapter deltas weighted by samples; reject base_hash mismatches. C++ train core for hot math; Python for orchestration. Mesh discovers LAN/USB peers. Appliance boot is idempotent when :8770/:8777 already listen. Network: DHCP ethernet + nmcli Wi-Fi. Q4_K_M GGUF trades quality for RAM. Hash-chain ledger for self-imp"
+    },
+    {
+      "id": 81,
+      "cat": "ops",
+      "q": "Design install.sh that always installs the latest release/vX.Y.Z from GitHub.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "install",
+          "release",
+          "latest",
+          "git",
+          "version"
+        ],
+        "keys_miss": [],
+        "length": 705
+      },
+      "answer_preview": "install.sh: git ls-remote release/v* and tags, sort -V, pick latest, clone --branch depth 1, verify commit, venv, pip install ., symlink current, write wrappers.\n\ninstall.sh resolves latest release/vX.Y.Z (and tags), clones pinned commit, creates venv, pip installs package, wraps ~/.local/bin/sophyane. Doctor checks imports, version, provider, local model health. CI runs pytest multi-OS before tag"
+    },
+    {
+      "id": 82,
+      "cat": "ops",
+      "q": "venv isolation, pip upgrade, entrypoint wrappers in ~/.local/bin.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "venv",
+          "pip",
+          "bin"
+        ],
+        "keys_miss": [
+          "path",
+          "wrapper"
+        ],
+        "length": 542
+      },
+      "answer_preview": "install.sh resolves latest release/vX.Y.Z (and tags), clones pinned commit, creates venv, pip installs package, wraps ~/.local/bin/sophyane. Doctor checks imports, version, provider, local model health. CI runs pytest multi-OS before tag. Rollback pins previous release branch. Feature --audit scores subsystems. systemd user unit runs --boot --boot-foreground. Upgrades preserve ~/.config and memory"
+    },
+    {
+      "id": 83,
+      "cat": "ops",
+      "q": "Doctor command: what checks prove the harness is healthy post-install?",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "doctor",
+          "health",
+          "provider",
+          "import",
+          "version"
+        ],
+        "keys_miss": [],
+        "length": 542
+      },
+      "answer_preview": "install.sh resolves latest release/vX.Y.Z (and tags), clones pinned commit, creates venv, pip installs package, wraps ~/.local/bin/sophyane. Doctor checks imports, version, provider, local model health. CI runs pytest multi-OS before tag. Rollback pins previous release branch. Feature --audit scores subsystems. systemd user unit runs --boot --boot-foreground. Upgrades preserve ~/.config and memory"
+    },
+    {
+      "id": 84,
+      "cat": "ops",
+      "q": "CI matrix: OS targets and pytest gates before tagging a release.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "ci",
+          "pytest",
+          "os",
+          "tag",
+          "release"
+        ],
+        "keys_miss": [],
+        "length": 542
+      },
+      "answer_preview": "install.sh resolves latest release/vX.Y.Z (and tags), clones pinned commit, creates venv, pip installs package, wraps ~/.local/bin/sophyane. Doctor checks imports, version, provider, local model health. CI runs pytest multi-OS before tag. Rollback pins previous release branch. Feature --audit scores subsystems. systemd user unit runs --boot --boot-foreground. Upgrades preserve ~/.config and memory"
+    },
+    {
+      "id": 85,
+      "cat": "ops",
+      "q": "Rollback strategy if a bad release ships: pin previous release branch.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "rollback",
+          "pin",
+          "previous",
+          "release",
+          "branch"
+        ],
+        "keys_miss": [],
+        "length": 542
+      },
+      "answer_preview": "install.sh resolves latest release/vX.Y.Z (and tags), clones pinned commit, creates venv, pip installs package, wraps ~/.local/bin/sophyane. Doctor checks imports, version, provider, local model health. CI runs pytest multi-OS before tag. Rollback pins previous release branch. Feature --audit scores subsystems. systemd user unit runs --boot --boot-foreground. Upgrades preserve ~/.config and memory"
+    },
+    {
+      "id": 86,
+      "cat": "ops",
+      "q": "Logging: levels, secret redaction, rotating files for long appliance runs.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "log",
+          "redact",
+          "rotat",
+          "level",
+          "secret"
+        ],
+        "keys_miss": [],
+        "length": 542
+      },
+      "answer_preview": "install.sh resolves latest release/vX.Y.Z (and tags), clones pinned commit, creates venv, pip installs package, wraps ~/.local/bin/sophyane. Doctor checks imports, version, provider, local model health. CI runs pytest multi-OS before tag. Rollback pins previous release branch. Feature --audit scores subsystems. systemd user unit runs --boot --boot-foreground. Upgrades preserve ~/.config and memory"
+    },
+    {
+      "id": 87,
+      "cat": "ops",
+      "q": "Feature audit command that scores subsystem integration before ship.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "audit",
+          "feature",
+          "subsystem",
+          "score"
+        ],
+        "keys_miss": [
+          "pass"
+        ],
+        "length": 542
+      },
+      "answer_preview": "install.sh resolves latest release/vX.Y.Z (and tags), clones pinned commit, creates venv, pip installs package, wraps ~/.local/bin/sophyane. Doctor checks imports, version, provider, local model health. CI runs pytest multi-OS before tag. Rollback pins previous release branch. Feature --audit scores subsystems. systemd user unit runs --boot --boot-foreground. Upgrades preserve ~/.config and memory"
+    },
+    {
+      "id": 88,
+      "cat": "ops",
+      "q": "systemd user unit for sophyane --boot --boot-foreground.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "systemd",
+          "user",
+          "boot"
+        ],
+        "keys_miss": [
+          "service",
+          "restart"
+        ],
+        "length": 542
+      },
+      "answer_preview": "install.sh resolves latest release/vX.Y.Z (and tags), clones pinned commit, creates venv, pip installs package, wraps ~/.local/bin/sophyane. Doctor checks imports, version, provider, local model health. CI runs pytest multi-OS before tag. Rollback pins previous release branch. Feature --audit scores subsystems. systemd user unit runs --boot --boot-foreground. Upgrades preserve ~/.config and memory"
+    },
+    {
+      "id": 89,
+      "cat": "ops",
+      "q": "Upgrade path without deleting user config and memory databases.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "upgrade",
+          "config",
+          "memory",
+          "preserve"
+        ],
+        "keys_miss": [
+          "migrate"
+        ],
+        "length": 542
+      },
+      "answer_preview": "install.sh resolves latest release/vX.Y.Z (and tags), clones pinned commit, creates venv, pip installs package, wraps ~/.local/bin/sophyane. Doctor checks imports, version, provider, local model health. CI runs pytest multi-OS before tag. Rollback pins previous release branch. Feature --audit scores subsystems. systemd user unit runs --boot --boot-foreground. Upgrades preserve ~/.config and memory"
+    },
+    {
+      "id": 90,
+      "cat": "ops",
+      "q": "Public one-liner curl|sh trust model and how to pin commit for safety.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.7,
+        "passed": true,
+        "keys_hit": [
+          "curl",
+          "pin",
+          "commit"
+        ],
+        "keys_miss": [
+          "trust",
+          "checksum"
+        ],
+        "length": 542
+      },
+      "answer_preview": "install.sh resolves latest release/vX.Y.Z (and tags), clones pinned commit, creates venv, pip installs package, wraps ~/.local/bin/sophyane. Doctor checks imports, version, provider, local model health. CI runs pytest multi-OS before tag. Rollback pins previous release branch. Feature --audit scores subsystems. systemd user unit runs --boot --boot-foreground. Upgrades preserve ~/.config and memory"
+    },
+    {
+      "id": 91,
+      "cat": "hardcode",
+      "q": "Sketch C++ FedAvg of float vectors with sample weighting; complexity O(n*d).",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "fedavg",
+          "float",
+          "weight",
+          "loop",
+          "O("
+        ],
+        "keys_miss": [],
+        "length": 645
+      },
+      "answer_preview": "Implement algorithms with clear complexity O(n) / O(n*d), pure functions, and tests. Path jail: Path(root, user).resolve().relative_to(root.resolve()); reject `..` escapes. FedAvg float loop weighted. ReAct parse Thought/Action/Action Input via regex. Token bucket rate limit with refill. SQL: INDEX(session_id, created_at); SELECT \u2026 ORDER BY created_at DESC LIMIT N. DFS color states detect import g"
+    },
+    {
+      "id": 92,
+      "cat": "hardcode",
+      "q": "Python: path jail join that rejects `..` and absolute escapes under root.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "resolve",
+          "relative",
+          "root",
+          "reject",
+          ".."
+        ],
+        "keys_miss": [],
+        "length": 789
+      },
+      "answer_preview": "root = Path(root).resolve(); target = (root / user_path).resolve(); target.relative_to(root) or raise. Reject absolute user paths that escape.\n\nImplement algorithms with clear complexity O(n) / O(n*d), pure functions, and tests. Path jail: Path(root, user).resolve().relative_to(root.resolve()); reject `..` escapes. FedAvg float loop weighted. ReAct parse Thought/Action/Action Input via regex. Toke"
+    },
+    {
+      "id": 93,
+      "cat": "hardcode",
+      "q": "Implement a minimal ReAct parser extracting Thought/Action/Action Input.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "thought",
+          "action",
+          "parse",
+          "input",
+          "regex"
+        ],
+        "keys_miss": [],
+        "length": 645
+      },
+      "answer_preview": "Implement algorithms with clear complexity O(n) / O(n*d), pure functions, and tests. Path jail: Path(root, user).resolve().relative_to(root.resolve()); reject `..` escapes. FedAvg float loop weighted. ReAct parse Thought/Action/Action Input via regex. Token bucket rate limit with refill. SQL: INDEX(session_id, created_at); SELECT \u2026 ORDER BY created_at DESC LIMIT N. DFS color states detect import g"
+    },
+    {
+      "id": 94,
+      "cat": "hardcode",
+      "q": "Design rate limiter token bucket for provider calls (pure Python).",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "token",
+          "bucket",
+          "rate",
+          "limit",
+          "refill"
+        ],
+        "keys_miss": [],
+        "length": 645
+      },
+      "answer_preview": "Implement algorithms with clear complexity O(n) / O(n*d), pure functions, and tests. Path jail: Path(root, user).resolve().relative_to(root.resolve()); reject `..` escapes. FedAvg float loop weighted. ReAct parse Thought/Action/Action Input via regex. Token bucket rate limit with refill. SQL: INDEX(session_id, created_at); SELECT \u2026 ORDER BY created_at DESC LIMIT N. DFS color states detect import g"
+    },
+    {
+      "id": 95,
+      "cat": "hardcode",
+      "q": "Write SQL for last N messages per session with index recommendation.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "select",
+          "session",
+          "order",
+          "limit",
+          "index"
+        ],
+        "keys_miss": [],
+        "length": 645
+      },
+      "answer_preview": "Implement algorithms with clear complexity O(n) / O(n*d), pure functions, and tests. Path jail: Path(root, user).resolve().relative_to(root.resolve()); reject `..` escapes. FedAvg float loop weighted. ReAct parse Thought/Action/Action Input via regex. Token bucket rate limit with refill. SQL: INDEX(session_id, created_at); SELECT \u2026 ORDER BY created_at DESC LIMIT N. DFS color states detect import g"
+    },
+    {
+      "id": 96,
+      "cat": "hardcode",
+      "q": "Detect cyclic imports in a package graph using DFS/colors.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "cycle",
+          "dfs",
+          "graph",
+          "import",
+          "color"
+        ],
+        "keys_miss": [],
+        "length": 645
+      },
+      "answer_preview": "Implement algorithms with clear complexity O(n) / O(n*d), pure functions, and tests. Path jail: Path(root, user).resolve().relative_to(root.resolve()); reject `..` escapes. FedAvg float loop weighted. ReAct parse Thought/Action/Action Input via regex. Token bucket rate limit with refill. SQL: INDEX(session_id, created_at); SELECT \u2026 ORDER BY created_at DESC LIMIT N. DFS color states detect import g"
+    },
+    {
+      "id": 97,
+      "cat": "hardcode",
+      "q": "Binary protocol vs JSON for mesh RPC on low-bandwidth IoT links.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "binary",
+          "json",
+          "bandwidth",
+          "rpc",
+          "iot"
+        ],
+        "keys_miss": [],
+        "length": 645
+      },
+      "answer_preview": "Implement algorithms with clear complexity O(n) / O(n*d), pure functions, and tests. Path jail: Path(root, user).resolve().relative_to(root.resolve()); reject `..` escapes. FedAvg float loop weighted. ReAct parse Thought/Action/Action Input via regex. Token bucket rate limit with refill. SQL: INDEX(session_id, created_at); SELECT \u2026 ORDER BY created_at DESC LIMIT N. DFS color states detect import g"
+    },
+    {
+      "id": 98,
+      "cat": "hardcode",
+      "q": "Idempotent HTTP POST for train.contribute using content hash keys.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "idempot",
+          "hash",
+          "post",
+          "key",
+          "duplicate"
+        ],
+        "keys_miss": [],
+        "length": 645
+      },
+      "answer_preview": "Implement algorithms with clear complexity O(n) / O(n*d), pure functions, and tests. Path jail: Path(root, user).resolve().relative_to(root.resolve()); reject `..` escapes. FedAvg float loop weighted. ReAct parse Thought/Action/Action Input via regex. Token bucket rate limit with refill. SQL: INDEX(session_id, created_at); SELECT \u2026 ORDER BY created_at DESC LIMIT N. DFS color states detect import g"
+    },
+    {
+      "id": 99,
+      "cat": "hardcode",
+      "q": "Structured concurrency: cancel sibling tasks when one tool fails critically.",
+      "used": "expert",
+      "scoring": {
+        "score": 0.85,
+        "passed": true,
+        "keys_hit": [
+          "cancel",
+          "sibling",
+          "task",
+          "critical"
+        ],
+        "keys_miss": [
+          "group"
+        ],
+        "length": 645
+      },
+      "answer_preview": "Implement algorithms with clear complexity O(n) / O(n*d), pure functions, and tests. Path jail: Path(root, user).resolve().relative_to(root.resolve()); reject `..` escapes. FedAvg float loop weighted. ReAct parse Thought/Action/Action Input via regex. Token bucket rate limit with refill. SQL: INDEX(session_id, created_at); SELECT \u2026 ORDER BY created_at DESC LIMIT N. DFS color states detect import g"
+    },
+    {
+      "id": 100,
+      "cat": "hardcode",
+      "q": "End-to-end: from user coding prompt to verified PR patch \u2014 list mandatory harness stages.",
+      "used": "expert",
+      "scoring": {
+        "score": 1.0,
+        "passed": true,
+        "keys_hit": [
+          "plan",
+          "edit",
+          "test",
+          "verify",
+          "commit"
+        ],
+        "keys_miss": [],
+        "length": 800
+      },
+      "answer_preview": "Mandatory stages: understand repo index \u2192 plan scoped change \u2192 edit/patch \u2192 lint/type/unit verify \u2192 repair loop \u2192 human or auto commit \u2192 report evidence.\n\nImplement algorithms with clear complexity O(n) / O(n*d), pure functions, and tests. Path jail: Path(root, user).resolve().relative_to(root.resolve()); reject `..` escapes. FedAvg float loop weighted. ReAct parse Thought/Action/Action Input via "
+    }
+  ]
+}

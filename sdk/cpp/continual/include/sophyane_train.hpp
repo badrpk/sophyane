@@ -20,7 +20,7 @@ namespace sophyane {
 namespace train {
 
 inline constexpr const char* kMagic = "SOPHYANE_ADAPTER_v1";
-inline constexpr const char* kCoreVersion = "16.8.0";
+inline constexpr const char* kCoreVersion = "17.0.0";
 
 struct AdapterMeta {
   std::string magic = kMagic;
