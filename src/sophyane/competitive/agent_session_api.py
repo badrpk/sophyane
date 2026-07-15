@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import payments as pay
+import auth as authmod
 
 SESSIONS, JOBS = {}, {}
 TOOLS = [
@@ -38,10 +39,15 @@ class H(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(n).decode() or "{}") if n else {}
     def do_OPTIONS(self): self._send(204, {})
     def do_GET(self):
+        _path_early = (self.path.split("?")[0].rstrip("/") or "/")
+        if _path_early.startswith("/auth"):
+            hdrs = {k: v for k, v in self.headers.items()}
+            code, body = authmod.handle_auth_request("GET", _path_early, {}, hdrs, product="sophyane")
+            return self._send(code, body)
         path = urlparse(self.path).path
         if path in ("/", "/health"):
             return self._send(200, {"ok": True, "service": "sophyane-agent-api", "version": "17.6.0",
-                "parity_target": "Claude Code / Cursor", "gaps_closed": ["apply_patch","list_dir","billing","stripe","plans"]})
+                "parity_target": "Claude Code / Cursor", "gaps_closed": ["apply_patch","list_dir","billing","stripe", "signup", "login", "otp", "oauth_google", "oauth_facebook","plans"]})
         if path == "/capabilities":
             return self._send(200, {"ok": True, "competitor": "Claude Code / Cursor",
                 "features": ["sessions","tools","skills","parallel_subagents","hitl","budget","apply_patch","list_dir","billing","stripe"]})
@@ -63,6 +69,12 @@ class H(BaseHTTPRequestHandler):
             return self._send(200 if inv else 404, {"invoice": inv})
         self._send(404, {"error": "not_found"})
     def do_POST(self):
+        _path_early = (self.path.split("?")[0].rstrip("/") or "/")
+        if _path_early.startswith("/auth"):
+            hdrs = {k: v for k, v in self.headers.items()}
+            body = self._read_json() if hasattr(self, "_read_json") else self._read()
+            code, resp = authmod.handle_auth_request("POST", _path_early, body if isinstance(body, dict) else {}, hdrs, product="sophyane")
+            return self._send(code, resp)
         path = urlparse(self.path).path
         body = self._read()
         if path == "/v1/sessions":
