@@ -16,8 +16,9 @@ from sophyane.cloud.store import PortalStore
 from sophyane.version import __version__
 
 SITE_DIR_CANDIDATES = [
-    Path.home() / ".local/share/sophyane/current/website",
+    # Prefer package-adjacent website (this release tree), then "current" install.
     Path(__file__).resolve().parents[3] / "website",
+    Path.home() / ".local/share/sophyane/current/website",
 ]
 
 
@@ -551,22 +552,32 @@ class PortalApp:
                     "unless the user asked about Sophyane itself. "
                     "Be concise, structured, and useful."
                 )
-                # Live web search for factual / "who is" questions
-                do_search = force_search or (want_search is None and needs_web_research(message))
+                # Live web search for factual / "who is" questions.
+                # want_search True → always; None → auto heuristic; False → off.
+                # Edge mode no longer disables search (user still wants correct facts).
+                if want_search is True:
+                    do_search = True
+                elif want_search is False and not force_search:
+                    do_search = False
+                else:
+                    do_search = force_search or needs_web_research(message)
                 research_block = ""
                 grounded = ""
-                if do_search and not edge:
-                    search_meta = web_search(message, limit=6)
-                    research_block = format_search_context(search_meta)
-                    grounded = grounded_answer_from_search(message, search_meta)
-                    for hit in search_meta.get("results") or []:
-                        sources.append(
-                            {
-                                "title": hit.get("title"),
-                                "url": hit.get("url"),
-                                "source": hit.get("source"),
-                            }
-                        )
+                if do_search:
+                    try:
+                        search_meta = web_search(message, limit=6)
+                        research_block = format_search_context(search_meta)
+                        grounded = grounded_answer_from_search(message, search_meta)
+                        for hit in search_meta.get("results") or []:
+                            sources.append(
+                                {
+                                    "title": hit.get("title"),
+                                    "url": hit.get("url"),
+                                    "source": hit.get("source"),
+                                }
+                            )
+                    except Exception as search_err:  # noqa: BLE001
+                        search_meta = {"ok": False, "error": str(search_err), "results": []}
 
                 cfg = load_config()
                 provider_id = str(cfg.get("provider") or "local_gguf").strip().lower()
@@ -575,8 +586,11 @@ class PortalApp:
                 # Free/local tiny models are slow and often invent facts — prefer live web
                 # when research is strong (e.g. "who is Imran Khan").
                 primary_snip = str((search_meta.get("results") or [{}])[0].get("snippet") or "")
-                strong_web = bool(grounded and len(primary_snip) >= 80 and search_meta.get("ok"))
-                if strong_web and local_tier and needs_web_research(message):
+                strong_web = bool(grounded and len(primary_snip) >= 60 and search_meta.get("ok"))
+                # Prefer live research for factual questions whenever extract is solid —
+                # tiny local models invent wrong biographies (e.g. "actor" for Imran Khan).
+                factual = needs_web_research(message) or do_search
+                if strong_web and factual and (local_tier or want_search is True):
                     reply = grounded
                     model_used = "web-grounded"
                 else:
@@ -627,20 +641,37 @@ class PortalApp:
                         if not (reply or "").strip():
                             raise RuntimeError("empty provider reply")
 
-                    # If we have strong search hits and the model looks wrong/weak, prefer grounded text.
+                    # Prefer grounded research when model is weak/wrong vs sources
                     if sources and search_meta.get("ok") and grounded:
                         low_reply = (reply or "").lower()
                         primary_low = primary_snip.lower()
-                        weak = len((reply or "").strip()) < 40
+                        weak = len((reply or "").strip()) < 80
+                        # Hallucination guards
                         if primary_low and any(
                             k in primary_low
-                            for k in ("prime minister", "politician", "cricketer", "cricket")
+                            for k in (
+                                "prime minister",
+                                "politician",
+                                "cricketer",
+                                "cricket",
+                                "president",
+                                "scientist",
+                            )
                         ):
-                            if (
-                                "actor" in low_reply
-                                and "prime minister" not in low_reply
-                                and "cricket" not in low_reply
+                            if "actor" in low_reply and not any(
+                                k in low_reply
+                                for k in ("prime minister", "politician", "cricket", "cricketer")
                             ):
+                                weak = True
+                        # If research extract is long and model barely overlaps key tokens, trust web
+                        key_tokens = [
+                            w
+                            for w in primary_low.replace(",", " ").split()
+                            if len(w) > 5
+                        ][:8]
+                        if key_tokens:
+                            hits = sum(1 for w in key_tokens if w in low_reply)
+                            if hits <= 1 and len(primary_snip) > 100:
                                 weak = True
                         if weak:
                             reply = grounded
@@ -691,11 +722,36 @@ class PortalApp:
                         reply = answer_tough_question(message, mode="expert").get("answer") or str(error)
                         model_used = "expert-pack"
                     else:
-                        reply = (
-                            "I could not reach a live language model just now "
-                            f"({error}). Please retry, or run `sophyane --doctor` / ensure local_gguf or API keys are configured."
-                        )
-                        model_used = "error-fallback"
+                        try:
+                            from sophyane.web_intel import grounded_answer_from_search, web_search
+
+                            sm = web_search(message, limit=6)
+                            g = grounded_answer_from_search(message, sm)
+                            if g:
+                                reply = g
+                                model_used = "web-grounded-fallback"
+                                sources = [
+                                    {
+                                        "title": h.get("title"),
+                                        "url": h.get("url"),
+                                        "source": h.get("source"),
+                                    }
+                                    for h in (sm.get("results") or [])
+                                ]
+                            else:
+                                reply = (
+                                    "I could not reach a live language model just now "
+                                    f"({error}). Open **Models** to add an API key "
+                                    "(OpenAI / Claude / Gemini / Grok), keep **Web search** on for facts, "
+                                    "or use **Local free** GGUF/Ollama."
+                                )
+                                model_used = "error-fallback"
+                        except Exception:
+                            reply = (
+                                "I could not reach a live language model just now "
+                                f"({error}). Open **Models** for API keys or enable **Web search**."
+                            )
+                            model_used = "error-fallback"
 
             tokens = max(1, (len(message) + len(reply)) // 4)
             self.store.record_usage(principal["user_id"], tokens, key_id=principal["key_id"], endpoint="/api/v1/chat")

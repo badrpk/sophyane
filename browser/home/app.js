@@ -500,6 +500,23 @@
     }));
   }
 
+  function webSearchEnabled() {
+    const el = $("webSearchMode");
+    if (el) return !!el.checked;
+    return true; // default on
+  }
+
+  function updateRailStatus() {
+    const el = $("railStatus");
+    if (!el) return;
+    const search = webSearchEnabled() ? "Search on" : "Search off";
+    const model =
+      llmStatus && llmStatus.active
+        ? (llmStatus.active.provider || "") + "/" + (llmStatus.active.model || "")
+        : "local fallback";
+    el.textContent = search + " · " + model;
+  }
+
   async function chatApi(message, edge, history) {
     if (!auth?.api_key) throw new Error("Not signed in");
     try {
@@ -513,8 +530,8 @@
           message,
           edge: !!edge,
           history: Array.isArray(history) ? history : [],
-          // Let portal decide via needs_web_research; never force off
-          web_search: edge ? false : null,
+          // true = force web, false = off, null = auto heuristic
+          web_search: webSearchEnabled() ? true : false,
         }),
       });
       const data = await res.json();
@@ -696,6 +713,62 @@
   if (els.btnHelp) els.btnHelp.onclick = () => openDrawer("help");
   if (els.btnCloseDrawer) els.btnCloseDrawer.onclick = closeDrawer;
 
+  // Main-surface action rail (always visible)
+  const railModels = $("railModels");
+  const railLocal = $("railLocal");
+  const emptyModels = $("emptyModels");
+  const btnLocalLlm = $("btnLocalLlm");
+  const btnSearchMode = $("btnSearchMode");
+  const webSearchMode = $("webSearchMode");
+
+  if (railModels) railModels.onclick = () => openDrawer("models");
+  if (emptyModels) emptyModels.onclick = () => openDrawer("models");
+  if (btnSearchMode) {
+    btnSearchMode.onclick = () => {
+      if (webSearchMode) {
+        webSearchMode.checked = !webSearchMode.checked;
+        updateRailStatus();
+      }
+      setLlmMsg(
+        webSearchEnabled()
+          ? "Web search ON — factual questions use live internet research."
+          : "Web search OFF — answers use the selected LLM only.",
+        false
+      );
+    };
+  }
+  if (webSearchMode) {
+    webSearchMode.addEventListener("change", updateRailStatus);
+    // persist
+    const pref = localStorage.getItem("sophyane_web_search");
+    if (pref === "0") webSearchMode.checked = false;
+    if (pref === "1") webSearchMode.checked = true;
+    webSearchMode.addEventListener("change", () => {
+      localStorage.setItem("sophyane_web_search", webSearchMode.checked ? "1" : "0");
+      updateRailStatus();
+    });
+  }
+
+  async function activateLocalFree() {
+    try {
+      const data = await jpost(CLOUD + "/api/v1/llm/select", {
+        provider: "local_gguf",
+        model: "qwen2.5-0.5b",
+      });
+      if (!data.ok) throw new Error(data.error || "failed");
+      llmStatus = data.status || data;
+      renderLlmForm();
+      updateRailStatus();
+      openDrawer("models");
+      setLlmMsg("Local free GGUF activated. Cloud keys remain available as fallbacks when configured.");
+    } catch (e) {
+      openDrawer("models");
+      setLlmMsg("Could not activate local model: " + e, true);
+    }
+  }
+  if (railLocal) railLocal.onclick = activateLocalFree;
+  if (btnLocalLlm) btnLocalLlm.onclick = activateLocalFree;
+
   function setLlmMsg(text, isErr) {
     if (!els.llmMsg) return;
     els.llmMsg.textContent = text || "";
@@ -707,10 +780,11 @@
     if (llmStatus && llmStatus.active) {
       const a = llmStatus.active;
       els.modelSelectLabel.textContent =
-        (a.provider || "local") + " · " + (a.model || "model");
+        (a.provider || "local") + " · " + (a.model || "model") + " ▾";
     } else {
-      els.modelSelectLabel.textContent = "Sophyane Chat";
+      els.modelSelectLabel.textContent = "Pick model ▾";
     }
+    updateRailStatus();
   }
 
   function fillModelSelect(providerId) {

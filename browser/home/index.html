@@ -7,8 +7,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Sophyane</title>
-  <meta name="description" content="Sophyane — ChatGPT-style agent chat with email login for browser, new tab, and mobile app." />
-  <link rel="stylesheet" href="styles.css" />
+  <meta name="description" content="Sophyane — ChatGPT-style chat, top LLMs, web search, and agent harness." />
+  <link rel="stylesheet" href="styles.css?v=17.2.1" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◆</text></svg>" />
 </head>
@@ -56,13 +56,21 @@
       <button type="button" class="btn-new" id="btnNewChat">
         <span class="plus">＋</span> New chat
       </button>
+
+      <!-- Always-visible primary nav (not buried under chat list) -->
+      <nav class="sidebar-nav" aria-label="Main features">
+        <div class="sidebar-label">Features</div>
+        <button type="button" class="side-link feature" id="btnModels">◆ Models · top 10 LLMs</button>
+        <a class="side-link feature harness-link" id="btnHarness" href="harness.html" target="_blank" rel="noopener">⚡ Agent Harness (CLI)</a>
+        <button type="button" class="side-link feature" id="btnSearchMode">🔍 Sophyane web search</button>
+        <button type="button" class="side-link" id="btnLocalLlm">💻 Local free LLM</button>
+      </nav>
+
       <div class="sidebar-scroll">
         <div class="sidebar-label">Chats</div>
         <ul class="chat-list" id="chatList"></ul>
       </div>
       <div class="sidebar-bottom">
-        <a class="side-link harness-link" id="btnHarness" href="harness.html" target="_blank" rel="noopener">⚡ AI Agent Harness (CLI)</a>
-        <button type="button" class="side-link" id="btnModels">◆ Models &amp; API keys</button>
         <button type="button" class="side-link" id="btnUpgrade">⬆ Upgrade plan</button>
         <button type="button" class="side-link" id="btnSettings">⚙ Settings</button>
         <button type="button" class="side-link" id="btnClearChats">🗑 Clear chats</button>
@@ -87,10 +95,8 @@
       <header class="topbar">
         <button type="button" class="icon-btn" id="btnMenu" aria-label="Menu">☰</button>
         <button type="button" class="model-select" id="btnModelSelect" title="Choose top LLMs + enter API keys">
-          <span id="modelSelectLabel">Sophyane Chat</span> <span class="chev">▾</span>
+          <span id="modelSelectLabel">Pick model ▾</span>
         </button>
-        <a class="top-harness" href="harness.html" target="_blank" rel="noopener" title="Open agent harness CLI window">⚡ Harness</a>
-        <!-- Header shows who is logged in -->
         <div class="logged-in-badge" id="headerUser" title="Logged-in user">
           <span class="avatar sm" id="headerAvatar">?</span>
           <span id="headerEmail">Sign in required</span>
@@ -100,16 +106,43 @@
         </div>
       </header>
 
+      <!-- Always-visible action rail on main chat surface -->
+      <div class="action-rail" id="actionRail">
+        <button type="button" class="rail-btn primary" id="railModels" title="Top 10 LLM companies + API keys">
+          ◆ Models
+        </button>
+        <button type="button" class="rail-btn" id="railLocal" title="Use free local GGUF / Ollama">
+          💻 Local free
+        </button>
+        <label class="rail-toggle" title="Live internet research for factual answers">
+          <input type="checkbox" id="webSearchMode" checked />
+          <span>🔍 Web search</span>
+        </label>
+        <a class="rail-btn accent" id="railHarness" href="harness.html" target="_blank" rel="noopener">
+          ⚡ Agent Harness
+        </a>
+        <span class="rail-status" id="railStatus">Search on · local fallback ready</span>
+      </div>
+
       <section class="empty" id="emptyState">
         <div class="empty-inner">
           <div class="empty-logo">◆</div>
           <h1>What can I help with?</h1>
           <p class="signed-as" id="emptySignedAs"></p>
+          <p class="empty-hint">
+            Use <strong>Models</strong> for OpenAI / Claude / Gemini / Grok… ·
+            <strong>Web search</strong> for facts ·
+            <strong>Agent Harness</strong> for CLI tools
+          </p>
           <div class="suggestions" id="suggestions">
+            <button type="button" class="sug" data-q="Who is Imran Khan?">Who is Imran Khan?</button>
             <button type="button" class="sug" data-q="Explain Sophyane hybrid edge compute in simple terms">Explain hybrid edge</button>
             <button type="button" class="sug" data-q="How do I install Sophyane and open the browser?">Install Sophyane</button>
             <button type="button" class="sug" data-q="Write a plan-act-verify agent loop in Python">Agent loop code</button>
-            <button type="button" class="sug" data-q="Summarize https://example.com">Summarize a URL</button>
+          </div>
+          <div class="empty-actions">
+            <button type="button" class="btn-primary" id="emptyModels">◆ Choose top 10 LLMs</button>
+            <a class="btn-ghost-link" href="harness.html" target="_blank" rel="noopener">⚡ Open Agent Harness</a>
           </div>
         </div>
       </section>
@@ -120,10 +153,10 @@
 
       <footer class="composer-wrap">
         <form class="composer" id="composer">
-          <textarea id="input" rows="1" placeholder="Message Sophyane…" enterkeyhint="send"></textarea>
+          <textarea id="input" rows="1" placeholder="Message Sophyane… (web search helps with who/what/when)" enterkeyhint="send"></textarea>
           <div class="composer-bar">
             <div class="composer-left">
-              <label class="toggle" title="Prefer on-device style answers (still answers your question)">
+              <label class="toggle" title="Edge style answers (still uses web search when enabled)">
                 <input type="checkbox" id="edgeMode" />
                 <span>Edge</span>
               </label>
@@ -135,7 +168,7 @@
             </button>
           </div>
         </form>
-        <p class="disclaimer">Signed-in chats use your account. Sophyane can make mistakes — verify important info.</p>
+        <p class="disclaimer">Signed-in chats use your account. Web search + cloud models improve accuracy. Verify important info.</p>
       </footer>
     </div>
 
@@ -173,9 +206,8 @@
         </div>
         <div id="drawerModels" hidden>
           <p class="muted" style="margin:0 0 0.75rem;font-size:0.88rem">
-            Pick a <strong>top LLM</strong> and public model for best agent performance.
-            Paste an API key for that provider. <strong>Ollama / Local GGUF</strong> stay free
-            fallbacks when you have no credits or want offline use.
+            Pick a <strong>top LLM company</strong> and public model for best agent performance.
+            Paste an API key. <strong>Ollama / Local GGUF</strong> = free fallback when unpaid or offline.
           </p>
           <div id="activeModelBox" class="account-box">Loading models…</div>
           <label class="field">Provider (top 10)
@@ -197,21 +229,15 @@
         </div>
         <div id="drawerHelp" hidden>
           <div class="help-block">
-            <p><strong>Chat</strong> — LLM answers with <strong>live internet research</strong> for “who/what/when…” questions.</p>
-            <p><strong>Models &amp; API keys</strong> — choose top-10 LLM providers and public models; paste keys for top agentic performance. Local GGUF/Ollama = free fallback.</p>
-            <p><strong>Agent Harness (CLI)</strong> — <a href="harness.html" target="_blank" rel="noopener">open Grok-CLI style agent window</a> for tools, plan→act→verify, higher throughput.</p>
-            <p><strong>Upgrade plan</strong> — free / hybrid / builder / scale from the sidebar.</p>
-            <p><strong>OTP login</strong> — codes come from <strong>badrpk@gmail.com</strong>.</p>
-            <p><strong>New tab</strong> — open <a href="/browser-home/" target="_blank" rel="noopener">/browser-home/</a> without installing Chromium.</p>
-            <p><strong>Start guide</strong> — <a href="/start.html" target="_blank" rel="noopener">/start.html</a> · <a href="/get-api.html" target="_blank" rel="noopener">Login / API</a> · <a href="/pricing.html" target="_blank" rel="noopener">Pricing</a> · <a href="/docs.html" target="_blank" rel="noopener">Docs</a></p>
-            <p><strong>Download browser</strong> — <a href="/browser.html" target="_blank" rel="noopener">Browser page</a> · <a href="/download/sophyane-browser.tar.gz">tarball</a> · <a href="https://raw.githubusercontent.com/badrpk/sophyane/main/browser/install.sh" target="_blank" rel="noopener">install.sh</a></p>
-            <p><strong>Handbook</strong> — <a href="/static/Sophyane_Complete_Handbook.pdf" target="_blank" rel="noopener">PDF handbook</a></p>
-            <p><strong>Source</strong> — <a href="https://github.com/badrpk/sophyane" target="_blank" rel="noopener">github.com/badrpk/sophyane</a></p>
+            <p><strong>Models</strong> — top 10 providers (OpenAI, Anthropic, Gemini, xAI, DeepSeek, Groq, OpenRouter, Mistral, Ollama, Local GGUF).</p>
+            <p><strong>Web search</strong> — live Wikipedia/DDG for who/what/when questions (toggle in the green bar).</p>
+            <p><strong>Agent Harness</strong> — <a href="harness.html" target="_blank" rel="noopener">CLI window</a> for plan→tools→verify throughput.</p>
+            <p><strong>OTP login</strong> — codes from badrpk@gmail.com.</p>
           </div>
         </div>
       </div>
     </div>
   </div>
-  <script src="app.js"></script>
+  <script src="app.js?v=17.2.1"></script>
 </body>
 </html>

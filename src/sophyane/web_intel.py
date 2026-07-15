@@ -397,43 +397,56 @@ def web_search(query: str, *, limit: int = 6) -> dict[str, Any]:
 
 
 def needs_web_research(message: str) -> bool:
-    """Heuristic: factual / current-events / entity questions benefit from live search."""
+    """Heuristic: factual / current-events / entity questions benefit from live search.
+
+    Matches phrases anywhere in the text so chat prefixes like
+    ``User (email): who is …`` still trigger research.
+    """
     text = (message or "").strip().lower()
     if not text or len(text) < 3:
         return False
-    # Explicit search intent
-    if any(
-        text.startswith(p)
-        for p in (
-            "search ",
-            "google ",
-            "look up ",
-            "lookup ",
-            "find online ",
-            "who is ",
-            "who was ",
-            "who are ",
-            "what is ",
-            "what are ",
-            "what was ",
-            "when did ",
-            "when was ",
-            "where is ",
-            "where was ",
-            "which ",
-            "tell me about ",
-            "define ",
-            "latest ",
-            "news about ",
-            "current ",
-        )
-    ):
+    # Strip common client prefixes
+    for prefix in ("user:", "question:", "user ("):
+        if text.startswith(prefix) or "): " in text[:80]:
+            # take last segment after a colon when short
+            if ":" in text:
+                tail = text.rsplit(":", 1)[-1].strip()
+                if len(tail) >= 3:
+                    text = tail
+            break
+    phrases = (
+        "who is ",
+        "who was ",
+        "who are ",
+        "what is ",
+        "what are ",
+        "what was ",
+        "when did ",
+        "when was ",
+        "where is ",
+        "where was ",
+        "tell me about ",
+        "search ",
+        "look up ",
+        "lookup ",
+        "find online ",
+        "define ",
+        "latest ",
+        "news about ",
+        "google ",
+    )
+    if any(p in text for p in phrases):
+        return True
+    if text.startswith("which ") or text.startswith("current "):
         return True
     # Short person/entity style questions
-    if text.endswith("?") and len(text.split()) <= 12:
+    words = text.replace("?", " ").split()
+    if text.endswith("?") and len(words) <= 16:
         if any(k in text for k in ("who", "what", "when", "where", "which", "why", "how many")):
             return True
-    # URLs already handled elsewhere
+    # Bare-ish person name style: 2–5 words without code punctuation
+    if 2 <= len(words) <= 5 and "?" in (message or "") and not any(c in text for c in "{}[]=/\\"):
+        return True
     if "http://" in text or "https://" in text:
         return False
     return False
