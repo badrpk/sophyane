@@ -345,45 +345,143 @@ class PortalApp:
             _json(handler, 200, {"ok": True, "usage": summary, "estimate": cost, "plan": principal.get("plan")})
             return True
 
+        if path == "/api/v1/account/me" and method == "GET":
+            key = _auth_key(handler)
+            principal = self.store.resolve_key(key) if key else None
+            if not principal:
+                _json(handler, 401, {"ok": False, "error": "invalid API key"})
+                return True
+            user = self.store.get_user(principal["user_id"]) or {}
+            summary = self.store.usage_summary(principal["user_id"])
+            _json(
+                handler,
+                200,
+                {
+                    "ok": True,
+                    "user": {
+                        "id": principal["user_id"],
+                        "email": principal.get("email"),
+                        "name": principal.get("name") or user.get("name"),
+                        "plan": principal.get("plan") or user.get("plan"),
+                        "email_verified": bool(principal.get("email_verified") or user.get("email_verified")),
+                    },
+                    "usage": summary,
+                    "plans": list_plans(),
+                },
+            )
+            return True
+
+        if path in {"/api/v1/account/plan", "/api/v1/account/upgrade"} and method == "POST":
+            key = _auth_key(handler)
+            principal = self.store.resolve_key(key) if key else None
+            if not principal:
+                _json(handler, 401, {"ok": False, "error": "invalid API key"})
+                return True
+            body = _read_json(handler)
+            plan = str(body.get("plan") or "").strip().lower()
+            valid = {p["id"] for p in list_plans()}
+            if plan not in valid:
+                _json(handler, 400, {"ok": False, "error": f"invalid plan; choose one of {sorted(valid)}"})
+                return True
+            result = self.store.update_plan(principal["user_id"], plan)
+            if not result.get("ok"):
+                _json(handler, 400, result)
+                return True
+            _json(
+                handler,
+                200,
+                {
+                    **result,
+                    "message": f"Plan updated to {plan}. Billing is usage-based; higher plans raise included tokens.",
+                    "plans": list_plans(),
+                },
+            )
+            return True
+
         if path == "/api/v1/chat" and method == "POST":
             key = _auth_key(handler)
             principal = self.store.resolve_key(key) if key else None
             if not principal:
-                _json(handler, 401, {"ok": False, "error": "invalid API key — signup at /api/v1/signup"})
+                _json(handler, 401, {"ok": False, "error": "invalid API key — sign in with email OTP first"})
                 return True
             body = _read_json(handler)
             message = str(body.get("message") or body.get("prompt") or "").strip()
             if not message:
                 _json(handler, 400, {"ok": False, "error": "message required"})
                 return True
-            # Prefer local/expert hybrid so portal works without paid frontier keys
+            # Optional short history for context (list of {role, content})
+            history = body.get("history") if isinstance(body.get("history"), list) else []
+            edge = bool(body.get("edge"))
             reply = ""
+            model_used = "unknown"
             try:
-                use_edge = bool(body.get("edge") or principal.get("plan") == "hybrid")
-                if use_edge:
+                from sophyane.config import load_config
+                from sophyane.main import create_provider
+
+                system = (
+                    "You are Sophyane, a helpful AI assistant in a ChatGPT-style chat product. "
+                    "Answer the user's actual question directly and specifically. "
+                    "Do not dump unrelated product marketing, capability catalogs, or generic harness essays "
+                    "unless the user asked about Sophyane itself. "
+                    "Be concise, structured, and useful. If you are unsure, say so."
+                )
+                # Build contextual prompt from recent turns
+                ctx_parts: list[str] = []
+                for turn in history[-8:]:
+                    if not isinstance(turn, dict):
+                        continue
+                    role = str(turn.get("role") or "user")
+                    content = str(turn.get("content") or "").strip()
+                    if not content or content == "…":
+                        continue
+                    ctx_parts.append(f"{role.upper()}: {content[:1500]}")
+                ctx_parts.append(f"USER: {message}")
+                prompt = "\n".join(ctx_parts)
+                if edge:
+                    system += (
+                        " Prefer answers that work offline/on-device when relevant; "
+                        "still answer the question itself first."
+                    )
+
+                provider = create_provider(load_config())
+                if hasattr(provider, "max_tokens"):
+                    try:
+                        provider.max_tokens = max(int(getattr(provider, "max_tokens", 512) or 512), 512)
+                    except Exception:
+                        pass
+                reply = provider.generate(prompt, system)
+                model_used = str(getattr(provider, "model", None) or load_config().get("model") or "provider")
+                # If provider returns empty/boilerplate, fall back carefully
+                if not (reply or "").strip():
+                    raise RuntimeError("empty provider reply")
+            except Exception as error:  # noqa: BLE001
+                # Fallback: only use expert pack for harness/engineering-ish prompts
+                low = message.lower()
+                harnessy = any(
+                    k in low
+                    for k in (
+                        "sophyane",
+                        "harness",
+                        "agent loop",
+                        "mesh",
+                        "federat",
+                        "lora",
+                        "peft",
+                        "tool registry",
+                    )
+                )
+                if harnessy:
                     from sophyane.expert.answer import answer_tough_question
 
-                    reply = answer_tough_question(message, mode="expert").get("answer") or ""
-                    reply = (
-                        "[Hybrid Edge] Heavy compute preferred on your devices via Sophyane mesh/local GGUF.\n\n"
-                        + reply
-                    )
+                    reply = answer_tough_question(message, mode="expert").get("answer") or str(error)
+                    model_used = "expert-pack"
                 else:
-                    from sophyane.config import load_config
-                    from sophyane.main import create_provider
-
-                    provider = create_provider(load_config())
-                    reply = provider.generate(
-                        message,
-                        "You are Sophyane Cloud — a helpful, investor-grade AI agent harness assistant. Be clear and actionable.",
+                    reply = (
+                        "I could not reach a live language model just now "
+                        f"({error}). Please retry, or run `sophyane --doctor` / ensure local_gguf or API keys are configured."
                     )
-            except Exception as error:  # noqa: BLE001
-                from sophyane.expert.answer import answer_tough_question
+                    model_used = "error-fallback"
 
-                reply = answer_tough_question(message, mode="expert").get("answer") or str(error)
-                reply = f"[fallback expert pack] {reply}"
-
-            # crude token estimate
             tokens = max(1, (len(message) + len(reply)) // 4)
             self.store.record_usage(principal["user_id"], tokens, key_id=principal["key_id"], endpoint="/api/v1/chat")
             _json(
@@ -394,7 +492,8 @@ class PortalApp:
                     "reply": reply,
                     "usage": {"tokens_estimate": tokens},
                     "plan": principal.get("plan"),
-                    "model": "sophyane-cloud",
+                    "model": model_used,
+                    "user": principal.get("email"),
                     "version": __version__,
                 },
             )

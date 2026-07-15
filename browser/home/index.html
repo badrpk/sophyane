@@ -61,9 +61,12 @@
         <ul class="chat-list" id="chatList"></ul>
       </div>
       <div class="sidebar-bottom">
-        <button type="button" class="side-link" id="btnTools">Tools &amp; status</button>
+        <button type="button" class="side-link" id="btnUpgrade">⬆ Upgrade plan</button>
+        <button type="button" class="side-link" id="btnSettings">⚙ Settings</button>
+        <button type="button" class="side-link" id="btnClearChats">🗑 Clear chats</button>
+        <button type="button" class="side-link" id="btnTools">🛠 Tools &amp; status</button>
+        <button type="button" class="side-link" id="btnHelp">? Help &amp; FAQ</button>
         <a class="side-link" href="https://github.com/badrpk/sophyane" target="_blank" rel="noopener">GitHub</a>
-        <!-- Logged-in user (always visible when signed in) -->
         <div class="user-pill" id="userPill" title="Signed-in account">
           <span class="avatar" id="userAvatar">?</span>
           <div class="user-meta">
@@ -117,8 +120,8 @@
           <textarea id="input" rows="1" placeholder="Message Sophyane…" enterkeyhint="send"></textarea>
           <div class="composer-bar">
             <div class="composer-left">
-              <label class="toggle" title="Prefer local / edge answer">
-                <input type="checkbox" id="edgeMode" checked />
+              <label class="toggle" title="Prefer on-device style answers (still answers your question)">
+                <input type="checkbox" id="edgeMode" />
                 <span>Edge</span>
               </label>
             </div>
@@ -135,16 +138,45 @@
 
     <div class="drawer" id="drawer" hidden>
       <div class="drawer-head">
-        <strong>Tools &amp; status</strong>
+        <strong id="drawerTitle">Tools &amp; status</strong>
         <button type="button" class="icon-btn" id="btnCloseDrawer">✕</button>
       </div>
       <div class="drawer-body">
         <div class="account-box" id="accountBox"></div>
-        <button type="button" class="tool" data-tool="platform">Platform</button>
-        <button type="button" class="tool" data-tool="hardware">Hardware</button>
-        <button type="button" class="tool" data-tool="mesh">Mesh</button>
-        <button type="button" class="tool" data-tool="train">Train</button>
-        <pre id="toolOut" class="tool-out">Select a tool…</pre>
+        <div id="drawerTools">
+          <button type="button" class="tool" data-tool="platform">Platform</button>
+          <button type="button" class="tool" data-tool="hardware">Hardware</button>
+          <button type="button" class="tool" data-tool="mesh">Mesh</button>
+          <button type="button" class="tool" data-tool="train">Train</button>
+          <button type="button" class="tool" data-tool="usage">Usage</button>
+          <pre id="toolOut" class="tool-out">Select a tool…</pre>
+        </div>
+        <div id="drawerUpgrade" hidden>
+          <p class="muted" style="margin:0 0 0.75rem;font-size:0.88rem">
+            Upgrade or change your plan. Higher plans include more tokens each month.
+          </p>
+          <div id="planCards" class="plan-cards"></div>
+          <p class="auth-msg" id="upgradeMsg"></p>
+        </div>
+        <div id="drawerSettings" hidden>
+          <label class="field">Cloud portal URL
+            <input type="url" id="setCloud" placeholder="http://127.0.0.1:8780" />
+          </label>
+          <label class="field">Hardware API
+            <input type="url" id="setHw" placeholder="http://127.0.0.1:8770" />
+          </label>
+          <button type="button" class="btn-primary" id="btnSaveSettings">Save settings</button>
+          <p class="auth-msg" id="settingsMsg"></p>
+        </div>
+        <div id="drawerHelp" hidden>
+          <div class="help-block">
+            <p><strong>Chat</strong> — type below like ChatGPT. Edge prefers local/hybrid answers.</p>
+            <p><strong>Upgrade plan</strong> — free / hybrid / builder / scale from the sidebar.</p>
+            <p><strong>OTP login</strong> — codes come from badrpk@gmail.com.</p>
+            <p><strong>New tab</strong> — open /browser-home/ without installing Chromium.</p>
+            <p><strong>Install app</strong> — <code>curl -fsSL …/browser/install.sh | sh</code></p>
+          </div>
+        </div>
       </div>
     </div>
   </div>

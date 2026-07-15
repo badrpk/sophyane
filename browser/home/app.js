@@ -1,4 +1,4 @@
-/* Sophyane Browser — ChatGPT UI + email OTP auth + logged-in user display */
+/* Sophyane Browser — ChatGPT UI + OTP auth + plan upgrade + sidebar */
 (function () {
   "use strict";
 
@@ -8,16 +8,18 @@
   function detectCloud() {
     const stored = localStorage.getItem("sophyane_cloud");
     if (stored) return stored.replace(/\/$/, "");
-    // Same origin when served from portal /browser-home/
-    if (location.port === "8780" || location.pathname.includes("browser-home") || location.pathname.includes("browser")) {
+    if (
+      location.port === "8780" ||
+      location.pathname.includes("browser-home") ||
+      location.pathname.includes("browser")
+    ) {
       return location.origin;
     }
-    // Common local portal
     return "http://127.0.0.1:8780";
   }
 
-  const HW = localStorage.getItem("sophyane_hw") || "http://127.0.0.1:8770";
-  const MESH = localStorage.getItem("sophyane_mesh") || "http://127.0.0.1:8777";
+  let HW = localStorage.getItem("sophyane_hw") || "http://127.0.0.1:8770";
+  let MESH = localStorage.getItem("sophyane_mesh") || "http://127.0.0.1:8777";
   let CLOUD = detectCloud();
 
   /** @type {{email:string,name:string,plan:string,api_key:string,user_id?:string}|null} */
@@ -26,6 +28,8 @@
   let sessions = loadSessions();
   let activeId = sessions[0]?.id || null;
   let busy = false;
+  /** @type {any[]} */
+  let planCatalog = [];
 
   const $ = (id) => document.getElementById(id);
   const els = {
@@ -53,7 +57,22 @@
     btnSend: $("btnSend"),
     edgeMode: $("edgeMode"),
     drawer: $("drawer"),
+    drawerTitle: $("drawerTitle"),
+    drawerTools: $("drawerTools"),
+    drawerUpgrade: $("drawerUpgrade"),
+    drawerSettings: $("drawerSettings"),
+    drawerHelp: $("drawerHelp"),
+    planCards: $("planCards"),
+    upgradeMsg: $("upgradeMsg"),
+    setCloud: $("setCloud"),
+    setHw: $("setHw"),
+    btnSaveSettings: $("btnSaveSettings"),
+    settingsMsg: $("settingsMsg"),
+    btnUpgrade: $("btnUpgrade"),
+    btnSettings: $("btnSettings"),
+    btnClearChats: $("btnClearChats"),
     btnTools: $("btnTools"),
+    btnHelp: $("btnHelp"),
     btnCloseDrawer: $("btnCloseDrawer"),
     toolOut: $("toolOut"),
     btnShare: $("btnShare"),
@@ -73,7 +92,6 @@
       const a = JSON.parse(localStorage.getItem(AUTH_KEY) || "null");
       if (a && a.email && a.api_key) return a;
     } catch (_) {}
-    // migrate old key-only storage
     const key = localStorage.getItem("sophyane_api_key");
     const email = localStorage.getItem("sophyane_user_email");
     if (key && email) {
@@ -185,6 +203,7 @@
     renderSidebar();
     renderThread();
     autoGrow();
+    refreshAccount().catch(() => {});
     els.input.focus();
   }
 
@@ -285,7 +304,7 @@
     setAuthMsg("Logged out. Sign in again with email OTP.");
   };
 
-  // —— Chat (requires auth) ——
+  // —— Chat ——
   function active() {
     return sessions.find((s) => s.id === activeId) || null;
   }
@@ -389,7 +408,10 @@
     els.overlay.hidden = true;
   }
   els.btnMenu.onclick = openSidebarMobile;
-  els.overlay.onclick = closeSidebarMobile;
+  els.overlay.onclick = () => {
+    closeSidebarMobile();
+    closeDrawer();
+  };
 
   els.btnNew.onclick = () => {
     const s = { id: uid(), title: "New chat", messages: [] };
@@ -402,6 +424,18 @@
     els.input.focus();
   };
 
+  if (els.btnClearChats) {
+    els.btnClearChats.onclick = () => {
+      if (!confirm("Clear all local chats on this device?")) return;
+      sessions = [];
+      activeId = null;
+      saveSessions();
+      renderSidebar();
+      renderThread();
+      closeSidebarMobile();
+    };
+  }
+
   document.querySelectorAll(".sug").forEach((b) => {
     b.onclick = () => {
       els.input.value = b.dataset.q || b.textContent;
@@ -410,32 +444,60 @@
     };
   });
 
-  async function jget(url) {
-    const res = await fetch(url);
+  async function jget(url, headers) {
+    const res = await fetch(url, { headers: headers || {} });
     if (!res.ok) throw new Error("HTTP " + res.status);
     return res.json();
   }
-  async function jpost(url, body) {
+  async function jpost(url, body, headers) {
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(headers || {}) },
       body: JSON.stringify(body || {}),
     });
-    if (!res.ok) throw new Error("HTTP " + res.status);
+    if (!res.ok) {
+      let err = "HTTP " + res.status;
+      try {
+        const d = await res.json();
+        if (d.error) err = d.error;
+      } catch (_) {}
+      throw new Error(err);
+    }
     return res.json();
   }
 
-  async function chatApi(message, edge) {
+  function authHeaders() {
+    if (!auth?.api_key) return {};
+    return { Authorization: "Bearer " + auth.api_key };
+  }
+
+  /** Build prior turns for the model (exclude the current user message already being sent). */
+  function historyPayload(session, excludeLastUser) {
+    const msgs = (session?.messages || []).filter((m) => m && m.content && m.content !== "…");
+    let list = msgs;
+    if (excludeLastUser && list.length && list[list.length - 1].role === "user") {
+      list = list.slice(0, -1);
+    }
+    return list.slice(-8).map((m) => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: String(m.content).slice(0, 1500),
+    }));
+  }
+
+  async function chatApi(message, edge, history) {
     if (!auth?.api_key) throw new Error("Not signed in");
-    // Prefer cloud portal with user key (authenticated)
     try {
       const res = await fetch(CLOUD + "/api/v1/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: "Bearer " + auth.api_key,
+          ...authHeaders(),
         },
-        body: JSON.stringify({ message, edge: !!edge }),
+        body: JSON.stringify({
+          message,
+          edge: !!edge,
+          history: Array.isArray(history) ? history : [],
+        }),
       });
       const data = await res.json();
       if (!res.ok || data.ok === false) {
@@ -443,10 +505,10 @@
       }
       return {
         reply: String(data.reply || data.error || JSON.stringify(data)),
+        model: data.model || "",
         sources: [],
       };
     } catch (cloudErr) {
-      // Fallback local hardware API (still show user as logged in)
       try {
         const data = await jpost(HW + "/v1/hardware/chat", { message, edge: !!edge });
         const reply =
@@ -455,7 +517,7 @@
           (typeof data.result === "string" ? data.result : null) ||
           data.error ||
           JSON.stringify(data);
-        return { reply: String(reply), sources: [] };
+        return { reply: String(reply), model: "hardware", sources: [] };
       } catch (e2) {
         throw new Error(String(cloudErr) + " · " + String(e2));
       }
@@ -514,6 +576,8 @@
     busy = true;
     els.btnSend.disabled = true;
     const edge = !!els.edgeMode.checked;
+    // Prior turns only (current user message is `message` field)
+    const history = historyPayload(s, true);
 
     try {
       let prompt = text;
@@ -523,11 +587,9 @@
         sources.push({ url: page.url, title: page.title });
         prompt =
           `Use this page content when answering.\nURL: ${page.url}\nTitle: ${page.title}\n\n` +
-          `${page.text}\n\nUser (${auth.email}): ${text}`;
-      } else {
-        prompt = `User (${auth.email}): ${text}`;
+          `${page.text}\n\nQuestion: ${text}`;
       }
-      const { reply } = await chatApi(prompt, edge);
+      const { reply } = await chatApi(prompt, edge, history);
       s.messages[typingIdx] = {
         role: "assistant",
         content: reply || "(empty reply)",
@@ -554,19 +616,207 @@
     els.input.focus();
   };
 
-  function openDrawer() {
-    els.drawer.hidden = false;
-    renderUser();
+  // —— Drawers (ChatGPT-style sidebar options) ——
+  function hideAllDrawerPanels() {
+    if (els.drawerTools) els.drawerTools.hidden = true;
+    if (els.drawerUpgrade) els.drawerUpgrade.hidden = true;
+    if (els.drawerSettings) els.drawerSettings.hidden = true;
+    if (els.drawerHelp) els.drawerHelp.hidden = true;
   }
+
+  function openDrawer(mode) {
+    els.drawer.hidden = false;
+    hideAllDrawerPanels();
+    renderUser();
+    if (mode === "upgrade") {
+      if (els.drawerTitle) els.drawerTitle.textContent = "Upgrade plan";
+      if (els.drawerUpgrade) els.drawerUpgrade.hidden = false;
+      loadPlanCards();
+    } else if (mode === "settings") {
+      if (els.drawerTitle) els.drawerTitle.textContent = "Settings";
+      if (els.drawerSettings) els.drawerSettings.hidden = false;
+      if (els.setCloud) els.setCloud.value = CLOUD;
+      if (els.setHw) els.setHw.value = HW;
+      if (els.settingsMsg) els.settingsMsg.textContent = "";
+    } else if (mode === "help") {
+      if (els.drawerTitle) els.drawerTitle.textContent = "Help & FAQ";
+      if (els.drawerHelp) els.drawerHelp.hidden = false;
+    } else {
+      if (els.drawerTitle) els.drawerTitle.textContent = "Tools & status";
+      if (els.drawerTools) els.drawerTools.hidden = false;
+    }
+    closeSidebarMobile();
+  }
+
   function closeDrawer() {
     els.drawer.hidden = true;
   }
-  els.btnTools.onclick = openDrawer;
-  els.btnCloseDrawer.onclick = closeDrawer;
+
+  if (els.btnTools) els.btnTools.onclick = () => openDrawer("tools");
+  if (els.btnUpgrade) els.btnUpgrade.onclick = () => openDrawer("upgrade");
+  if (els.btnSettings) els.btnSettings.onclick = () => openDrawer("settings");
+  if (els.btnHelp) els.btnHelp.onclick = () => openDrawer("help");
+  if (els.btnCloseDrawer) els.btnCloseDrawer.onclick = closeDrawer;
+
+  async function refreshAccount() {
+    if (!auth?.api_key) return;
+    try {
+      const data = await jget(CLOUD + "/api/v1/account/me", authHeaders());
+      if (data.ok && data.user) {
+        auth.plan = data.user.plan || auth.plan;
+        auth.name = data.user.name || auth.name;
+        auth.email = data.user.email || auth.email;
+        auth.user_id = data.user.id || auth.user_id;
+        saveAuth(auth);
+        if (Array.isArray(data.plans)) planCatalog = data.plans;
+        renderUser();
+      }
+    } catch (_) {
+      // Older portal without /account/me — ignore
+    }
+  }
+
+  function defaultPlans() {
+    return [
+      {
+        id: "free",
+        name: "Free Explorer",
+        price_usd_month: 0,
+        included_tokens: 500000,
+        description: "Start free. Perfect for demos and personal agents.",
+      },
+      {
+        id: "hybrid",
+        name: "Hybrid Edge",
+        price_usd_month: 0,
+        included_tokens: 2000000,
+        description: "Cloud orchestration + free heavy compute on your hardware.",
+      },
+      {
+        id: "builder",
+        name: "Builder",
+        price_usd_month: 1,
+        included_tokens: 10000000,
+        description: "Indie builders — almost free at scale.",
+      },
+      {
+        id: "scale",
+        name: "Scale",
+        price_usd_month: 9,
+        included_tokens: 200000000,
+        description: "Production agents at a fraction of frontier rates.",
+      },
+    ];
+  }
+
+  async function loadPlanCards() {
+    if (!els.planCards) return;
+    els.planCards.innerHTML = "Loading plans…";
+    if (els.upgradeMsg) {
+      els.upgradeMsg.textContent = "";
+      els.upgradeMsg.classList.remove("err");
+    }
+    try {
+      await refreshAccount();
+      if (!planCatalog.length) {
+        const pricing = await jget(CLOUD + "/api/v1/pricing");
+        if (Array.isArray(pricing.plans)) planCatalog = pricing.plans;
+      }
+    } catch (_) {}
+    const plans = planCatalog.length ? planCatalog : defaultPlans();
+    const current = (auth && auth.plan) || "free";
+    els.planCards.innerHTML = plans
+      .map((p) => {
+        const id = p.id || p.plan;
+        const isCurrent = id === current;
+        const price =
+          p.price_usd_month === 0 || p.price_usd_month === "0"
+            ? "Free"
+            : "$" + p.price_usd_month + "/mo";
+        const tokens = p.included_tokens
+          ? (Number(p.included_tokens) / 1e6).toFixed(Number(p.included_tokens) >= 1e6 ? 0 : 1) + "M tokens incl."
+          : "";
+        return (
+          `<button type="button" class="plan-card${isCurrent ? " current" : ""}" data-plan="${escapeAttr(id)}">` +
+          `<h4>${escapeHtml(p.name || id)}${isCurrent ? " · current" : ""}</h4>` +
+          `<div class="price">${escapeHtml(price)}${tokens ? " · " + escapeHtml(tokens) : ""}</div>` +
+          `<p>${escapeHtml(p.description || "")}</p>` +
+          `</button>`
+        );
+      })
+      .join("");
+    els.planCards.querySelectorAll(".plan-card").forEach((card) => {
+      card.onclick = () => upgradePlan(card.dataset.plan);
+    });
+  }
+
+  async function upgradePlan(planId) {
+    if (!auth?.api_key) {
+      if (els.upgradeMsg) {
+        els.upgradeMsg.textContent = "Sign in required.";
+        els.upgradeMsg.classList.add("err");
+      }
+      return;
+    }
+    if (!planId) return;
+    if (planId === auth.plan) {
+      if (els.upgradeMsg) {
+        els.upgradeMsg.textContent = "Already on " + planId + ".";
+        els.upgradeMsg.classList.remove("err");
+      }
+      return;
+    }
+    if (els.upgradeMsg) {
+      els.upgradeMsg.textContent = "Updating to " + planId + "…";
+      els.upgradeMsg.classList.remove("err");
+    }
+    try {
+      const data = await jpost(
+        CLOUD + "/api/v1/account/upgrade",
+        { plan: planId },
+        authHeaders()
+      );
+      if (!data.ok) throw new Error(data.error || "upgrade failed");
+      auth.plan = planId;
+      saveAuth(auth);
+      renderUser();
+      if (Array.isArray(data.plans)) planCatalog = data.plans;
+      if (els.upgradeMsg) {
+        els.upgradeMsg.textContent = data.message || "Plan updated to " + planId + ".";
+        els.upgradeMsg.classList.remove("err");
+      }
+      loadPlanCards();
+    } catch (e) {
+      if (els.upgradeMsg) {
+        els.upgradeMsg.textContent = String(e);
+        els.upgradeMsg.classList.add("err");
+      }
+    }
+  }
+
+  if (els.btnSaveSettings) {
+    els.btnSaveSettings.onclick = () => {
+      const cloud = (els.setCloud?.value || "").trim().replace(/\/$/, "");
+      const hw = (els.setHw?.value || "").trim().replace(/\/$/, "");
+      if (cloud) {
+        CLOUD = cloud;
+        localStorage.setItem("sophyane_cloud", CLOUD);
+      }
+      if (hw) {
+        HW = hw;
+        localStorage.setItem("sophyane_hw", HW);
+      }
+      if (els.settingsMsg) {
+        els.settingsMsg.textContent = "Saved. Chat will use " + CLOUD;
+        els.settingsMsg.classList.remove("err");
+      }
+    };
+  }
 
   document.querySelectorAll(".tool").forEach((btn) => {
     btn.onclick = async () => {
       const t = btn.dataset.tool;
+      if (!els.toolOut) return;
       els.toolOut.textContent = "Loading…";
       try {
         if (t === "platform") {
@@ -577,6 +827,13 @@
           els.toolOut.textContent = JSON.stringify(await jget(MESH + "/v1/mesh/hello"), null, 2);
         } else if (t === "train") {
           els.toolOut.textContent = JSON.stringify(await jget(HW + "/v1/train/status"), null, 2);
+        } else if (t === "usage") {
+          if (!auth?.api_key) throw new Error("Sign in required");
+          els.toolOut.textContent = JSON.stringify(
+            await jget(CLOUD + "/api/v1/usage", authHeaders()),
+            null,
+            2
+          );
         }
       } catch (e) {
         els.toolOut.textContent = String(e);
@@ -598,6 +855,18 @@
       }, 1200);
     } catch (_) {}
   };
+
+  // Default Edge off so general chat always hits the live model (user can re-enable).
+  if (els.edgeMode && localStorage.getItem("sophyane_edge_pref") == null) {
+    els.edgeMode.checked = false;
+  } else if (els.edgeMode) {
+    els.edgeMode.checked = localStorage.getItem("sophyane_edge_pref") === "1";
+  }
+  if (els.edgeMode) {
+    els.edgeMode.addEventListener("change", () => {
+      localStorage.setItem("sophyane_edge_pref", els.edgeMode.checked ? "1" : "0");
+    });
+  }
 
   // Boot
   updateAuthTabs();

@@ -200,6 +200,32 @@ html, body {
   line-height: 1.45;
 }
 .account-box strong { color: var(--text); }
+
+.plan-cards { display: flex; flex-direction: column; gap: 0.5rem; }
+.plan-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.75rem 0.85rem;
+  background: rgba(255,255,255,0.03);
+  cursor: pointer;
+  text-align: left;
+}
+.plan-card:hover { border-color: rgba(255,255,255,0.25); }
+.plan-card.current {
+  border-color: var(--ok);
+  box-shadow: 0 0 0 1px rgba(74,222,128,0.25);
+}
+.plan-card h4 { margin: 0 0 0.25rem; font-size: 0.95rem; color: var(--text); }
+.plan-card p { margin: 0; font-size: 0.8rem; color: var(--muted); line-height: 1.35; }
+.plan-card .price { color: var(--ok); font-weight: 600; font-size: 0.85rem; }
+.help-block p { margin: 0 0 0.65rem; color: var(--muted); font-size: 0.88rem; line-height: 1.45; }
+.help-block strong { color: var(--text); }
+.help-block code {
+  font-size: 0.78rem;
+  background: rgba(255,255,255,0.08);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
 button, textarea { font: inherit; color: inherit; }
 a { color: #7dd3fc; text-decoration: none; }
 a:hover { text-decoration: underline; }

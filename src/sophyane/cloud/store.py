@@ -135,6 +135,36 @@ class PortalStore:
                 (time.time(), user_id),
             )
 
+    def update_plan(self, user_id: str, plan: str) -> dict[str, Any]:
+        plan = (plan or "free").strip().lower()
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT id, email, name, plan, email_verified FROM users WHERE id=?",
+                (user_id,),
+            ).fetchone()
+            if not row:
+                return {"ok": False, "error": "user not found"}
+            conn.execute("UPDATE users SET plan=? WHERE id=?", (plan, user_id))
+            return {
+                "ok": True,
+                "user": {
+                    "id": row["id"],
+                    "email": row["email"],
+                    "name": row["name"],
+                    "plan": plan,
+                    "email_verified": bool(row["email_verified"]),
+                },
+                "previous_plan": row["plan"],
+            }
+
+    def get_user(self, user_id: str) -> dict[str, Any] | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT id, email, name, plan, created_at, email_verified, last_login_at FROM users WHERE id=?",
+                (user_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
     def issue_key(self, user_id: str, label: str = "default") -> dict[str, Any]:
         raw = "sph_" + secrets.token_urlsafe(32)
         kid = secrets.token_hex(8)
