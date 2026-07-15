@@ -1,0 +1,29 @@
+# Example Caddyfile site block for Sophyane public cloud portal
+# Replace YOUR_DOMAIN with the Namecheap domain that has the longest expiry.
+#
+# After DNS A/AAAA records point at your static IP:
+#   1) sophyane --cloud-serve --cloud-port 8780
+#   2) merge this block into /etc/caddy/Caddyfile and reload caddy
+#
+# IMPORTANT: do NOT put basic_auth on the public marketing/API site.
+
+YOUR_DOMAIN, www.YOUR_DOMAIN, api.YOUR_DOMAIN, sophyane.YOUR_DOMAIN {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    reverse_proxy 127.0.0.1:8780
+
+    log {
+        output file /var/log/caddy/sophyane-cloud.log {
+            roll_size 10MiB
+            roll_keep 10
+        }
+    }
+}

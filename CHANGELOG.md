@@ -1,5 +1,15 @@
 # Changelog
 
+## 17.1.0 — 2026-07-15
+
+### Added
+- **Sophyane Cloud portal**: investor website + public API token system
+- Ultra-low pricing (free / $1 builder / hybrid edge free device compute)
+- Namecheap API client: list domains, longest expiry, set A/AAAA to static IP
+- CLI: `--cloud-serve`, `--namecheap-domains`, `--namecheap-longest`, `--namecheap-setup-site`
+- Docs: `docs/CLOUD_PORTAL.md`, `website/`
+
+
 ## 17.0.0 — 2026-07-15
 
 ### Added — future-complete agent surface

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>API Docs — Sophyane Cloud</title>
+  <link rel="stylesheet" href="/css/site.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <header class="nav">
+    <a class="logo" href="/">◆ Sophyane</a>
+    <nav>
+      <a href="/get-api.html">Get API</a>
+      <a href="/pricing.html">Pricing</a>
+    </nav>
+  </header>
+  <main class="section">
+    <h2>API reference</h2>
+    <div class="code-panel wide">
+<pre><code>POST /api/v1/signup
+{"email":"you@x.com","name":"You","plan":"hybrid"}
+→ { api_key, user, endpoint }
+
+POST /api/v1/chat
+Authorization: Bearer sph_...
+{"message":"Hello","edge":true}
+→ { reply, usage }
+
+GET  /api/v1/usage
+Authorization: Bearer sph_...
+
+GET  /api/v1/pricing
+GET  /api/v1/health
+
+POST /api/v1/keys   # mint additional keys
+Authorization: Bearer sph_...
+{"label":"prod"}
+</code></pre>
+    </div>
+    <h2 style="margin-top:2rem">Local open-source install</h2>
+    <div class="code-panel wide">
+<pre><code>curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
+sophyane --capabilities
+sophyane --boot
+sophyane --train-opt-in   # contribute free device compute
+</code></pre>
+    </div>
+    <p style="color:var(--muted);margin-top:1rem">Full capability docs on GitHub: <a href="https://github.com/badrpk/sophyane/blob/main/docs/AGENT_CAPABILITIES.md">AGENT_CAPABILITIES.md</a></p>
+  </main>
+</body>
+</html>

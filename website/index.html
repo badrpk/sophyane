@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sophyane — The Open Agent Infrastructure Layer</title>
+  <meta name="description" content="Sophyane is a cross-platform AI agent harness with ultra-low cost cloud tokens and free extra compute on your own hardware. Investor-ready agent OS for devices, cloud, and edge." />
+  <link rel="stylesheet" href="/css/site.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="bg-glow"></div>
+  <header class="nav">
+    <a class="logo" href="/">◆ Sophyane</a>
+    <nav>
+      <a href="#product">Product</a>
+      <a href="#hybrid">Hybrid Compute</a>
+      <a href="/pricing.html">Pricing</a>
+      <a href="#investors">Investors</a>
+      <a href="/docs.html">Docs</a>
+      <a class="btn btn-sm" href="/get-api.html">Get API Key</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Cross-platform AI agent infrastructure · v17</p>
+      <h1>The agent layer that runs on <em>every device</em> — and costs almost nothing in the cloud.</h1>
+      <p class="lede">
+        Sophyane is a full agent operating system: plan → act → verify harness, mesh of user devices,
+        federated continual training, skills, RAG, MCP tools, and an ultra-low-cost public API.
+        Heavy inference can run on <strong>your users’ own hardware</strong> — free additional compute.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="/get-api.html">Get free API key</a>
+        <a class="btn btn-ghost" href="https://github.com/badrpk/sophyane" target="_blank" rel="noopener">GitHub ★</a>
+        <a class="btn btn-ghost" href="#investors">Investor brief</a>
+      </div>
+      <div class="hero-stats">
+        <div><strong>10–30×</strong><span>cheaper than typical frontier APIs</span></div>
+        <div><strong>$0–$1</strong><span>plans for builders</span></div>
+        <div><strong>Edge-free</strong><span>extra compute on user devices</span></div>
+        <div><strong>41</strong><span>modern agent capabilities</span></div>
+      </div>
+    </section>
+
+    <section id="product" class="section">
+      <h2>One agent stack. Phone → PC → cloud → industrial edge.</h2>
+      <div class="grid-3">
+        <article class="card">
+          <h3>Agent harness</h3>
+          <p>Plan → tool use → verify → self-repair. Multi-provider fallback, local GGUF rescue, skills, RAG, HITL, budgets, observability.</p>
+        </article>
+        <article class="card">
+          <h3>Mesh compute</h3>
+          <p>USB / Wi‑Fi / LAN peer federation. Clone install, shared storage, offload chat/compute to nearby devices users already own.</p>
+        </article>
+        <article class="card">
+          <h3>Continual learning</h3>
+          <p>C++ PEFT adapters over existing LLM weights. Opt-in federated rounds improve the shared Sophyane model across installs.</p>
+        </article>
+        <article class="card">
+          <h3>Enterprise connectors</h3>
+          <p>ERP adapters (Oracle, SAP, Odoo…), app factory for web/Android/iOS/Harmony, Hardware API for Python / C++ / JS.</p>
+        </article>
+        <article class="card">
+          <h3>Appliance boot</h3>
+          <p>Install on Linux-capable SoCs like an OS appliance — Ethernet + Wi‑Fi bring-up, kernel, mesh, API auto-start.</p>
+        </article>
+        <article class="card">
+          <h3>Open & installable</h3>
+          <p>One-liner install from GitHub always pulls the latest release. Zero mandatory heavy dependencies. Investor-clear architecture.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="hybrid" class="section band">
+      <div class="split">
+        <div>
+          <h2>Hybrid economics that win markets</h2>
+          <p>
+            Cloud APIs are metered at <strong>extreme low prices</strong> so teams adopt Sophyane everywhere.
+            For the <em>additional</em> heavy load — long coding loops, batch agents, fine-tune adapters —
+            Sophyane routes work onto hardware users already run (phones, PCs, gateways, servers).
+          </p>
+          <ul class="checks">
+            <li>Cloud tokens: orchestration, light chat, control plane</li>
+            <li>User devices: free extra FLOPs via mesh + local GGUF</li>
+            <li>Federated PEFT: network-wide model improvement, opt-in</li>
+            <li>Builders stay under $1/mo for millions of tokens</li>
+          </ul>
+          <a class="btn btn-primary" href="/pricing.html">See pricing →</a>
+        </div>
+        <div class="code-panel">
+          <pre><code># Get a key (free plan)
+curl -s https://YOUR_DOMAIN/api/v1/signup \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@startup.com","plan":"hybrid"}'
+
+# Call Sophyane Cloud
+curl -s https://YOUR_DOMAIN/api/v1/chat \
+  -H "Authorization: Bearer sph_..." \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"Design a verify loop for agents","edge":true}'
+
+# Or run free local compute
+curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
+sophyane --boot && sophyane --train-opt-in
+</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="investors" class="section">
+      <h2>Why investors pay attention</h2>
+      <div class="grid-2">
+        <article class="card tall">
+          <h3>Category</h3>
+          <p>Not another chatbot UI — an <strong>agent infrastructure layer</strong> spanning devices, cloud, and enterprise systems. Expandable surface: 38+ ready capabilities, honest roadmap for voice/GUI/A2A.</p>
+        </article>
+        <article class="card tall">
+          <h3>Moat</h3>
+          <p>Installed base becomes a <strong>compute + learning network</strong>. Every opted-in device improves the shared model and absorbs load competitors would pay GPU cloud for.</p>
+        </article>
+        <article class="card tall">
+          <h3>Go-to-market</h3>
+          <p>Open-source install + freemium API. Viral through developer tools, industrial gateways, and student devices. Ultra-low prices remove adoption friction.</p>
+        </article>
+        <article class="card tall">
+          <h3>Traction levers</h3>
+          <p>GitHub releases, appliance on SoCs, ERP connectors, multi-language SDKs, daily self-improvement ledger, public capability audit.</p>
+        </article>
+      </div>
+      <div class="investor-cta">
+        <p>Request the deck / technical deep-dive: <a href="mailto:invest@sophyane.local">contact via your domain email</a> · Product is live on GitHub today.</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Install anywhere in one line</h2>
+      <div class="code-panel wide">
+        <pre><code>curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
+sophyane --capabilities
+sophyane --audit</code></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div>© <span id="y"></span> Sophyane · Open agent infrastructure</div>
+    <div class="footer-links">
+      <a href="https://github.com/badrpk/sophyane">GitHub</a>
+      <a href="/pricing.html">Pricing</a>
+      <a href="/get-api.html">API</a>
+      <a href="/docs.html">Docs</a>
+    </div>
+  </footer>
+  <script src="/js/site.js"></script>
+</body>
+</html>

@@ -323,6 +323,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--notify-test", action="store_true", help="send a test notification")
     parser.add_argument("--voice-status", action="store_true", help="voice STT/TTS capability status")
     parser.add_argument("--image", default="", help="describe an image path (multimodal hook)")
+    parser.add_argument("--cloud-serve", action="store_true", help="serve Sophyane public website + token API")
+    parser.add_argument("--cloud-host", default="0.0.0.0", help="cloud portal bind host")
+    parser.add_argument("--cloud-port", type=int, default=8780, help="cloud portal port (default 8780)")
+    parser.add_argument("--namecheap-domains", action="store_true", help="list Namecheap domains (needs API env)")
+    parser.add_argument("--namecheap-longest", action="store_true", help="pick domain with longest expiry")
+    parser.add_argument(
+        "--namecheap-setup-site",
+        action="store_true",
+        help="point longest-expiry domain A/AAAA records at STATIC_IPV4/IPV6",
+    )
+    parser.add_argument("--namecheap-domain", default="", help="force domain for --namecheap-setup-site")
+    parser.add_argument("--static-ipv4", default="", help="public static IPv4 for DNS A records")
+    parser.add_argument("--static-ipv6", default="", help="optional static IPv6 for AAAA records")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--single-agent", action="store_true", help="use legacy one-worker runtime")
     parser.add_argument("--multi-agent", action="store_true", help="use legacy supervisor-worker runtime")
@@ -630,6 +643,59 @@ def main() -> int:
         from sophyane.multimodal import describe_image
 
         print(json.dumps(describe_image(str(args.image)), indent=2))
+        return 0
+
+    if args.namecheap_domains or args.namecheap_longest or args.namecheap_setup_site:
+        from sophyane.cloud.namecheap import NamecheapClient
+
+        try:
+            client = NamecheapClient()
+        except Exception as error:  # noqa: BLE001
+            print(json.dumps({"ok": False, "error": str(error)}, indent=2))
+            return 1
+        if args.namecheap_domains:
+            print(json.dumps({"ok": True, "domains": client.list_domains()}, indent=2))
+            return 0
+        if args.namecheap_longest:
+            best = client.longest_expiry_domain()
+            print(json.dumps({"ok": bool(best), "domain": best}, indent=2))
+            return 0 if best else 1
+        ipv4 = str(args.static_ipv4 or os.environ.get("STATIC_IPV4") or "").strip()
+        ipv6 = str(args.static_ipv6 or os.environ.get("STATIC_IPV6") or "").strip()
+        if not ipv4:
+            print(json.dumps({"ok": False, "error": "STATIC_IPV4 / --static-ipv4 required"}, indent=2))
+            return 1
+        result = client.setup_sophyane_site(
+            ipv4=ipv4,
+            ipv6=ipv6,
+            prefer_domain=str(args.namecheap_domain or ""),
+        )
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("ok") else 1
+
+    if args.cloud_serve:
+        from sophyane.cloud.portal import serve_portal
+
+        host = str(args.cloud_host)
+        port = int(args.cloud_port)
+        server = serve_portal(host, port)
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "url": f"http://{host}:{port}/",
+                    "api": f"http://{host}:{port}/api/v1/health",
+                    "signup": f"http://{host}:{port}/get-api.html",
+                    "message": "Sophyane Cloud portal serving. Point domain DNS here and reverse-proxy with Caddy/nginx.",
+                },
+                indent=2,
+            ),
+            flush=True,
+        )
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print("\nCloud portal stopped.")
         return 0
 
     if args.ask:

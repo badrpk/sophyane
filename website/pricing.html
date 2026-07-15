@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pricing — Sophyane Cloud</title>
+  <link rel="stylesheet" href="/css/site.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <header class="nav">
+    <a class="logo" href="/">◆ Sophyane</a>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/get-api.html">Get API</a>
+      <a href="/docs.html">Docs</a>
+    </nav>
+  </header>
+  <main class="section">
+    <p class="eyebrow">Ultra-low cloud · free edge compute</p>
+    <h2>Pricing designed for mass adoption</h2>
+    <p class="lede">Pay almost nothing for cloud orchestration. Run heavy agent work on devices you already own via Sophyane mesh / local models — that extra compute is free.</p>
+    <div class="grid-3" id="plans"></div>
+    <table class="price-table">
+      <thead>
+        <tr><th>Compare</th><th>Typical frontier API</th><th>Sophyane Builder</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Approx. per 1M tokens</td><td>~$0.50+</td><td><strong>$0.03</strong> overage</td></tr>
+        <tr><td>Monthly entry</td><td>$20+ platforms</td><td><strong>$0–$1</strong></td></tr>
+        <tr><td>User-owned GPU/CPU</td><td>Not included</td><td><strong>Free hybrid edge</strong></td></tr>
+      </tbody>
+    </table>
+    <p class="alert" style="margin-top:1.5rem">Prices are intentionally aggressive to grow the network. Enterprise SLAs available on request.</p>
+    <p style="margin-top:1.5rem"><a class="btn btn-primary" href="/get-api.html">Create free key</a></p>
+  </main>
+  <script src="/js/site.js"></script>
+  <script>
+    fetch('/api/v1/pricing').then(r=>r.json()).then(d=>{
+      const el=document.getElementById('plans');
+      (d.plans||[]).forEach(p=>{
+        const div=document.createElement('article');
+        div.className='card';
+        div.innerHTML=`<span class="badge">${p.id}</span><h3 style="margin-top:.6rem">${p.name}</h3>
+          <p style="font-size:1.6rem;margin:.4rem 0;color:var(--accent2)"><strong>$${p.price_usd_month}</strong><span style="font-size:.85rem;color:var(--muted)">/mo</span></p>
+          <p>${p.description||''}</p>
+          <p style="margin-top:.7rem;color:var(--muted);font-size:.9rem">${(p.included_tokens/1e6).toFixed(1)}M tokens included · $${p.overage_per_1m}/1M over</p>`;
+        el.appendChild(div);
+      });
+    }).catch(()=>{});
+  </script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Get API Key — Sophyane Cloud</title>
+  <link rel="stylesheet" href="/css/site.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <header class="nav">
+    <a class="logo" href="/">◆ Sophyane</a>
+    <nav>
+      <a href="/pricing.html">Pricing</a>
+      <a href="/docs.html">Docs</a>
+    </nav>
+  </header>
+  <main class="section">
+    <p class="eyebrow">Public API</p>
+    <h2>Get your Sophyane API key</h2>
+    <p class="lede">Signup is instant. Keys start with <code>sph_</code>. Use Hybrid Edge to keep cloud cheap and push heavy work to your own hardware.</p>
+    <form class="form" id="signup">
+      <label>Email
+        <input name="email" type="email" required placeholder="you@company.com" />
+      </label>
+      <label>Name
+        <input name="name" type="text" placeholder="Ada" />
+      </label>
+      <label>Plan
+        <select name="plan">
+          <option value="free">Free Explorer — $0</option>
+          <option value="hybrid" selected>Hybrid Edge — $0 + free device compute</option>
+          <option value="builder">Builder — $1/mo</option>
+          <option value="scale">Scale — $9/mo</option>
+        </select>
+      </label>
+      <button class="btn btn-primary" type="submit">Create key</button>
+      <p class="alert">Copy the key once — full secret is only shown at creation.</p>
+    </form>
+    <div class="out" id="out"></div>
+
+    <h2 style="margin-top:2.5rem">Try chat</h2>
+    <form class="form" id="chat">
+      <label>API key
+        <input name="key" type="password" placeholder="sph_..." />
+      </label>
+      <label>Message
+        <textarea name="message" rows="3" placeholder="Explain Sophyane hybrid compute"></textarea>
+      </label>
+      <label><input type="checkbox" name="edge" checked /> Prefer hybrid edge answer</label>
+      <button class="btn btn-primary" type="submit">Send</button>
+    </form>
+    <div class="out" id="chat-out"></div>
+  </main>
+  <script src="/js/site.js"></script>
+  <script>
+    const out=document.getElementById('out');
+    const chatOut=document.getElementById('chat-out');
+    document.getElementById('signup').onsubmit=async(e)=>{
+      e.preventDefault();
+      const fd=new FormData(e.target);
+      const body=Object.fromEntries(fd.entries());
+      const r=await fetch('/api/v1/signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const j=await r.json();
+      out.classList.add('show');
+      out.textContent=JSON.stringify(j,null,2);
+      if(j.api_key){ document.querySelector('#chat [name=key]').value=j.api_key; }
+    };
+    document.getElementById('chat').onsubmit=async(e)=>{
+      e.preventDefault();
+      const fd=new FormData(e.target);
+      const key=fd.get('key');
+      const r=await fetch('/api/v1/chat',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
+        body:JSON.stringify({message:fd.get('message'), edge: !!fd.get('edge')})
+      });
+      const j=await r.json();
+      chatOut.classList.add('show');
+      chatOut.textContent=JSON.stringify(j,null,2);
+    };
+  </script>
+</body>
+</html>

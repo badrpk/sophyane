@@ -3,6 +3,16 @@
 Sophyane is a lightweight, multi-provider AI harness with persistent memory, safe local tools, repository awareness, provider plugins, diagnostics, and a mobile-friendly browser interface.
 
 
+## Cloud portal (API keys + investor site)
+
+```bash
+sophyane --cloud-serve --cloud-port 8780
+# open http://127.0.0.1:8780/  ·  get keys at /get-api.html
+# Namecheap: sophyane --namecheap-longest && sophyane --namecheap-setup-site --static-ipv4 x.x.x.x
+```
+
+See [docs/CLOUD_PORTAL.md](docs/CLOUD_PORTAL.md).
+
 ## Full agent capabilities (v17+)
 
 ```bash
