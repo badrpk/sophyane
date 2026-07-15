@@ -58,7 +58,14 @@ def _device_id() -> str:
     return f"{socket.gethostname()}-{uuid.uuid5(uuid.NAMESPACE_DNS, socket.gethostname()).hex[:8]}"
 
 
-def _hash_block(index: int, timestamp: float, proposal: dict[str, Any], prev_hash: str, device: str) -> str:
+def _hash_block(
+    index: int,
+    timestamp: float,
+    proposal: dict[str, Any],
+    prev_hash: str,
+    device: str,
+    version: str | None = None,
+) -> str:
     payload = json.dumps(
         {
             "index": index,
@@ -66,7 +73,7 @@ def _hash_block(index: int, timestamp: float, proposal: dict[str, Any], prev_has
             "proposal": proposal,
             "prev_hash": prev_hash,
             "device": device,
-            "version": __version__,
+            "version": version or __version__,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -109,6 +116,7 @@ def verify_chain() -> dict[str, Any]:
             block["proposal"],
             block["prev_hash"],
             str(block.get("device") or ""),
+            version=str(block.get("version") or __version__),
         )
         if block.get("prev_hash") != prev:
             return {"ok": False, "error": f"prev_hash mismatch at {i}", "length": len(blocks)}
@@ -143,7 +151,9 @@ def propose_improvement(
     timestamp = time.time()
     prev_hash = str(tip["hash"])
     device = proposal.source_device
-    block_hash = _hash_block(index, timestamp, proposal.to_dict(), prev_hash, device)
+    block_hash = _hash_block(
+        index, timestamp, proposal.to_dict(), prev_hash, device, version=__version__
+    )
     block = LedgerBlock(
         index=index,
         timestamp=timestamp,

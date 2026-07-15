@@ -1,14 +1,14 @@
 {
   "day": "2026-07-15",
-  "exported_at": 1784121438.3786137,
+  "exported_at": 1784122054.5262306,
   "device": "penguin-889b882e",
-  "sophyane_version": "16.6.0",
+  "sophyane_version": "16.7.0",
   "chain_verify": {
     "ok": true,
-    "length": 3,
-    "tip": "6ed1d60ff4b56e09172fee29a106ce07acc5a429f69dce7e34712bf7d5233965"
+    "length": 43,
+    "tip": "1783017be6a3f1b30bb527f4035c50fc5a51597ef80541ec7469110b946d96bf"
   },
-  "count": 3,
+  "count": 43,
   "blocks": [
     {
       "index": 0,
@@ -66,7 +66,820 @@
       "hash": "6ed1d60ff4b56e09172fee29a106ce07acc5a429f69dce7e34712bf7d5233965",
       "device": "penguin-889b882e",
       "version": "16.6.0"
+    },
+    {
+      "index": 3,
+      "timestamp": 1784121736.4721792,
+      "proposal": {
+        "proposal_id": "0bde45fe-7c0a-428e-833a-ca1d9c32e793",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null
+        },
+        "score": 0.1,
+        "created_at": 1784121736.4721746
+      },
+      "prev_hash": "6ed1d60ff4b56e09172fee29a106ce07acc5a429f69dce7e34712bf7d5233965",
+      "hash": "390c67a9948b127da1fae554d5c4c9d6540a9262668a87b452fbedf95f55d2a1",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 4,
+      "timestamp": 1784121740.8617973,
+      "proposal": {
+        "proposal_id": "3e8d9580-d9c5-448c-8b35-46bc6062b639",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1784121740.8617947
+      },
+      "prev_hash": "390c67a9948b127da1fae554d5c4c9d6540a9262668a87b452fbedf95f55d2a1",
+      "hash": "f5bee20f5fa2317114bb25eb91439db4707b409039fe4ad2db222a17dfd8d2aa",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 5,
+      "timestamp": 1784121741.9895356,
+      "proposal": {
+        "proposal_id": "63b4a280-8a04-456e-bc58-47d67a31f265",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1784121741.9895322
+      },
+      "prev_hash": "f5bee20f5fa2317114bb25eb91439db4707b409039fe4ad2db222a17dfd8d2aa",
+      "hash": "c622a1338ab43c006659b4f1fcb97b4d0d1f83d3afc2244017db246c43c6bfeb",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 6,
+      "timestamp": 1784121745.1183815,
+      "proposal": {
+        "proposal_id": "64d0423a-e66d-4bb9-b37c-3bd0d94400a1",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null
+        },
+        "score": 0.1,
+        "created_at": 1784121745.1183767
+      },
+      "prev_hash": "c622a1338ab43c006659b4f1fcb97b4d0d1f83d3afc2244017db246c43c6bfeb",
+      "hash": "3db194388826de2e46c983ecfea9cc187c36a5421ec12e888fdcbf93ca01256e",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 7,
+      "timestamp": 1784121748.5432034,
+      "proposal": {
+        "proposal_id": "181480da-e0f9-4af5-9031-6532e91db212",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1784121748.543197
+      },
+      "prev_hash": "3db194388826de2e46c983ecfea9cc187c36a5421ec12e888fdcbf93ca01256e",
+      "hash": "53cba82d0bb766a17b31a840d5e88e1ef61cb0fcffeaec3aa2239d97c38b8f26",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 8,
+      "timestamp": 1784121772.8129797,
+      "proposal": {
+        "proposal_id": "070d4073-f6e6-45d9-ad21-0d31d4e32261",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null
+        },
+        "score": 0.1,
+        "created_at": 1784121772.812975
+      },
+      "prev_hash": "53cba82d0bb766a17b31a840d5e88e1ef61cb0fcffeaec3aa2239d97c38b8f26",
+      "hash": "97058c346fcd6fca5c0dbca010f464c337353174ef726ab38d582f2e7ec4d5b9",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 9,
+      "timestamp": 1784121773.9410985,
+      "proposal": {
+        "proposal_id": "7f14f6ec-6b70-4de7-afe9-b8c3aab728ee",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1784121773.9410946
+      },
+      "prev_hash": "97058c346fcd6fca5c0dbca010f464c337353174ef726ab38d582f2e7ec4d5b9",
+      "hash": "2bf4f1b66e9bfdabc5d6684432f74088b35138105d42a9b4986584da68b6f947",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 10,
+      "timestamp": 1784121775.2538764,
+      "proposal": {
+        "proposal_id": "09d79295-c620-46a6-a6d9-a80c02c9335e",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1784121775.253873
+      },
+      "prev_hash": "2bf4f1b66e9bfdabc5d6684432f74088b35138105d42a9b4986584da68b6f947",
+      "hash": "cf98b343f81243a672e1111f8092493070b50472b0be93bc24ae5ea1b1555d40",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 11,
+      "timestamp": 1784121779.9841897,
+      "proposal": {
+        "proposal_id": "34ac77c8-dfd6-490e-99ba-daeb9157cd63",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null
+        },
+        "score": 0.1,
+        "created_at": 1784121779.984186
+      },
+      "prev_hash": "cf98b343f81243a672e1111f8092493070b50472b0be93bc24ae5ea1b1555d40",
+      "hash": "3ee9b5663edb58bdf47dc26ba35a0f5fd9fcfc94b43078a9f619b69006839d40",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 12,
+      "timestamp": 1784121780.900903,
+      "proposal": {
+        "proposal_id": "43644a8a-b311-4a31-bb95-e4a4febb668b",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1784121780.9009001
+      },
+      "prev_hash": "3ee9b5663edb58bdf47dc26ba35a0f5fd9fcfc94b43078a9f619b69006839d40",
+      "hash": "a71293c59bdd8d5a8690ce3c69936e0e43d5c0914a4b4dd182a902e9350675e3",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 13,
+      "timestamp": 1784121784.486397,
+      "proposal": {
+        "proposal_id": "9d6bde9e-05ce-469f-8866-96e47acc70c2",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1784121784.4863944
+      },
+      "prev_hash": "a71293c59bdd8d5a8690ce3c69936e0e43d5c0914a4b4dd182a902e9350675e3",
+      "hash": "4b3a0043178154334416ef0ee41608555ea5dd7ad5be18ac1e6f5ca433dd4b16",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 14,
+      "timestamp": 1784121790.884015,
+      "proposal": {
+        "proposal_id": "d5101596-5fcb-4817-abc9-ee92f38ffb68",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null
+        },
+        "score": 0.1,
+        "created_at": 1784121790.8839433
+      },
+      "prev_hash": "4b3a0043178154334416ef0ee41608555ea5dd7ad5be18ac1e6f5ca433dd4b16",
+      "hash": "1e260eeda4a122af76aada4126a1124aeffc619622e3337da0fc753f2d00b41e",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 15,
+      "timestamp": 1784121792.7800953,
+      "proposal": {
+        "proposal_id": "2c45e511-a629-411f-840e-98b57c2baf5c",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1784121792.7800913
+      },
+      "prev_hash": "1e260eeda4a122af76aada4126a1124aeffc619622e3337da0fc753f2d00b41e",
+      "hash": "a6fd4e9ef087b3a54be46b040777578a424ec522c36688d99275441911e51a91",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 16,
+      "timestamp": 1784121801.548341,
+      "proposal": {
+        "proposal_id": "20354348-4077-47c1-807b-811ef16edff0",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null
+        },
+        "score": 0.1,
+        "created_at": 1784121801.5483382
+      },
+      "prev_hash": "a6fd4e9ef087b3a54be46b040777578a424ec522c36688d99275441911e51a91",
+      "hash": "af8d2e5fd281460ab63843f658a51bdb20fcd9b9f57a7bb75b189ee8f08330be",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 17,
+      "timestamp": 1784121803.7626739,
+      "proposal": {
+        "proposal_id": "33acf7c5-7315-464d-b675-e2658327a5ed",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1784121803.7626698
+      },
+      "prev_hash": "af8d2e5fd281460ab63843f658a51bdb20fcd9b9f57a7bb75b189ee8f08330be",
+      "hash": "1dfb68e216a5790f5c691e6aa6b3d796b6c94cb6e801f1783eaa566b39b9eebf",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 18,
+      "timestamp": 1784121858.3157027,
+      "proposal": {
+        "proposal_id": "690e0fd5-d440-4855-a778-0710808e44ce",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1784121858.3157
+      },
+      "prev_hash": "1dfb68e216a5790f5c691e6aa6b3d796b6c94cb6e801f1783eaa566b39b9eebf",
+      "hash": "f13bdeb47b7747ea7ff556547c9a213b104c02fdd7f1cf61f8f3e731a51ae96e",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 19,
+      "timestamp": 1784121860.158789,
+      "proposal": {
+        "proposal_id": "e643c53e-786f-403e-868d-0fc1c37fa540",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1784121860.1587856
+      },
+      "prev_hash": "f13bdeb47b7747ea7ff556547c9a213b104c02fdd7f1cf61f8f3e731a51ae96e",
+      "hash": "22fedd4c341a11e5105e360734e62326d9db1b6f03d5d09f7868a6dcc8d1701e",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 20,
+      "timestamp": 1784121974.4907742,
+      "proposal": {
+        "proposal_id": "6b99fd0b-845e-4851-8493-3ec431653ab0",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1784121974.4907713
+      },
+      "prev_hash": "22fedd4c341a11e5105e360734e62326d9db1b6f03d5d09f7868a6dcc8d1701e",
+      "hash": "24b1e37e735b146f2bc58b8c89d6ee0ee25a3bfbb867f536c649eac33d968765",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 21,
+      "timestamp": 1784121975.8714666,
+      "proposal": {
+        "proposal_id": "b79c930c-f990-4e02-ac04-d1ccd436ebc0",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1784121975.8714626
+      },
+      "prev_hash": "24b1e37e735b146f2bc58b8c89d6ee0ee25a3bfbb867f536c649eac33d968765",
+      "hash": "db77d7a2e13a2533abd8b44955a423c6f1877d32e753b1db50f47e4a2d916423",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 22,
+      "timestamp": 1784121976.570371,
+      "proposal": {
+        "proposal_id": "69561d0f-b1f1-4c48-9e8a-205383d907a7",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1784121976.5703673
+      },
+      "prev_hash": "db77d7a2e13a2533abd8b44955a423c6f1877d32e753b1db50f47e4a2d916423",
+      "hash": "6e034bdbb5062a0c0da7829b9055e5962a3a821d102ae780ada879452fd62394",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 23,
+      "timestamp": 1784121982.4902787,
+      "proposal": {
+        "proposal_id": "0f004476-ae87-404a-bac7-9c7ea1a687f4",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1784121982.4902747
+      },
+      "prev_hash": "6e034bdbb5062a0c0da7829b9055e5962a3a821d102ae780ada879452fd62394",
+      "hash": "ededd03c0cbca43edead63ec5511b852ba43bbb60a3c0df58414ac3c4fd19264",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 24,
+      "timestamp": 1784122004.0054314,
+      "proposal": {
+        "proposal_id": "000db6b6-19f4-4e38-946d-2599569fa9c6",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1784122004.0054283
+      },
+      "prev_hash": "ededd03c0cbca43edead63ec5511b852ba43bbb60a3c0df58414ac3c4fd19264",
+      "hash": "5c3c482cca6a241d771c22e1aac37db88d276eda010aedbf2e61fb3a09c10b6d",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 25,
+      "timestamp": 1784122006.9493392,
+      "proposal": {
+        "proposal_id": "ba55a2bc-34bd-404a-8474-f64b80829f71",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1784122006.9493337
+      },
+      "prev_hash": "5c3c482cca6a241d771c22e1aac37db88d276eda010aedbf2e61fb3a09c10b6d",
+      "hash": "e73ec682bec5dde2f6eb8f5237cd60e0ef4594df1189ac6f770d0ff42072f8e3",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 26,
+      "timestamp": 1784122007.2942002,
+      "proposal": {
+        "proposal_id": "78aaa179-3a62-4dd6-b111-2bb6a2e1755f",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1784122007.2941945
+      },
+      "prev_hash": "e73ec682bec5dde2f6eb8f5237cd60e0ef4594df1189ac6f770d0ff42072f8e3",
+      "hash": "9f47c02d3951526c33b6a83f75156cb8e3132667b390bf821c986769e8842ddd",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 27,
+      "timestamp": 1784122008.2303257,
+      "proposal": {
+        "proposal_id": "b13d5f3c-14e2-4bb5-98ed-2242415b6e15",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1784122008.230324
+      },
+      "prev_hash": "9f47c02d3951526c33b6a83f75156cb8e3132667b390bf821c986769e8842ddd",
+      "hash": "7e9edd70b20a58c8657bbc83dbba8c67960246012861d612619907e376015164",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 28,
+      "timestamp": 1784122008.7075772,
+      "proposal": {
+        "proposal_id": "dd795324-9181-431a-b253-391465a75728",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1784122008.7075737
+      },
+      "prev_hash": "7e9edd70b20a58c8657bbc83dbba8c67960246012861d612619907e376015164",
+      "hash": "522333fb1d8b9510e1dd460089833a081b6a09c9cdb4728d16db6c1f6681f92c",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 29,
+      "timestamp": 1784122011.1008677,
+      "proposal": {
+        "proposal_id": "f07d0faa-95e8-4764-9db1-33928d2efebf",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1784122011.1008646
+      },
+      "prev_hash": "522333fb1d8b9510e1dd460089833a081b6a09c9cdb4728d16db6c1f6681f92c",
+      "hash": "9f0d6d235d4a6ea7b1ae8ba238c2cbdcef1c0e2231b8566ba87dc5f7f79b355b",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 30,
+      "timestamp": 1784122022.5237617,
+      "proposal": {
+        "proposal_id": "2c870263-513a-45b5-8cf1-dfc939c56720",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1784122022.523756
+      },
+      "prev_hash": "9f0d6d235d4a6ea7b1ae8ba238c2cbdcef1c0e2231b8566ba87dc5f7f79b355b",
+      "hash": "8751546817fe90da9a09bca72f493c68811867ea41d3d1c1f332e851e3a2e1ca",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 31,
+      "timestamp": 1784122022.7638922,
+      "proposal": {
+        "proposal_id": "5cda38d7-f076-49c6-8afa-46b207b002aa",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1784122022.763886
+      },
+      "prev_hash": "8751546817fe90da9a09bca72f493c68811867ea41d3d1c1f332e851e3a2e1ca",
+      "hash": "24d84cfae566155cf9ff820b520043f5be2990d7df7691dcf75f497af68e1ae4",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 32,
+      "timestamp": 1784122023.1056201,
+      "proposal": {
+        "proposal_id": "12adb2c5-a100-4021-a80d-00c3211f3ea6",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1784122023.105615
+      },
+      "prev_hash": "24d84cfae566155cf9ff820b520043f5be2990d7df7691dcf75f497af68e1ae4",
+      "hash": "1fd01cf59f3d5dcfe715cbe33c44ae98c48ec280d44124a02151af1cc2e6e856",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 33,
+      "timestamp": 1784122023.1588078,
+      "proposal": {
+        "proposal_id": "657cb31d-c0f2-424e-961c-c05b7a07ee81",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1784122023.1588025
+      },
+      "prev_hash": "1fd01cf59f3d5dcfe715cbe33c44ae98c48ec280d44124a02151af1cc2e6e856",
+      "hash": "9ac0dae7994c4f7dce78c2b536de1e989cf7446cca2b05f546c3d1404a474ab3",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 34,
+      "timestamp": 1784122024.6872902,
+      "proposal": {
+        "proposal_id": "b33ba229-869e-43df-b6ac-e08773163da5",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1784122024.6872845
+      },
+      "prev_hash": "9ac0dae7994c4f7dce78c2b536de1e989cf7446cca2b05f546c3d1404a474ab3",
+      "hash": "eab45a46fa7c20330acf9156b4a79166308f4db849161144d9f20dfdf85dbd19",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 35,
+      "timestamp": 1784122025.6382213,
+      "proposal": {
+        "proposal_id": "df804fb3-c69c-4041-8d1c-524a9bbcb4c8",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1784122025.638219
+      },
+      "prev_hash": "eab45a46fa7c20330acf9156b4a79166308f4db849161144d9f20dfdf85dbd19",
+      "hash": "f9e05286ff4ebee55d5de6fac77c80afe70800513e130d44ae53a45e96045f27",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 36,
+      "timestamp": 1784122026.2270567,
+      "proposal": {
+        "proposal_id": "b5c89cec-c228-4f5d-a0b3-12e7b728b818",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1784122026.2270536
+      },
+      "prev_hash": "f9e05286ff4ebee55d5de6fac77c80afe70800513e130d44ae53a45e96045f27",
+      "hash": "b86677a6f1a4b7a2d0af5259a73926dd3aa782a7e2396e7eb379f2d0049cc067",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 37,
+      "timestamp": 1784122029.0631146,
+      "proposal": {
+        "proposal_id": "806f659d-6914-440e-8102-c3f2ac4c5ef1",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1784122029.0631113
+      },
+      "prev_hash": "b86677a6f1a4b7a2d0af5259a73926dd3aa782a7e2396e7eb379f2d0049cc067",
+      "hash": "035b95cc321aff5be9a564e0844c09eb584c305e0773361773d1c2a709f747d9",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 38,
+      "timestamp": 1784122048.420524,
+      "proposal": {
+        "proposal_id": "17e4e949-dab5-4515-8021-74a70d8dab9d",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1784122048.4205184
+      },
+      "prev_hash": "035b95cc321aff5be9a564e0844c09eb584c305e0773361773d1c2a709f747d9",
+      "hash": "26113e3f8d695292e2102b6c071b9bc06c64d6a669aacfc37b90368cbda9b8f4",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 39,
+      "timestamp": 1784122048.761682,
+      "proposal": {
+        "proposal_id": "4d55c9e5-193b-4145-8de5-e0b9f734262b",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1784122048.761656
+      },
+      "prev_hash": "26113e3f8d695292e2102b6c071b9bc06c64d6a669aacfc37b90368cbda9b8f4",
+      "hash": "1dc75be91bdd785433f4f3d2f4cf6927bac4e7a0b18bb5f71746f24f7af7fb7c",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 40,
+      "timestamp": 1784122050.9319232,
+      "proposal": {
+        "proposal_id": "deed7975-06a1-4baf-a863-99de81980cb2",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1784122050.9319198
+      },
+      "prev_hash": "1dc75be91bdd785433f4f3d2f4cf6927bac4e7a0b18bb5f71746f24f7af7fb7c",
+      "hash": "61bec990c6eb75755037fba3a6e1653da0fb592a8070357e058e446f9778d7d6",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 41,
+      "timestamp": 1784122051.4120681,
+      "proposal": {
+        "proposal_id": "00a1c427-162f-40b1-8169-8b90550238ba",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v16.7.0 on linux/x86_64",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1784122051.412064
+      },
+      "prev_hash": "61bec990c6eb75755037fba3a6e1653da0fb592a8070357e058e446f9778d7d6",
+      "hash": "6bdacf28dac54d8e69d7e25efee6e8a7950a4c150da5c84d34a9d9bc6c873e11",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
+    },
+    {
+      "index": 42,
+      "timestamp": 1784122054.5213883,
+      "proposal": {
+        "proposal_id": "ac2d48a7-8f4e-4f61-9e00-4d6a38239f1e",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1784122054.5213845
+      },
+      "prev_hash": "6bdacf28dac54d8e69d7e25efee6e8a7950a4c150da5c84d34a9d9bc6c873e11",
+      "hash": "1783017be6a3f1b30bb527f4035c50fc5a51597ef80541ec7469110b946d96bf",
+      "device": "penguin-889b882e",
+      "version": "16.7.0"
     }
   ],
-  "merkle_root": "e1f558121217765edc8da6042330035a140b06c7b417de713cd27207d1fe8f86"
+  "merkle_root": "22216bdfe5ea4e944a081f9763b7d39c9c2b21205fe67a8301116b0b05861477"
 }

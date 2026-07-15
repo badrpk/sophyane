@@ -281,6 +281,19 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(404, {"ok": False, "error": "not found", "path": path})
 
 
+def _probe_hardware_health(host: str, port: int) -> bool:
+    """True if Hardware API already answers health on this port."""
+    try:
+        import urllib.request
+
+        url = f"http://127.0.0.1:{port}/v1/hardware/health"
+        with urllib.request.urlopen(url, timeout=2.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return bool(data.get("ok") is True or data.get("status") == "ok" or "version" in data or data)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def serve_hardware_api(
     host: str = "127.0.0.1",
     port: int = 8770,
@@ -288,5 +301,34 @@ def serve_hardware_api(
 ) -> ThreadingHTTPServer:
     """Start threaded HTTP hardware API (blocks if serve_forever is called)."""
     handler = type("BoundHandler", (_Handler,), {"api": api or create_default_api()})
-    server = ThreadingHTTPServer((host, port), handler)
+    try:
+        server = ThreadingHTTPServer((host, port), handler)
+    except OSError as error:
+        if getattr(error, "errno", None) in {98, 48} or "Address already in use" in str(error):
+            if _probe_hardware_health(host, port):
+                # Return a dummy-like sentinel: callers that only need the port up can continue.
+                # Re-raise with a tagged message so appliance can treat as reused.
+                raise OSError(98, f"Address already in use (hardware API healthy on :{port})") from error
+        raise
     return server
+
+
+def ensure_hardware_api(
+    host: str = "0.0.0.0",
+    port: int = 8770,
+    api: HardwareAPI | None = None,
+) -> dict[str, Any]:
+    """Bind Hardware API or reuse an existing healthy listener. Non-blocking."""
+    import threading
+
+    if _probe_hardware_health(host, port):
+        return {"ok": True, "reused": True, "port": port}
+    try:
+        server = serve_hardware_api(host, port, api)
+    except OSError as error:
+        if "already in use" in str(error).lower() or getattr(error, "errno", None) in {98, 48}:
+            if _probe_hardware_health(host, port):
+                return {"ok": True, "reused": True, "port": port, "note": "hardware API already listening"}
+        raise
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return {"ok": True, "reused": False, "port": port}

@@ -1,5 +1,23 @@
 # Changelog
 
+## 16.7.0 — 2026-07-15
+
+### Added
+- **Appliance boot** for Linux-capable chips/SoCs (`--boot`, Ethernet + Wi‑Fi bring-up)
+- Chip install helper + systemd user unit (`--install-chip`, `--install-appliance-unit`)
+- Integrated **feature audit** (`--audit`) covering all major subsystems
+- Network capability report (cable Ethernet + Wi‑Fi tool/path detection)
+- Docs: `docs/APPLIANCE_BOOT.md`
+
+### Fixed
+- Idempotent boot: mesh `:8777` and Hardware API `:8770` reuse existing listeners (no EADDRINUSE fail)
+- Mesh hello probe accepts wrapped `{"ok":true,"result":{...}}` responses
+
+### Verified
+- Feature audit **28/28 (100%)** — kernel, mesh, browser, web intel, improve, ERP, apps, hardware, appliance boot
+- Live boot: ethernet up, internet online, kernel/mesh/API healthy
+- Pytest suite green for appliance, mesh, hardware, kernel, browser
+
 ## 16.6.0 — 2026-07-15
 
 ### Added

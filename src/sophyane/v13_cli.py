@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 
@@ -189,6 +190,46 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="body text for --improve-propose",
     )
+    parser.add_argument(
+        "--boot",
+        action="store_true",
+        help="boot Sophyane appliance (network + kernel + mesh + hardware API)",
+    )
+    parser.add_argument(
+        "--boot-foreground",
+        action="store_true",
+        help="with --boot, keep process alive (for systemd)",
+    )
+    parser.add_argument(
+        "--boot-browser",
+        action="store_true",
+        help="with --boot, also open Sophyane Browser",
+    )
+    parser.add_argument(
+        "--wifi-ssid",
+        default="",
+        help="Wi‑Fi SSID for appliance network bring-up",
+    )
+    parser.add_argument(
+        "--wifi-psk",
+        default="",
+        help="Wi‑Fi password for appliance network bring-up",
+    )
+    parser.add_argument(
+        "--install-appliance-unit",
+        action="store_true",
+        help="write systemd user unit for appliance auto-boot",
+    )
+    parser.add_argument(
+        "--install-chip",
+        action="store_true",
+        help="write sophyane-install-chip helper for Linux SoC/boards",
+    )
+    parser.add_argument(
+        "--audit",
+        action="store_true",
+        help="run integrated feature audit (all major subsystems)",
+    )
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--single-agent", action="store_true", help="use legacy one-worker runtime")
     parser.add_argument("--multi-agent", action="store_true", help="use legacy supervisor-worker runtime")
@@ -337,6 +378,49 @@ def main() -> int:
         system = None if args.erp in {"", "all"} else str(args.erp)
         print(json.dumps(kernel.erp_status(system), indent=2))
         return 0
+    if args.audit:
+        from sophyane.feature_audit import run_full_audit
+
+        report = run_full_audit()
+        print(json.dumps(report, indent=2))
+        return 0 if report.get("ok") else 1
+
+    if args.install_appliance_unit:
+        from sophyane.appliance import write_systemd_unit
+
+        path = write_systemd_unit()
+        print(json.dumps({"ok": True, "unit": str(path)}, indent=2))
+        return 0
+
+    if args.install_chip:
+        from sophyane.appliance import write_chip_install_script
+
+        path = write_chip_install_script()
+        print(json.dumps({"ok": True, "script": str(path)}, indent=2))
+        return 0
+
+    if args.boot:
+        from sophyane.appliance import boot_appliance
+
+        report = boot_appliance(
+            wifi_ssid=str(args.wifi_ssid or "") or None,
+            wifi_psk=str(args.wifi_psk or "") or None,
+            open_browser=bool(args.boot_browser),
+            start_mesh=True,
+            start_hardware_api=True,
+            start_kernel=True,
+        )
+        print(json.dumps(report.to_dict(), indent=2))
+        # Stay up so mesh/hardware API threads remain alive (OS-like appliance).
+        # Use SOPHYANE_BOOT_ONCE=1 for one-shot boot reports in scripts/tests.
+        if os.environ.get("SOPHYANE_BOOT_ONCE", "").lower() not in {"1", "true", "yes"}:
+            try:
+                while True:
+                    time.sleep(3600)
+            except KeyboardInterrupt:
+                print("\nSophyane appliance stopped.")
+        return 0 if report.ok else 1
+
     if args.browser:
         from sophyane.browser import launch_sophyane_browser
 

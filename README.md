@@ -44,6 +44,19 @@ Useful slash commands:
 | `/session-info` | Hardware + session stats |
 | `/quit` | Exit |
 
+## Appliance boot (SoC / chip / gateway)
+
+Install Sophyane on Linux-capable processors and boot like an appliance:
+
+```bash
+sophyane --boot                          # ethernet + kernel + mesh + API
+sophyane --boot --wifi-ssid MYWIFI --wifi-psk 'secret'
+sophyane --install-chip && sophyane --install-appliance-unit
+sophyane --audit                         # verify every major feature
+```
+
+See [docs/APPLIANCE_BOOT.md](docs/APPLIANCE_BOOT.md).
+
 ## Sophyane Browser + daily self-improvement
 
 ```bash

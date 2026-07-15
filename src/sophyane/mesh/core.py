@@ -371,16 +371,51 @@ class MeshNode:
         self._server = server
         return server
 
-    def serve_background(self, host: str = "0.0.0.0") -> None:
+    def _probe_local_hello(self) -> bool:
+        """True if something already answers mesh hello on this port."""
+        try:
+            with socket.create_connection(("127.0.0.1", self.port), timeout=1.0):
+                pass
+        except OSError:
+            return False
+        try:
+            import urllib.request
+
+            url = f"http://127.0.0.1:{self.port}/v1/mesh/hello"
+            with urllib.request.urlopen(url, timeout=2.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            # Responses may be flat or wrapped as {"ok": true, "result": {...}}
+            magic = data.get("magic")
+            if magic is None and isinstance(data.get("result"), dict):
+                magic = data["result"].get("magic")
+            return magic == "SOPHYANE_MESH_v1"
+        except Exception:  # noqa: BLE001
+            return False
+
+    def serve_background(self, host: str = "0.0.0.0") -> dict[str, Any]:
+        """Start mesh HTTP in a daemon thread. Idempotent if already listening."""
         if self._thread and self._thread.is_alive():
-            return
-        server = self.serve(host=host)
+            return {"ok": True, "reused": True, "port": self.port}
+        try:
+            server = self.serve(host=host)
+        except OSError as error:
+            # Address already in use — another Sophyane (or prior boot) holds the port.
+            if getattr(error, "errno", None) in {98, 48} or "Address already in use" in str(error):
+                if self._probe_local_hello():
+                    return {
+                        "ok": True,
+                        "reused": True,
+                        "port": self.port,
+                        "note": "mesh already listening",
+                    }
+            raise
 
         def run() -> None:
             server.serve_forever()
 
         self._thread = threading.Thread(target=run, daemon=True)
         self._thread.start()
+        return {"ok": True, "reused": False, "port": self.port}
 
 
 _NODE: MeshNode | None = None
