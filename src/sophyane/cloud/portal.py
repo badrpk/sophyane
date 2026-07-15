@@ -586,11 +586,10 @@ class PortalApp:
                 # Free/local tiny models are slow and often invent facts — prefer live web
                 # when research is strong (e.g. "who is Imran Khan").
                 primary_snip = str((search_meta.get("results") or [{}])[0].get("snippet") or "")
-                strong_web = bool(grounded and len(primary_snip) >= 60 and search_meta.get("ok"))
-                # Prefer live research for factual questions whenever extract is solid —
+                # Prefer live research whenever we have a grounded extract —
                 # tiny local models invent wrong biographies (e.g. "actor" for Imran Khan).
-                factual = needs_web_research(message) or do_search
-                if strong_web and factual and (local_tier or want_search is True):
+                factual = bool(do_search or needs_web_research(message))
+                if grounded and factual and (local_tier or want_search is True or want_search is None):
                     reply = grounded
                     model_used = "web-grounded"
                 else:
@@ -623,17 +622,37 @@ class PortalApp:
                     # Bound LLM wait so chat never hangs 2+ minutes on broken/local models
                     import concurrent.futures
 
-                    llm_timeout = 25 if local_tier else 60
+                    llm_timeout = 15 if local_tier else 45
                     try:
                         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                             fut = pool.submit(provider.generate, prompt, system)
                             reply = fut.result(timeout=llm_timeout)
                     except concurrent.futures.TimeoutError:
+                        # Never hang the UI — try web, else short error
+                        try:
+                            if not grounded:
+                                search_meta = web_search(message, limit=5)
+                                grounded = grounded_answer_from_search(message, search_meta)
+                                sources = [
+                                    {
+                                        "title": h.get("title"),
+                                        "url": h.get("url"),
+                                        "source": h.get("source"),
+                                    }
+                                    for h in (search_meta.get("results") or [])
+                                ]
+                        except Exception:
+                            pass
                         if grounded:
                             reply = grounded
                             model_used = "web-grounded (llm-timeout)"
                         else:
-                            raise RuntimeError(f"LLM timed out after {llm_timeout}s")
+                            reply = (
+                                f"Model timed out after {llm_timeout}s. "
+                                "Open **Models** to pick a cloud API (OpenAI/Claude/Gemini/Grok), "
+                                "or keep **Web search** on for factual questions."
+                            )
+                            model_used = "timeout-fallback"
                     else:
                         model_used = str(
                             getattr(provider, "model", None) or cfg.get("model") or "provider"
