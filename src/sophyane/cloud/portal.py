@@ -563,6 +563,7 @@ class PortalApp:
                     do_search = force_search or needs_web_research(message)
                 research_block = ""
                 grounded = ""
+                search_meta: dict[str, Any] = {}
                 if do_search:
                     try:
                         search_meta = web_search(message, limit=6)
@@ -583,13 +584,11 @@ class PortalApp:
                 provider_id = str(cfg.get("provider") or "local_gguf").strip().lower()
                 local_tier = provider_id in {"local_gguf", "ollama", ""}
 
-                # Free/local tiny models are slow and often invent facts — prefer live web
-                # when research is strong (e.g. "who is Imran Khan").
-                primary_snip = str((search_meta.get("results") or [{}])[0].get("snippet") or "")
                 # Prefer live research whenever we have a grounded extract —
                 # tiny local models invent wrong biographies (e.g. "actor" for Imran Khan).
                 factual = bool(do_search or needs_web_research(message))
-                if grounded and factual and (local_tier or want_search is True or want_search is None):
+                if grounded and factual:
+                    # Always use web extract for factual Qs when available (cloud can refine later)
                     reply = grounded
                     model_used = "web-grounded"
                 else:
