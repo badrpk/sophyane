@@ -212,7 +212,8 @@ class PortalApp:
                     "purpose": purpose,
                     "expires_in": created.get("expires_in"),
                     "message": (
-                        f"OTP sent once to {email} from badrpk@gmail.com. "
+                        f"OTP sent to {email} (email). "
+                        "You can also chat with Sophyane on Telegram @sophyanebot and WhatsApp. "
                         "Enter the 6-digit code to finish "
                         + ("signup and receive your API key." if purpose == "signup" else "login.")
                     ),
@@ -924,6 +925,53 @@ class PortalApp:
                     "plans": list_plans(),
                 },
             )
+            try:
+                from sophyane.cloud.telegram_bot import notify_user
+                notify_user(
+                    email=str(principal.get("email") or ""),
+                    text=f"Sophyane: payment confirmed. Plan → {confirmed.get('plan')}.",
+                    subject="Sophyane payment confirmed",
+                    channels=["telegram", "email", "whatsapp"],
+                )
+            except Exception:
+                pass
+            return True
+
+
+        if path == "/api/v1/telegram/webhook" and method == "POST":
+            body = _read_json(handler)
+            try:
+                from sophyane.cloud.telegram_bot import process_update
+                result = process_update(body if isinstance(body, dict) else {})
+                _json(handler, 200, {"ok": True, **(result if isinstance(result, dict) else {})})
+            except Exception as err:  # noqa: BLE001
+                _json(handler, 500, {"ok": False, "error": str(err)})
+            return True
+
+        if path == "/api/v1/notify" and method == "POST":
+            key = _auth_key(handler)
+            principal = self.store.resolve_key(key) if key else None
+            if not principal:
+                _json(handler, 401, {"ok": False, "error": "invalid API key"})
+                return True
+            body = _read_json(handler)
+            text = str(body.get("text") or body.get("message") or "").strip()
+            if not text:
+                _json(handler, 400, {"ok": False, "error": "text required"})
+                return True
+            from sophyane.cloud.telegram_bot import notify_user
+            channels = body.get("channels")
+            if isinstance(channels, str):
+                channels = [c.strip() for c in channels.split(",") if c.strip()]
+            result = notify_user(
+                email=str(body.get("email") or principal.get("email") or ""),
+                telegram_chat_id=str(body.get("telegram_chat_id") or ""),
+                phone=str(body.get("phone") or body.get("whatsapp") or ""),
+                text=text,
+                subject=str(body.get("subject") or "Sophyane"),
+                channels=channels if isinstance(channels, list) else None,
+            )
+            _json(handler, 200 if result.get("ok") else 400, result)
             return True
 
         if path == "/api/v1/chat" and method == "POST":

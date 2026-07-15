@@ -157,20 +157,86 @@ def send_email(
 
 
 def _tg_api(method: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Call Telegram Bot API. Direct → pinned IPv4 → Tor SOCKS (common on blocked nets)."""
+    import subprocess
+    import tempfile
+
     e = load_messaging_env()
     token = (e.get("TELEGRAM_BOT_TOKEN") or "").strip()
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN not set in messaging.env")
     url = f"https://api.telegram.org/bot{token}/{method}"
-    data = json.dumps(payload or {}).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json", "User-Agent": "SophyaneBot/17.3"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    body = json.dumps(payload or {})
+    timeout = int(e.get("TELEGRAM_HTTP_TIMEOUT") or "45")
+
+    def _via_curl(extra: list[str]) -> dict[str, Any]:
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
+            tf.write(body)
+            tf.flush()
+            path = tf.name
+        try:
+            cmd = [
+                "curl",
+                "-sS",
+                "-m",
+                str(timeout),
+                "-X",
+                "POST",
+                url,
+                "-H",
+                "Content-Type: application/json",
+                "-H",
+                "User-Agent: SophyaneBot/17.3",
+                "--data-binary",
+                f"@{path}",
+                *extra,
+            ]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 15)
+            if r.returncode != 0:
+                raise RuntimeError((r.stderr or r.stdout or f"curl exit {r.returncode}")[:300])
+            return json.loads(r.stdout or "{}")
+        finally:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    errors: list[str] = []
+    # 1) Direct IPv4
+    try:
+        return _via_curl(["-4"])
+    except Exception as err:
+        errors.append(f"direct4:{err}")
+    # 2) Pin known Telegram API edge IPs (bypass bad DNS/IPv6)
+    for ip in (e.get("TELEGRAM_API_IP") or "149.154.167.220,149.154.167.50,149.154.166.110").split(","):
+        ip = ip.strip()
+        if not ip:
+            continue
+        try:
+            return _via_curl(["-4", "--resolve", f"api.telegram.org:443:{ip}"])
+        except Exception as err:
+            errors.append(f"ip{ip}:{err}")
+    # 3) Tor SOCKS (local tor on 9050)
+    socks = (e.get("TELEGRAM_SOCKS") or "127.0.0.1:9050").strip()
+    if socks:
+        try:
+            return _via_curl(["--socks5-hostname", socks])
+        except Exception as err:
+            errors.append(f"socks:{err}")
+    # 4) Last resort: urllib (may hang on IPv6)
+    try:
+        data = body.encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json", "User-Agent": "SophyaneBot/17.3"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=min(timeout, 20)) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as err:
+        errors.append(f"urllib:{err}")
+    raise RuntimeError("Telegram API unreachable: " + " | ".join(errors)[:500])
 
 
 def telegram_get_me() -> dict[str, Any]:
