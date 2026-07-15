@@ -520,12 +520,88 @@ def serve_portal(host: str = "0.0.0.0", port: int = 8780) -> ThreadingHTTPServer
         def do_OPTIONS(self) -> None:  # noqa: N802
             app.handle_api("OPTIONS", urlparse(self.path).path, self)
 
-        def do_GET(self) -> None:  # noqa: N802
+        def _content_type(self, target: Path) -> str:
+            suffix = target.suffix.lower()
+            if suffix == ".css":
+                return "text/css; charset=utf-8"
+            if suffix == ".js":
+                return "application/javascript; charset=utf-8"
+            if suffix == ".svg":
+                return "image/svg+xml"
+            if suffix == ".json":
+                return "application/json"
+            if suffix in {".webmanifest", ".manifest"}:
+                return "application/manifest+json; charset=utf-8"
+            if suffix == ".pdf":
+                return "application/pdf"
+            if suffix in {".gz", ".tgz"}:
+                return "application/gzip"
+            if suffix == ".sh":
+                return "text/x-shellscript; charset=utf-8"
+            if suffix == ".ps1":
+                return "text/plain; charset=utf-8"
+            if suffix == ".txt":
+                return "text/plain; charset=utf-8"
+            if suffix == ".zip":
+                return "application/zip"
+            if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico"}:
+                return {
+                    ".png": "image/png",
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".gif": "image/gif",
+                    ".webp": "image/webp",
+                    ".ico": "image/x-icon",
+                }[suffix]
+            return "text/html; charset=utf-8"
+
+        def _resolve_static(self, path: str) -> Path | None:
+            """Map URL path → site file. None means 404 (do not fake index.html for assets)."""
+            rel = "index.html" if path == "/" else path.lstrip("/")
+            aliases = {
+                "docs": "docs.html",
+                "docs/": "docs.html",
+                "pricing": "pricing.html",
+                "pricing/": "pricing.html",
+                "get-api": "get-api.html",
+                "get-api/": "get-api.html",
+                "api-keys": "get-api.html",
+                "login": "get-api.html",
+                "signup": "get-api.html",
+                "start": "start.html",
+                "start/": "start.html",
+                "welcome": "start.html",
+                "getting-started": "start.html",
+                "onboarding": "start.html",
+                "browser": "browser.html",
+                "browser/": "browser.html",
+                "browser-home": "browser-home/index.html",
+                "browser-home/": "browser-home/index.html",
+            }
+            rel = aliases.get(rel, rel)
+            target = (site / rel).resolve()
+            site_root = site.resolve()
+            browser_pkg = (Path(__file__).resolve().parent.parent / "browser" / "home").resolve()
+            allowed = str(target).startswith(str(site_root)) or str(target).startswith(str(browser_pkg))
+            if not allowed:
+                return None
+            if target.is_dir():
+                index = target / "index.html"
+                return index if index.exists() else None
+            if target.exists() and target.is_file():
+                return target
+            # Missing file: never fall back to homepage for asset-like paths
+            if Path(rel).suffix:
+                return None
+            # bare unknown path → homepage only for clean SPA-like nav
+            home = site / "index.html"
+            return home if home.exists() else None
+
+        def _serve_static(self, *, head_only: bool = False) -> None:
             parsed = urlparse(self.path)
             path = parsed.path.rstrip("/") or "/"
             if path.startswith("/api/"):
-                # Browser open helper (JSON) + downloads list
-                if path == "/api/v1/browser":
+                if path == "/api/v1/browser" and not head_only:
                     _json(
                         self,
                         200,
@@ -538,6 +614,7 @@ def serve_portal(host: str = "0.0.0.0", port: int = 8780) -> ThreadingHTTPServer
                                 "linux_mac_install": "/download/install-sophyane-browser.sh",
                                 "windows_install": "/download/install-sophyane-browser.ps1",
                                 "readme": "/download/README.txt",
+                                "handbook": "/static/Sophyane_Complete_Handbook.pdf",
                             },
                             "cli": ["sophyane-browser", "sophyane --browser"],
                             "note": (
@@ -547,75 +624,58 @@ def serve_portal(host: str = "0.0.0.0", port: int = 8780) -> ThreadingHTTPServer
                         },
                     )
                     return
+                if head_only and path == "/api/v1/browser":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    return
+                if head_only:
+                    # API HEAD: probe existence without body
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    return
                 app.handle_api("GET", path, self)
                 return
-            # static site
-            rel = "index.html" if path == "/" else path.lstrip("/")
-            # docs alias
-            if rel in {"docs", "docs/"}:
-                rel = "docs.html"
-            if rel in {"pricing", "pricing/"}:
-                rel = "pricing.html"
-            if rel in {"get-api", "get-api/", "api-keys", "login", "signup"}:
-                rel = "get-api.html"
-            if rel in {"start", "start/", "welcome", "getting-started", "onboarding"}:
-                rel = "start.html"
-            if rel in {"browser", "browser/"}:
-                rel = "browser.html"
-            # directory index for browser-home
-            if rel in {"browser-home", "browser-home/"}:
-                rel = "browser-home/index.html"
-            target = (site / rel).resolve()
-            site_root = site.resolve()
-            # allow resolved symlink targets under site or browser package home
-            browser_pkg = (Path(__file__).resolve().parent.parent / "browser" / "home").resolve()
-            allowed = str(target).startswith(str(site_root)) or str(target).startswith(str(browser_pkg))
-            if not allowed or not target.exists():
-                if target.is_dir():
-                    index = target / "index.html"
-                    if index.exists():
-                        target = index
-                    else:
-                        target = site / "index.html"
-                elif not target.exists() or not target.is_file():
-                    target = site / "index.html"
-            if target.is_dir():
-                target = target / "index.html"
-            if not target.exists():
-                _json(self, 404, {"ok": False, "error": "site not built"})
+
+            target = self._resolve_static(path)
+            if target is None or not target.exists():
+                if head_only:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                _json(self, 404, {"ok": False, "error": "not found", "path": path})
                 return
-            data = target.read_bytes()
-            ctype = "text/html; charset=utf-8"
-            if target.suffix == ".css":
-                ctype = "text/css; charset=utf-8"
-            elif target.suffix == ".js":
-                ctype = "application/javascript; charset=utf-8"
-            elif target.suffix == ".svg":
-                ctype = "image/svg+xml"
-            elif target.suffix == ".json":
-                ctype = "application/json"
-            elif target.suffix == ".pdf":
-                ctype = "application/pdf"
-            elif target.suffix in {".gz", ".tgz"}:
-                ctype = "application/gzip"
-            elif target.suffix == ".sh":
-                ctype = "text/x-shellscript; charset=utf-8"
-            elif target.suffix == ".ps1":
-                ctype = "text/plain; charset=utf-8"
-            elif target.suffix == ".txt":
-                ctype = "text/plain; charset=utf-8"
-            elif target.suffix == ".zip":
-                ctype = "application/zip"
+            data = b"" if head_only else target.read_bytes()
+            ctype = self._content_type(target)
             self.send_response(200)
             self.send_header("Content-Type", ctype)
-            self.send_header("Content-Length", str(len(data)))
-            if target.suffix in {".gz", ".tgz", ".zip", ".sh", ".ps1"}:
+            size = 0 if head_only else len(data)
+            if head_only:
+                try:
+                    size = target.stat().st_size
+                except OSError:
+                    size = 0
+            self.send_header("Content-Length", str(size))
+            if target.suffix.lower() in {".gz", ".tgz", ".zip", ".sh", ".ps1"}:
                 self.send_header(
                     "Content-Disposition",
                     f'attachment; filename="{target.name}"',
                 )
+            elif target.suffix.lower() == ".pdf":
+                self.send_header(
+                    "Content-Disposition",
+                    f'inline; filename="{target.name}"',
+                )
             self.end_headers()
-            self.wfile.write(data)
+            if not head_only:
+                self.wfile.write(data)
+
+        def do_HEAD(self) -> None:  # noqa: N802
+            self._serve_static(head_only=True)
+
+        def do_GET(self) -> None:  # noqa: N802
+            self._serve_static(head_only=False)
 
         def do_POST(self) -> None:  # noqa: N802
             path = urlparse(self.path).path.rstrip("/") or "/"
