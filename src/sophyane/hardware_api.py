@@ -101,6 +101,53 @@ class HardwareAPI:
             body=params.get("body") if isinstance(params.get("body"), dict) else None,
         )
 
+    def web_fetch(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        from sophyane.web_intel import fetch_url
+
+        params = params or {}
+        result = fetch_url(str(params.get("url") or params.get("message") or ""))
+        return result.to_dict()
+
+    def improve_from_url(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        from sophyane.self_improve.ledger import auto_propose_from_scrape
+        from sophyane.web_intel import scrape_for_improvement
+
+        params = params or {}
+        url = str(params.get("url") or params.get("message") or "").strip()
+        if not url:
+            return {"ok": False, "error": "url required"}
+        bundle = scrape_for_improvement([url])
+        proposals = auto_propose_from_scrape(bundle)
+        return {"ok": True, "scrape": bundle, "proposals": proposals}
+
+    def improve_propose(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        from sophyane.self_improve.ledger import propose_improvement
+
+        params = params or {}
+        return propose_improvement(
+            str(params.get("kind") or "fact"),
+            str(params.get("title") or "proposal"),
+            str(params.get("body") or params.get("message") or ""),
+            evidence=params.get("evidence") if isinstance(params.get("evidence"), dict) else {},
+            score=float(params.get("score") or 0),
+        )
+
+    def improve_export(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        from sophyane.self_improve.ledger import export_daily_epoch
+
+        params = params or {}
+        day = params.get("day")
+        return export_daily_epoch(str(day) if day else None)
+
+    def improve_status(self) -> dict[str, Any]:
+        from sophyane.self_improve.ledger import chain_tip, list_proposals, verify_chain
+
+        return {
+            "tip": chain_tip(),
+            "verify": verify_chain(),
+            "recent": list_proposals(10),
+        }
+
     def dispatch(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         params = params or {}
         table: dict[str, Callable[[], dict[str, Any]]] = {
@@ -110,6 +157,7 @@ class HardwareAPI:
             "backends": self.backends,
             "software": self.software,
             "kernel": self.kernel,
+            "improve_status": self.improve_status,
         }
         if method == "chat":
             return self.chat(
@@ -122,6 +170,14 @@ class HardwareAPI:
             return {"ok": True, "result": self.erp(params)}
         if method == "erp_query":
             return self.erp_call(params)
+        if method == "web_fetch":
+            return {"ok": True, "result": self.web_fetch(params)}
+        if method == "improve_from_url":
+            return self.improve_from_url(params)
+        if method == "improve_propose":
+            return self.improve_propose(params)
+        if method == "improve_export":
+            return {"ok": True, "result": self.improve_export(params)}
         if method == "report_text":
             return {
                 "platform": format_platform_report(),

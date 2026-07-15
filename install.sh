@@ -89,6 +89,14 @@ exec "$VENV/bin/sophyane" "\$@"
 EOF
 chmod 0755 "$BIN/sophyane"
 
+# Sophyane Browser launcher (Chromium profile + home UI when available)
+cat > "$BIN/sophyane-browser" <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+exec "$VENV/bin/sophyane" --browser "\$@"
+EOF
+chmod 0755 "$BIN/sophyane-browser"
+
 cat > "$BASE/installed-release" <<EOF
 VERSION=$VERSION
 BRANCH=$BRANCH
@@ -115,3 +123,12 @@ fi
 
 printf '\n✅ Sophyane v%s installed from %s at %s.\n' \
   "$VERSION" "$BRANCH" "$RELEASE_COMMIT"
+printf 'Browser: run  sophyane-browser  or  sophyane --browser\n'
+printf 'Tip: install Chromium/Chrome for the full Sophyane Browser shell.\n'
+
+# Best-effort open browser home on graphical sessions
+if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && [ "${SOPHYANE_NO_BROWSER:-}" != "1" ]; then
+  if "$BIN/sophyane" --browser >/tmp/sophyane-browser-install.log 2>&1 & then
+    printf 'Sophyane Browser launch attempted (see /tmp/sophyane-browser-install.log).\n'
+  fi
+fi

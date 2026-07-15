@@ -44,6 +44,17 @@ Useful slash commands:
 | `/session-info` | Hardware + session stats |
 | `/quit` | Exit |
 
+## Sophyane Browser + daily self-improvement
+
+```bash
+sophyane-browser                 # Chromium profile + home UI
+sophyane --fetch https://...     # scrape web
+sophyane --learn https://...     # scrape → hash-chain improvement
+sophyane --improve-export        # daily epoch to improvements/
+```
+
+See [docs/BROWSER_AND_SELF_IMPROVE.md](docs/BROWSER_AND_SELF_IMPROVE.md).
+
 ## Mesh (USB · WiFi · shared compute/storage)
 
 Connect devices that run Sophyane — or install a clone — then share control,

@@ -1,0 +1,58 @@
+name: Sophyane daily improvement epoch
+
+# Blockchain-style daily catalog: commits improvement epoch files from CI.
+# Does NOT auto-merge untrusted executable code into the agent runtime.
+on:
+  schedule:
+    - cron: "0 3 * * *"   # every day 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  daily-epoch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Propose CI heartbeat + export epoch
+        run: |
+          python - <<'PY'
+          from sophyane.self_improve.ledger import (
+              export_daily_epoch,
+              propose_improvement,
+              verify_chain,
+          )
+          propose_improvement(
+              "benchmark",
+              "daily-ci-heartbeat",
+              "Automated daily CI epoch for Sophyane continuous improvement catalog.",
+              evidence={"workflow": "sophyane-daily-improve", "verify": verify_chain()},
+              score=0.1,
+          )
+          epoch = export_daily_epoch()
+          print(epoch.get("day"), epoch.get("count"), epoch.get("merkle_root"))
+          print("verify", verify_chain())
+          PY
+
+      - name: Commit improvement catalog
+        run: |
+          git config user.name "sophyane-daily-bot"
+          git config user.email "sophyane-bot@users.noreply.github.com"
+          git add improvements || true
+          if git diff --cached --quiet; then
+            echo "No improvement catalog changes"
+          else
+            git commit -m "chore(improvements): daily epoch $(date -u +%F)"
+            git push
+          fi

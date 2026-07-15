@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 from sophyane.agent import SophyaneAgent
@@ -153,6 +154,41 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="confirm destructive/mesh install actions",
     )
+    parser.add_argument(
+        "--browser",
+        action="store_true",
+        help="open Sophyane Browser (Chromium profile + home UI)",
+    )
+    parser.add_argument(
+        "--fetch",
+        metavar="URL",
+        help="fetch/scrape a URL into web intel store",
+    )
+    parser.add_argument(
+        "--learn",
+        metavar="URL",
+        help="scrape URL and append hash-chained self-improvement proposal",
+    )
+    parser.add_argument(
+        "--improve-status",
+        action="store_true",
+        help="show self-improvement ledger tip and verification",
+    )
+    parser.add_argument(
+        "--improve-export",
+        action="store_true",
+        help="export today's improvement epoch (local + repo improvements/)",
+    )
+    parser.add_argument(
+        "--improve-propose",
+        metavar="TITLE",
+        help="manually propose an improvement (use with --improve-body)",
+    )
+    parser.add_argument(
+        "--improve-body",
+        default="",
+        help="body text for --improve-propose",
+    )
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--single-agent", action="store_true", help="use legacy one-worker runtime")
     parser.add_argument("--multi-agent", action="store_true", help="use legacy supervisor-worker runtime")
@@ -301,6 +337,68 @@ def main() -> int:
         system = None if args.erp in {"", "all"} else str(args.erp)
         print(json.dumps(kernel.erp_status(system), indent=2))
         return 0
+    if args.browser:
+        from sophyane.browser import launch_sophyane_browser
+
+        result = launch_sophyane_browser(open_home=True, start_apis=True)
+        print(json.dumps(result, indent=2))
+        # Keep process alive while local home server runs if chromium missing
+        if not result.get("pid"):
+            try:
+                while True:
+                    time.sleep(3600)
+            except KeyboardInterrupt:
+                print("\nSophyane Browser home stopped.")
+        return 0
+
+    if args.fetch:
+        from sophyane.web_intel import fetch_url
+
+        print(json.dumps(fetch_url(str(args.fetch)).to_dict(), indent=2)[:8000])
+        return 0
+
+    if args.learn:
+        from sophyane.self_improve.ledger import auto_propose_from_scrape
+        from sophyane.web_intel import scrape_for_improvement
+
+        bundle = scrape_for_improvement([str(args.learn)])
+        props = auto_propose_from_scrape(bundle)
+        print(json.dumps({"scrape": bundle, "proposals": props}, indent=2)[:12000])
+        return 0
+
+    if args.improve_status:
+        from sophyane.self_improve.ledger import chain_tip, list_proposals, verify_chain
+
+        print(
+            json.dumps(
+                {
+                    "tip": chain_tip(),
+                    "verify": verify_chain(),
+                    "recent": list_proposals(15),
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.improve_export:
+        from sophyane.self_improve.ledger import export_daily_epoch
+
+        print(json.dumps(export_daily_epoch(), indent=2)[:12000])
+        return 0
+
+    if args.improve_propose:
+        from sophyane.self_improve.ledger import propose_improvement
+
+        result = propose_improvement(
+            "manual",
+            str(args.improve_propose),
+            str(args.improve_body or args.improve_propose),
+            score=0.5,
+        )
+        print(json.dumps(result, indent=2))
+        return 0
+
     if args.mesh_serve or args.mesh_discover or args.mesh_status or args.mesh_install or args.mesh_compute:
         from sophyane.mesh.core import get_mesh_node
         from sophyane.mesh.discovery import MESH_PORT

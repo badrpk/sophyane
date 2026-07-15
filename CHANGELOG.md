@@ -1,5 +1,14 @@
 # Changelog
 
+## 16.6.0 — 2026-07-15
+
+### Added
+- **Sophyane Browser** (Chromium profile + local home UI; `sophyane-browser`)
+- Web intel: fetch/scrape internet pages for agent learning
+- Blockchain-style self-improvement ledger + daily epoch export
+- GitHub Action: daily improvement catalog commit
+- Install opens browser on graphical sessions; docs/BROWSER_AND_SELF_IMPROVE.md
+
 ## 16.5.0 — 2026-07-15
 
 ### Added

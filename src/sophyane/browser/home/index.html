@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sophyane Browser</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">◆ Sophyane Browser</div>
+    <div class="sub">AI control plane · mesh · web intel · self-improvement</div>
+  </header>
+
+  <section class="bar">
+    <input id="url" type="text" placeholder="https://example.com or ask Sophyane…" />
+    <button id="goFetch">Fetch</button>
+    <button id="goChat">Ask AI</button>
+    <button id="goImprove">Learn</button>
+  </section>
+
+  <main class="grid">
+    <article class="card">
+      <h2>Status</h2>
+      <pre id="status">Loading…</pre>
+    </article>
+    <article class="card">
+      <h2>Mesh</h2>
+      <pre id="mesh">Loading…</pre>
+    </article>
+    <article class="card wide">
+      <h2>Output</h2>
+      <pre id="out">Ready.</pre>
+    </article>
+  </main>
+
+  <footer>
+    Local APIs: hardware <code>:8770</code> · mesh <code>:8777</code> ·
+    improvements are hash-chained daily · never silent code merge to main
+  </footer>
+  <script src="app.js"></script>
+</body>
+</html>

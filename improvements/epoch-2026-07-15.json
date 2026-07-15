@@ -1,0 +1,72 @@
+{
+  "day": "2026-07-15",
+  "exported_at": 1784121438.3786137,
+  "device": "penguin-889b882e",
+  "sophyane_version": "16.6.0",
+  "chain_verify": {
+    "ok": true,
+    "length": 3,
+    "tip": "6ed1d60ff4b56e09172fee29a106ce07acc5a429f69dce7e34712bf7d5233965"
+  },
+  "count": 3,
+  "blocks": [
+    {
+      "index": 0,
+      "timestamp": 1784121414.9224389,
+      "proposal": {
+        "proposal_id": "7440dddc-303a-4a02-887b-10e1a402e1dc",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1784121414.9224343
+      },
+      "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "hash": "86faf9b27d1b8ff2c60ee8e01f1f5e89c618a9642a3dc1324325e77385fc03bf",
+      "device": "penguin-889b882e",
+      "version": "16.6.0"
+    },
+    {
+      "index": 1,
+      "timestamp": 1784121419.5262992,
+      "proposal": {
+        "proposal_id": "802ceec2-e0fd-4635-84d4-f665a7ed09db",
+        "kind": "scrape_insight",
+        "title": "Web insight: Example Domain",
+        "body": "Source: https://example.com\nHash: e287aec09ba1c2c7f962a77a5155c4f7090a26d82f7556fa86135f5fbb40ede9\n\nExample Domain \nThis domain is for use in documentation examples without needing permission. Avoid use in operations. \nLearn more",
+        "source_device": "penguin-889b882e",
+        "evidence": {
+          "url": "https://example.com",
+          "hash": "e287aec09ba1c2c7f962a77a5155c4f7090a26d82f7556fa86135f5fbb40ede9"
+        },
+        "score": 0.3,
+        "created_at": 1784121419.5262952
+      },
+      "prev_hash": "86faf9b27d1b8ff2c60ee8e01f1f5e89c618a9642a3dc1324325e77385fc03bf",
+      "hash": "eea7cc958f7407fd4b71c8bf802d1857f6a640e5ea6ee5798838124f71c79430",
+      "device": "penguin-889b882e",
+      "version": "16.6.0"
+    },
+    {
+      "index": 2,
+      "timestamp": 1784121438.3776178,
+      "proposal": {
+        "proposal_id": "a0e4fa7e-992e-4408-8b65-84dec50f2c1b",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "penguin-889b882e",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1784121438.3776128
+      },
+      "prev_hash": "eea7cc958f7407fd4b71c8bf802d1857f6a640e5ea6ee5798838124f71c79430",
+      "hash": "6ed1d60ff4b56e09172fee29a106ce07acc5a429f69dce7e34712bf7d5233965",
+      "device": "penguin-889b882e",
+      "version": "16.6.0"
+    }
+  ],
+  "merkle_root": "e1f558121217765edc8da6042330035a140b06c7b417de713cd27207d1fe8f86"
+}
