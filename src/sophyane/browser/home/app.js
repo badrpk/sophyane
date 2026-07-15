@@ -32,6 +32,9 @@
   let planCatalog = [];
   /** @type {any|null} */
   let llmStatus = null;
+  /** @type {any|null} */
+  let hwFit = null;
+  let hwPollTimer = null;
 
   const $ = (id) => document.getElementById(id);
   const els = {
@@ -750,21 +753,12 @@
   }
 
   async function activateLocalFree() {
-    try {
-      const data = await jpost(CLOUD + "/api/v1/llm/select", {
-        provider: "local_gguf",
-        model: "qwen2.5-0.5b",
-      });
-      if (!data.ok) throw new Error(data.error || "failed");
-      llmStatus = data.status || data;
-      renderLlmForm();
-      updateRailStatus();
-      openDrawer("models");
-      setLlmMsg("Local free GGUF activated. Cloud keys remain available as fallbacks when configured.");
-    } catch (e) {
-      openDrawer("models");
-      setLlmMsg("Could not activate local model: " + e, true);
-    }
+    openDrawer("models");
+    await setLocalMode(false);
+    await loadHardwareFit();
+    setLlmMsg(
+      "Local mode on. Review the hardware-fit offer and click Approve to download a model sized for this machine."
+    );
   }
   if (railLocal) railLocal.onclick = activateLocalFree;
   if (btnLocalLlm) btnLocalLlm.onclick = activateLocalFree;
@@ -880,8 +874,146 @@
       llmStatus = data;
       renderLlmForm();
       setLlmMsg("");
+      await loadHardwareFit();
     } catch (e) {
       setLlmMsg("Could not load LLM catalog: " + e, true);
+    }
+  }
+
+  function renderHardwareFit() {
+    const box = $("hwFitBox");
+    const offer = $("hwOfferBox");
+    const offerText = $("hwOfferText");
+    const list = $("hwModelList");
+    const dlBox = $("hwDownloadBox");
+    if (!box || !hwFit) return;
+
+    const hw = hwFit.hardware || {};
+    const prefs = hwFit.prefs || {};
+    const cur = hwFit.current || {};
+    box.innerHTML =
+      `<strong>Hardware-fit local LLM</strong><br/>` +
+      `Tier: <b>${escapeHtml(hw.tier || "?")}</b> — ${escapeHtml(hw.tier_meaning || "")}<br/>` +
+      `RAM ${escapeHtml(String(hw.ram_mb || "?"))}MB · disk free ${escapeHtml(String(hw.disk_free_mb || "?"))}MB · CPUs ${escapeHtml(String(hw.cpus || "?"))}<br/>` +
+      `Mode: ${prefs.prefer_api_only ? "<b>API only</b> (no local)" : prefs.local_enabled ? "<b>Local enabled</b>" : "local off"}<br/>` +
+      `Active: ${escapeHtml(String(cur.active_provider || "—"))} / ${escapeHtml(String(cur.active_model || "—"))}` +
+      (cur.llama_server_up ? " · llama-server up" : "");
+
+    if (offer && offerText) {
+      if (hwFit.upgrade_offer && !prefs.prefer_api_only) {
+        offer.hidden = false;
+        offerText.textContent = hwFit.upgrade_offer.message || "";
+        offer.dataset.key = hwFit.upgrade_offer.key || "";
+      } else {
+        offer.hidden = true;
+      }
+    }
+
+    if (list) {
+      const models = hwFit.models || [];
+      list.innerHTML = models
+        .slice(0, 8)
+        .map((m) => {
+          const badge = m.installed
+            ? "installed"
+            : m.recommended
+              ? "recommended for your hardware"
+              : m.fits_ram && m.fits_disk
+                ? "fits — needs approval"
+                : !m.fits_ram
+                  ? "needs more RAM"
+                  : "needs more disk";
+          const cls = m.recommended ? "plan-card current" : "plan-card";
+          return (
+            `<button type="button" class="${cls}" data-gguf="${escapeAttr(m.key)}">` +
+            `<h4>${escapeHtml(m.key)}${m.recommended ? " · best fit" : ""}</h4>` +
+            `<div class="price">~${escapeHtml(String(m.size_mb))}MB · min RAM ${escapeHtml(String(m.min_ram_mb))}MB · ${escapeHtml(badge)}</div>` +
+            `<p>${escapeHtml(m.notes || "")}</p>` +
+            `</button>`
+          );
+        })
+        .join("");
+      list.querySelectorAll("[data-gguf]").forEach((btn) => {
+        btn.onclick = () => approveLocalModel(btn.dataset.gguf);
+      });
+    }
+
+    if (dlBox) {
+      const d = hwFit.download || {};
+      if (d.status && d.status !== "idle") {
+        dlBox.textContent =
+          "Download: " +
+          (d.status || "") +
+          (d.model_key ? " · " + d.model_key : "") +
+          (d.message ? " — " + d.message : "");
+      } else {
+        dlBox.textContent = "";
+      }
+    }
+  }
+
+  async function loadHardwareFit() {
+    try {
+      hwFit = await jget(CLOUD + "/api/v1/local/status");
+      renderHardwareFit();
+      // Poll while download running
+      const d = hwFit.download || {};
+      if (d.active || d.status === "running") {
+        if (hwPollTimer) clearTimeout(hwPollTimer);
+        hwPollTimer = setTimeout(loadHardwareFit, 2500);
+      }
+    } catch (e) {
+      const box = $("hwFitBox");
+      if (box) box.textContent = "Hardware-fit status unavailable: " + e;
+    }
+  }
+
+  async function approveLocalModel(key) {
+    if (!key) return;
+    if (
+      !confirm(
+        "Download open local model \"" +
+          key +
+          "\" to this machine?\n\n" +
+          "Only starts after you approve. Larger hardware gets stronger models. " +
+          "You can stay API-only instead."
+      )
+    ) {
+      return;
+    }
+    setLlmMsg("Starting approved download of " + key + "…");
+    try {
+      const data = await jpost(CLOUD + "/api/v1/local/approve", {
+        model_key: key,
+        background: true,
+      });
+      if (!data.ok) throw new Error(data.error || "approve failed");
+      setLlmMsg(data.message || "Download started.");
+      await loadHardwareFit();
+      if (hwPollTimer) clearTimeout(hwPollTimer);
+      hwPollTimer = setTimeout(loadHardwareFit, 2000);
+    } catch (e) {
+      setLlmMsg(String(e.message || e), true);
+    }
+  }
+
+  async function setLocalMode(apiOnly) {
+    try {
+      const data = await jpost(CLOUD + "/api/v1/local/mode", {
+        prefer_api_only: !!apiOnly,
+        local_enabled: !apiOnly,
+      });
+      if (!data.ok) throw new Error(data.error || "mode failed");
+      hwFit = data.status || hwFit;
+      renderHardwareFit();
+      setLlmMsg(
+        apiOnly
+          ? "API-only mode: frontier cloud models only (no local GGUF downloads)."
+          : "Local LLMs enabled: hardware-fit open models can be offered with your approval."
+      );
+      await loadLlmCatalog();
+    } catch (e) {
+      setLlmMsg(String(e.message || e), true);
     }
   }
 
@@ -923,6 +1055,34 @@
 
   if (els.btnSaveLlm) els.btnSaveLlm.onclick = () => saveLlm(true);
   if (els.btnSaveKeyOnly) els.btnSaveKeyOnly.onclick = () => saveLlm(false);
+
+  const btnApiOnly = $("btnApiOnly");
+  const btnEnableLocal = $("btnEnableLocal");
+  const btnApproveLocal = $("btnApproveLocal");
+  const btnDeclineLocal = $("btnDeclineLocal");
+  if (btnApiOnly) btnApiOnly.onclick = () => setLocalMode(true);
+  if (btnEnableLocal) btnEnableLocal.onclick = () => setLocalMode(false);
+  if (btnApproveLocal) {
+    btnApproveLocal.onclick = () => {
+      const key = ($("hwOfferBox") && $("hwOfferBox").dataset.key) || (hwFit && hwFit.upgrade_offer && hwFit.upgrade_offer.key);
+      if (key) approveLocalModel(key);
+    };
+  }
+  if (btnDeclineLocal) {
+    btnDeclineLocal.onclick = async () => {
+      const key =
+        ($("hwOfferBox") && $("hwOfferBox").dataset.key) ||
+        (hwFit && hwFit.upgrade_offer && hwFit.upgrade_offer.key) ||
+        "";
+      try {
+        await jpost(CLOUD + "/api/v1/local/decline", { model_key: key });
+        await loadHardwareFit();
+        setLlmMsg("Offer dismissed. You can install later from the list.");
+      } catch (e) {
+        setLlmMsg(String(e.message || e), true);
+      }
+    };
+  }
 
   async function refreshAccount() {
     if (!auth?.api_key) return;

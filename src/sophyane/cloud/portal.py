@@ -346,6 +346,50 @@ class PortalApp:
             _json(handler, 200, {"ok": True, "usage": summary, "estimate": cost, "plan": principal.get("plan")})
             return True
 
+        # —— Hardware-fit local LLM (recommend → approve → download) ——
+        if path in {"/api/v1/local", "/api/v1/local/status", "/api/v1/hardware-fit"} and method == "GET":
+            from sophyane.hardware_fit import hardware_fit_status
+
+            _json(handler, 200, hardware_fit_status())
+            return True
+
+        if path in {"/api/v1/local/mode", "/api/v1/hardware-fit/mode"} and method == "POST":
+            body = _read_json(handler)
+            from sophyane.hardware_fit import set_mode
+
+            prefer = body.get("prefer_api_only")
+            local_en = body.get("local_enabled")
+            result = set_mode(
+                prefer_api_only=bool(prefer) if prefer is not None else None,
+                local_enabled=bool(local_en) if local_en is not None else None,
+            )
+            _json(handler, 200, result)
+            return True
+
+        if path in {"/api/v1/local/approve", "/api/v1/hardware-fit/approve"} and method == "POST":
+            body = _read_json(handler)
+            from sophyane.hardware_fit import approve_and_install
+
+            key = str(body.get("model_key") or body.get("key") or "").strip()
+            background = bool(body.get("background", True))
+            result = approve_and_install(key, background=background)
+            code = 200 if result.get("ok") else 400
+            _json(handler, code, result)
+            return True
+
+        if path in {"/api/v1/local/decline", "/api/v1/hardware-fit/decline"} and method == "POST":
+            body = _read_json(handler)
+            from sophyane.hardware_fit import decline_offer
+
+            _json(handler, 200, decline_offer(str(body.get("model_key") or body.get("key") or "")))
+            return True
+
+        if path in {"/api/v1/local/download", "/api/v1/hardware-fit/download"} and method == "GET":
+            from sophyane.hardware_fit import download_status
+
+            _json(handler, 200, {"ok": True, "download": download_status()})
+            return True
+
         # —— LLM provider catalog (top 10 + API keys + free local fallback) ——
         if path in {"/api/v1/llm", "/api/v1/llm/catalog"} and method == "GET":
             from sophyane.llm_catalog import catalog_status

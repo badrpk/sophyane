@@ -59,13 +59,17 @@ class HardwareProfile:
 
     @property
     def tier(self) -> str:
+        """Hardware tier used to pick open GGUF size (larger machine → stronger model)."""
         if self.ram_mb < 2500 or self.disk_free_mb < 900:
             return "nano"
         if self.ram_mb < 5500 or self.disk_free_mb < 2500:
             return "micro"
         if self.ram_mb < 12000:
             return "small"
-        return "standard"
+        if self.ram_mb < 20000 or self.disk_free_mb < 8000:
+            return "standard"
+        # High-RAM / desktop / workstation: allow 7–8B class local models
+        return "pro"
 
 
 # (model_tag, approx_download_mb, min_ram_mb, notes)
@@ -90,6 +94,11 @@ MODEL_CATALOG: dict[str, list[tuple[str, int, int, str]]] = {
         ("llama3.2:3b", 2000, 4500, "Llama 3.2 3B"),
         ("qwen2.5:3b", 2000, 4500, "Qwen2.5 3B"),
         ("llama3.1:8b", 4700, 9000, "Llama 3.1 8B"),
+    ],
+    "pro": [
+        ("llama3.1:8b", 4700, 10000, "Llama 3.1 8B — strong local agent"),
+        ("qwen2.5:7b", 4500, 10000, "Qwen2.5 7B"),
+        ("llama3.2:3b", 2000, 4500, "Llama 3.2 3B (lighter)"),
     ],
 }
 
@@ -228,6 +237,32 @@ HF_GGUF_CATALOG: dict[str, list[HfGgufSpec]] = {
             1000,
             2500,
             "Qwen2.5 1.5B Instruct Q4_K_M",
+        ),
+    ],
+    "pro": [
+        HfGgufSpec(
+            "qwen2.5-7b",
+            "Qwen/Qwen2.5-7B-Instruct-GGUF",
+            "qwen2.5-7b-instruct-q4_k_m.gguf",
+            4500,
+            10000,
+            "Qwen2.5 7B Instruct Q4_K_M — strong local agent on 10GB+ RAM",
+        ),
+        HfGgufSpec(
+            "llama3.1-8b",
+            "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF",
+            "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+            4700,
+            10000,
+            "Llama 3.1 8B Instruct Q4_K_M",
+        ),
+        HfGgufSpec(
+            "llama3.2-3b",
+            "bartowski/Llama-3.2-3B-Instruct-GGUF",
+            "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+            2000,
+            4500,
+            "Llama 3.2 3B Instruct Q4_K_M (lighter)",
         ),
     ],
 }
@@ -751,11 +786,15 @@ def choose_hf_gguf(profile: HardwareProfile | None = None) -> HfGgufSpec:
     profile = profile or profile_hardware()
     specs = list(HF_GGUF_CATALOG.get(profile.tier, HF_GGUF_CATALOG["nano"]))
     # Always allow falling back to smaller tiers.
-    if profile.tier != "nano":
-        for tier in ("nano",):
-            for spec in HF_GGUF_CATALOG.get(tier, []):
-                if all(spec.key != s.key for s in specs):
-                    specs.append(spec)
+    tier_order = ("pro", "standard", "small", "micro", "nano")
+    try:
+        start = tier_order.index(profile.tier)
+    except ValueError:
+        start = tier_order.index("nano")
+    for tier in tier_order[start + 1 :]:
+        for spec in HF_GGUF_CATALOG.get(tier, []):
+            if all(spec.key != s.key for s in specs):
+                specs.append(spec)
 
     for spec in specs:
         if profile.ram_mb >= spec.min_ram_mb and profile.disk_free_mb >= spec.size_mb + 150:
@@ -767,6 +806,41 @@ def choose_hf_gguf(profile: HardwareProfile | None = None) -> HfGgufSpec:
         if profile.ram_mb >= spec.min_ram_mb and profile.disk_free_mb >= spec.size_mb + 150:
             return spec
     return specs[0]
+
+
+def list_hf_gguf_for_hardware(profile: HardwareProfile | None = None) -> list[dict[str, Any]]:
+    """All GGUF options that fit (or almost fit) this machine, with install status."""
+    profile = profile or profile_hardware()
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    # Present this tier first, then stronger/weaker for user choice with approval
+    for tier in (profile.tier, "pro", "standard", "small", "micro", "nano"):
+        for spec in HF_GGUF_CATALOG.get(tier, []):
+            if spec.key in seen:
+                continue
+            seen.add(spec.key)
+            path = GGUF_DIR / spec.filename
+            installed = path.exists() and path.stat().st_size > 1024 * 1024
+            fits_ram = profile.ram_mb >= spec.min_ram_mb
+            fits_disk = profile.disk_free_mb >= spec.size_mb + 150
+            out.append(
+                {
+                    "key": spec.key,
+                    "filename": spec.filename,
+                    "repo": spec.repo,
+                    "size_mb": spec.size_mb,
+                    "min_ram_mb": spec.min_ram_mb,
+                    "notes": spec.notes,
+                    "tier_catalog": tier,
+                    "installed": installed,
+                    "path": str(path) if installed else "",
+                    "fits_ram": fits_ram,
+                    "fits_disk": fits_disk,
+                    "recommended": fits_ram and fits_disk and tier == profile.tier,
+                    "requires_approval": not installed,
+                }
+            )
+    return out
 
 
 def download_hf_gguf(

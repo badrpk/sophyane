@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Sophyane</title>
   <meta name="description" content="Sophyane — ChatGPT-style chat, top LLMs, web search, and agent harness." />
-  <link rel="stylesheet" href="styles.css?v=17.2.1" />
+  <link rel="stylesheet" href="styles.css?v=17.2.2" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◆</text></svg>" />
 </head>
@@ -206,10 +206,29 @@
         </div>
         <div id="drawerModels" hidden>
           <p class="muted" style="margin:0 0 0.75rem;font-size:0.88rem">
-            Pick a <strong>top LLM company</strong> and public model for best agent performance.
-            Paste an API key. <strong>Ollama / Local GGUF</strong> = free fallback when unpaid or offline.
+            <strong>Cloud:</strong> top LLM companies + API keys for best agent performance.<br/>
+            <strong>Local:</strong> hardware-fit open GGUF — larger machines get stronger models offered
+            (download only after you approve). Some users prefer API-only.
           </p>
           <div id="activeModelBox" class="account-box">Loading models…</div>
+
+          <div class="mode-row">
+            <button type="button" class="rail-btn" id="btnApiOnly">☁ API only (frontier)</button>
+            <button type="button" class="rail-btn accent" id="btnEnableLocal">💻 Enable local LLMs</button>
+          </div>
+
+          <div id="hwFitBox" class="account-box" style="margin-top:0.65rem">Scanning hardware…</div>
+          <div id="hwOfferBox" class="offer-box" hidden>
+            <p id="hwOfferText"></p>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+              <button type="button" class="btn-primary" id="btnApproveLocal">✓ Approve download</button>
+              <button type="button" class="tool" id="btnDeclineLocal">Not now</button>
+            </div>
+          </div>
+          <div id="hwDownloadBox" class="muted" style="font-size:0.8rem;margin:0.4rem 0"></div>
+          <div id="hwModelList" class="plan-cards" style="margin-bottom:0.85rem"></div>
+
+          <div class="sidebar-label" style="padding-left:0">Cloud / frontier providers</div>
           <label class="field">Provider (top 10)
             <select id="llmProvider"></select>
           </label>
@@ -238,6 +257,6 @@
       </div>
     </div>
   </div>
-  <script src="app.js?v=17.2.1"></script>
+  <script src="app.js?v=17.2.2"></script>
 </body>
 </html>

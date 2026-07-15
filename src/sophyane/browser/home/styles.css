@@ -462,6 +462,22 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 .model-select:hover { background: rgba(255,255,255,0.05); }
+.mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.35rem 0 0.5rem;
+}
+.offer-box {
+  border: 1px solid rgba(74, 222, 128, 0.4);
+  background: rgba(74, 222, 128, 0.08);
+  border-radius: 12px;
+  padding: 0.75rem;
+  margin: 0.5rem 0;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+.offer-box p { margin: 0 0 0.65rem; color: var(--text); }
 #drawerModels .field { margin-bottom: 0.55rem; }
 #drawerModels select,
 #drawerModels input[type="password"],
