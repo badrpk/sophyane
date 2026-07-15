@@ -554,9 +554,11 @@ class PortalApp:
                 # Live web search for factual / "who is" questions
                 do_search = force_search or (want_search is None and needs_web_research(message))
                 research_block = ""
+                grounded = ""
                 if do_search and not edge:
                     search_meta = web_search(message, limit=6)
                     research_block = format_search_context(search_meta)
+                    grounded = grounded_answer_from_search(message, search_meta)
                     for hit in search_meta.get("results") or []:
                         sources.append(
                             {
@@ -566,60 +568,91 @@ class PortalApp:
                             }
                         )
 
-                # Build contextual prompt from recent turns
-                ctx_parts: list[str] = []
-                if research_block:
-                    ctx_parts.append(research_block)
-                for turn in history[-8:]:
-                    if not isinstance(turn, dict):
-                        continue
-                    role = str(turn.get("role") or "user")
-                    content = str(turn.get("content") or "").strip()
-                    if not content or content == "…":
-                        continue
-                    ctx_parts.append(f"{role.upper()}: {content[:1500]}")
-                ctx_parts.append(f"USER: {message}")
-                prompt = "\n".join(ctx_parts)
-                if edge:
-                    system += (
-                        " Prefer answers that work offline/on-device when relevant; "
-                        "still answer the question itself first."
-                    )
+                cfg = load_config()
+                provider_id = str(cfg.get("provider") or "local_gguf").strip().lower()
+                local_tier = provider_id in {"local_gguf", "ollama", ""}
 
-                provider = create_provider(load_config())
-                if hasattr(provider, "max_tokens"):
-                    try:
-                        provider.max_tokens = max(int(getattr(provider, "max_tokens", 512) or 512), 512)
-                    except Exception:
-                        pass
-                reply = provider.generate(prompt, system)
-                model_used = str(getattr(provider, "model", None) or load_config().get("model") or "provider")
-                if not (reply or "").strip():
-                    raise RuntimeError("empty provider reply")
-
-                # If we have strong search hits and the model looks wrong/weak, prefer grounded text.
-                if sources and search_meta.get("ok"):
-                    grounded = grounded_answer_from_search(message, search_meta)
-                    low_reply = (reply or "").lower()
-                    primary_snip = str((search_meta.get("results") or [{}])[0].get("snippet") or "").lower()
-                    # Weak/wrong: too short, or contradicts key entity facts (e.g. "actor" vs PM)
-                    weak = len((reply or "").strip()) < 40
-                    # If research mentions prime minister/cricketer and model says only "actor"
-                    if primary_snip and any(
-                        k in primary_snip for k in ("prime minister", "politician", "cricketer", "cricket")
-                    ):
-                        if "actor" in low_reply and "prime minister" not in low_reply and "cricket" not in low_reply:
-                            weak = True
-                    if weak and grounded:
-                        reply = grounded
-                        model_used = f"{model_used}+web-grounded"
-                    elif sources and "Source:" not in reply and "http" not in reply:
-                        # Append citations for transparency
-                        cites = "\n\nSources:\n" + "\n".join(
-                            f"- {s.get('title') or 'link'}: {s.get('url')}" for s in sources[:4] if s.get("url")
+                # Free/local tiny models are slow and often invent facts — prefer live web
+                # when research is strong (e.g. "who is Imran Khan").
+                primary_snip = str((search_meta.get("results") or [{}])[0].get("snippet") or "")
+                strong_web = bool(grounded and len(primary_snip) >= 80 and search_meta.get("ok"))
+                if strong_web and local_tier and needs_web_research(message):
+                    reply = grounded
+                    model_used = "web-grounded"
+                else:
+                    # Build contextual prompt from recent turns
+                    ctx_parts: list[str] = []
+                    if research_block:
+                        ctx_parts.append(research_block)
+                    for turn in history[-8:]:
+                        if not isinstance(turn, dict):
+                            continue
+                        role = str(turn.get("role") or "user")
+                        content = str(turn.get("content") or "").strip()
+                        if not content or content == "…":
+                            continue
+                        ctx_parts.append(f"{role.upper()}: {content[:1500]}")
+                    ctx_parts.append(f"USER: {message}")
+                    prompt = "\n".join(ctx_parts)
+                    if edge:
+                        system += (
+                            " Prefer answers that work offline/on-device when relevant; "
+                            "still answer the question itself first."
                         )
-                        reply = (reply or "").rstrip() + cites
-                        model_used = f"{model_used}+web"
+
+                    provider = create_provider(cfg)
+                    if hasattr(provider, "max_tokens"):
+                        try:
+                            provider.max_tokens = max(int(getattr(provider, "max_tokens", 512) or 512), 512)
+                        except Exception:
+                            pass
+                    # Bound LLM wait so chat never hangs 2+ minutes on broken/local models
+                    import concurrent.futures
+
+                    llm_timeout = 25 if local_tier else 60
+                    try:
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                            fut = pool.submit(provider.generate, prompt, system)
+                            reply = fut.result(timeout=llm_timeout)
+                    except concurrent.futures.TimeoutError:
+                        if grounded:
+                            reply = grounded
+                            model_used = "web-grounded (llm-timeout)"
+                        else:
+                            raise RuntimeError(f"LLM timed out after {llm_timeout}s")
+                    else:
+                        model_used = str(
+                            getattr(provider, "model", None) or cfg.get("model") or "provider"
+                        )
+                        if not (reply or "").strip():
+                            raise RuntimeError("empty provider reply")
+
+                    # If we have strong search hits and the model looks wrong/weak, prefer grounded text.
+                    if sources and search_meta.get("ok") and grounded:
+                        low_reply = (reply or "").lower()
+                        primary_low = primary_snip.lower()
+                        weak = len((reply or "").strip()) < 40
+                        if primary_low and any(
+                            k in primary_low
+                            for k in ("prime minister", "politician", "cricketer", "cricket")
+                        ):
+                            if (
+                                "actor" in low_reply
+                                and "prime minister" not in low_reply
+                                and "cricket" not in low_reply
+                            ):
+                                weak = True
+                        if weak:
+                            reply = grounded
+                            model_used = f"{model_used}+web-grounded"
+                        elif sources and "Source:" not in reply and "http" not in reply:
+                            cites = "\n\nSources:\n" + "\n".join(
+                                f"- {s.get('title') or 'link'}: {s.get('url')}"
+                                for s in sources[:4]
+                                if s.get("url")
+                            )
+                            reply = (reply or "").rstrip() + cites
+                            model_used = f"{model_used}+web"
             except Exception as error:  # noqa: BLE001
                 # Fallback: web-grounded answer if available, else expert pack for harnessy Qs
                 try:
