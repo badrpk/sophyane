@@ -61,6 +61,8 @@
         <ul class="chat-list" id="chatList"></ul>
       </div>
       <div class="sidebar-bottom">
+        <a class="side-link harness-link" id="btnHarness" href="harness.html" target="_blank" rel="noopener">⚡ AI Agent Harness (CLI)</a>
+        <button type="button" class="side-link" id="btnModels">◆ Models &amp; API keys</button>
         <button type="button" class="side-link" id="btnUpgrade">⬆ Upgrade plan</button>
         <button type="button" class="side-link" id="btnSettings">⚙ Settings</button>
         <button type="button" class="side-link" id="btnClearChats">🗑 Clear chats</button>
@@ -84,9 +86,10 @@
     <div class="main">
       <header class="topbar">
         <button type="button" class="icon-btn" id="btnMenu" aria-label="Menu">☰</button>
-        <div class="model-select" title="Sophyane agent">
-          Sophyane <span class="chev">▾</span>
-        </div>
+        <button type="button" class="model-select" id="btnModelSelect" title="Choose top LLMs + enter API keys">
+          <span id="modelSelectLabel">Sophyane Chat</span> <span class="chev">▾</span>
+        </button>
+        <a class="top-harness" href="harness.html" target="_blank" rel="noopener" title="Open agent harness CLI window">⚡ Harness</a>
         <!-- Header shows who is logged in -->
         <div class="logged-in-badge" id="headerUser" title="Logged-in user">
           <span class="avatar sm" id="headerAvatar">?</span>
@@ -168,9 +171,35 @@
           <button type="button" class="btn-primary" id="btnSaveSettings">Save settings</button>
           <p class="auth-msg" id="settingsMsg"></p>
         </div>
+        <div id="drawerModels" hidden>
+          <p class="muted" style="margin:0 0 0.75rem;font-size:0.88rem">
+            Pick a <strong>top LLM</strong> and public model for best agent performance.
+            Paste an API key for that provider. <strong>Ollama / Local GGUF</strong> stay free
+            fallbacks when you have no credits or want offline use.
+          </p>
+          <div id="activeModelBox" class="account-box">Loading models…</div>
+          <label class="field">Provider (top 10)
+            <select id="llmProvider"></select>
+          </label>
+          <label class="field">Public model
+            <select id="llmModel"></select>
+          </label>
+          <label class="field" id="llmKeyWrap">API key
+            <input type="password" id="llmApiKey" placeholder="sk-… / xai-… / AIza…" autocomplete="off" />
+          </label>
+          <p class="muted" id="llmKeyHint" style="font-size:0.78rem;margin:0 0 0.5rem"></p>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+            <button type="button" class="btn-primary" id="btnSaveLlm">Activate model</button>
+            <button type="button" class="tool" id="btnSaveKeyOnly">Save key only</button>
+          </div>
+          <p class="auth-msg" id="llmMsg"></p>
+          <div id="llmProviderList" class="plan-cards" style="margin-top:0.75rem"></div>
+        </div>
         <div id="drawerHelp" hidden>
           <div class="help-block">
-            <p><strong>Chat</strong> — type below like ChatGPT. Edge prefers local/hybrid answers.</p>
+            <p><strong>Chat</strong> — LLM answers with <strong>live internet research</strong> for “who/what/when…” questions.</p>
+            <p><strong>Models &amp; API keys</strong> — choose top-10 LLM providers and public models; paste keys for top agentic performance. Local GGUF/Ollama = free fallback.</p>
+            <p><strong>Agent Harness (CLI)</strong> — <a href="harness.html" target="_blank" rel="noopener">open Grok-CLI style agent window</a> for tools, plan→act→verify, higher throughput.</p>
             <p><strong>Upgrade plan</strong> — free / hybrid / builder / scale from the sidebar.</p>
             <p><strong>OTP login</strong> — codes come from <strong>badrpk@gmail.com</strong>.</p>
             <p><strong>New tab</strong> — open <a href="/browser-home/" target="_blank" rel="noopener">/browser-home/</a> without installing Chromium.</p>

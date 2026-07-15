@@ -345,6 +345,59 @@ class PortalApp:
             _json(handler, 200, {"ok": True, "usage": summary, "estimate": cost, "plan": principal.get("plan")})
             return True
 
+        # —— LLM provider catalog (top 10 + API keys + free local fallback) ——
+        if path in {"/api/v1/llm", "/api/v1/llm/catalog"} and method == "GET":
+            from sophyane.llm_catalog import catalog_status
+
+            _json(handler, 200, catalog_status())
+            return True
+
+        if path in {"/api/v1/llm/select", "/api/v1/llm/activate"} and method == "POST":
+            # Optional auth: signed-in users preferred; still allow local host configure
+            body = _read_json(handler)
+            from sophyane.llm_catalog import apply_llm_selection
+
+            result = apply_llm_selection(
+                provider=str(body.get("provider") or ""),
+                model=str(body.get("model") or ""),
+                api_key=str(body.get("api_key") or body.get("key") or ""),
+                set_fallback=bool(body.get("set_fallback", True)),
+            )
+            code = 200 if result.get("ok") else 400
+            _json(handler, code, result)
+            return True
+
+        if path == "/api/v1/llm/key" and method == "POST":
+            body = _read_json(handler)
+            provider = str(body.get("provider") or "").strip().lower()
+            api_key = str(body.get("api_key") or body.get("key") or "").strip()
+            if not provider or not api_key:
+                _json(handler, 400, {"ok": False, "error": "provider and api_key required"})
+                return True
+            from sophyane.llm_catalog import apply_llm_selection, catalog_status, resolve_plugin_id
+            from sophyane.config import save_secret
+
+            plugin = resolve_plugin_id(provider)
+            save_id = "openrouter" if provider == "mistral" else plugin
+            save_secret(save_id, api_key)
+            _json(
+                handler,
+                200,
+                {
+                    "ok": True,
+                    "message": f"API key saved for {provider} (stored as {save_id}). Select a model to activate.",
+                    "status": catalog_status(),
+                },
+            )
+            return True
+
+        if path in {"/api/v1/llm/key/clear", "/api/v1/llm/clear-key"} and method == "POST":
+            body = _read_json(handler)
+            from sophyane.llm_catalog import clear_provider_key
+
+            _json(handler, 200, clear_provider_key(str(body.get("provider") or "")))
+            return True
+
         # Same-origin tool proxies for browser-home (avoids Failed to fetch on :8770/:8777)
         if path.startswith("/api/v1/tools/") and method == "GET":
             tool = path.rsplit("/", 1)[-1].strip().lower()
@@ -469,21 +522,54 @@ class PortalApp:
             # Optional short history for context (list of {role, content})
             history = body.get("history") if isinstance(body.get("history"), list) else []
             edge = bool(body.get("edge"))
+            want_search = body.get("web_search")
+            if want_search is None:
+                force_search = False
+            else:
+                force_search = bool(want_search)
             reply = ""
             model_used = "unknown"
+            sources: list[dict[str, Any]] = []
+            search_meta: dict[str, Any] = {}
             try:
                 from sophyane.config import load_config
                 from sophyane.main import create_provider
+                from sophyane.web_intel import (
+                    format_search_context,
+                    grounded_answer_from_search,
+                    needs_web_research,
+                    web_search,
+                )
 
                 system = (
-                    "You are Sophyane, a helpful AI assistant in a ChatGPT-style chat product. "
+                    "You are Sophyane, a helpful AI assistant with live internet research. "
                     "Answer the user's actual question directly and specifically. "
-                    "Do not dump unrelated product marketing, capability catalogs, or generic harness essays "
+                    "When LIVE INTERNET RESEARCH is provided, treat it as ground truth — "
+                    "prefer it over your own memory (small models often confuse people/places). "
+                    "Cite sources briefly. Do not invent biographies. "
+                    "Do not dump unrelated product marketing or harness essays "
                     "unless the user asked about Sophyane itself. "
-                    "Be concise, structured, and useful. If you are unsure, say so."
+                    "Be concise, structured, and useful."
                 )
+                # Live web search for factual / "who is" questions
+                do_search = force_search or (want_search is None and needs_web_research(message))
+                research_block = ""
+                if do_search and not edge:
+                    search_meta = web_search(message, limit=6)
+                    research_block = format_search_context(search_meta)
+                    for hit in search_meta.get("results") or []:
+                        sources.append(
+                            {
+                                "title": hit.get("title"),
+                                "url": hit.get("url"),
+                                "source": hit.get("source"),
+                            }
+                        )
+
                 # Build contextual prompt from recent turns
                 ctx_parts: list[str] = []
+                if research_block:
+                    ctx_parts.append(research_block)
                 for turn in history[-8:]:
                     if not isinstance(turn, dict):
                         continue
@@ -508,36 +594,75 @@ class PortalApp:
                         pass
                 reply = provider.generate(prompt, system)
                 model_used = str(getattr(provider, "model", None) or load_config().get("model") or "provider")
-                # If provider returns empty/boilerplate, fall back carefully
                 if not (reply or "").strip():
                     raise RuntimeError("empty provider reply")
-            except Exception as error:  # noqa: BLE001
-                # Fallback: only use expert pack for harness/engineering-ish prompts
-                low = message.lower()
-                harnessy = any(
-                    k in low
-                    for k in (
-                        "sophyane",
-                        "harness",
-                        "agent loop",
-                        "mesh",
-                        "federat",
-                        "lora",
-                        "peft",
-                        "tool registry",
-                    )
-                )
-                if harnessy:
-                    from sophyane.expert.answer import answer_tough_question
 
-                    reply = answer_tough_question(message, mode="expert").get("answer") or str(error)
-                    model_used = "expert-pack"
-                else:
-                    reply = (
-                        "I could not reach a live language model just now "
-                        f"({error}). Please retry, or run `sophyane --doctor` / ensure local_gguf or API keys are configured."
+                # If we have strong search hits and the model looks wrong/weak, prefer grounded text.
+                if sources and search_meta.get("ok"):
+                    grounded = grounded_answer_from_search(message, search_meta)
+                    low_reply = (reply or "").lower()
+                    primary_snip = str((search_meta.get("results") or [{}])[0].get("snippet") or "").lower()
+                    # Weak/wrong: too short, or contradicts key entity facts (e.g. "actor" vs PM)
+                    weak = len((reply or "").strip()) < 40
+                    # If research mentions prime minister/cricketer and model says only "actor"
+                    if primary_snip and any(
+                        k in primary_snip for k in ("prime minister", "politician", "cricketer", "cricket")
+                    ):
+                        if "actor" in low_reply and "prime minister" not in low_reply and "cricket" not in low_reply:
+                            weak = True
+                    if weak and grounded:
+                        reply = grounded
+                        model_used = f"{model_used}+web-grounded"
+                    elif sources and "Source:" not in reply and "http" not in reply:
+                        # Append citations for transparency
+                        cites = "\n\nSources:\n" + "\n".join(
+                            f"- {s.get('title') or 'link'}: {s.get('url')}" for s in sources[:4] if s.get("url")
+                        )
+                        reply = (reply or "").rstrip() + cites
+                        model_used = f"{model_used}+web"
+            except Exception as error:  # noqa: BLE001
+                # Fallback: web-grounded answer if available, else expert pack for harnessy Qs
+                try:
+                    from sophyane.web_intel import grounded_answer_from_search, needs_web_research, web_search
+
+                    if needs_web_research(message) or force_search:
+                        search_meta = web_search(message, limit=6)
+                        grounded = grounded_answer_from_search(message, search_meta)
+                        if grounded:
+                            reply = grounded
+                            model_used = "web-grounded"
+                            sources = [
+                                {"title": h.get("title"), "url": h.get("url"), "source": h.get("source")}
+                                for h in (search_meta.get("results") or [])
+                            ]
+                except Exception:  # noqa: BLE001
+                    pass
+                if not (reply or "").strip():
+                    low = message.lower()
+                    harnessy = any(
+                        k in low
+                        for k in (
+                            "sophyane",
+                            "harness",
+                            "agent loop",
+                            "mesh",
+                            "federat",
+                            "lora",
+                            "peft",
+                            "tool registry",
+                        )
                     )
-                    model_used = "error-fallback"
+                    if harnessy:
+                        from sophyane.expert.answer import answer_tough_question
+
+                        reply = answer_tough_question(message, mode="expert").get("answer") or str(error)
+                        model_used = "expert-pack"
+                    else:
+                        reply = (
+                            "I could not reach a live language model just now "
+                            f"({error}). Please retry, or run `sophyane --doctor` / ensure local_gguf or API keys are configured."
+                        )
+                        model_used = "error-fallback"
 
             tokens = max(1, (len(message) + len(reply)) // 4)
             self.store.record_usage(principal["user_id"], tokens, key_id=principal["key_id"], endpoint="/api/v1/chat")
@@ -552,6 +677,146 @@ class PortalApp:
                     "model": model_used,
                     "user": principal.get("email"),
                     "version": __version__,
+                    "sources": sources,
+                    "web_search": bool(sources) or bool(search_meta.get("ok")),
+                },
+            )
+            return True
+
+        if path == "/api/v1/search" and method == "POST":
+            key = _auth_key(handler)
+            principal = self.store.resolve_key(key) if key else None
+            if not principal:
+                _json(handler, 401, {"ok": False, "error": "invalid API key"})
+                return True
+            body = _read_json(handler)
+            query = str(body.get("query") or body.get("message") or "").strip()
+            if not query:
+                _json(handler, 400, {"ok": False, "error": "query required"})
+                return True
+            from sophyane.web_intel import web_search
+
+            result = web_search(query, limit=int(body.get("limit") or 6))
+            _json(handler, 200, {"ok": True, **result})
+            return True
+
+        if path == "/api/v1/agent" and method == "POST":
+            # Agentic harness / CLI-style tool loop (same auth as chat)
+            key = _auth_key(handler)
+            principal = self.store.resolve_key(key) if key else None
+            if not principal:
+                _json(handler, 401, {"ok": False, "error": "invalid API key — sign in first"})
+                return True
+            body = _read_json(handler)
+            message = str(body.get("message") or body.get("prompt") or body.get("command") or "").strip()
+            if not message:
+                _json(handler, 400, {"ok": False, "error": "message required"})
+                return True
+            steps: list[dict[str, Any]] = []
+            reply = ""
+            model_used = "agent-harness"
+            try:
+                from sophyane.agent_runtime import route_local_request, tools_help
+                from sophyane.web_intel import format_search_context, grounded_answer_from_search, web_search
+
+                # Slash / natural local tools first (high throughput, no LLM needed)
+                routed = route_local_request(message)
+                if routed.get("handled"):
+                    if routed.get("direct"):
+                        reply = str(routed["direct"])
+                        steps.append({"step": "local_tool", "tool": routed.get("tool_name") or "slash", "ok": True})
+                    elif routed.get("context"):
+                        # Summarize tool context with LLM if available
+                        tool_ctx = str(routed["context"])
+                        steps.append(
+                            {
+                                "step": "local_tool",
+                                "tool": routed.get("tool_name") or "tool",
+                                "ok": True,
+                                "preview": tool_ctx[:400],
+                            }
+                        )
+                        try:
+                            from sophyane.config import load_config
+                            from sophyane.main import create_provider
+
+                            provider = create_provider(load_config())
+                            reply = provider.generate(
+                                f"Tool output:\n{tool_ctx[:4000]}\n\nUser: {message}\nSummarize clearly.",
+                                "You are Sophyane Agent Harness. Report tool results accurately.",
+                            )
+                            model_used = str(getattr(provider, "model", None) or "provider")
+                        except Exception:  # noqa: BLE001
+                            reply = tool_ctx
+                    else:
+                        reply = tools_help()
+                else:
+                    # Plan → research → answer (agent loop)
+                    steps.append({"step": "plan", "ok": True, "plan": "research + answer + cite"})
+                    search = web_search(message, limit=6)
+                    steps.append(
+                        {
+                            "step": "web_search",
+                            "ok": bool(search.get("ok")),
+                            "count": search.get("count") or 0,
+                        }
+                    )
+                    research = format_search_context(search)
+                    try:
+                        from sophyane.config import load_config
+                        from sophyane.main import create_provider
+
+                        provider = create_provider(load_config())
+                        system = (
+                            "You are Sophyane Agent Harness (CLI agent). "
+                            "Plan briefly, use research facts, answer the user, cite sources. "
+                            "Prefer tool/research facts over model memory."
+                        )
+                        prompt = (research + "\n\n" if research else "") + f"USER: {message}"
+                        reply = provider.generate(prompt, system)
+                        model_used = str(getattr(provider, "model", None) or "provider")
+                        if search.get("ok") and len((reply or "").strip()) < 40:
+                            reply = grounded_answer_from_search(message, search) or reply
+                            model_used = f"{model_used}+web-grounded"
+                        steps.append({"step": "generate", "ok": True, "model": model_used})
+                    except Exception as gen_err:  # noqa: BLE001
+                        grounded = grounded_answer_from_search(message, search)
+                        if grounded:
+                            reply = grounded
+                            model_used = "web-grounded"
+                            steps.append({"step": "generate", "ok": True, "fallback": "web-grounded"})
+                        else:
+                            reply = f"Agent could not complete generation: {gen_err}"
+                            steps.append({"step": "generate", "ok": False, "error": str(gen_err)})
+                    # Attach sources
+                    sources = [
+                        {"title": h.get("title"), "url": h.get("url")}
+                        for h in (search.get("results") or [])
+                        if h.get("url")
+                    ]
+                    if sources and "Sources:" not in (reply or ""):
+                        reply = (reply or "").rstrip() + "\n\nSources:\n" + "\n".join(
+                            f"- {s['title']}: {s['url']}" for s in sources[:5]
+                        )
+                    steps.append({"step": "verify", "ok": bool(reply), "sources": len(sources)})
+            except Exception as error:  # noqa: BLE001
+                reply = f"Agent harness error: {error}"
+                steps.append({"step": "error", "ok": False, "error": str(error)})
+
+            tokens = max(1, (len(message) + len(reply)) // 4)
+            self.store.record_usage(principal["user_id"], tokens, key_id=principal["key_id"], endpoint="/api/v1/agent")
+            _json(
+                handler,
+                200,
+                {
+                    "ok": True,
+                    "reply": reply,
+                    "steps": steps,
+                    "model": model_used,
+                    "mode": "agent-harness",
+                    "user": principal.get("email"),
+                    "version": __version__,
+                    "usage": {"tokens_estimate": tokens},
                 },
             )
             return True

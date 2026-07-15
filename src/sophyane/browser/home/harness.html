@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <title>Sophyane Agent Harness — CLI</title>
+  <meta name="description" content="Sophyane AI Agent Harness — Grok CLI-style agent loop with tools, web research, and plan-act-verify." />
+  <link rel="stylesheet" href="harness.css" />
+</head>
+<body>
+  <div class="cli-app">
+    <header class="cli-bar">
+      <div class="cli-brand">
+        <span class="prompt-mark">◆</span>
+        <strong>Sophyane Agent Harness</strong>
+        <span class="badge">CLI</span>
+      </div>
+      <div class="cli-meta">
+        <span id="cliModel">model: …</span>
+        <span id="cliUser">not signed in</span>
+        <a class="cli-link" href="index.html" target="_blank" rel="noopener">Chat UI · Models</a>
+        <a class="cli-link" href="/start.html" target="_blank" rel="noopener">Start</a>
+        <a class="cli-link" href="https://github.com/badrpk/sophyane" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </header>
+
+    <section class="cli-banner">
+      <pre id="banner">Sophyane Agent Harness  ·  plan → tools/web → act → verify
+Same throughput as CLI. Type /help · /tools · or a natural agent task.
+Internet research is on for factual questions. Auth uses your browser login key.
+</pre>
+    </section>
+
+    <main class="cli-term" id="term" aria-live="polite"></main>
+
+    <footer class="cli-input-wrap">
+      <form id="cliForm" class="cli-form" autocomplete="off">
+        <label class="cli-prompt" for="cliInput">sophyane&gt;</label>
+        <input id="cliInput" type="text" spellcheck="false" placeholder="who is Imran Khan · /tools · check my system · plan a PEFT train step" />
+        <button type="submit" id="cliSend">Run</button>
+      </form>
+      <p class="cli-hint">Enter runs · ↑/↓ history · opens as dedicated agent window from Chat sidebar</p>
+    </footer>
+  </div>
+  <script src="harness.js"></script>
+</body>
+</html>

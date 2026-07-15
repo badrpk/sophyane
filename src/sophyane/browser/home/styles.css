@@ -353,12 +353,51 @@ a:hover { text-decoration: underline; }
 }
 .model-select {
   font-weight: 600;
-  font-size: 1.05rem;
-  padding: 0.35rem 0.5rem;
+  font-size: 0.95rem;
+  padding: 0.35rem 0.55rem;
   border-radius: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  max-width: min(48vw, 16rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .model-select:hover { background: rgba(255,255,255,0.05); }
+#drawerModels .field { margin-bottom: 0.55rem; }
+#drawerModels select,
+#drawerModels input[type="password"],
+#drawerModels input[type="text"] {
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #0d0d0d;
+  color: var(--text);
+}
 .chev { color: var(--muted); font-size: 0.75rem; }
+.top-harness {
+  font-size: 0.82rem;
+  color: var(--ok);
+  border: 1px solid rgba(74, 222, 128, 0.35);
+  border-radius: 999px;
+  padding: 0.25rem 0.65rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.top-harness:hover {
+  background: rgba(74, 222, 128, 0.1);
+  text-decoration: none;
+}
+.side-link.harness-link {
+  color: var(--ok);
+  font-weight: 600;
+  border: 1px solid rgba(74, 222, 128, 0.25);
+  margin-bottom: 0.15rem;
+}
 .top-actions { margin-left: auto; }
 .icon-btn {
   border: 0;
