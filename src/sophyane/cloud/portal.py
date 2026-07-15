@@ -788,6 +788,74 @@ class PortalApp:
             _json(handler, code, result)
             return True
 
+        # ── Messaging: email / telegram / whatsapp / sms ─────────────────
+        if path == "/api/v1/messaging/status" and method == "GET":
+            from sophyane.cloud.messaging import public_status
+
+            _json(handler, 200, public_status())
+            return True
+
+        if path == "/api/v1/messaging/telegram/discover" and method == "POST":
+            key = _auth_key(handler)
+            principal = self.store.resolve_key(key) if key else None
+            if not principal:
+                _json(handler, 401, {"ok": False, "error": "invalid API key"})
+                return True
+            from sophyane.cloud.messaging import discover_telegram_chat, telegram_get_me
+
+            me = telegram_get_me()
+            disc = discover_telegram_chat()
+            _json(handler, 200 if disc.get("ok") else 400, {"bot": me, **disc})
+            return True
+
+        if path == "/api/v1/messaging/notify" and method == "POST":
+            key = _auth_key(handler)
+            principal = self.store.resolve_key(key) if key else None
+            if not principal:
+                _json(handler, 401, {"ok": False, "error": "invalid API key"})
+                return True
+            body = _read_json(handler)
+            from sophyane.cloud.messaging import notify_owner
+
+            text = str(body.get("text") or body.get("message") or "").strip()
+            if not text:
+                _json(handler, 400, {"ok": False, "error": "text required"})
+                return True
+            channels = body.get("channels")
+            if isinstance(channels, str):
+                channels = [c.strip() for c in channels.split(",") if c.strip()]
+            result = notify_owner(text, channels=channels if isinstance(channels, list) else None)
+            _json(handler, 200 if result.get("ok") else 400, result)
+            return True
+
+        if path == "/api/v1/messaging/send" and method == "POST":
+            key = _auth_key(handler)
+            principal = self.store.resolve_key(key) if key else None
+            if not principal:
+                _json(handler, 401, {"ok": False, "error": "invalid API key"})
+                return True
+            body = _read_json(handler)
+            channel = str(body.get("channel") or "email").lower()
+            text = str(body.get("text") or body.get("message") or "").strip()
+            to = str(body.get("to") or "").strip()
+            if not text:
+                _json(handler, 400, {"ok": False, "error": "text required"})
+                return True
+            from sophyane.cloud import messaging as msg
+
+            if channel == "email":
+                result = msg.send_email(to or msg.merchant_contacts()["email"], str(body.get("subject") or "Sophyane"), text)
+            elif channel == "telegram":
+                result = msg.send_telegram(text, chat_id=to or None)
+            elif channel == "whatsapp":
+                result = msg.send_whatsapp(to or msg.merchant_contacts()["whatsapp"], text)
+            elif channel == "sms":
+                result = msg.send_sms(to or msg.merchant_contacts()["phone"], text)
+            else:
+                result = {"ok": False, "error": f"unknown channel {channel}"}
+            _json(handler, 200 if result.get("ok") else 400, result)
+            return True
+
         if path == "/api/v1/billing/checkout" and method == "POST":
             key = _auth_key(handler)
             principal = self.store.resolve_key(key) if key else None
