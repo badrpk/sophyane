@@ -112,6 +112,47 @@ def build_parser() -> argparse.ArgumentParser:
         const="all",
         help="probe ERP connectors (oracle|sap|odoo|dynamics|netsuite|erpnext|all)",
     )
+    parser.add_argument(
+        "--mesh-serve",
+        action="store_true",
+        help="serve Sophyane mesh peer API (WiFi/LAN control + shared storage/compute)",
+    )
+    parser.add_argument(
+        "--mesh-port",
+        type=int,
+        default=8777,
+        help="mesh peer port (default 8777)",
+    )
+    parser.add_argument(
+        "--mesh-discover",
+        action="store_true",
+        help="discover Sophyane peers on WiFi/LAN and USB/ADB",
+    )
+    parser.add_argument(
+        "--mesh-status",
+        action="store_true",
+        help="show local mesh node status and known peers",
+    )
+    parser.add_argument(
+        "--mesh-install",
+        metavar="PEER_ID",
+        help="install Sophyane clone on peer (requires --yes)",
+    )
+    parser.add_argument(
+        "--mesh-compute",
+        metavar="MESSAGE",
+        help="run a short chat/compute job on the best mesh peer",
+    )
+    parser.add_argument(
+        "--mesh-ssh-user",
+        default="",
+        help="SSH user for --mesh-install over LAN",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="confirm destructive/mesh install actions",
+    )
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--single-agent", action="store_true", help="use legacy one-worker runtime")
     parser.add_argument("--multi-agent", action="store_true", help="use legacy supervisor-worker runtime")
@@ -260,6 +301,54 @@ def main() -> int:
         system = None if args.erp in {"", "all"} else str(args.erp)
         print(json.dumps(kernel.erp_status(system), indent=2))
         return 0
+    if args.mesh_serve or args.mesh_discover or args.mesh_status or args.mesh_install or args.mesh_compute:
+        from sophyane.mesh.core import get_mesh_node
+        from sophyane.mesh.discovery import MESH_PORT
+
+        port = int(args.mesh_port or MESH_PORT)
+        node = get_mesh_node(port=port)
+
+        if args.mesh_serve:
+            server = node.serve(host="0.0.0.0")
+            print(
+                f"Sophyane mesh peer {node.peer_id} listening on 0.0.0.0:{port}\n"
+                f"Hello: http://<this-host>:{port}/v1/mesh/hello\n"
+                f"Share dir: ~/.local/state/sophyane/mesh_share\n"
+                f"Optional auth: SOPHYANE_MESH_TOKEN",
+                flush=True,
+            )
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                print("\nMesh peer stopped.")
+            return 0
+
+        if args.mesh_discover:
+            peers = node.discover(include_usb=True)
+            print(json.dumps({"ok": True, "count": len(peers), "peers": peers}, indent=2))
+            return 0
+
+        if args.mesh_status:
+            print(json.dumps(node.status(), indent=2))
+            return 0
+
+        if args.mesh_install:
+            result = node.install_peer(
+                str(args.mesh_install),
+                yes=bool(args.yes),
+                ssh_user=str(args.mesh_ssh_user or ""),
+            )
+            print(json.dumps(result, indent=2))
+            return 0 if result.get("ok") else 1
+
+        if args.mesh_compute:
+            # ensure we know some peers
+            if not node.peers:
+                node.discover(include_usb=False)
+            result = node.use_peer_compute(str(args.mesh_compute))
+            print(json.dumps(result, indent=2))
+            return 0 if result.get("ok") else 1
+
     if args.providers:
         print(list_providers())
         return 0

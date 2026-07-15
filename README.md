@@ -44,6 +44,20 @@ Useful slash commands:
 | `/session-info` | Hardware + session stats |
 | `/quit` | Exit |
 
+## Mesh (USB · WiFi · shared compute/storage)
+
+Connect devices that run Sophyane — or install a clone — then share control,
+compute, and storage:
+
+```bash
+sophyane --mesh-serve              # peer API on :8777
+sophyane --mesh-discover           # WiFi/LAN + USB/ADB
+sophyane --mesh-install HOST --yes # clone Sophyane onto peer
+sophyane --mesh-compute "hello"    # use another device's compute
+```
+
+See [docs/MESH.md](docs/MESH.md).
+
 ## AI Kernel (intelligence control plane)
 
 Sophyane includes a **userspace AI Kernel** that coordinates hardware adapters,

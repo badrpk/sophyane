@@ -122,6 +122,12 @@ class AIKernel:
             "ready",
             "guardrails + approval gates + edge safety prompts",
         )
+        self.modules["mesh"] = KernelModule(
+            "mesh",
+            "network",
+            "ready",
+            "WiFi/LAN/USB/ADB discovery, clone install, shared compute/storage",
+        )
 
         self._booted = True
         self.bus.publish(

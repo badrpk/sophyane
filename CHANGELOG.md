@@ -1,5 +1,14 @@
 # Changelog
 
+## 16.5.0 — 2026-07-15
+
+### Added
+- **Sophyane Mesh**: WiFi/LAN discovery, USB serial + ADB inventory
+- Peer clone install over SSH/ADB (`--mesh-install --yes`)
+- Shared compute offload (`--mesh-compute`) and mesh storage share
+- Mesh peer server (`--mesh-serve` on port 8777)
+- Docs: `docs/MESH.md`
+
 ## 16.4.0 — 2026-07-15
 
 ### Added
