@@ -217,10 +217,32 @@
         </div>
         <div id="drawerUpgrade" hidden>
           <p class="muted" style="margin:0 0 0.75rem;font-size:0.88rem">
-            Upgrade or change your plan. <strong>Builder ($1)</strong> and <strong>Scale ($9)</strong>
-            charge via <strong>Stripe Checkout</strong> (your Monzo-linked account). Free / Hybrid stay free.
+            Paid plans: <strong>Stripe card</strong> (Monzo-linked) or <strong>crypto</strong>
+            (Monero XMR · KuCoin USDT/BTC/ETH on <strong>badrpk@gmail.com</strong>). Free / Hybrid stay free.
           </p>
+          <div class="mode-row" style="margin-bottom:0.65rem">
+            <button type="button" class="rail-btn primary" id="payMethodCard" data-pay="card">💳 Card (Stripe)</button>
+            <button type="button" class="rail-btn accent" id="payMethodCrypto" data-pay="crypto">Ƀ Crypto (XMR/KuCoin)</button>
+          </div>
           <div id="planCards" class="plan-cards"></div>
+          <div id="cryptoPayBox" class="offer-box" hidden>
+            <p id="cryptoPayText"></p>
+            <p id="cryptoStatus" class="muted" style="font-size:0.82rem;margin:0 0 0.5rem"></p>
+            <label class="field">Payment method
+              <select id="cryptoMethod">
+                <option value="monero">Monero (XMR) — local wallet</option>
+                <option value="kucoin_usdt">KuCoin USDT (TRC20)</option>
+                <option value="kucoin_btc">KuCoin BTC</option>
+                <option value="kucoin_eth">KuCoin ETH</option>
+              </select>
+            </label>
+            <button type="button" class="btn-primary" id="btnCryptoInvoice">Create crypto invoice</button>
+            <pre id="cryptoInvoiceOut" class="tool-out" style="min-height:6rem;margin-top:0.5rem"></pre>
+            <label class="field">TXID (optional, faster confirm)
+              <input type="text" id="cryptoTxid" placeholder="transaction hash" />
+            </label>
+            <button type="button" class="tool" id="btnCryptoPaid">I have paid</button>
+          </div>
           <p class="auth-msg" id="upgradeMsg"></p>
         </div>
         <div id="drawerSettings" hidden>

@@ -639,9 +639,97 @@ class PortalApp:
             return True
 
         if path == "/api/v1/billing/config" and method == "GET":
-            from sophyane.cloud.stripe_billing import public_config
+            from sophyane.cloud.stripe_billing import public_config as stripe_public
+            from sophyane.cloud.crypto_billing import public_config as crypto_public
+
+            stripe_cfg = stripe_public()
+            crypto_cfg = crypto_public()
+            _json(
+                handler,
+                200,
+                {
+                    **stripe_cfg,
+                    "crypto": crypto_cfg,
+                    "methods": {
+                        "card_stripe": bool(stripe_cfg.get("enabled")),
+                        "crypto": bool(crypto_cfg.get("enabled")),
+                    },
+                },
+            )
+            return True
+
+        if path == "/api/v1/billing/crypto/config" and method == "GET":
+            from sophyane.cloud.crypto_billing import public_config
 
             _json(handler, 200, public_config())
+            return True
+
+        if path == "/api/v1/billing/crypto/invoice" and method == "POST":
+            key = _auth_key(handler)
+            principal = self.store.resolve_key(key) if key else None
+            if not principal:
+                _json(handler, 401, {"ok": False, "error": "invalid API key — sign in first"})
+                return True
+            body = _read_json(handler)
+            from sophyane.cloud.crypto_billing import create_invoice
+
+            inv = create_invoice(
+                user_id=str(principal["user_id"]),
+                email=str(principal.get("email") or ""),
+                plan_id=str(body.get("plan") or "").strip().lower(),
+                method=str(body.get("method") or "monero"),
+            )
+            code = 200 if inv.get("ok") else 400
+            _json(handler, code, inv)
+            return True
+
+        if path == "/api/v1/billing/crypto/confirm" and method == "POST":
+            key = _auth_key(handler)
+            principal = self.store.resolve_key(key) if key else None
+            if not principal:
+                _json(handler, 401, {"ok": False, "error": "invalid API key"})
+                return True
+            body = _read_json(handler)
+            inv_id = str(body.get("invoice_id") or "").strip()
+            txid = str(body.get("txid") or body.get("tx_hash") or "").strip()
+            from sophyane.cloud.crypto_billing import get_invoice, user_report_payment
+
+            inv = get_invoice(inv_id)
+            if not inv:
+                _json(handler, 404, {"ok": False, "error": "invoice not found"})
+                return True
+            result = user_report_payment(inv_id, str(principal["user_id"]), txid=txid)
+            if result.get("ok") and (result.get("plan") or (result.get("invoice") or {}).get("status") == "paid"):
+                plan = result.get("plan") or (result.get("invoice") or {}).get("plan")
+                if plan and (result.get("invoice") or {}).get("status") == "paid":
+                    up = self.store.update_plan(principal["user_id"], str(plan))
+                    _json(
+                        handler,
+                        200,
+                        {
+                            **result,
+                            "activated": True,
+                            "user": up.get("user"),
+                            "message": f"Crypto payment confirmed. Plan set to {plan}.",
+                            "plans": list_plans(),
+                        },
+                    )
+                    return True
+            _json(handler, 200, result)
+            return True
+
+        if path.startswith("/api/v1/billing/crypto/invoice/") and method == "GET":
+            inv_id = path.rsplit("/", 1)[-1]
+            from sophyane.cloud.crypto_billing import get_invoice, try_auto_confirm_monero
+
+            inv = get_invoice(inv_id)
+            if not inv:
+                _json(handler, 404, {"ok": False, "error": "not found"})
+                return True
+            if inv.get("status") == "pending" and inv.get("asset") == "XMR":
+                try_auto_confirm_monero(inv_id)
+                inv = get_invoice(inv_id) or inv
+            _json(handler, 200, {"ok": True, "invoice": inv})
             return True
 
         if path == "/api/v1/billing/checkout" and method == "POST":

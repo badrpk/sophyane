@@ -1499,6 +1499,61 @@
     });
   }
 
+  let payMethod = localStorage.getItem("sophyane_pay_method") || "card";
+  let pendingCryptoPlan = "";
+  let lastCryptoInvoice = null;
+  let cryptoBillingCfg = null;
+
+  async function refreshCryptoStatus() {
+    const st = $("cryptoStatus");
+    const sel = $("cryptoMethod");
+    try {
+      const bill = await jget(CLOUD + "/api/v1/billing/config");
+      cryptoBillingCfg = bill.crypto || null;
+      const c = bill.crypto || {};
+      const parts = [];
+      if (c.monero_enabled) parts.push("Monero ready");
+      else parts.push("Monero off");
+      if (c.kucoin_enabled) parts.push("KuCoin deposits ready");
+      else if (c.kucoin_account)
+        parts.push("KuCoin account " + c.kucoin_account + " (add deposit address in crypto.env)");
+      else parts.push("KuCoin not configured");
+      if (st) st.textContent = parts.join(" · ");
+      // Prefer live methods in select when available
+      if (sel && Array.isArray(c.methods) && c.methods.length) {
+        const usable = c.methods.filter((m) => m.id && !m.needs_setup);
+        if (usable.length) {
+          const cur = sel.value;
+          sel.innerHTML = usable
+            .map(
+              (m) =>
+                `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name || m.id)}${
+                  m.address_preview ? " · " + escapeHtml(m.address_preview) : ""
+                }</option>`
+            )
+            .join("");
+          if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+        }
+      }
+    } catch (_) {
+      if (st) st.textContent = "Could not load crypto billing status.";
+    }
+  }
+
+  function setPayMethod(m) {
+    payMethod = m === "crypto" ? "crypto" : "card";
+    localStorage.setItem("sophyane_pay_method", payMethod);
+    const card = $("payMethodCard");
+    const cry = $("payMethodCrypto");
+    const box = $("cryptoPayBox");
+    if (card) card.classList.toggle("primary", payMethod === "card");
+    if (cry) cry.classList.toggle("accent", payMethod === "crypto");
+    if (box) box.hidden = payMethod !== "crypto";
+    if (payMethod === "crypto") refreshCryptoStatus();
+  }
+  if ($("payMethodCard")) $("payMethodCard").onclick = () => setPayMethod("card");
+  if ($("payMethodCrypto")) $("payMethodCrypto").onclick = () => setPayMethod("crypto");
+
   async function upgradePlan(planId) {
     if (!auth?.api_key) {
       if (els.upgradeMsg) {
@@ -1519,6 +1574,21 @@
       els.upgradeMsg.textContent = "Starting upgrade…";
       els.upgradeMsg.classList.remove("err");
     }
+
+    // Crypto path for paid plans
+    if (payMethod === "crypto" && (planId === "builder" || planId === "scale")) {
+      pendingCryptoPlan = planId;
+      setPayMethod("crypto");
+      if ($("cryptoPayText")) {
+        $("cryptoPayText").textContent =
+          "Selected plan: " + planId + ". Choose Monero or KuCoin asset, then create invoice.";
+      }
+      if (els.upgradeMsg) {
+        els.upgradeMsg.textContent = "Crypto selected — create an invoice below.";
+      }
+      return;
+    }
+
     try {
       const data = await jpost(
         CLOUD + "/api/v1/account/upgrade",
@@ -1549,6 +1619,94 @@
         els.upgradeMsg.classList.add("err");
       }
     }
+  }
+
+  if ($("btnCryptoInvoice")) {
+    $("btnCryptoInvoice").onclick = async () => {
+      const plan = pendingCryptoPlan || "builder";
+      const method = ($("cryptoMethod") && $("cryptoMethod").value) || "monero";
+      const out = $("cryptoInvoiceOut");
+      if (out) out.textContent = "Creating invoice…";
+      try {
+        const data = await jpost(
+          CLOUD + "/api/v1/billing/crypto/invoice",
+          { plan, method },
+          authHeaders()
+        );
+        if (!data.ok) throw new Error(data.error || "invoice failed");
+        lastCryptoInvoice = data;
+        if (out) {
+          out.textContent =
+            "Invoice: " +
+            data.invoice_id +
+            "\nPlan: " +
+            data.plan +
+            "\nSend: " +
+            data.amount_crypto_str +
+            " " +
+            data.asset +
+            (data.network ? " (" + data.network + ")" : "") +
+            "\nAddress:\n" +
+            data.address +
+            "\n\n" +
+            (data.instructions || "") +
+            (data.pay_uri ? "\n\nURI: " + data.pay_uri : "");
+        }
+        if (els.upgradeMsg) {
+          els.upgradeMsg.textContent = "Send exact crypto amount, then click I have paid.";
+          els.upgradeMsg.classList.remove("err");
+        }
+        // copy address for convenience
+        try {
+          await navigator.clipboard.writeText(data.address);
+        } catch (_) {}
+      } catch (e) {
+        if (out) out.textContent = String(e.message || e);
+        if (els.upgradeMsg) {
+          els.upgradeMsg.textContent = String(e.message || e);
+          els.upgradeMsg.classList.add("err");
+        }
+      }
+    };
+  }
+
+  if ($("btnCryptoPaid")) {
+    $("btnCryptoPaid").onclick = async () => {
+      if (!lastCryptoInvoice || !lastCryptoInvoice.invoice_id) {
+        if (els.upgradeMsg) {
+          els.upgradeMsg.textContent = "Create an invoice first.";
+          els.upgradeMsg.classList.add("err");
+        }
+        return;
+      }
+      const txid = ($("cryptoTxid") && $("cryptoTxid").value.trim()) || "";
+      try {
+        const data = await jpost(
+          CLOUD + "/api/v1/billing/crypto/confirm",
+          { invoice_id: lastCryptoInvoice.invoice_id, txid },
+          authHeaders()
+        );
+        if (data.activated && data.plan) {
+          auth.plan = data.plan;
+          saveAuth(auth);
+          renderUser();
+          loadPlanCards();
+          if (els.upgradeMsg) {
+            els.upgradeMsg.textContent = data.message || "Plan activated via crypto.";
+            els.upgradeMsg.classList.remove("err");
+          }
+        } else if (els.upgradeMsg) {
+          els.upgradeMsg.textContent =
+            data.message || data.error || "Awaiting network confirmation…";
+          els.upgradeMsg.classList.toggle("err", !data.ok);
+        }
+      } catch (e) {
+        if (els.upgradeMsg) {
+          els.upgradeMsg.textContent = String(e.message || e);
+          els.upgradeMsg.classList.add("err");
+        }
+      }
+    };
   }
 
   async function confirmStripePaymentIfNeeded() {
@@ -1682,17 +1840,14 @@
 
   // Boot
   updateAuthTabs();
+  setPayMethod(payMethod);
   if (auth && auth.api_key && auth.email) {
     showApp();
     loadLlmCatalog().catch(() => {});
     confirmStripePaymentIfNeeded().catch(() => {});
-    // Show Stripe billing badge on upgrade drawer when available
     jget(CLOUD + "/api/v1/billing/config")
       .then((c) => {
-        if (c && c.enabled && els.upgradeMsg) {
-          /* leave quiet until open */
-          window.__sophyaneStripe = c;
-        }
+        window.__sophyaneStripe = c;
       })
       .catch(() => {});
   } else {
