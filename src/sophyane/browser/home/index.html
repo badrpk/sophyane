@@ -217,12 +217,14 @@
         </div>
         <div id="drawerUpgrade" hidden>
           <p class="muted" style="margin:0 0 0.75rem;font-size:0.88rem">
-            Paid plans: <strong>Stripe card</strong> (Monzo-linked) or <strong>crypto</strong>
-            (Monero XMR · KuCoin USDT/BTC/ETH on <strong>badrpk@gmail.com</strong>). Free / Hybrid stay free.
+            Paid plans: <strong>Stripe card</strong>, <strong>crypto</strong>
+            (Monero · KuCoin · Coinbase · Binance), or <strong>Pakistan wallets</strong>
+            (JazzCash · EasyPaisa · UPaisa on <strong>+92 321 2558089</strong> /
+            <strong>badrpk@gmail.com</strong>). Free / Hybrid stay free.
           </p>
           <div class="mode-row" style="margin-bottom:0.65rem">
             <button type="button" class="rail-btn primary" id="payMethodCard" data-pay="card">💳 Card (Stripe)</button>
-            <button type="button" class="rail-btn accent" id="payMethodCrypto" data-pay="crypto">Ƀ Crypto (XMR/KuCoin)</button>
+            <button type="button" class="rail-btn accent" id="payMethodCrypto" data-pay="crypto">Ƀ Crypto + PK wallets</button>
           </div>
           <div id="planCards" class="plan-cards"></div>
           <div id="cryptoPayBox" class="offer-box" hidden>
@@ -231,15 +233,23 @@
             <label class="field">Payment method
               <select id="cryptoMethod">
                 <option value="monero">Monero (XMR) — local wallet</option>
-                <option value="kucoin_usdt">KuCoin USDT (TRC20)</option>
+                <option value="kucoin_usdt">KuCoin USDT</option>
                 <option value="kucoin_btc">KuCoin BTC</option>
                 <option value="kucoin_eth">KuCoin ETH</option>
+                <option value="coinbase_btc">Coinbase BTC</option>
+                <option value="coinbase_eth">Coinbase ETH</option>
+                <option value="coinbase_usdc">Coinbase USDC</option>
+                <option value="binance_usdt">Binance USDT</option>
+                <option value="binance_btc">Binance BTC</option>
+                <option value="easypaisa">EasyPaisa (PKR)</option>
+                <option value="jazzcash">JazzCash (PKR)</option>
+                <option value="upaisa">UPaisa (PKR)</option>
               </select>
             </label>
-            <button type="button" class="btn-primary" id="btnCryptoInvoice">Create crypto invoice</button>
+            <button type="button" class="btn-primary" id="btnCryptoInvoice">Create payment invoice</button>
             <pre id="cryptoInvoiceOut" class="tool-out" style="min-height:6rem;margin-top:0.5rem"></pre>
-            <label class="field">TXID (optional, faster confirm)
-              <input type="text" id="cryptoTxid" placeholder="transaction hash" />
+            <label class="field">TXID / TID / reference (optional, faster confirm)
+              <input type="text" id="cryptoTxid" placeholder="tx hash or JazzCash/EasyPaisa TID" />
             </label>
             <button type="button" class="tool" id="btnCryptoPaid">I have paid</button>
           </div>

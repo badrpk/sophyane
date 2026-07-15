@@ -641,18 +641,30 @@ class PortalApp:
         if path == "/api/v1/billing/config" and method == "GET":
             from sophyane.cloud.stripe_billing import public_config as stripe_public
             from sophyane.cloud.crypto_billing import public_config as crypto_public
+            from sophyane.cloud.payments_rails import public_config as rails_public
 
             stripe_cfg = stripe_public()
             crypto_cfg = crypto_public()
+            rails_cfg = rails_public()
             _json(
                 handler,
                 200,
                 {
                     **stripe_cfg,
                     "crypto": crypto_cfg,
+                    "rails": rails_cfg,
                     "methods": {
                         "card_stripe": bool(stripe_cfg.get("enabled")),
                         "crypto": bool(crypto_cfg.get("enabled")),
+                        "pk_wallets": any(
+                            m.get("rail") in {"jazzcash", "easypaisa", "upaisa"}
+                            for m in (rails_cfg.get("methods") or [])
+                        ),
+                        "exchanges": any(
+                            m.get("rail") in {"coinbase", "binance"}
+                            for m in (rails_cfg.get("methods") or [])
+                            if not m.get("needs_setup")
+                        ),
                     },
                 },
             )
@@ -664,6 +676,12 @@ class PortalApp:
             _json(handler, 200, public_config())
             return True
 
+        if path == "/api/v1/billing/rails" and method == "GET":
+            from sophyane.cloud.payments_rails import public_config as rails_public
+
+            _json(handler, 200, rails_public())
+            return True
+
         if path == "/api/v1/billing/crypto/invoice" and method == "POST":
             key = _auth_key(handler)
             principal = self.store.resolve_key(key) if key else None
@@ -671,13 +689,22 @@ class PortalApp:
                 _json(handler, 401, {"ok": False, "error": "invalid API key — sign in first"})
                 return True
             body = _read_json(handler)
-            from sophyane.cloud.crypto_billing import create_invoice
+            # Multi-rail: PK wallets / Coinbase / Binance via payments_rails; crypto via crypto_billing
+            method_name = str(body.get("method") or "monero").strip().lower()
+            if method_name in {
+                "jazzcash",
+                "easypaisa",
+                "upaisa",
+            } or method_name.startswith(("coinbase", "binance")):
+                from sophyane.cloud.payments_rails import create_invoice
+            else:
+                from sophyane.cloud.crypto_billing import create_invoice
 
             inv = create_invoice(
                 user_id=str(principal["user_id"]),
                 email=str(principal.get("email") or ""),
                 plan_id=str(body.get("plan") or "").strip().lower(),
-                method=str(body.get("method") or "monero"),
+                method=method_name,
             )
             code = 200 if inv.get("ok") else 400
             _json(handler, code, inv)
@@ -691,8 +718,11 @@ class PortalApp:
                 return True
             body = _read_json(handler)
             inv_id = str(body.get("invoice_id") or "").strip()
-            txid = str(body.get("txid") or body.get("tx_hash") or "").strip()
-            from sophyane.cloud.crypto_billing import get_invoice, user_report_payment
+            txid = str(body.get("txid") or body.get("tx_hash") or body.get("reference") or "").strip()
+            if inv_id.startswith("pay_"):
+                from sophyane.cloud.payments_rails import get_invoice, user_report_payment
+            else:
+                from sophyane.cloud.crypto_billing import get_invoice, user_report_payment
 
             inv = get_invoice(inv_id)
             if not inv:
@@ -710,7 +740,7 @@ class PortalApp:
                             **result,
                             "activated": True,
                             "user": up.get("user"),
-                            "message": f"Crypto payment confirmed. Plan set to {plan}.",
+                            "message": f"Payment confirmed. Plan set to {plan}.",
                             "plans": list_plans(),
                         },
                     )
@@ -720,16 +750,42 @@ class PortalApp:
 
         if path.startswith("/api/v1/billing/crypto/invoice/") and method == "GET":
             inv_id = path.rsplit("/", 1)[-1]
-            from sophyane.cloud.crypto_billing import get_invoice, try_auto_confirm_monero
+            if inv_id.startswith("pay_"):
+                from sophyane.cloud.payments_rails import get_invoice
 
-            inv = get_invoice(inv_id)
+                inv = get_invoice(inv_id)
+            else:
+                from sophyane.cloud.crypto_billing import get_invoice, try_auto_confirm_monero
+
+                inv = get_invoice(inv_id)
+                if inv and inv.get("status") == "pending" and inv.get("asset") == "XMR":
+                    try_auto_confirm_monero(inv_id)
+                    inv = get_invoice(inv_id) or inv
             if not inv:
                 _json(handler, 404, {"ok": False, "error": "not found"})
                 return True
-            if inv.get("status") == "pending" and inv.get("asset") == "XMR":
-                try_auto_confirm_monero(inv_id)
-                inv = get_invoice(inv_id) or inv
             _json(handler, 200, {"ok": True, "invoice": inv})
+            return True
+
+        if path == "/api/v1/billing/payout" and method == "POST":
+            key = _auth_key(handler)
+            principal = self.store.resolve_key(key) if key else None
+            if not principal:
+                _json(handler, 401, {"ok": False, "error": "invalid API key"})
+                return True
+            body = _read_json(handler)
+            from sophyane.cloud.payments_rails import create_payout
+
+            result = create_payout(
+                user_id=str(principal["user_id"]),
+                rail=str(body.get("rail") or body.get("method") or "").strip().lower(),
+                amount=float(body.get("amount") or 0),
+                currency=str(body.get("currency") or "PKR"),
+                destination=str(body.get("destination") or body.get("to") or "").strip(),
+                note=str(body.get("note") or ""),
+            )
+            code = 200 if result.get("ok") else 400
+            _json(handler, code, result)
             return True
 
         if path == "/api/v1/billing/checkout" and method == "POST":

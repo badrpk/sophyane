@@ -1511,32 +1511,34 @@
       const bill = await jget(CLOUD + "/api/v1/billing/config");
       cryptoBillingCfg = bill.crypto || null;
       const c = bill.crypto || {};
+      const r = bill.rails || {};
+      const m = r.merchant || {};
       const parts = [];
       if (c.monero_enabled) parts.push("Monero ready");
-      else parts.push("Monero off");
-      if (c.kucoin_enabled) parts.push("KuCoin deposits ready");
-      else if (c.kucoin_account)
-        parts.push("KuCoin account " + c.kucoin_account + " (add deposit address in crypto.env)");
-      else parts.push("KuCoin not configured");
-      if (st) st.textContent = parts.join(" · ");
-      // Prefer live methods in select when available
-      if (sel && Array.isArray(c.methods) && c.methods.length) {
-        const usable = c.methods.filter((m) => m.id && !m.needs_setup);
-        if (usable.length) {
-          const cur = sel.value;
-          sel.innerHTML = usable
-            .map(
-              (m) =>
-                `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name || m.id)}${
-                  m.address_preview ? " · " + escapeHtml(m.address_preview) : ""
-                }</option>`
-            )
-            .join("");
-          if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
-        }
+      if (c.kucoin_enabled) parts.push("KuCoin ready");
+      else if (c.kucoin_account) parts.push("KuCoin " + c.kucoin_account + " (need deposit addr)");
+      const ready = (r.receive_ready || []).join(", ");
+      if (ready) parts.push("Rails: " + ready);
+      if (m.phone) parts.push("PK wallets → " + m.phone);
+      if (m.email) parts.push(m.email);
+      if (st) st.textContent = parts.join(" · ") || "Loading payment rails…";
+      // Prefer multi-rail methods (crypto + PK + exchanges)
+      const railMethods = Array.isArray(r.methods) ? r.methods : [];
+      const usable = railMethods.filter((x) => x.id && !x.needs_setup);
+      if (sel && usable.length) {
+        const cur = sel.value;
+        sel.innerHTML = usable
+          .map((x) => {
+            const extra = x.pay_to_preview || x.address_preview || "";
+            return `<option value="${escapeHtml(x.id)}">${escapeHtml(x.name || x.id)}${
+              extra ? " · " + escapeHtml(extra) : ""
+            }</option>`;
+          })
+          .join("");
+        if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
       }
     } catch (_) {
-      if (st) st.textContent = "Could not load crypto billing status.";
+      if (st) st.textContent = "Could not load payment rails status.";
     }
   }
 
@@ -1636,18 +1638,26 @@
         if (!data.ok) throw new Error(data.error || "invoice failed");
         lastCryptoInvoice = data;
         if (out) {
+          const amt =
+            data.amount_crypto_str ||
+            data.amount_str ||
+            (data.amount != null ? String(data.amount) : "");
+          const asset = data.asset || data.currency || "";
+          const dest = data.pay_to || data.address || "";
           out.textContent =
             "Invoice: " +
             data.invoice_id +
             "\nPlan: " +
             data.plan +
+            (data.rail ? "\nRail: " + data.rail : "") +
             "\nSend: " +
-            data.amount_crypto_str +
+            amt +
             " " +
-            data.asset +
+            asset +
             (data.network ? " (" + data.network + ")" : "") +
-            "\nAddress:\n" +
-            data.address +
+            "\nPay to:\n" +
+            dest +
+            (data.pay_to_label ? "\n(" + data.pay_to_label + ")" : "") +
             "\n\n" +
             (data.instructions || "") +
             (data.pay_uri ? "\n\nURI: " + data.pay_uri : "");
