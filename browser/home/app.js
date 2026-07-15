@@ -1453,6 +1453,19 @@
       els.upgradeMsg.classList.remove("err");
     }
     try {
+      const bill = await jget(CLOUD + "/api/v1/billing/config");
+      window.__sophyaneStripe = bill;
+      if (bill && bill.enabled && els.upgradeMsg) {
+        els.upgradeMsg.textContent =
+          "Stripe " +
+          (bill.mode || "") +
+          " payments ready (" +
+          (bill.currency || "gbp").toUpperCase() +
+          "). Paid plans open secure Checkout.";
+        els.upgradeMsg.classList.remove("err");
+      }
+    } catch (_) {}
+    try {
       await refreshAccount();
       if (!planCatalog.length) {
         const pricing = await jget(CLOUD + "/api/v1/pricing");
@@ -1503,7 +1516,7 @@
       return;
     }
     if (els.upgradeMsg) {
-      els.upgradeMsg.textContent = "Updating to " + planId + "…";
+      els.upgradeMsg.textContent = "Starting upgrade…";
       els.upgradeMsg.classList.remove("err");
     }
     try {
@@ -1513,6 +1526,14 @@
         authHeaders()
       );
       if (!data.ok) throw new Error(data.error || "upgrade failed");
+      // Paid plan → Stripe Checkout (Monzo-linked live Stripe)
+      if (data.checkout && data.url) {
+        if (els.upgradeMsg) {
+          els.upgradeMsg.textContent = "Redirecting to secure Stripe Checkout…";
+        }
+        window.location.href = data.url;
+        return;
+      }
       auth.plan = planId;
       saveAuth(auth);
       renderUser();
@@ -1524,10 +1545,49 @@
       loadPlanCards();
     } catch (e) {
       if (els.upgradeMsg) {
-        els.upgradeMsg.textContent = String(e);
+        els.upgradeMsg.textContent = String(e.message || e);
         els.upgradeMsg.classList.add("err");
       }
     }
+  }
+
+  async function confirmStripePaymentIfNeeded() {
+    const params = new URLSearchParams(location.search);
+    const paid = params.get("paid");
+    const sessionId = params.get("session_id");
+    if (paid !== "1" || !sessionId || !auth?.api_key) return;
+    try {
+      const data = await jpost(
+        CLOUD + "/api/v1/billing/confirm",
+        { session_id: sessionId },
+        authHeaders()
+      );
+      if (data.ok && data.plan) {
+        auth.plan = data.plan;
+        saveAuth(auth);
+        renderUser();
+        openDrawer("upgrade");
+        if (els.upgradeMsg) {
+          els.upgradeMsg.textContent =
+            data.message || "Payment received — plan " + data.plan + " active.";
+          els.upgradeMsg.classList.remove("err");
+        }
+      } else if (els.upgradeMsg) {
+        openDrawer("upgrade");
+        els.upgradeMsg.textContent = data.error || "Payment confirm failed";
+        els.upgradeMsg.classList.add("err");
+      }
+    } catch (e) {
+      openDrawer("upgrade");
+      if (els.upgradeMsg) {
+        els.upgradeMsg.textContent = String(e.message || e);
+        els.upgradeMsg.classList.add("err");
+      }
+    }
+    // Clean URL
+    try {
+      history.replaceState({}, "", location.pathname);
+    } catch (_) {}
   }
 
   if (els.btnSaveSettings) {
@@ -1625,6 +1685,16 @@
   if (auth && auth.api_key && auth.email) {
     showApp();
     loadLlmCatalog().catch(() => {});
+    confirmStripePaymentIfNeeded().catch(() => {});
+    // Show Stripe billing badge on upgrade drawer when available
+    jget(CLOUD + "/api/v1/billing/config")
+      .then((c) => {
+        if (c && c.enabled && els.upgradeMsg) {
+          /* leave quiet until open */
+          window.__sophyaneStripe = c;
+        }
+      })
+      .catch(() => {});
   } else {
     showAuth();
   }

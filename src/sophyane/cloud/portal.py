@@ -587,6 +587,41 @@ class PortalApp:
             if plan not in valid:
                 _json(handler, 400, {"ok": False, "error": f"invalid plan; choose one of {sorted(valid)}"})
                 return True
+            # Paid plans → Stripe Checkout (unless force_free for internal)
+            from sophyane.cloud.pricing import PLANS
+            from sophyane.cloud.stripe_billing import create_checkout_session, stripe_configured
+
+            price = float((PLANS.get(plan) or {}).get("price_usd_month") or 0)
+            force_free = bool(body.get("force_free") or body.get("skip_payment"))
+            if price > 0 and stripe_configured() and not force_free:
+                origin = (handler.headers.get("Origin") or "").rstrip("/")
+                if not origin:
+                    host = handler.headers.get("Host") or "127.0.0.1:8780"
+                    origin = f"http://{host}"
+                success = f"{origin}/browser-home/?paid=1&session_id={{CHECKOUT_SESSION_ID}}"
+                cancel = f"{origin}/browser-home/?paid=0"
+                try:
+                    session = create_checkout_session(
+                        plan_id=plan,
+                        user_id=str(principal["user_id"]),
+                        email=str(principal.get("email") or ""),
+                        success_url=success,
+                        cancel_url=cancel,
+                    )
+                except Exception as error:  # noqa: BLE001
+                    _json(handler, 502, {"ok": False, "error": str(error)})
+                    return True
+                _json(
+                    handler,
+                    200,
+                    {
+                        **session,
+                        "checkout": True,
+                        "message": f"Redirect to Stripe to pay for {plan}.",
+                    },
+                )
+                return True
+
             result = self.store.update_plan(principal["user_id"], plan)
             if not result.get("ok"):
                 _json(handler, 400, result)
@@ -596,7 +631,84 @@ class PortalApp:
                 200,
                 {
                     **result,
+                    "checkout": False,
                     "message": f"Plan updated to {plan}. Billing is usage-based; higher plans raise included tokens.",
+                    "plans": list_plans(),
+                },
+            )
+            return True
+
+        if path == "/api/v1/billing/config" and method == "GET":
+            from sophyane.cloud.stripe_billing import public_config
+
+            _json(handler, 200, public_config())
+            return True
+
+        if path == "/api/v1/billing/checkout" and method == "POST":
+            key = _auth_key(handler)
+            principal = self.store.resolve_key(key) if key else None
+            if not principal:
+                _json(handler, 401, {"ok": False, "error": "invalid API key — sign in first"})
+                return True
+            body = _read_json(handler)
+            plan = str(body.get("plan") or "").strip().lower()
+            from sophyane.cloud.stripe_billing import create_checkout_session, stripe_configured
+
+            if not stripe_configured():
+                _json(handler, 503, {"ok": False, "error": "Stripe not configured on server"})
+                return True
+            origin = (handler.headers.get("Origin") or "").rstrip("/")
+            if not origin:
+                host = handler.headers.get("Host") or "127.0.0.1:8780"
+                origin = f"http://{host}"
+            success = str(body.get("success_url") or f"{origin}/browser-home/?paid=1&session_id={{CHECKOUT_SESSION_ID}}")
+            cancel = str(body.get("cancel_url") or f"{origin}/browser-home/?paid=0")
+            try:
+                session = create_checkout_session(
+                    plan_id=plan,
+                    user_id=str(principal["user_id"]),
+                    email=str(principal.get("email") or ""),
+                    success_url=success,
+                    cancel_url=cancel,
+                )
+            except Exception as error:  # noqa: BLE001
+                _json(handler, 502, {"ok": False, "error": str(error)})
+                return True
+            code = 200 if session.get("ok") else 400
+            _json(handler, code, session)
+            return True
+
+        if path == "/api/v1/billing/confirm" and method == "POST":
+            key = _auth_key(handler)
+            principal = self.store.resolve_key(key) if key else None
+            if not principal:
+                _json(handler, 401, {"ok": False, "error": "invalid API key"})
+                return True
+            body = _read_json(handler)
+            session_id = str(body.get("session_id") or "").strip()
+            if not session_id:
+                _json(handler, 400, {"ok": False, "error": "session_id required"})
+                return True
+            from sophyane.cloud.stripe_billing import confirm_session
+
+            try:
+                confirmed = confirm_session(session_id, str(principal["user_id"]))
+            except Exception as error:  # noqa: BLE001
+                _json(handler, 502, {"ok": False, "error": str(error)})
+                return True
+            if not confirmed.get("ok"):
+                _json(handler, 400, confirmed)
+                return True
+            result = self.store.update_plan(principal["user_id"], str(confirmed["plan"]))
+            _json(
+                handler,
+                200,
+                {
+                    **result,
+                    "paid": True,
+                    "plan": confirmed.get("plan"),
+                    "session_id": session_id,
+                    "message": f"Payment confirmed. Plan set to {confirmed.get('plan')}.",
                     "plans": list_plans(),
                 },
             )
