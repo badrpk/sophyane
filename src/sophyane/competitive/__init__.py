@@ -1,1 +1,1 @@
-"""Competitive agent-OS surfaces (Claude Code / Cursor parity helpers)."""
+"""Competitive agent-OS surfaces."""
