@@ -1,0 +1,287 @@
+{
+  "started": "2026-07-16T13:44:29.710484+00:00",
+  "finished": "2026-07-16T13:44:34.262122+00:00",
+  "sophyane_version": "sophyane 17.5.0",
+  "packages": {
+    "langgraph": "1.2.9",
+    "langchain-core": "1.4.9",
+    "langchain": "1.3.14",
+    "langsmith": "0.3.45",
+    "langchain-text-splitters": "1.1.2"
+  },
+  "summary": {
+    "total": 38,
+    "passed": 37,
+    "failed": 0,
+    "skipped": 1,
+    "pass_rate": 97.4
+  },
+  "cases": [
+    {
+      "suite": "langgraph",
+      "feature": "StateGraph sequential nodes",
+      "status": "PASS",
+      "detail": "x=11 path=['a', 'b']",
+      "seconds": 0.021622729997034185
+    },
+    {
+      "suite": "langgraph",
+      "feature": "conditional edges",
+      "status": "PASS",
+      "detail": "branch=high",
+      "seconds": 0.005110486992634833
+    },
+    {
+      "suite": "langgraph",
+      "feature": "loop + termination",
+      "status": "PASS",
+      "detail": "loops=3",
+      "seconds": 0.005369514998164959
+    },
+    {
+      "suite": "langgraph",
+      "feature": "MemorySaver checkpoint",
+      "status": "PASS",
+      "detail": "checkpoint_history=3",
+      "seconds": 0.00924568300251849
+    },
+    {
+      "suite": "langgraph",
+      "feature": "multi-node merge path",
+      "status": "PASS",
+      "detail": "['L', 'R']",
+      "seconds": 0.005145660994458012
+    },
+    {
+      "suite": "langgraph",
+      "feature": "recursion_limit safety",
+      "status": "PASS",
+      "detail": "GraphRecursionError",
+      "seconds": 0.009694469001260586
+    },
+    {
+      "suite": "langgraph",
+      "feature": "stream(values)",
+      "status": "PASS",
+      "detail": "events=3",
+      "seconds": 0.005057881993707269
+    },
+    {
+      "suite": "sophyane_graph",
+      "feature": "StateGraph sequential",
+      "status": "PASS",
+      "detail": "['a', 'b']",
+      "seconds": 0.0026325829967390746
+    },
+    {
+      "suite": "sophyane_graph",
+      "feature": "conditional edges",
+      "status": "PASS",
+      "detail": "['high']",
+      "seconds": 0.0021151090040802956
+    },
+    {
+      "suite": "sophyane_graph",
+      "feature": "Command dynamic routing",
+      "status": "PASS",
+      "detail": "{'x': 6, 'trace': ['b']}",
+      "seconds": 0.0019995229959022254
+    },
+    {
+      "suite": "sophyane_graph",
+      "feature": "RetryPolicy recovery",
+      "status": "PASS",
+      "detail": "{'ok': True, 'attempts': 3, 'trace': ['flaky']}",
+      "seconds": 0.001892315995064564
+    },
+    {
+      "suite": "sophyane_graph",
+      "feature": "DurableStore checkpoint resume",
+      "status": "PASS",
+      "detail": "{'trace': ['a', 'b'], 'x': 3}",
+      "seconds": 0.005721288995118812
+    },
+    {
+      "suite": "sophyane_graph",
+      "feature": "RecursionLimitError",
+      "status": "PASS",
+      "detail": "graph exceeded recursion limit 5",
+      "seconds": 0.0011161880102008581
+    },
+    {
+      "suite": "sophyane_graph",
+      "feature": "StateGraph.merge reducer",
+      "status": "PASS",
+      "detail": "{'items': [1, 2, 3], 'n': 5}",
+      "seconds": 4.3735999497585e-05
+    },
+    {
+      "suite": "langchain",
+      "feature": "RunnableLambda.invoke",
+      "status": "PASS",
+      "detail": "ok:a",
+      "seconds": 0.0013164039992261678
+    },
+    {
+      "suite": "langchain",
+      "feature": "LCEL pipe (|)",
+      "status": "PASS",
+      "detail": "8",
+      "seconds": 0.001974173996131867
+    },
+    {
+      "suite": "langchain",
+      "feature": "ChatPromptTemplate",
+      "status": "PASS",
+      "detail": "['SystemMessage', 'HumanMessage']",
+      "seconds": 0.11266337499546353
+    },
+    {
+      "suite": "langchain",
+      "feature": "StrOutputParser",
+      "status": "PASS",
+      "detail": "str",
+      "seconds": 0.005859662007424049
+    },
+    {
+      "suite": "langchain",
+      "feature": "@tool + invoke",
+      "status": "PASS",
+      "detail": "add",
+      "seconds": 0.030791592987952754
+    },
+    {
+      "suite": "langchain",
+      "feature": "Message types",
+      "status": "PASS",
+      "detail": "['system', 'human', 'ai']",
+      "seconds": 9.986299846787006e-05
+    },
+    {
+      "suite": "langchain",
+      "feature": "Runnable.batch",
+      "status": "PASS",
+      "detail": "['A', 'B']",
+      "seconds": 0.0020489880116656423
+    },
+    {
+      "suite": "langchain",
+      "feature": "Runnable.stream",
+      "status": "PASS",
+      "detail": "chunks=1",
+      "seconds": 0.00038867500552441925
+    },
+    {
+      "suite": "langchain",
+      "feature": "text splitters / docs",
+      "status": "PASS",
+      "detail": "chunks=4",
+      "seconds": 0.021820830996148288
+    },
+    {
+      "suite": "langchain",
+      "feature": "InvokeAdapter(Sophyane)",
+      "status": "PASS",
+      "detail": "lc:hello",
+      "seconds": 0.00336583900207188
+    },
+    {
+      "suite": "langchain",
+      "feature": "MultiAgent + LC backend",
+      "status": "PASS",
+      "detail": "mode=multi_agent workers=4",
+      "seconds": 0.15375680600118358
+    },
+    {
+      "suite": "langsmith",
+      "feature": "import Client",
+      "status": "PASS",
+      "detail": "langsmith=0.3.45 Client=<class 'langsmith.client.Client'>",
+      "seconds": 3.146199742332101e-05
+    },
+    {
+      "suite": "langsmith",
+      "feature": "Client construct",
+      "status": "PASS",
+      "detail": "Client",
+      "seconds": 0.010135933000128716
+    },
+    {
+      "suite": "langsmith",
+      "feature": "@traceable local",
+      "status": "PASS",
+      "detail": "5",
+      "seconds": 0.000535204992047511
+    },
+    {
+      "suite": "langsmith",
+      "feature": "RunTree local",
+      "status": "PASS",
+      "detail": "exam",
+      "seconds": 0.00038144800055306405
+    },
+    {
+      "suite": "langsmith",
+      "feature": "evaluation/trace surface",
+      "status": "PASS",
+      "detail": "attrs=[]",
+      "seconds": 2.965300518553704e-05
+    },
+    {
+      "suite": "langsmith",
+      "feature": "live list_projects",
+      "status": "SKIP",
+      "detail": "RuntimeError: LANGSMITH_API_KEY not set \u2014 live list projects skipped",
+      "seconds": 3.157400351483375e-05
+    },
+    {
+      "suite": "langsmith",
+      "feature": "wrap_openai helper",
+      "status": "PASS",
+      "detail": "wrap_openai available",
+      "seconds": 0.02536945899191778
+    },
+    {
+      "suite": "sophyane_cli",
+      "feature": "--version",
+      "status": "PASS",
+      "detail": "sophyane 17.5.0",
+      "seconds": 0.3869924140017247
+    },
+    {
+      "suite": "sophyane_cli",
+      "feature": "--capabilities",
+      "status": "PASS",
+      "detail": "chars=3009",
+      "seconds": 0.3930119669967098
+    },
+    {
+      "suite": "sophyane_cli",
+      "feature": "--checkpoint-list (persistence)",
+      "status": "PASS",
+      "detail": "{\n  \"ok\": true,\n  \"checkpoints\": [\n    {\n      \"task_id\": \"266d6f75e74a\",\n      \"name\": \"audit\",\n      \"updated_at\": 1784146657.2855399\n    },\n    {\n      \"task",
+      "seconds": 0.36988816800294444
+    },
+    {
+      "suite": "sophyane_cli",
+      "feature": "--hitl-list (human-in-loop)",
+      "status": "PASS",
+      "detail": "{\n  \"ok\": true,\n  \"pending\": [\n    {\n      \"id\": \"605e57f7cebf\",\n      \"action\": \"audit-noop\",\n      \"detail\": \"feature audit\",\n      \"risk\": \"low\",\n      \"stat",
+      "seconds": 0.29414692700083833
+    },
+    {
+      "suite": "sophyane_cli",
+      "feature": "--trace-list (observability)",
+      "status": "PASS",
+      "detail": "{\n  \"ok\": true,\n  \"traces\": [\n    {\n      \"run_id\": \"a07ae268c79e40a4\",\n      \"start\": {\n        \"type\": \"run_start\",\n        \"run_id\": \"a07ae268c79e40a4\",\n    ",
+      "seconds": 0.32580654199409764
+    },
+    {
+      "suite": "sophyane_cli",
+      "feature": "--eval",
+      "status": "PASS",
+      "detail": "{\n  \"ok\": true,\n  \"stdout\": \"\",\n  \"stderr\": \"\",\n  \"result\": \"4\",\n  \"sandbox\": \"best-effort sandbox\"\n}\n\u25c6 Sophyane 17.5.0 | provider: local_gguf | model: qwen2.5-0.5b\n",
+      "seconds": 0.352673760993639
+    }
+  ]
+}
