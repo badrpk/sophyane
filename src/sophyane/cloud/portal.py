@@ -1109,7 +1109,7 @@ class PortalApp:
                         search_meta = {"ok": False, "error": str(search_err), "results": []}
 
                 cfg = load_config()
-                provider_id = str(cfg.get("provider") or "local_gguf").strip().lower()
+                provider_id = str(cfg.get("provider") or "gemini").strip().lower()
                 local_tier = provider_id in {"local_gguf", "ollama", ""}
 
                 # Prefer live research whenever we have a grounded extract —

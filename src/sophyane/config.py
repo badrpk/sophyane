@@ -67,8 +67,75 @@ def save_json(
             pass
 
 
+# Default LLM after a fresh install / git clone (API keys stay private).
+DEFAULT_PROVIDER = "gemini"
+DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_FALLBACK_ORDER = (
+    "gemini",
+    "xai",
+    "openai",
+    "anthropic",
+    "groq",
+    "openrouter",
+    "deepseek",
+    "ollama",
+    "local_gguf",
+)
+
+
+def default_config() -> dict[str, Any]:
+    """Built-in defaults so clones use Gemini first without shipping secrets."""
+    return {
+        "provider": DEFAULT_PROVIDER,
+        "model": DEFAULT_MODEL,
+        "timeout": 60,
+        "temperature": 0.3,
+        "max_tokens": 4096,
+    }
+
+
+def default_llm_config() -> dict[str, Any]:
+    return {
+        "active_provider": DEFAULT_PROVIDER,
+        "fallback_order": list(DEFAULT_FALLBACK_ORDER),
+        "providers": {
+            "gemini": {
+                "enabled": True,
+                "model": DEFAULT_MODEL,
+                "api_key_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+                "base_url": "https://generativelanguage.googleapis.com/v1beta",
+            },
+            "openai": {"enabled": True, "model": "gpt-4o-mini"},
+            "xai": {"enabled": True, "model": "grok-3-mini"},
+            "local_gguf": {"enabled": True},
+        },
+    }
+
+
+def ensure_default_llm_files() -> None:
+    """Create ~/.config/sophyane/{config,llm}.json with Gemini defaults if missing.
+
+    Never overwrites an existing user config. Never writes API keys to disk here —
+    set GEMINI_API_KEY / GOOGLE_API_KEY or run ``sophyane --setup``.
+    """
+    ensure_directories()
+    if not CONFIG_FILE.exists():
+        save_json(CONFIG_FILE, default_config(), private=True)
+    if not (CONFIG_DIR / "llm.json").exists():
+        save_json(CONFIG_DIR / "llm.json", default_llm_config(), private=True)
+
+
 def load_config() -> dict[str, Any]:
-    return load_json(CONFIG_FILE)
+    ensure_default_llm_files()
+    data = load_json(CONFIG_FILE)
+    if not data:
+        return default_config()
+    # Fresh/empty provider field → Gemini
+    if not str(data.get("provider") or "").strip():
+        data = {**default_config(), **data}
+        data["provider"] = DEFAULT_PROVIDER
+        data.setdefault("model", DEFAULT_MODEL)
+    return data
 
 
 def save_config(config: dict[str, Any]) -> None:
@@ -94,7 +161,29 @@ def get_secret(
     if environment_value:
         return environment_value
 
-    return str(load_secrets().get(provider, "")).strip()
+    # Gemini commonly uses GOOGLE_API_KEY as well as GEMINI_API_KEY.
+    if provider == "gemini" or environment_variable in {
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+    }:
+        for env_name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+            alt = os.getenv(env_name, "").strip()
+            if alt:
+                return alt
+
+    secrets = load_secrets()
+    value = str(secrets.get(provider, "")).strip()
+    if value:
+        return value
+
+    # Also accept secrets stored under alternate names.
+    if provider == "gemini":
+        for alt_name in ("google", "GOOGLE_API_KEY", "GEMINI_API_KEY"):
+            alt = str(secrets.get(alt_name, "")).strip()
+            if alt:
+                return alt
+
+    return ""
 
 
 def prompt_secret(provider: str, environment_variable: str) -> str:

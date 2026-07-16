@@ -1,0 +1,7 @@
+{
+  "provider": "gemini",
+  "model": "gemini-2.5-flash",
+  "timeout": 60,
+  "temperature": 0.3,
+  "max_tokens": 4096
+}

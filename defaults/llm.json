@@ -1,0 +1,33 @@
+{
+  "active_provider": "gemini",
+  "fallback_order": [
+    "gemini",
+    "xai",
+    "openai",
+    "anthropic",
+    "groq",
+    "openrouter",
+    "deepseek",
+    "ollama",
+    "local_gguf"
+  ],
+  "providers": {
+    "gemini": {
+      "enabled": true,
+      "model": "gemini-2.5-flash",
+      "api_key_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+      "base_url": "https://generativelanguage.googleapis.com/v1beta"
+    },
+    "openai": {
+      "enabled": true,
+      "model": "gpt-4o-mini"
+    },
+    "xai": {
+      "enabled": true,
+      "model": "grok-3-mini"
+    },
+    "local_gguf": {
+      "enabled": true
+    }
+  }
+}

@@ -311,20 +311,38 @@ Apple does not allow a normal always-on Python CLI installation on stock iOS. Th
 
 ## First run
 
-Sophyane displays a provider menu:
+**Default LLM is Google Gemini** (`gemini-2.5-flash`). After install or a fresh clone, Sophyane writes Gemini-first defaults under `~/.config/sophyane/` (no API keys are stored in this repository).
+
+Set your key (required for cloud replies):
+
+```bash
+export GEMINI_API_KEY="your_key_from_https://aistudio.google.com/apikey"
+# or
+export GOOGLE_API_KEY="your_key"
+# or
+sophyane --setup
+```
+
+Keys are stored only in the private user config directory (`~/.config/sophyane/secrets.json`), never in git.
+
+You can still switch providers. Fallback order when the active provider fails:
+
+```text
+gemini → xai → openai → anthropic → groq → openrouter → deepseek → ollama → local_gguf
+```
+
+Optional first-run menu (still available via `sophyane --setup`):
 
 ```text
 1. Anthropic Claude
 2. DeepSeek
-3. Google Gemini
+3. Google Gemini   ← default
 4. Groq
 5. Ollama (local)
 6. OpenAI
 7. OpenRouter
 8. xAI Grok
 ```
-
-Choose a provider, accept or change the model, and enter its API key. The key is stored in the user's private configuration directory, not in the repository.
 
 ## Common commands
 

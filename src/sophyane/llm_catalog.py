@@ -220,7 +220,7 @@ def catalog_status() -> dict[str, Any]:
     """Full catalog + which keys/models are active on this host."""
     cfg = load_config()
     llm = load_llm_config()
-    active_provider = str(cfg.get("provider") or llm.get("active_provider") or "local_gguf")
+    active_provider = str(cfg.get("provider") or llm.get("active_provider") or "gemini")
     active_model = str(cfg.get("model") or "")
     providers_cfg = llm.get("providers") if isinstance(llm.get("providers"), dict) else {}
 

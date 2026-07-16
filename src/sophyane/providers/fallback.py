@@ -165,14 +165,28 @@ class FallbackProvider(Provider):
 
 
 def load_llm_config() -> dict[str, Any]:
+    """Load llm.json; seed Gemini-first defaults on first run."""
+    try:
+        from sophyane.config import default_llm_config, ensure_default_llm_files
+
+        ensure_default_llm_files()
+    except Exception:  # noqa: BLE001
+        default_llm_config = None  # type: ignore[assignment]
+
     path = LLM_CONFIG_FILE
     if not path.exists():
-        return {}
+        return default_llm_config() if callable(default_llm_config) else {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
+        return default_llm_config() if callable(default_llm_config) else {}
+    if not isinstance(data, dict):
+        return default_llm_config() if callable(default_llm_config) else {}
+    if not data.get("active_provider") and not data.get("fallback_order"):
+        base = default_llm_config() if callable(default_llm_config) else {}
+        base.update(data)
+        return base
+    return data
 
 
 def resolve_provider_order(

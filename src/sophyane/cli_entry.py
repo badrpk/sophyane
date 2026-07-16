@@ -12,14 +12,17 @@ def _runtime_identity() -> str:
         config = load_config()
     except Exception:
         config = {}
-    provider = str(config.get("provider") or "not configured")
-    model = str(config.get("model") or "not configured")
+    provider = str(config.get("provider") or "gemini")
+    model = str(config.get("model") or "gemini-2.5-flash")
     return f"◆ Sophyane {__version__} | provider: {provider} | model: {model}"
 
 
 def _user_start_tips() -> str:
     return (
         "Start guide for users:\n"
+        "  Default LLM: Google Gemini (gemini-2.5-flash)\n"
+        "  Set key:  export GEMINI_API_KEY=...   or  sophyane --setup\n"
+        "            (GOOGLE_API_KEY also accepted)\n"
         "  Web: open /start.html on the cloud portal (sophyane --cloud-serve → :8780)\n"
         "  Auth: email OTP from badrpk@gmail.com — signup once, then login with OTP\n"
         "  API:  POST /api/v1/auth/request-otp → verify-otp → sph_ key → POST /api/v1/chat\n"
