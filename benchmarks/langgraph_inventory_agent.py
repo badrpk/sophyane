@@ -147,6 +147,10 @@ def mechanical_verification() -> tuple[bool, str]:
     commands = [
         ["cmake", "-S", ".", "-B", "build", "-DCMAKE_BUILD_TYPE=Release"],
         ["cmake", "--build", "build", "--parallel", "2"],
+        # A stateful SQLite test can pass once and fail on the next invocation.
+        # Require consecutive passes without manually cleaning test data.
+        ["ctest", "--test-dir", "build", "--output-on-failure"],
+        ["ctest", "--test-dir", "build", "--output-on-failure"],
         ["ctest", "--test-dir", "build", "--output-on-failure"],
     ]
     evidence: list[str] = []
@@ -174,6 +178,7 @@ def mechanical_verification() -> tuple[bool, str]:
                 or "No tests were found" in completed.stdout
             ):
                 passed = False
+                break
         except (OSError, subprocess.TimeoutExpired) as error:
             evidence.append(f"$ {' '.join(argv)}\nERROR: {error}")
             passed = False
