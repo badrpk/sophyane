@@ -997,6 +997,7 @@ def main() -> int:
                 "hello",
                 "hey",
                 "say ",
+                "confirm ",
                 "reply ",
                 "respond ",
                 "what ",
