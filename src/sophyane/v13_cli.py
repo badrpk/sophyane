@@ -992,7 +992,19 @@ def main() -> int:
     if not force_chat and len(original_prompt) < 240:
         stripped = lower_prompt.strip()
         if stripped.endswith("?") or stripped.startswith(
-            ("hi", "hello", "hey", "say ", "what ", "who ", "how ", "why ", "thanks")
+            (
+                "hi",
+                "hello",
+                "hey",
+                "say ",
+                "reply ",
+                "respond ",
+                "what ",
+                "who ",
+                "how ",
+                "why ",
+                "thanks",
+            )
         ):
             force_chat = True
 
