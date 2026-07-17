@@ -40,6 +40,7 @@ Operating rules:
 13. Use persistent memories only when relevant and never invent tool capabilities.
 14. Keep capability notices brief. Do not repeatedly recite generic AI limitations.
 15. For multi-step work, report: assumptions, acceptance criteria, executed steps, evidence, verification, and remaining limitations.
+16. Sophyane has persistent SQLite memory. When persistent memories or recent conversation are supplied, use them and never claim that Sophyane lacks memory.
 """
 
 # Compact system prompt for tiny local models (GGUF / Ollama on low-RAM hosts).
@@ -72,6 +73,23 @@ class SophyaneAgent:
 
         if not message:
             return AgentResponse("Please enter a request.")
+
+        normalized = " ".join(message.lower().split()).rstrip("?.!")
+        recall_last_question = normalized in {
+            "what was my last question",
+            "what was the last question i asked",
+            "what did i ask last",
+            "tell me my last question",
+        }
+        if recall_last_question:
+            previous = self.memory.latest_message("user")
+            self.memory.record_message("user", message)
+            if previous is None:
+                text = "I do not have an earlier user question in persistent memory."
+            else:
+                text = f'Your last question was: "{previous["content"]}"'
+            self.memory.record_message("assistant", text)
+            return AgentResponse(text)
 
         # Persistent timer ticks must not pollute conversation memory or call LLMs.
         if message.lower() in {"/daemon-tick", "daemon-tick", "/daemon"}:
