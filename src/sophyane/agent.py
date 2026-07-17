@@ -222,19 +222,18 @@ class SophyaneAgent:
             return AgentResponse(f"INTERNAL_COMMAND:{kind}")
 
         # Bound prompt size so tiny local models (1k–4k ctx) still answer chat.
-        provider_name = getattr(
+        # Choose prompt size for the provider attempted first. A cloud-first
+        # fallback chain may contain local_gguf, but that must not strip history
+        # from prompts sent to Gemini/OpenAI/etc.
+        provider_name = getattr(self.provider, "primary", "") or getattr(
             getattr(self.provider, "metadata", None),
             "provider_id",
             "",
-        ) or getattr(self.provider, "last_provider", "") or ""
-        # FallbackProvider exposes .primary / .chain
-        if not provider_name:
-            provider_name = getattr(self.provider, "primary", "") or ""
+        )
         local_mode = str(provider_name).lower() in {
             "local_gguf",
             "ollama",
-            "fallback",
-        } or "local_gguf" in str(getattr(self.provider, "chain", ()))
+        }
 
         if local_mode:
             # Skip bulky memory dumps — they drown 0.5B–1B models.
