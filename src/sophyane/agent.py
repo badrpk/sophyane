@@ -77,9 +77,15 @@ class SophyaneAgent:
         normalized = " ".join(message.lower().split()).rstrip("?.!")
         recall_last_question = normalized in {
             "what was my last question",
+            "what was my last question to you",
             "what was the last question i asked",
+            "what was the last question i asked you",
             "what did i ask last",
+            "what did i ask you last",
+            "what did i last ask",
+            "what did i last ask you",
             "tell me my last question",
+            "tell me the last question i asked you",
         }
         if recall_last_question:
             previous = self.memory.latest_message("user")
