@@ -76,6 +76,10 @@ class SophyaneAgent:
 
         normalized = " ".join(message.lower().split()).rstrip("?.!")
         recall_last_question = normalized in {
+            "what is my last question",
+            "what is my last question to you",
+            "what is the last question i asked",
+            "what is the last question i asked you",
             "what was my last question",
             "what was my last question to you",
             "what was the last question i asked",
