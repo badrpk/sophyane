@@ -307,6 +307,24 @@ class MemoryStore:
                 for row in reversed(rows)
             ]
 
+    def latest_message(self, role: str) -> dict[str, Any] | None:
+        """Return the newest persisted conversation turn for a role."""
+        normalized_role = role.strip().lower()
+        if normalized_role not in {"user", "assistant", "system"}:
+            raise ValueError(f"Unsupported conversation role: {role}")
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT created_at, role, content
+                FROM conversations
+                WHERE role = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (normalized_role,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def count(self) -> int:
         with self.connect() as connection:
             row = connection.execute(
