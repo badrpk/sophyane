@@ -269,8 +269,9 @@ def repository_information() -> ToolResult:
 
 def resolve_workspace_path(path_text: str = ".") -> Path:
     """Resolve a user path and reject escapes from Sophyane's workspace."""
-    ensure_directories()
-    root = WORKSPACE_DIR.expanduser().resolve()
+    workspace = WORKSPACE_DIR.expanduser()
+    workspace.mkdir(parents=True, exist_ok=True)
+    root = workspace.resolve()
     candidate = Path(path_text).expanduser()
     if not candidate.is_absolute():
         candidate = root / candidate
