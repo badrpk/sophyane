@@ -14,10 +14,10 @@ def test_one_shot_prompt_uses_module_provider_factory(monkeypatch, capsys) -> No
             assert selected_provider is provider
 
         def ask(self, prompt: str):
-            assert prompt == "hello"
+            assert prompt == "Reply with exactly: SPEED_OK"
             return SimpleNamespace(text="SPEED_OK")
 
-    monkeypatch.setattr(sys, "argv", ["sophyane", "hello"])
+    monkeypatch.setattr(sys, "argv", ["sophyane", "Reply with exactly: SPEED_OK"])
     monkeypatch.setattr(cli, "load_runtime_config", lambda: {"provider": "gemini"})
     monkeypatch.setattr(cli, "create_provider", lambda config: provider)
     monkeypatch.setattr(cli, "MemoryStore", lambda: object())
