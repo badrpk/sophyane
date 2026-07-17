@@ -230,3 +230,33 @@ def test_patch_engine_rejects_ambiguous_match(tmp_path: Path) -> None:
             "x = 1",
             "x = 2",
         )
+
+
+def test_repository_index_ignores_generated_environments_and_builds(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.cpp").write_text(
+        "int main() { return 0; }\n",
+        encoding="utf-8",
+    )
+    for directory in (
+        ".venv",
+        ".langgraph-venv",
+        "build",
+        "build-asan",
+        "build-debug",
+        "build-release",
+        ".cache",
+    ):
+        target = tmp_path / directory
+        target.mkdir()
+        (target / "generated.py").write_text(
+            "def generated(): return 1\n",
+            encoding="utf-8",
+        )
+
+    snapshot = RepositoryIndex(tmp_path).build()
+
+    assert snapshot.files == ["src/main.cpp"]
+    assert snapshot.symbols == []
