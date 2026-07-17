@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import urllib.parse
 
 from sophyane.providers.base import (
     Provider,
@@ -26,12 +25,13 @@ class GeminiProvider(Provider):
         prompt: str,
         system_prompt: str,
     ) -> str:
-        model = urllib.parse.quote(self.model, safe="")
-        key = urllib.parse.quote(self.api_key, safe="")
+        # Match Google's current SDK authentication: keep credentials out of
+        # URLs and send the API key using the x-goog-api-key header.
+        model = self.model.strip()
 
         response = post_json(
             "https://generativelanguage.googleapis.com/"
-            f"v1beta/models/{model}:generateContent?key={key}",
+            f"v1beta/models/{model}:generateContent",
             {
                 "system_instruction": {
                     "parts": [{"text": system_prompt}],
@@ -47,6 +47,7 @@ class GeminiProvider(Provider):
                     "maxOutputTokens": self.max_tokens,
                 },
             },
+            headers={"x-goog-api-key": self.api_key},
             timeout=self.timeout,
         )
 
