@@ -27,8 +27,9 @@ TEXT_SUFFIXES = {
     ".c", ".h", ".cc", ".cpp", ".hpp", ".java", ".go", ".rs",
 }
 IGNORE_PARTS = {
-    ".git", ".venv", "venv", "node_modules", "dist", "build", "__pycache__",
-    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".next", "coverage",
+    ".git", ".venv", ".langgraph-venv", "venv", "node_modules", "dist",
+    "build", "build-asan", "build-debug", "build-release", "__pycache__",
+    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".next", ".cache", "coverage",
 }
 
 
