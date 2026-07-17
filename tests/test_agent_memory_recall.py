@@ -25,9 +25,9 @@ def test_last_question_is_recalled_across_store_instances(tmp_path: Path) -> Non
         logging.getLogger("test-memory-recall"),
     )
 
-    response = agent.ask("What was my last question to you?")
+    response = agent.ask("what is my last question")
 
     assert response.text == 'Your last question was: "2+2"'
     assert second_session.latest_message("user")["content"] == (
-        "What was my last question to you?"
+        "what is my last question"
     )
