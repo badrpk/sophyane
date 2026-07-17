@@ -1,6 +1,6 @@
 # Sophyane — Cross-Platform Local Agentic AI Harness
 
-**Version: 17.5.0** · Public open source — [download / contribute](COMMUNITY.md)
+**Version: 17.5.1** · Public open source — [download / contribute](COMMUNITY.md)
 
 Sophyane is a lightweight, multi-provider AI harness with persistent memory, safe local tools, repository awareness, provider plugins, diagnostics, and a mobile-friendly browser interface.
 
@@ -22,7 +22,7 @@ AI browser shell (ask + sources + agent tools) — open source and **downloadabl
 
 ```bash
 # Linux / macOS / ChromeOS Linux
-curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/browser/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/browser/install.sh | bash
 sophyane-browser
 ```
 
@@ -34,7 +34,7 @@ sophyane-browser
 
 ```bash
 # Always-latest public install
-curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | bash
 
 sophyane --capabilities   # full modern-agent matrix
 sophyane --skills
@@ -216,7 +216,7 @@ sophyane /local
 ### Linux, macOS, ChromeOS Linux, UserLAnd, and Termux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | bash
 ```
 
 Then open a new terminal and run:
@@ -387,7 +387,7 @@ Installer-based installations can be updated by running the same installer again
 Linux/macOS/Termux/UserLAnd:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | bash
 ```
 
 Windows:
