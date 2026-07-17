@@ -7,7 +7,7 @@ from sophyane.local_runtime import (
     profile_hardware,
     recommend_models,
 )
-from sophyane.tui import SLASH_COMMANDS, Style
+from sophyane.tui import SLASH_COMMANDS, Style, looks_like_coding_task
 
 
 def test_hardware_profile_has_tier() -> None:
@@ -51,3 +51,12 @@ def test_style_noop_without_color() -> None:
     style = Style(False)
     assert style.bold("x") == "x"
     assert style.cyan("y") == "y"
+
+
+def test_interactive_coding_intent_routes_to_execution_runtime() -> None:
+    assert looks_like_coding_task(
+        "Create a production-ready C++17 inventory CLI, compile it, "
+        "run automated tests, and repair failures."
+    )
+    assert looks_like_coding_task("Fix the bug and run the tests")
+    assert not looks_like_coding_task("What is the relationship between Fatima and Alyan?")
