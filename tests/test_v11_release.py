@@ -7,7 +7,7 @@ from sophyane.version import __version__
 
 
 def test_version_is_16() -> None:
-    assert __version__ == "17.2.0"
+    assert __version__ == "17.5.1"
 
 
 def test_supported_request_detection() -> None:
