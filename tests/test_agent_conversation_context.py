@@ -37,3 +37,22 @@ def test_cloud_first_fallback_receives_recent_conversation(tmp_path: Path) -> No
     assert response.text == "Raheem"
     assert "Saleem and Raheem are brothers." in provider.prompt
     assert "Recent conversation:" in provider.prompt
+
+
+def test_early_fact_survives_many_later_turns(tmp_path: Path) -> None:
+    memory = MemoryStore(tmp_path / "long-memory.db")
+    memory.record_message("user", "Raheem has a son named Alyan.")
+    memory.record_message("assistant", "Understood.")
+    for index in range(10):
+        memory.record_message("user", f"Unrelated follow-up {index}")
+        memory.record_message("assistant", f"Acknowledged {index}")
+
+    provider = CloudFirstFallback()
+    agent = SophyaneAgent(
+        provider,
+        memory,
+        logging.getLogger("test-long-conversation-context"),
+    )
+    agent.ask("Who is Alyan's father?")
+
+    assert "Raheem has a son named Alyan." in provider.prompt
