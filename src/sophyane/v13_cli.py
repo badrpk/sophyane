@@ -712,7 +712,6 @@ def main() -> int:
         generate = None
         try:
             from sophyane.config import load_config
-            from sophyane.main import create_provider
 
             provider = create_provider(load_config())
 
