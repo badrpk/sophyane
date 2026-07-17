@@ -69,6 +69,43 @@ class Style:
         return self._wrap("34", text)
 
 
+def looks_like_coding_task(message: str) -> bool:
+    """Return True when a prompt requires repository actions, not prose."""
+    text = " ".join(message.lower().split())
+    explicit = (
+        "apply patch",
+        "create a file",
+        "edit the file",
+        "run the tests",
+        "run automated tests",
+        "compile the program",
+        "fix the bug",
+        "debug this",
+        "refactor",
+        "implement",
+        "pytest",
+        "test suite",
+        "repository",
+        "codebase",
+    )
+    if any(marker in text for marker in explicit):
+        return True
+    action_verbs = ("build", "create", "develop", "modify", "repair", "write")
+    software_objects = (
+        "api",
+        "application",
+        "cli",
+        "code",
+        "program",
+        "service",
+        "software",
+        "website",
+    )
+    return any(verb in text.split() for verb in action_verbs) and any(
+        noun in text.split() for noun in software_objects
+    )
+
+
 SLASH_COMMANDS: dict[str, str] = {
     "/help": "Show slash commands (Grok-compatible palette)",
     "/status": "Show provider, model, fallback chain, and memory",
@@ -563,10 +600,16 @@ def run_grok_style_tui(
     logger = configure_logging(verbose)
     memory = MemoryStore()
 
-    state: dict[str, Any] = {"agent": None, "config": config}
+    state: dict[str, Any] = {
+        "agent": None,
+        "provider": None,
+        "config": config,
+        "tui": None,
+    }
 
     def rebuild(provider: Any, cfg: dict[str, Any]) -> None:
         state["agent"] = SophyaneAgent(provider, memory, logger)
+        state["provider"] = provider
         state["config"] = cfg
 
     try:
@@ -586,7 +629,45 @@ def run_grok_style_tui(
     rebuild(provider, config)
 
     def ask(message: str) -> Any:
-        return state["agent"].ask(message)
+        if not looks_like_coding_task(message):
+            return state["agent"].ask(message)
+
+        # Interactive coding requests must use the same inspect/plan/act/verify
+        # loop as one-shot CLI requests. Never let the chat model imitate tools.
+        from sophyane.agent import AgentResponse
+        from sophyane.live_coding_doer import LiveProgressReporter
+        from sophyane.strict_interactive_doer import (
+            StrictInteractiveCodingDoerRuntime,
+        )
+
+        active_tui = state.get("tui")
+        if active_tui is not None:
+            active_tui.spinner.stop()
+
+        provider = state["provider"]
+
+        def backend(prompt: str, system: str) -> str:
+            return provider.generate(prompt, system)
+
+        runtime = StrictInteractiveCodingDoerRuntime(
+            backend=backend,
+            memory=memory,
+            workspace=Path.cwd(),
+            max_steps=12,
+            protocol_attempts=3,
+            progress=LiveProgressReporter(enabled=True),
+        )
+        result = runtime.run(message)
+        summary = (
+            "EXECUTION_MODE=repository_coding_agent\n"
+            f"GOAL_MET={'true' if result.goal_met else 'false'}\n"
+            f"LOOP_STEPS={len(result.steps)}\n"
+            f"STOPPED_REASON={result.stopped_reason}\n\n"
+            f"{result.final_output}"
+        )
+        memory.record_message("user", message)
+        memory.record_message("assistant", summary)
+        return AgentResponse(summary)
 
     tui = GrokStyleTUI(
         config=state["config"],
@@ -598,6 +679,7 @@ def run_grok_style_tui(
         list_providers=list_providers,
         verbose=verbose,
     )
+    state["tui"] = tui
     # Keep config reference live
     def _handle(cmd: str, cfg: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         text, updated = handle_internal_command(cmd, cfg)
