@@ -244,12 +244,12 @@ class SophyaneAgent:
             memory_context = self.memory.format_relevant(original_message)
             if len(memory_context) > 1200:
                 memory_context = memory_context[:1200] + "\n…"
-            recent = self.memory.recent_messages(limit=4)
+            recent = self.memory.recent_messages(limit=32)
             history_lines = []
             for item in recent[:-1]:
                 content = str(item.get("content") or "")
-                if len(content) > 400:
-                    content = content[:400] + "…"
+                if len(content) > 500:
+                    content = content[:500] + "…"
                 history_lines.append(f"{item['role']}: {content}")
 
             sections = []
@@ -266,8 +266,8 @@ class SophyaneAgent:
                     + "\n".join(f"- {item}" for item in captured)
                 )
             prompt = "\n\n".join(sections)
-            if len(prompt) > 6000:
-                prompt = prompt[-6000:]
+            if len(prompt) > 16_000:
+                prompt = prompt[-16_000:]
             system = SYSTEM_PROMPT
         try:
             text = self.provider.generate(prompt, system)
