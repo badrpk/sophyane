@@ -25,17 +25,10 @@ class ToolResult:
 
 
 SAFE_COMMANDS = {
-    "awk",
-    "cat",
     "date",
     "df",
     "du",
-    "env",
-    "find",
     "free",
-    "git",
-    "grep",
-    "head",
     "hostname",
     "id",
     "ip",
@@ -45,19 +38,12 @@ SAFE_COMMANDS = {
     "lsmem",
     "lspci",
     "lsusb",
-    "pip",
-    "pip3",
-    "printenv",
     "ps",
     "pwd",
-    "python3",
-    "sed",
     "ss",
-    "tail",
     "top",
     "uname",
     "uptime",
-    "wc",
     "whoami",
 }
 
@@ -218,7 +204,8 @@ def safe_shell(
                 "Command cancelled by user.",
             )
 
-    return run_process(arguments, timeout=30)
+    ensure_directories()
+    return run_process(arguments, timeout=30, cwd=WORKSPACE_DIR.resolve())
 
 
 def system_information() -> ToolResult:
@@ -279,8 +266,28 @@ def repository_information() -> ToolResult:
     )
 
 
+
+def resolve_workspace_path(path_text: str = ".") -> Path:
+    """Resolve a user path and reject escapes from Sophyane's workspace."""
+    ensure_directories()
+    root = WORKSPACE_DIR.expanduser().resolve()
+    candidate = Path(path_text).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as error:
+        raise ValueError(
+            f"Path is outside the Sophyane workspace: {resolved}"
+        ) from error
+    return resolved
+
 def list_directory(path_text: str = ".") -> ToolResult:
-    path = Path(path_text).expanduser().resolve()
+    try:
+        path = resolve_workspace_path(path_text)
+    except ValueError as error:
+        return ToolResult("files", False, f"Rejected: {error}")
 
     if not path.exists():
         return ToolResult(
@@ -326,7 +333,10 @@ def list_directory(path_text: str = ".") -> ToolResult:
 
 
 def read_text_file(path_text: str) -> ToolResult:
-    path = Path(path_text).expanduser().resolve()
+    try:
+        path = resolve_workspace_path(path_text)
+    except ValueError as error:
+        return ToolResult("read", False, f"Rejected: {error}")
 
     if not path.exists() or not path.is_file():
         return ToolResult(
