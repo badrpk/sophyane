@@ -129,12 +129,23 @@ def load_config() -> dict[str, Any]:
     ensure_default_llm_files()
     data = load_json(CONFIG_FILE)
     if not data:
-        return default_config()
+        data = default_config()
     # Fresh/empty provider field → Gemini
     if not str(data.get("provider") or "").strip():
         data = {**default_config(), **data}
         data["provider"] = DEFAULT_PROVIDER
         data.setdefault("model", DEFAULT_MODEL)
+
+    # Process-local overrides are useful for benchmarks and do not rewrite the
+    # user's persisted configuration.
+    provider_override = os.getenv("SOPHYANE_PROVIDER", "").strip()
+    if provider_override:
+        data["provider"] = provider_override
+    model_override = os.getenv("SOPHYANE_MODEL", "").strip()
+    if not model_override and str(data.get("provider") or "").lower() == "gemini":
+        model_override = os.getenv("GEMINI_MODEL", "").strip()
+    if model_override:
+        data["model"] = model_override
     return data
 
 
