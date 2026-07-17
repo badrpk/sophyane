@@ -9,9 +9,9 @@ if ! command -v curl >/dev/null && ! command -v wget >/dev/null; then
   echo "curl or wget required" >&2; exit 1
 fi
 if command -v curl >/dev/null; then
-  curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | bash
 else
-  wget -qO- https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
+  wget -qO- https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | bash
 fi
 export PATH="$HOME/.local/bin:$PATH"
 BIN="$HOME/.local/bin"
