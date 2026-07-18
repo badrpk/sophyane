@@ -68,6 +68,28 @@ class FallbackProvider(Provider):
     def chain(self) -> tuple[str, ...]:
         return tuple(name for name, _ in self._providers)
 
+    def get_token_usage(self) -> dict[str, int]:
+        """Aggregate usage exposed by providers used in this process."""
+        totals = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "thinking_tokens": 0,
+            "total_tokens": 0,
+            "model_calls": 0,
+        }
+        available = False
+        for _, provider in self._providers:
+            getter = getattr(provider, "get_token_usage", None)
+            if not callable(getter):
+                continue
+            usage = getter()
+            if not isinstance(usage, dict):
+                continue
+            available = True
+            for key in totals:
+                totals[key] += int(usage.get(key, 0) or 0)
+        return {"available": available, **totals}
+
     def generate(self, prompt: str, system_prompt: str) -> str:
         errors: list[str] = []
         for name, provider in self._providers:
