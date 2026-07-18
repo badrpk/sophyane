@@ -1,5 +1,24 @@
 # Changelog
 
+## 18.0.0 — 2026-07-18
+
+### Fixed
+- Preserve recent conversation when Gemini is wrapped by the local fallback chain
+- Remove the CLI `create_provider` local-import shadowing crash
+- Accept common deterministic-check aliases emitted by provider models
+- Reject empty stdout checks and timed-out command evidence
+
+### Efficiency and observability
+- Stop before an extra verifier call when deterministic checks and the execution contract pass
+- Reduce repeated repository context and planner history
+- Report exact Gemini input, output, thinking, total-token, and model-call usage
+- Report completion time plus honest device/cloud energy proxies without claiming joule measurements
+
+### Distribution
+- Consistent 18.0.0 package, CLI, and documentation version
+- One cross-platform download page for Windows, macOS, Linux, ChromeOS, Android, and iOS/browser use
+
+
 ## 17.5.0 — 2026-07-15
 
 ### Highlights
