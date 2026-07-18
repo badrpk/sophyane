@@ -132,26 +132,78 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
         observation: dict[str, Any],
     ) -> dict[str, Any]:
         observation = dict(observation)
+
         if self._current_checks:
             observation["deterministic_checks"] = self._current_checks
 
-        mechanical = self.mechanical.verify(
-            self._current_checks,
-            command_observations=[asdict(item) for item in self.executor.report.commands],
-        ) if self._current_checks else {"passed": None, "results": []}
+        mechanical = (
+            self.mechanical.verify(
+                self._current_checks,
+                command_observations=[
+                    asdict(item) for item in self.executor.report.commands
+                ],
+            )
+            if self._current_checks
+            else {"passed": None, "results": []}
+        )
 
-        # Deterministic evidence is authoritative and costs no verifier model call.
-        if mechanical.get("passed") is True and self._execution_contract_satisfied():
-            return {
-                "goal_met": True,
-                "confidence": 1,
-                "missing_requirements": [],
-                "next_instruction": "",
-                "final_answer": "Objective completed with verified execution evidence.",
-                "verification_mode": "deterministic_fast_path",
-                "mechanical_verification": mechanical,
+        # Always call the verifier. Mechanical evidence can override a
+        # hesitant verdict, but must not bypass the verifier call.
+        try:
+            verdict = super()._verify(
+                prompt,
+                objective,
+                criteria,
+                history,
+                observation,
+            )
+        except Exception as error:
+            verdict = {
+                "goal_met": False,
+                "confidence": 0,
+                "missing_requirements": [
+                    f"Verifier failure: {type(error).__name__}: {error}"
+                ],
+                "next_instruction": (
+                    "Repair the verifier response and continue with "
+                    "a concrete safe action."
+                ),
+                "final_answer": "",
             }
 
-        verdict = super()._verify(prompt, objective, criteria, history, observation)
+        if not isinstance(verdict, dict):
+            verdict = {
+                "goal_met": False,
+                "confidence": 0,
+                "missing_requirements": [
+                    "Verifier returned an invalid non-dictionary result."
+                ],
+                "next_instruction": (
+                    "Repair the verifier response and continue with "
+                    "a concrete safe action."
+                ),
+                "final_answer": "",
+            }
+
         verdict["mechanical_verification"] = mechanical
+
+        if (
+            mechanical.get("passed") is True
+            and self._execution_contract_satisfied()
+        ):
+            verdict.update(
+                {
+                    "goal_met": True,
+                    "confidence": 1,
+                    "missing_requirements": [],
+                    "next_instruction": "",
+                    "final_answer": (
+                        verdict.get("final_answer")
+                        or "Objective completed with verified execution evidence."
+                    ),
+                    "verification_mode": "deterministic_evidence_override",
+                }
+            )
+
         return verdict
+
