@@ -74,8 +74,8 @@ class CodingDoerRuntime(DoerRuntime):
                 "manifests": self.repository_snapshot.manifests,
                 "digest": self.repository_snapshot.digest,
             },
-            "search_hits": self.index.search(prompt, limit=30),
-            "relevant_context": self.index.context(prompt, max_chars=20_000),
+            "search_hits": self.index.search(prompt, limit=10),
+            "relevant_context": self.index.context(prompt, max_chars=6_000),
         }
         parts = [
             item
@@ -102,7 +102,7 @@ class CodingDoerRuntime(DoerRuntime):
             "persistent_and_repository_context": context,
             "current_objective": objective,
             "current_success_criteria": criteria,
-            "previous_steps": [asdict(item) for item in history[-12:]],
+            "previous_steps": [asdict(item) for item in history[-4:]],
             "verifier_instruction": verifier_instruction,
             "workspace": str(self.workspace),
             "task_queue": self.task_queue.to_dict(),
@@ -298,7 +298,7 @@ class CodingDoerRuntime(DoerRuntime):
             "user_request": prompt,
             "objective": objective,
             "success_criteria": criteria,
-            "prior_steps": [asdict(item) for item in history[-12:]],
+            "prior_steps": [asdict(item) for item in history[-4:]],
             "latest_observation": observation,
             "execution_report": self.executor.report.to_dict(),
             "repository_digest": self.index.build().digest,
