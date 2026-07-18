@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Any
+from pydantic import BaseModel
+
 import json
 import urllib.parse
 
@@ -11,6 +14,17 @@ from sophyane.providers.base import (
     ProviderMetadata,
 )
 from sophyane.providers.http import post_json
+
+
+
+class PlanSchema(BaseModel):
+    objective: str
+    success_criteria: list[str]
+    deterministic_checks: list[dict[str, Any]]
+    candidates: list[dict[str, Any]]
+    selected_index: int
+    selection_reason: str
+    action: dict[str, Any]
 
 
 class GeminiProvider(Provider):
@@ -36,6 +50,10 @@ class GeminiProvider(Provider):
             temperature=temperature,
             max_tokens=max_tokens,
         )
+        self.generation_config = {
+            "response_mime_type": "application/json",
+            "response_schema": PlanSchema.model_json_schema()
+        }
         self._token_usage = {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -90,6 +108,8 @@ class GeminiProvider(Provider):
                 "generationConfig": {
                     "temperature": self.temperature,
                     "maxOutputTokens": self.max_tokens,
+                    "responseMimeType": "application/json",
+                    "responseJsonSchema": PlanSchema.model_json_schema(),
                 },
             },
             timeout=self.timeout,
