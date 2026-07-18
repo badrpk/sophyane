@@ -712,9 +712,9 @@ def main() -> int:
         generate = None
         try:
             from sophyane.config import load_config
-            from sophyane.main import create_provider
+            from sophyane.main import create_provider as _create_provider
 
-            provider = create_provider(load_config())
+            provider = _create_provider(load_config())
 
             def generate(prompt: str, system: str) -> str:
                 return provider.generate(prompt, system)
@@ -1037,7 +1037,19 @@ def main() -> int:
         protocol_attempts=args.protocol_attempts,
         progress=progress,
     )
+    run_started = time.perf_counter()
     result = runtime.run(original_prompt)
+    completion_seconds = time.perf_counter() - run_started
+
+    token_usage = getattr(provider, "get_token_usage", None)
+    if callable(token_usage):
+        result.execution["token_usage"] = token_usage()
+    result.execution["efficiency"] = {
+        "completion_seconds": round(completion_seconds, 6),
+        "device_energy_proxy": "completion_seconds",
+        "cloud_energy_proxy": "provider_total_tokens",
+        "energy_joules_available": False,
+    }
 
     if args.agent_json:
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))

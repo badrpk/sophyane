@@ -21,6 +21,38 @@ class GeminiProvider(Provider):
         environment_variable="GEMINI_API_KEY",
     )
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._token_usage = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "thinking_tokens": 0,
+            "total_tokens": 0,
+            "model_calls": 0,
+        }
+
+    def get_token_usage(self) -> dict[str, int]:
+        """Return cumulative provider-reported usage for this process."""
+        return dict(self._token_usage)
+
+    def _record_usage(self, response: dict) -> None:
+        usage = response.get("usageMetadata")
+        if not isinstance(usage, dict):
+            return
+        self._token_usage["input_tokens"] += int(
+            usage.get("promptTokenCount", 0) or 0
+        )
+        self._token_usage["output_tokens"] += int(
+            usage.get("candidatesTokenCount", 0) or 0
+        )
+        self._token_usage["thinking_tokens"] += int(
+            usage.get("thoughtsTokenCount", 0) or 0
+        )
+        self._token_usage["total_tokens"] += int(
+            usage.get("totalTokenCount", 0) or 0
+        )
+        self._token_usage["model_calls"] += 1
+
     def generate(
         self,
         prompt: str,
@@ -49,6 +81,7 @@ class GeminiProvider(Provider):
             },
             timeout=self.timeout,
         )
+        self._record_usage(response)
 
         try:
             parts = response["candidates"][0]["content"]["parts"]

@@ -193,20 +193,25 @@ class SophyaneAgent:
         if kind in {"status", "providers", "doctor", "setup"}:
             return AgentResponse(f"INTERNAL_COMMAND:{kind}")
 
-        # Bound prompt size so tiny local models (1k–4k ctx) still answer chat.
-        provider_name = getattr(
-            getattr(self.provider, "metadata", None),
-            "provider_id",
-            "",
-        ) or getattr(self.provider, "last_provider", "") or ""
-        # FallbackProvider exposes .primary / .chain
-        if not provider_name:
-            provider_name = getattr(self.provider, "primary", "") or ""
-        local_mode = str(provider_name).lower() in {
-            "local_gguf",
-            "ollama",
-            "fallback",
-        } or "local_gguf" in str(getattr(self.provider, "chain", ()))
+        # Bound prompt size only when the provider currently serving the request
+        # is genuinely local. A cloud-first fallback chain may contain local
+        # providers without making the active Gemini/OpenAI request local.
+        def provider_id(value: object) -> str:
+            if isinstance(value, str):
+                return value.strip().lower()
+            metadata = getattr(value, "metadata", None)
+            return str(
+                getattr(metadata, "provider_id", "")
+                or getattr(value, "provider_id", "")
+                or ""
+            ).strip().lower()
+
+        active_provider = (
+            provider_id(getattr(self.provider, "last_provider", ""))
+            or provider_id(getattr(self.provider, "primary", ""))
+            or provider_id(self.provider)
+        )
+        local_mode = active_provider in {"local_gguf", "ollama"}
 
         if local_mode:
             # Skip bulky memory dumps — they drown 0.5B–1B models.

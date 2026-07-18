@@ -33,7 +33,7 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
             "persistent_and_repository_context": context,
             "current_objective": objective,
             "current_success_criteria": criteria,
-            "previous_steps": [asdict(item) for item in history[-12:]],
+            "previous_steps": [asdict(item) for item in history[-4:]],
             "verifier_instruction": verifier_instruction,
             "workspace": str(self.workspace),
             "task_queue": self.task_queue.to_dict(),
@@ -134,19 +134,24 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
         observation = dict(observation)
         if self._current_checks:
             observation["deterministic_checks"] = self._current_checks
-        verdict = super()._verify(prompt, objective, criteria, history, observation)
 
         mechanical = self.mechanical.verify(
             self._current_checks,
             command_observations=[asdict(item) for item in self.executor.report.commands],
         ) if self._current_checks else {"passed": None, "results": []}
 
-        # Typed mechanical checks plus the hard execution contract are stronger than
-        # a hesitant or inconsistent LLM verifier response.
+        # Deterministic evidence is authoritative and costs no verifier model call.
         if mechanical.get("passed") is True and self._execution_contract_satisfied():
-            verdict["goal_met"] = True
-            verdict["confidence"] = 1
-            verdict["missing_requirements"] = []
-            verdict["next_instruction"] = ""
-            verdict["final_answer"] = verdict.get("final_answer") or "Objective completed with verified execution evidence."
+            return {
+                "goal_met": True,
+                "confidence": 1,
+                "missing_requirements": [],
+                "next_instruction": "",
+                "final_answer": "Objective completed with verified execution evidence.",
+                "verification_mode": "deterministic_fast_path",
+                "mechanical_verification": mechanical,
+            }
+
+        verdict = super()._verify(prompt, objective, criteria, history, observation)
+        verdict["mechanical_verification"] = mechanical
         return verdict

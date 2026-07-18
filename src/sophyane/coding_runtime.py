@@ -409,16 +409,45 @@ class MechanicalVerifier:
                     passed = False
                 detail = f"{path} contains {needle!r}"
             elif kind == "command_exit_zero":
-                executable = str(check.get("executable", ""))
+                executable = str(check.get("executable", "")).strip()
+                requested_argv = check.get("argv")
+                command = check.get("command")
+                if not executable and isinstance(requested_argv, list) and requested_argv:
+                    executable = Path(str(requested_argv[0])).name
+                if not executable and isinstance(command, list) and command:
+                    executable = Path(str(command[0])).name
+                if not executable and isinstance(command, str) and command.strip():
+                    executable = Path(command.strip().split()[0]).name
                 matching = [
                     item for item in observations
-                    if item.get("argv") and Path(str(item["argv"][0])).name == executable
+                    if executable
+                    and item.get("argv")
+                    and Path(str(item["argv"][0])).name == executable
                 ]
-                passed = bool(matching) and matching[-1].get("exit_code") == 0
-                detail = json.dumps(matching[-1] if matching else {}, ensure_ascii=False)
+                passed = (
+                    bool(matching)
+                    and matching[-1].get("exit_code") == 0
+                    and not matching[-1].get("timed_out", False)
+                )
+                detail = (
+                    json.dumps(matching[-1], ensure_ascii=False)
+                    if matching
+                    else f"no command evidence for executable {executable!r}"
+                )
             elif kind == "stdout_contains":
-                needle = str(check.get("text", ""))
-                passed = any(needle in str(item.get("stdout", "")) for item in observations)
+                needle = str(
+                    check.get("text")
+                    or check.get("pattern")
+                    or check.get("expected_stdout")
+                    or check.get("expected_string")
+                    or check.get("expected")
+                    or check.get("substring")
+                    or check.get("value")
+                    or ""
+                )
+                passed = bool(needle) and any(
+                    needle in str(item.get("stdout", "")) for item in observations
+                )
                 detail = f"stdout contains {needle!r}"
             elif kind == "no_uncommitted_changes":
                 git = GitCheckpoint(self.root).status()
