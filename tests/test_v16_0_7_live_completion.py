@@ -20,7 +20,7 @@ def test_version_and_runtime_identity(monkeypatch) -> None:
     )
     assert __version__ == "18.0.0"
     identity = _runtime_identity()
-    assert "Sophyane 17.2.0" in identity
+    assert "Sophyane 18.0.0" in identity
     assert "provider: gemini" in identity
     assert "model: gemini-test" in identity
 
