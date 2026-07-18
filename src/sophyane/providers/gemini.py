@@ -21,8 +21,21 @@ class GeminiProvider(Provider):
         environment_variable="GEMINI_API_KEY",
     )
 
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        timeout: int = 180,
+        temperature: float = 0.3,
+        max_tokens: int = 4096,
+    ) -> None:
+        super().__init__(
+            api_key=api_key,
+            model=model,
+            timeout=timeout,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
         self._token_usage = {
             "input_tokens": 0,
             "output_tokens": 0,
