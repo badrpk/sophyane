@@ -9,17 +9,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-from sophyane.execution_runtime import (
-    coding_request_needs_language,
-    extract_plan,
-    run_structured_loop,
-    selected_action,
-)
+from sophyane.execution_runtime import extract_plan, run_structured_loop, selected_action
 from sophyane.version import __version__
 
 
 def _simple_chat_reply(message: str) -> str | None:
-    text = message.strip().lower()
+    text = " ".join(message.strip().lower().split())
     if text in {"hi", "hello", "hey", "salam", "assalamualaikum", "assalamu alaikum"}:
         return "Hello! What would you like me to build, fix, research, or explain?"
     if text in {"thanks", "thank you", "thx"}:
@@ -28,29 +23,31 @@ def _simple_chat_reply(message: str) -> str | None:
 
 
 def _execution_requested(message: str) -> bool:
-    """Only explicit imperative work requests may execute local actions."""
     text = " ".join(message.lower().split())
-    advice_markers = (
+    advice = (
         "what should", "which project", "project should", "ideas", "recommend",
         "suggest", "explain", "tell me about", "what is", "how does", "can i",
+        "temperature", "weather", "meaning of",
     )
-    if any(marker in text for marker in advice_markers):
+    if any(marker in text for marker in advice):
         return False
-    action_markers = (
+    actions = (
         r"\bbuild\b", r"\bmake\b", r"\bcreate\b", r"\bdevelop\b",
         r"\bimplement\b", r"\bwrite\b", r"\bfix\b", r"\bpatch\b",
         r"\bcompile\b", r"\brun\b", r"\btest\b", r"\bdeploy\b",
         r"\bopen\b", r"\bshow\b.*\bdemo\b", r"\bcontinue\b",
+        r"\bconvert\b", r"\binstall\b", r"\badd\b.*\bicon\b",
     )
-    return any(re.search(pattern, text) for pattern in action_markers)
+    return any(re.search(pattern, text) for pattern in actions)
 
 
 def _references_previous_project(message: str) -> bool:
     text = " ".join(message.lower().split())
     markers = (
-        "above", "previous", "same project", "this project", "it in browser",
-        "open output", "open demo", "browser demo", "run it", "show it",
-        "continue", "compile it", "test it", "fix it",
+        "above", "previous", "same project", "this project", "this in",
+        "it in browser", "open output", "open demo", "browser demo", "run it",
+        "show it", "continue", "compile it", "test it", "fix it", "of this",
+        "create icon", "add icon", "this software", "this app",
     )
     return any(marker in text for marker in markers)
 
@@ -58,15 +55,21 @@ def _references_previous_project(message: str) -> bool:
 def _render_nonexecuting_response(text: str) -> str:
     plan = extract_plan(text)
     if not plan:
-        return text
+        return text.strip()
     action = selected_action(plan)
     if isinstance(action, dict):
         kind = str(action.get("type") or action.get("action") or "").lower()
         if kind in {"respond", "message"}:
             return str(action.get("message") or action.get("content") or "").strip()
+    for key in ("answer", "response", "message", "content"):
+        value = plan.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
     objective = str(plan.get("objective") or "").strip()
-    reason = str(plan.get("selection_reason") or "").strip()
-    return objective or reason or "I could not produce a normal chat response. Please retry or switch model with /setup."
+    # Reject planning-language masquerading as an answer.
+    if objective.lower().startswith(("explain ", "interpret ", "explore ", "analyze ", "provide ")):
+        return "I received a planning instruction instead of an answer. Please retry; Sophyane will request a direct response."
+    return objective or "I could not produce a direct answer. Please retry or switch model with /setup."
 
 
 class ObservableTUI:
@@ -74,7 +77,6 @@ class ObservableTUI:
         self.config = config
         self.ask = ask
         self.handle_internal = handle_internal
-        self.pending_request = ""
         self.active_workspace: Path | None = None
         self.active_request = ""
 
@@ -82,8 +84,7 @@ class ObservableTUI:
         print(f"\n{role}\n  " + text.replace("\n", "\n  ") + "\n", flush=True)
 
     def progress(self, text: str) -> None:
-        stamp = time.strftime("%H:%M:%S")
-        print(f"[{stamp}] {text}", file=sys.stderr, flush=True)
+        print(f"[{time.strftime('%H:%M:%S')}] {text}", file=sys.stderr, flush=True)
 
     def call_provider(self, message: str, *, timeout: int = 60) -> Any:
         results: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
@@ -111,7 +112,7 @@ class ObservableTUI:
                 if elapsed >= timeout:
                     raise TimeoutError(
                         f"{self.config.get('provider')} did not respond within {timeout}s. "
-                        "Check quota/network, use /setup to switch provider, or configure a local model."
+                        "Check quota/network, use /setup, or configure a local model."
                     )
 
     def _workspace_for(self, message: str) -> Path:
@@ -127,7 +128,7 @@ class ObservableTUI:
     def run(self) -> int:
         print(f"\n◆ Sophyane {__version__}")
         print(f"provider {self.config.get('provider')}  model {self.config.get('model')}")
-        print("Chat never runs tools. Explicit build/fix/run tasks show actions and 5-second progress. /quit to exit.\n")
+        print("Sophyane chooses implementation defaults automatically. Explicit work shows actions and progress. /quit to exit.\n")
         while True:
             try:
                 raw = input("❯ ")
@@ -137,7 +138,9 @@ class ObservableTUI:
             message = raw.strip()
             if not message:
                 continue
-            if message in {"/quit", "/exit"}:
+            normalized = " ".join(message.lower().split())
+            if normalized in {"exit", "quit", "/quit", "/exit", "ecit"}:
+                print("Goodbye.")
                 return 0
             if message.startswith("/"):
                 command = message[1:].split()[0]
@@ -146,26 +149,6 @@ class ObservableTUI:
                     self.emit("system", text)
                     continue
 
-            if self.pending_request:
-                original = self.pending_request
-                self.pending_request = ""
-                selected = message.strip()
-                message = (
-                    f"{original}\n\nSelected implementation language/framework: {selected}. "
-                    "This selection is final. Do not ask again. Start with a small executable JSON action."
-                )
-                self.active_request = message
-            elif coding_request_needs_language(message) and _execution_requested(message):
-                self.pending_request = message
-                terminal = any(token in message.lower() for token in ("bash", "terminal", "console"))
-                suggestion = (
-                    "For a terminal program, choose Python, JavaScript/Node.js, C++, Rust, or say 'choose best'."
-                    if terminal
-                    else "Choose Python, JavaScript, C++, Rust, or say 'choose best'. Mention browser if you want a browser demo."
-                )
-                self.emit("Sophyane", f"Which language or framework should I use? {suggestion}")
-                continue
-
             self.emit("You", message)
             quick = _simple_chat_reply(message)
             if quick is not None:
@@ -173,19 +156,28 @@ class ObservableTUI:
                 continue
 
             executable = _execution_requested(message)
-            if executable and _references_previous_project(message) and self.active_request:
-                request_for_model = (
-                    f"Continue the existing project for this new instruction: {message}\n\n"
-                    f"Original project request: {self.active_request}\n"
-                    f"Existing workspace: {self.active_workspace}\n"
-                    "Inspect only this workspace. Return one small valid JSON action and continue until verified."
-                )
-            else:
-                request_for_model = message
-                if executable:
+            if executable:
+                if _references_previous_project(message) and self.active_request:
+                    request_for_model = (
+                        f"Continue the existing project. New instruction: {message}\n\n"
+                        f"Original request: {self.active_request}\nExisting workspace: {self.active_workspace}\n"
+                        "Do not ask for a language. Preserve the existing implementation unless conversion is requested. "
+                        "Return one small executable JSON action and continue until verified."
+                    )
+                else:
                     self.active_request = message
+                    request_for_model = (
+                        f"Execute this request: {message}\n\n"
+                        "Choose the best practical language/framework automatically unless the user already specified one. "
+                        "Do not ask a language question. Start with one small executable JSON action."
+                    )
+            else:
+                request_for_model = (
+                    f"Answer the user's question directly in natural language. Do not return a plan, objective, JSON, "
+                    f"tool action, or instruction to another assistant. User question: {message}"
+                )
 
-            self.progress("Thinking and planning" if executable else "Getting response")
+            self.progress("Thinking and planning" if executable else "Getting direct response")
             try:
                 response = self.call_provider(request_for_model)
                 text = getattr(response, "text", str(response))
@@ -200,8 +192,7 @@ class ObservableTUI:
                 continue
 
             if executable:
-                plan = extract_plan(text)
-                if plan or text.lstrip().startswith("{"):
+                if extract_plan(text) or text.lstrip().startswith("{"):
                     self.progress("Structured plan received; executing")
                     try:
                         workspace = self._workspace_for(message)
@@ -229,12 +220,5 @@ def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
     from sophyane.memory import MemoryStore
 
     logger = configure_logging(verbose)
-    memory = MemoryStore()
-    provider = create_provider(config)
-    agent = SophyaneAgent(provider, memory, logger)
-
-    return ObservableTUI(
-        config=config,
-        ask=agent.ask,
-        handle_internal=handle_internal_command,
-    ).run()
+    agent = SophyaneAgent(create_provider(config), MemoryStore(), logger)
+    return ObservableTUI(config=config, ask=agent.ask, handle_internal=handle_internal_command).run()
