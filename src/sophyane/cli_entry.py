@@ -27,7 +27,13 @@ def _user_start_tips() -> str:
     )
 
 
+def _metadata_only_invocation() -> bool:
+    return any(arg in {"-V", "--version", "--status", "--providers", "--doctor"} for arg in sys.argv[1:])
+
+
 def _start_local_server_if_needed() -> None:
+    if _metadata_only_invocation():
+        return
     try:
         config = load_config()
         if str(config.get("provider") or "").strip().lower() != "local_gguf":
