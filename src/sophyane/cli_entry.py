@@ -20,18 +20,19 @@ def _runtime_identity() -> str:
 def _user_start_tips() -> str:
     return (
         "Sophyane checks provider credentials before starting. Use `sophyane --setup` to switch company/model, replace or forget API keys, or configure local models.\n"
-        "Only explicit build/fix/run requests may execute tools. Advice and normal chat never run shell commands.\n"
-        "Terminal demos attach to the real terminal so keyboard controls and live output work.\n"
+        "Sophyane chooses implementation defaults automatically unless you specify a language.\n"
+        "Only explicit build/fix/run requests may execute tools; normal chat requests direct answers.\n"
+        "Terminal demos attach to the real terminal and generated commands stay inside the task workspace.\n"
         "Updates preserve repositories and user work.\n"
     )
 
 
 def main() -> int:
-    # Install only execution-runtime compatibility. Do not patch SophyaneAgent:
-    # advice and chat routing must remain non-executing.
     from sophyane.runtime_interactive_patch import install_runtime_patch
+    from sophyane.runtime_safety import install_runtime_safety
 
     install_runtime_patch()
+    install_runtime_safety()
     print(_runtime_identity(), file=sys.stderr, flush=True)
     if len(sys.argv) <= 1:
         print(_user_start_tips(), file=sys.stderr, flush=True)
