@@ -1,7 +1,9 @@
 """Observable Sophyane terminal interface with real action execution."""
 from __future__ import annotations
 
+import queue
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -12,6 +14,15 @@ from sophyane.execution_runtime import (
     run_structured_loop,
 )
 from sophyane.version import __version__
+
+
+def _simple_chat_reply(message: str) -> str | None:
+    text = message.strip().lower()
+    if text in {"hi", "hello", "hey", "salam", "assalamualaikum", "assalamu alaikum"}:
+        return "Hello! What would you like me to build, fix, research, or explain?"
+    if text in {"thanks", "thank you", "thx"}:
+        return "You’re welcome."
+    return None
 
 
 class ObservableTUI:
@@ -28,10 +39,39 @@ class ObservableTUI:
         stamp = time.strftime("%H:%M:%S")
         print(f"[{stamp}] {text}", file=sys.stderr, flush=True)
 
+    def call_provider(self, message: str, *, timeout: int = 60) -> Any:
+        results: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
+
+        def worker() -> None:
+            try:
+                results.put(("ok", self.ask(message)))
+            except Exception as error:  # noqa: BLE001
+                results.put(("error", error))
+
+        threading.Thread(target=worker, daemon=True).start()
+        started = time.monotonic()
+        next_update = 5
+        while True:
+            try:
+                status, value = results.get(timeout=1)
+                if status == "error":
+                    raise value
+                return value
+            except queue.Empty:
+                elapsed = int(time.monotonic() - started)
+                if elapsed >= next_update:
+                    self.progress(f"Waiting for {self.config.get('provider')} response ({elapsed}s)")
+                    next_update += 5
+                if elapsed >= timeout:
+                    raise TimeoutError(
+                        f"{self.config.get('provider')} did not respond within {timeout}s. "
+                        "Check quota/network, use /setup to switch provider, or configure a local model."
+                    )
+
     def run(self) -> int:
         print(f"\n◆ Sophyane {__version__}")
         print(f"provider {self.config.get('provider')}  model {self.config.get('model')}")
-        print("Actions, commands and 5-second progress are shown live. /quit to exit.\n")
+        print("Chat replies stay lightweight. Coding tasks show actions, commands and 5-second progress. /quit to exit.\n")
         while True:
             try:
                 raw = input("❯ ")
@@ -56,16 +96,28 @@ class ObservableTUI:
                 message = f"{original}\n\nUser selected implementation language/framework: {message}"
             elif coding_request_needs_language(message):
                 self.pending_request = message
-                self.emit(
-                    "Sophyane",
-                    "Which language or framework should I use? For a browser game, choose HTML/CSS/JavaScript for direct browser play, or C++ for WebAssembly/Emscripten.",
+                terminal = any(token in message.lower() for token in ("bash", "terminal", "console"))
+                suggestion = (
+                    "For a terminal program, choose Python, JavaScript/Node.js, C++, Rust, or say 'choose best'."
+                    if terminal
+                    else "For a browser project, choose HTML/CSS/JavaScript for direct play, or C++ for WebAssembly/Emscripten."
                 )
+                self.emit("Sophyane", f"Which language or framework should I use? {suggestion}")
                 continue
 
             self.emit("You", message)
-            self.progress("Thinking and planning")
+            quick = _simple_chat_reply(message)
+            if quick is not None:
+                self.emit("Sophyane", quick)
+                continue
+
+            is_coding = any(
+                token in message.lower()
+                for token in ("build", "make", "create", "develop", "game", "app", "website", "api", "script", "program", "fix", "code")
+            )
+            self.progress("Thinking and planning" if is_coding else "Getting response")
             try:
-                response = self.ask(message)
+                response = self.call_provider(message)
                 text = getattr(response, "text", str(response))
             except Exception as error:  # noqa: BLE001
                 self.emit("system", f"Error: {error}")
@@ -77,13 +129,13 @@ class ObservableTUI:
                 self.emit("system", body)
                 continue
 
-            if extract_plan(text):
+            if is_coding and extract_plan(text):
                 self.progress("Structured plan received; executing instead of printing JSON")
                 try:
                     text = run_structured_loop(
                         initial_text=text,
                         original_request=message,
-                        ask=self.ask,
+                        ask=lambda prompt: self.call_provider(prompt),
                         workspace=Path.cwd(),
                         max_steps=8,
                         progress=self.progress,
@@ -104,11 +156,8 @@ def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
     provider = create_provider(config)
     agent = SophyaneAgent(provider, memory, logger)
 
-    def ask(message: str) -> Any:
-        return agent.ask(message)
-
     return ObservableTUI(
         config=config,
-        ask=ask,
+        ask=agent.ask,
         handle_internal=handle_internal_command,
     ).run()
