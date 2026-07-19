@@ -1,11 +1,16 @@
 """Observable bounded execution loop for structured software actions."""
 from __future__ import annotations
 
+import functools
+import hashlib
+import http.server
 import json
 import os
 import shutil
 import subprocess
+import threading
 import time
+import urllib.request
 import webbrowser
 from pathlib import Path
 from typing import Any, Callable
@@ -17,6 +22,7 @@ VALID_ACTIONS = {
     "open_browser", "browser", "respond", "message", "run_interactive", "interactive",
     "play_demo", "analyze_log", "verify", "check",
 }
+_BROWSER_SERVERS: dict[Path, tuple[http.server.ThreadingHTTPServer, threading.Thread, str]] = {}
 
 
 def coding_request_needs_language(message: str) -> bool:
@@ -104,36 +110,88 @@ def _run_interactive(command: str, workspace: Path, progress: Progress) -> str:
     return f"Interactive command: {command}\nExit code: {completed.returncode}"
 
 
+def _workspace_server(workspace: Path) -> str:
+    root = workspace.resolve()
+    existing = _BROWSER_SERVERS.get(root)
+    if existing is not None:
+        server, thread, base_url = existing
+        if thread.is_alive():
+            return base_url
+        try:
+            server.server_close()
+        except OSError:
+            pass
+        _BROWSER_SERVERS.pop(root, None)
+
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True, name=f"sophyane-browser-{server.server_port}")
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    _BROWSER_SERVERS[root] = (server, thread, base_url)
+    return base_url
+
+
+def _verify_served_file(candidate: Path, url: str) -> tuple[bool, str]:
+    expected = candidate.read_bytes()
+    expected_hash = hashlib.sha256(expected).hexdigest()
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            status = getattr(response, "status", 200)
+            body = response.read()
+    except Exception as error:  # noqa: BLE001
+        return False, f"HTTP verification failed: {type(error).__name__}: {error}"
+    actual_hash = hashlib.sha256(body).hexdigest()
+    if status != 200:
+        return False, f"HTTP verification returned status {status}"
+    if actual_hash != expected_hash:
+        return False, "served browser content does not match the current workspace index.html"
+    return True, f"served {len(body)} bytes; SHA-256 matched {expected_hash[:12]}"
+
+
 def _open_browser(workspace: Path, url: str, progress: Progress) -> str:
     candidate = workspace / "index.html"
-    if not url:
-        if not candidate.exists():
-            return "Browser launch blocked: index.html does not exist in the current project workspace."
-        url = candidate.resolve().as_uri()
+    project_launch = not url or url.startswith("file:") or url.startswith("http://127.0.0.1") or url.startswith("http://localhost")
 
-    if url.startswith("file:") and candidate.exists():
-        subprocess.Popen(
-            [os.environ.get("PYTHON", "python3"), "-m", "http.server", "8000", "--bind", "127.0.0.1"],
-            cwd=workspace,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        url = "http://127.0.0.1:8000/"
-        time.sleep(1)
+    if project_launch:
+        if not candidate.is_file():
+            return "Browser launch blocked: index.html does not exist in the current project workspace."
+        if candidate.stat().st_size < 100:
+            return "Browser launch blocked: index.html is empty or too small to be a usable project."
+        base_url = _workspace_server(workspace)
+        url = f"{base_url}/index.html?v={candidate.stat().st_mtime_ns}"
+        ok, verification = _verify_served_file(candidate, url)
+        if not ok:
+            return f"Browser launch blocked: {verification}."
+        progress(f"Verified browser artifact over HTTP: {verification}")
+    else:
+        return "Browser launch blocked: external URLs do not verify the current project workspace."
 
     progress(f"Opening browser: {url}")
     if shutil.which("termux-open-url"):
         completed = subprocess.run(["termux-open-url", url], text=True, capture_output=True)
-        return f"Browser command: termux-open-url {url}\nExit code: {completed.returncode}\n{completed.stdout}{completed.stderr}"
+        return (
+            f"Browser file: {candidate}\nBrowser URL: {url}\nHTTP verification: {verification}\n"
+            f"Browser command: termux-open-url {url}\nExit code: {completed.returncode}\n"
+            f"{completed.stdout}{completed.stderr}"
+        )
     if shutil.which("am"):
         completed = subprocess.run(
             ["am", "start", "-a", "android.intent.action.VIEW", "-d", url],
             text=True,
             capture_output=True,
         )
-        return f"Browser command: am start ... {url}\nExit code: {completed.returncode}\n{completed.stdout}{completed.stderr}"
+        return (
+            f"Browser file: {candidate}\nBrowser URL: {url}\nHTTP verification: {verification}\n"
+            f"Browser command: am start ... {url}\nExit code: {completed.returncode}\n"
+            f"{completed.stdout}{completed.stderr}"
+        )
     opened = webbrowser.open(url)
-    return f"Browser open requested for {url}; accepted={opened}."
+    return (
+        f"Browser file: {candidate}\nBrowser URL: {url}\nHTTP verification: {verification}\n"
+        f"Browser open requested; accepted={opened}."
+    )
 
 
 def _normalize_action(value: Any) -> dict[str, Any] | None:
