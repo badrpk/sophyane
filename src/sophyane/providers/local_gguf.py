@@ -1,4 +1,4 @@
-"""Local GGUF provider via llama-server (OpenAI-compatible) or llama-cli."""
+"""Local GGUF provider via persistent llama-server or bounded llama-cli."""
 from __future__ import annotations
 
 import json
@@ -15,8 +15,6 @@ DEFAULT_ENDPOINT = os.environ.get("SOPHYANE_LLAMA_SERVER", "http://127.0.0.1:876
 
 
 class LocalGgufProvider(Provider):
-    """Talk to a persistent llama.cpp server or use a bounded one-shot CLI fallback."""
-
     metadata = ProviderMetadata(
         provider_id="local_gguf",
         display_name="Local GGUF (Hugging Face / llama.cpp)",
@@ -44,47 +42,60 @@ class LocalGgufProvider(Provider):
             if cancelled():
                 raise ProviderError("local generation cancelled") from first_server_error
 
-            # The CLI entry point starts llama-server in the background. A user
-            # can submit a prompt before model loading completes, so wait once
-            # for that same persistent process instead of immediately loading a
-            # second copy through llama-cli.
+            detail = ""
             try:
-                from sophyane.local_server import ensure_server_background, wait_until_ready
-
-                started, _ = ensure_server_background()
-                if started and wait_until_ready(timeout=30.0):
+                from sophyane.local_server import (
+                    ensure_server_background,
+                    failure_detail,
+                    wait_until_ready,
+                )
+                started, startup_message = ensure_server_background()
+                if started and wait_until_ready(timeout=8.0):
                     return self._generate_via_server(prompt, system_prompt)
-            except Exception:
-                pass
+                detail = failure_detail() or startup_message
+            except Exception as startup_error:  # noqa: BLE001
+                detail = f"server startup check failed: {startup_error}"
 
             if cancelled():
                 raise ProviderError("local generation cancelled") from first_server_error
+
             combined_len = len(prompt) + len(system_prompt)
             if self.cli_path and self.gguf_path and combined_len <= 5000:
                 try:
                     return self._generate_via_cli(prompt, system_prompt)
                 except Exception as cli_error:  # noqa: BLE001
                     raise ProviderError(
-                        f"local_gguf server failed ({first_server_error}); cli failed ({cli_error})"
+                        "local_gguf unavailable. "
+                        f"Server: {detail or first_server_error}. "
+                        f"CLI fallback: {cli_error}"
                     ) from cli_error
             raise ProviderError(
-                f"local_gguf server unavailable: {first_server_error}. Run `sophyane /local` "
-                "or ensure llama-server is listening on :8766."
+                "local_gguf server unavailable. "
+                f"{detail or first_server_error}"
             ) from first_server_error
 
     def _generate_via_server(self, prompt: str, system_prompt: str) -> str:
         response = post_json(
             f"{self.endpoint}/v1/chat/completions",
-            {"model": self.model, "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}],
-             "temperature": self.temperature, "max_tokens": min(self.max_tokens, 512), "stream": False},
-            headers={"Authorization": "Bearer local"}, timeout=min(self.timeout, 45),
+            {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": self.temperature,
+                "max_tokens": min(self.max_tokens, 384),
+                "stream": False,
+            },
+            headers={"Authorization": "Bearer local"},
+            timeout=min(self.timeout, 50),
         )
         try:
             content = response["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as error:
-            raise ProviderError(f"Unexpected llama-server response: {json.dumps(response)[:1000]}") from error
+            raise ProviderError(
+                f"Unexpected llama-server response: {json.dumps(response)[:1000]}"
+            ) from error
         if not isinstance(content, str) or not content.strip():
             raise ProviderError("llama-server returned no text")
         return content.strip()
@@ -95,7 +106,7 @@ class LocalGgufProvider(Provider):
         fenced = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.S | re.I)
         if fenced:
             return fenced[-1].strip()
-        starts = [m.start() for m in re.finditer(r"\{", text)]
+        starts = [match.start() for match in re.finditer(r"\{", text)]
         for start in reversed(starts):
             candidate = text[start:text.rfind("}") + 1].strip()
             if candidate:
@@ -111,8 +122,12 @@ class LocalGgufProvider(Provider):
         return text.strip()
 
     def _run_cli(self, cmd: list[str], deadline: int) -> tuple[int, str, str]:
-        kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE,
-                  "stderr": subprocess.PIPE, "text": True}
+        kwargs = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+        }
         if os.name == "posix":
             kwargs["start_new_session"] = True
         process = subprocess.Popen(cmd, **kwargs)
@@ -138,11 +153,12 @@ class LocalGgufProvider(Provider):
 
     def _generate_via_cli(self, prompt: str, system_prompt: str) -> str:
         full = f"{system_prompt.strip()}\n\nUser: {prompt}\nAssistant:"
-        tokens = str(max(32, min(self.max_tokens, 256)))
-        deadline = max(15, min(int(self.timeout), 40))
+        tokens = str(max(32, min(self.max_tokens, 192)))
+        deadline = max(12, min(int(self.timeout), 32))
         variants = [
             [self.cli_path, "-m", self.gguf_path, "-p", full, "-n", tokens,
-             "--temp", str(self.temperature), "--single-turn", "--simple-io", "--no-display-prompt"],
+             "--temp", str(self.temperature), "--single-turn", "--simple-io",
+             "--no-display-prompt"],
             [self.cli_path, "-m", self.gguf_path, "-p", full, "-n", tokens,
              "--temp", str(self.temperature), "-no-cnv"],
         ]
