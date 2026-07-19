@@ -5,35 +5,43 @@ Sophyane is distributed from one open-source repository in two operating edition
 - **Sophyane Local** — local GGUF/Ollama models, designed for Android Termux and other private or offline devices.
 - **Sophyane Frontier** — top hosted frontier LLMs, designed for ChromeOS Linux/Penguin, Linux, macOS, and Windows development machines.
 
-Both editions use the same Sophyane runtime and installer. The selected provider configuration determines which edition is active.
+Both editions share the same deterministic runtime, but they use separate installation and maintenance paths.
 
 ## Sophyane Local — Android Termux
 
-Use this edition when inference should run on your phone through `llama-server`, GGUF, or Ollama.
+Use this edition when inference should run on the phone through `llama-server`, GGUF, or Ollama. It does not require a cloud API key.
 
 ```bash
-pkg update && pkg install curl
-curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | bash
-sophyane /local
+pkg update && pkg install -y curl git python
+curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/fix/local-llm-termux-reliability/install-local.sh | bash
+sophyane
 ```
 
-Inside the interactive CLI, you can also run:
+The first run shows the complete **supported Sophyane Local catalog**. For every selectable model it displays:
+
+- Hugging Face source repository
+- approximate GGUF download size
+- minimum RAM requirement
+- whether the model fits the detected phone
+- whether it is recommended or already installed
+
+After selection, Sophyane downloads the GGUF from Hugging Face, installs `llama.cpp` from GitHub releases, starts `llama-server` when possible, and configures `provider=local_gguf`. No API key is requested.
+
+Local installation paths:
 
 ```text
-/local
+CLI:     ~/.local/bin/sophyane-local
+Alias:   ~/.local/bin/sophyane
+Code:    ~/.local/share/sophyane-local/source
+Models:  ~/.local/share/sophyane/models/gguf
+Logs:    ${TMPDIR:-~/.cache/sophyane-local}/logs
 ```
 
-Recommended ownership and update path:
+Update Sophyane Local from Termux by rerunning the same installer:
 
 ```bash
-# Run from Termux on the Android phone
-cd "$HOME/sophyane"
-git pull --ff-only
-python -m pip install --upgrade .
-sophyane --doctor
+curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/fix/local-llm-termux-reliability/install-local.sh | bash
 ```
-
-Local configuration, models, memory, and workspaces remain on the device. Long local inference requests display progress heartbeats, and constrained GGUF generation is bounded to avoid apparent hangs.
 
 ## Sophyane Frontier — Chromebook Penguin
 
@@ -72,12 +80,6 @@ The Chromebook/Penguin checkout is the primary environment for frontier-provider
 curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | bash
 ```
 
-If `curl` is unavailable:
-
-```bash
-wget -qO- https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | bash
-```
-
 ### Windows 10 and 11
 
 Open PowerShell and run:
@@ -105,7 +107,5 @@ Typical provider identity:
 Sophyane Local:    provider local_gguf or ollama
 Sophyane Frontier: provider gemini, openai, anthropic, xai, groq, openrouter, or deepseek
 ```
-
-Rerun the installer or update the repository checkout to upgrade to the current stable release.
 
 Source repository: https://github.com/badrpk/sophyane
