@@ -14,6 +14,14 @@ from sophyane.execution_runtime import extract_plan, run_structured_loop, select
 from sophyane.version import __version__
 
 
+def _clean_message(message: str) -> str:
+    """Remove copied terminal prompt glyphs and harmless leading whitespace."""
+    value = message.strip()
+    while value.startswith(("❯", ">")):
+        value = value[1:].lstrip()
+    return value
+
+
 def _simple_chat_reply(message: str) -> str | None:
     text = " ".join(message.strip().lower().split())
     if text in {"hi", "hello", "hey", "salam", "assalamualaikum", "assalamu alaikum"}:
@@ -41,24 +49,35 @@ def _execution_requested(message: str) -> bool:
         r"\bconvert\b", r"\binstall\b", r"\bintegrate\b", r"\boptimi[sz]e\b",
         r"\baudit\b", r"\bprofile\b", r"\bmonitor\b", r"\bsimulate\b",
         r"\bdemonstrate\b", r"\bexecute\b", r"\bstart building\b",
+        r"\badd\b", r"\bremove\b", r"\bchange\b", r"\bupdate\b", r"\bimprove\b",
+        r"\bstyle\b", r"\breopen\b", r"\breplace\b", r"\bmodify\b",
     )
     return any(re.search(pattern, text) for pattern in actions)
 
 
+def _explicit_new_benchmark(message: str) -> bool:
+    """Numbered benchmark prompts are independent unless they say same project."""
+    text = message.lower()
+    return bool(re.match(r"^\s*\d+[.)]\s+", message)) and not any(
+        marker in text for marker in ("same project", "continue", "existing project", "reuse")
+    )
+
+
 def _project_continuation(message: str, has_project: bool) -> bool:
-    if not has_project:
+    if not has_project or _explicit_new_benchmark(message):
         return False
     text = " ".join(message.lower().split())
-    if re.match(r"^\s*(?:[-*•]|\d+[.)])\s+", message):
+    continuation_verbs = (
+        "add ", "remove ", "change ", "update ", "improve ", "make the design",
+        "style ", "reopen", "test it", "run it", "open it", "fix it", "modify ",
+    )
+    if text.startswith(continuation_verbs):
         return True
     markers = (
         "above", "previous", "same project", "this project", "this in", "it in browser",
-        "open output", "open demo", "browser demo", "run it", "show it", "continue",
-        "resume", "compile it", "test it", "fix it", "giving error", "has error",
-        "of this", "create icon", "add icon", "this software", "this app", "option 1",
-        "must survive", "persistent sqlite", "dynamic fallback", "full integration",
-        "self-improvement loop", "security:", "provide:", "start building it",
-        "use c++", "show every action", "without downtime", "working prototype",
+        "open output", "open demo", "browser demo", "show it", "continue", "resume",
+        "compile it", "giving error", "has error", "of this", "create icon", "add icon",
+        "this software", "this app", "must survive", "full integration", "working prototype",
     )
     return any(marker in text for marker in markers)
 
@@ -76,10 +95,7 @@ def _render_nonexecuting_response(text: str) -> str:
         value = plan.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
-    objective = str(plan.get("objective") or "").strip()
-    if objective.lower().startswith(("explain ", "interpret ", "explore ", "analyze ", "provide ", "respond ", "read ", "implement ", "build ")):
-        return "The provider returned an instruction instead of an answer. Use /inspect to view the raw reply."
-    return objective or "I could not produce a direct answer. Use /inspect or switch model with /setup."
+    return str(plan.get("objective") or "I could not produce a direct answer.").strip()
 
 
 class ObservableTUI:
@@ -96,6 +112,10 @@ class ObservableTUI:
         self.last_elapsed = 0.0
         self.last_mode = "none"
         self.trace = False
+
+    @property
+    def small_local(self) -> bool:
+        return str(self.config.get("provider") or "").lower() in {"local_gguf", "ollama"}
 
     def emit(self, role: str, text: str) -> None:
         print(f"\n{role}\n  " + text.replace("\n", "\n  ") + "\n", flush=True)
@@ -144,11 +164,16 @@ class ObservableTUI:
             return self.active_workspace
         return self._new_workspace()
 
-    def _context_prompt(self, message: str) -> str:
-        recent = self.history[-6:]
+    def _context_prompt(self, message: str, *, continuing: bool) -> str:
+        # A 1024-token local model cannot afford full transcript replay.
+        if self.small_local:
+            if continuing and self.active_request:
+                return f"Project: {self.active_request[:180]}\nChange: {message[:320]}"
+            return message[:600]
+        recent = self.history[-2:]
         if not recent:
             return message
-        context = "\n".join(f"{role}: {content}" for role, content in recent)
+        context = "\n".join(f"{role}: {content[:700]}" for role, content in recent)
         return f"Conversation context:\n{context}\n\nCurrent user message: {message}"
 
     def _inspect(self) -> str:
@@ -163,30 +188,21 @@ class ObservableTUI:
             "", "Raw model response:", self.last_raw or "(none)",
         ]
         if plan:
-            action = selected_action(plan)
             lines.extend(["", "Parsed JSON plan:", json.dumps(plan, indent=2, ensure_ascii=False)])
-            lines.extend(["", "Selected action:", json.dumps(action, indent=2, ensure_ascii=False) if action else "(none)"])
         if self.active_workspace and self.active_workspace.exists():
             files = [p for p in sorted(self.active_workspace.rglob("*")) if p.is_file()]
             lines.extend(["", "Workspace files:"])
             for path in files[:30]:
                 lines.append(f"- {path.relative_to(self.active_workspace)} ({path.stat().st_size} bytes)")
-            code_files = [p for p in files if p.suffix.lower() in {".py", ".js", ".ts", ".html", ".css", ".cpp", ".c", ".h", ".rs", ".java", ".sh", ".txt"}]
-            for path in code_files[:4]:
-                try:
-                    content = path.read_text(encoding="utf-8")
-                except Exception:
-                    continue
-                lines.extend(["", f"Code: {path.relative_to(self.active_workspace)}", content[:8000]])
         return "\n".join(lines)
 
     def run(self) -> int:
         print(f"\n◆ Sophyane {__version__}")
         print(f"provider {self.config.get('provider')}  model {self.config.get('model')}")
-        print("Projects keep one workspace across bullet requirements. /new starts a fresh project. /inspect shows raw plan and code. /quit exits.\n")
+        print("Projects keep one workspace across follow-up edits. /new starts a fresh project. /inspect shows raw plan and files. /quit exits.\n")
         while True:
             try:
-                message = input("❯ ").strip()
+                message = _clean_message(input("❯ "))
             except (EOFError, KeyboardInterrupt):
                 print()
                 return 0
@@ -200,6 +216,7 @@ class ObservableTUI:
                 self.active_workspace = None
                 self.active_request = ""
                 self.project_requirements.clear()
+                self.history.clear()
                 self.emit("system", "Project session cleared. The next build request will use a new workspace.")
                 continue
             if normalized == "/inspect":
@@ -219,40 +236,34 @@ class ObservableTUI:
             self.emit("You", message)
             quick = _simple_chat_reply(message)
             if quick is not None:
-                self.history.extend([("user", message), ("assistant", quick)])
                 self.emit("Sophyane", quick)
                 continue
 
-            continuing = _project_continuation(message, bool(self.active_request and self.active_workspace))
+            has_project = bool(self.active_request and self.active_workspace)
+            continuing = _project_continuation(message, has_project)
             executable = _execution_requested(message) or continuing
-            context_message = self._context_prompt(message)
+            if _explicit_new_benchmark(message):
+                continuing = False
+            context_message = self._context_prompt(message, continuing=continuing)
+
             if executable:
                 self.last_mode = "execution"
                 if continuing:
                     self.project_requirements.append(message)
-                    requirements = "\n".join(f"- {item}" for item in self.project_requirements[-20:])
                     request_for_model = (
-                        f"Continue the SAME existing project in the SAME workspace. New requirement/instruction: {context_message}\n\n"
-                        f"Original project request: {self.active_request}\nExisting workspace: {self.active_workspace}\n"
-                        f"Accumulated requirements:\n{requirements}\n\n"
-                        "Inspect and modify only this existing workspace. Do not start over or assume files from another workspace. "
-                        "Return exactly one compact JSON action. Use relative paths. Use append_file for genuine continuations; "
-                        "compile/test concrete files and finish with respond when the requested increment is verified."
+                        f"Continue existing project. {context_message}\n"
+                        "Return one compact JSON action using relative paths. Modify existing files; do not start over."
                     )
                 else:
                     self.active_request = message
                     self.project_requirements = [message]
                     request_for_model = (
-                        f"Execute this new project request: {context_message}\n\nChoose practical defaults automatically. "
-                        "Build incrementally in one workspace. Return exactly one compact JSON action. Use relative paths, "
-                        "keep file chunks small, compile/test, and finish with respond when the current increment is verified."
+                        f"Execute: {context_message}\n"
+                        "Return one compact JSON action or artifact. Use relative paths and verify real output."
                     )
             else:
                 self.last_mode = "chat"
-                request_for_model = (
-                    "Answer the current user directly using conversation context. Do not return a plan, objective, JSON, "
-                    f"tool action, or instruction to another assistant.\n\n{context_message}"
-                )
+                request_for_model = f"Answer directly. No JSON or tool action.\n{context_message}"
 
             self.progress("Thinking and planning" if executable else "Getting direct response")
             try:
@@ -267,27 +278,25 @@ class ObservableTUI:
                 self.emit("raw model response", text)
 
             if executable:
-                if extract_plan(text) or text.lstrip().startswith("{"):
-                    self.progress("Structured plan received; executing")
-                    try:
-                        workspace = self._workspace_for(continuing)
-                        text = run_structured_loop(
-                            initial_text=text,
-                            original_request=request_for_model,
-                            ask=lambda prompt: self.call_provider(prompt),
-                            workspace=workspace,
-                            max_steps=16,
-                            progress=self.progress,
-                        )
-                    except Exception as error:  # noqa: BLE001
-                        text = f"Execution loop failed safely: {error}"
-                else:
-                    text = "Execution did not start because the provider returned no executable action. Use /inspect to review the raw reply."
+                self.progress("Execution request received; entering adaptive runtime")
+                try:
+                    workspace = self._workspace_for(continuing)
+                    text = run_structured_loop(
+                        initial_text=text,
+                        original_request=message,
+                        ask=lambda prompt: self.call_provider(prompt),
+                        workspace=workspace,
+                        max_steps=8 if self.small_local else 16,
+                        progress=self.progress,
+                    )
+                except Exception as error:  # noqa: BLE001
+                    text = f"Execution loop failed safely: {error}"
             else:
                 text = _render_nonexecuting_response(text)
 
-            self.history.extend([("user", message), ("assistant", text)])
-            self.history = self.history[-12:]
+            # Keep only tiny summaries for future chat; execution context comes from workspace.
+            self.history.extend([("user", message[:300]), ("assistant", text[:500])])
+            self.history = self.history[-4:]
             self.emit("Sophyane", text)
 
 
