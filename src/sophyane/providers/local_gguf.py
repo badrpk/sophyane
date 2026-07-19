@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 
 from sophyane.providers.base import Provider, ProviderError, ProviderMetadata
@@ -34,25 +35,59 @@ class LocalGgufProvider(Provider):
     def generate(self, prompt: str, system_prompt: str) -> str:
         if cancelled():
             raise ProviderError("local generation cancelled")
+        started_at = time.monotonic()
+        total_budget = max(20.0, min(float(self.timeout), 54.0))
         system_prompt = (system_prompt or "")[:800]
         prompt = (prompt or "")[:4000]
         try:
-            return self._generate_via_server(prompt, system_prompt)
+            return self._generate_via_server(prompt, system_prompt, request_timeout=3)
         except Exception as first_server_error:  # noqa: BLE001
             if cancelled():
                 raise ProviderError("local generation cancelled") from first_server_error
 
             detail = ""
+            server_loading = False
             try:
                 from sophyane.local_server import (
                     ensure_server_background,
                     failure_detail,
                     wait_until_ready,
                 )
-                started, startup_message = ensure_server_background()
-                if started and wait_until_ready(timeout=8.0):
-                    return self._generate_via_server(prompt, system_prompt)
+                server_started, startup_message = ensure_server_background()
+                normalized = startup_message.lower()
+                server_loading = server_started and any(
+                    marker in normalized for marker in ("loading", "starting", "startup already", "still starting")
+                )
+
+                # Never launch llama-cli while a live llama-server is loading the
+                # same GGUF. Two simultaneous model copies can exhaust Android RAM.
+                if server_loading:
+                    remaining = total_budget - (time.monotonic() - started_at)
+                    wait_budget = max(1.0, min(46.0, remaining - 8.0))
+                    if wait_until_ready(timeout=wait_budget):
+                        remaining = total_budget - (time.monotonic() - started_at)
+                        if remaining > 2.0:
+                            return self._generate_via_server(
+                                prompt,
+                                system_prompt,
+                                request_timeout=max(2, int(remaining)),
+                            )
+                    detail = failure_detail() or startup_message
+                    raise ProviderError(
+                        "llama-server is still loading the model; CLI fallback was skipped "
+                        f"to avoid loading a second GGUF copy. {detail}"
+                    )
+
+                if server_started and wait_until_ready(timeout=8.0):
+                    remaining = total_budget - (time.monotonic() - started_at)
+                    return self._generate_via_server(
+                        prompt,
+                        system_prompt,
+                        request_timeout=max(2, int(remaining)),
+                    )
                 detail = failure_detail() or startup_message
+            except ProviderError:
+                raise
             except Exception as startup_error:  # noqa: BLE001
                 detail = f"server startup check failed: {startup_error}"
 
@@ -60,9 +95,14 @@ class LocalGgufProvider(Provider):
                 raise ProviderError("local generation cancelled") from first_server_error
 
             combined_len = len(prompt) + len(system_prompt)
-            if self.cli_path and self.gguf_path and combined_len <= 5000:
+            remaining = total_budget - (time.monotonic() - started_at)
+            if self.cli_path and self.gguf_path and combined_len <= 5000 and remaining >= 12:
                 try:
-                    return self._generate_via_cli(prompt, system_prompt)
+                    return self._generate_via_cli(
+                        prompt,
+                        system_prompt,
+                        deadline=max(10, min(28, int(remaining))),
+                    )
                 except Exception as cli_error:  # noqa: BLE001
                     raise ProviderError(
                         "local_gguf unavailable. "
@@ -74,7 +114,13 @@ class LocalGgufProvider(Provider):
                 f"{detail or first_server_error}"
             ) from first_server_error
 
-    def _generate_via_server(self, prompt: str, system_prompt: str) -> str:
+    def _generate_via_server(
+        self,
+        prompt: str,
+        system_prompt: str,
+        *,
+        request_timeout: int | None = None,
+    ) -> str:
         response = post_json(
             f"{self.endpoint}/v1/chat/completions",
             {
@@ -88,7 +134,7 @@ class LocalGgufProvider(Provider):
                 "stream": False,
             },
             headers={"Authorization": "Bearer local"},
-            timeout=min(self.timeout, 50),
+            timeout=request_timeout or min(self.timeout, 50),
         )
         try:
             content = response["choices"][0]["message"]["content"]
@@ -151,10 +197,15 @@ class LocalGgufProvider(Provider):
         finally:
             unregister(process)
 
-    def _generate_via_cli(self, prompt: str, system_prompt: str) -> str:
+    def _generate_via_cli(
+        self,
+        prompt: str,
+        system_prompt: str,
+        *,
+        deadline: int = 28,
+    ) -> str:
         full = f"{system_prompt.strip()}\n\nUser: {prompt}\nAssistant:"
         tokens = str(max(32, min(self.max_tokens, 192)))
-        deadline = max(12, min(int(self.timeout), 32))
         variants = [
             [self.cli_path, "-m", self.gguf_path, "-p", full, "-n", tokens,
              "--temp", str(self.temperature), "--single-turn", "--simple-io",
