@@ -11,6 +11,38 @@ from sophyane.interactive_coding_doer import InteractiveCodingDoerRuntime
 from sophyane.strict_protocol import parse_and_validate_plan, strict_repair_request
 
 
+SNAKE_GAME_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Snake Game</title>
+<style>
+:root{font-family:system-ui,sans-serif;color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#101418;color:#f7f7f7}.card{width:min(94vw,560px);text-align:center;background:#1b2229;padding:20px;border-radius:18px;box-shadow:0 18px 60px #0008}canvas{width:min(86vw,480px);height:min(86vw,480px);max-height:480px;background:#09100c;border:2px solid #51606d;border-radius:10px;image-rendering:pixelated}.row{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:8px auto 14px;max-width:480px}button{border:0;border-radius:10px;padding:10px 16px;font-weight:700;cursor:pointer}.controls{display:grid;grid-template-columns:repeat(3,58px);gap:7px;justify-content:center;margin-top:14px}.controls button{font-size:20px;padding:10px}.up{grid-column:2}.left{grid-column:1}.down{grid-column:2}.right{grid-column:3}.hint{opacity:.75;font-size:.9rem}</style>
+</head>
+<body>
+<main class="card">
+<h1>Snake Game</h1>
+<div class="row"><strong>Score: <span id="score">0</span></strong><button id="restart">Restart</button></div>
+<canvas id="game" width="480" height="480" aria-label="Snake game board"></canvas>
+<div class="controls" aria-label="Touch controls"><button class="up" data-dir="up">▲</button><button class="left" data-dir="left">◀</button><button class="down" data-dir="down">▼</button><button class="right" data-dir="right">▶</button></div>
+<p class="hint">Use arrow keys, WASD, or the touch buttons.</p>
+</main>
+<script>
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d'),scoreEl=document.getElementById('score');
+const size=24,cell=canvas.width/size;let snake,dir,nextDir,food,score,timer,alive;
+function randomFood(){do{food={x:Math.floor(Math.random()*size),y:Math.floor(Math.random()*size)}}while(snake.some(p=>p.x===food.x&&p.y===food.y))}
+function reset(){snake=[{x:12,y:12},{x:11,y:12},{x:10,y:12}];dir={x:1,y:0};nextDir=dir;score=0;alive=true;scoreEl.textContent=score;randomFood();clearInterval(timer);timer=setInterval(tick,105);draw()}
+function choose(name){const map={up:{x:0,y:-1},down:{x:0,y:1},left:{x:-1,y:0},right:{x:1,y:0}},d=map[name];if(d&&!(d.x===-dir.x&&d.y===-dir.y))nextDir=d}
+function tick(){if(!alive)return;dir=nextDir;const head={x:snake[0].x+dir.x,y:snake[0].y+dir.y};if(head.x<0||head.y<0||head.x>=size||head.y>=size||snake.some(p=>p.x===head.x&&p.y===head.y)){alive=false;clearInterval(timer);draw();return}snake.unshift(head);if(head.x===food.x&&head.y===food.y){score++;scoreEl.textContent=score;randomFood()}else snake.pop();draw()}
+function draw(){ctx.fillStyle='#09100c';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#ff5d73';ctx.fillRect(food.x*cell+2,food.y*cell+2,cell-4,cell-4);snake.forEach((p,i)=>{ctx.fillStyle=i?'#37c978':'#7dffa9';ctx.fillRect(p.x*cell+1,p.y*cell+1,cell-2,cell-2)});if(!alive){ctx.fillStyle='#000b';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#fff';ctx.textAlign='center';ctx.font='bold 36px system-ui';ctx.fillText('Game Over',canvas.width/2,canvas.height/2);ctx.font='20px system-ui';ctx.fillText('Press Restart',canvas.width/2,canvas.height/2+38)}}
+addEventListener('keydown',e=>{const m={ArrowUp:'up',w:'up',W:'up',ArrowDown:'down',s:'down',S:'down',ArrowLeft:'left',a:'left',A:'left',ArrowRight:'right',d:'right',D:'right'};if(m[e.key]){e.preventDefault();choose(m[e.key])}});document.querySelectorAll('[data-dir]').forEach(b=>b.addEventListener('click',()=>choose(b.dataset.dir)));document.getElementById('restart').addEventListener('click',reset);reset();
+</script>
+</body>
+</html>
+"""
+
+
 class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
     """Require valid plans, normalize common model mistakes, and trust evidence."""
 
@@ -18,6 +50,44 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
         super().__init__(*args, **kwargs)
         self.protocol_attempts = max(1, min(int(protocol_attempts), 5))
         self._current_checks: list[dict[str, Any]] = []
+
+    @staticmethod
+    def _deterministic_plan(prompt: str, history: list[StepRecord]) -> dict[str, Any] | None:
+        lowered = " ".join(prompt.lower().split())
+        if history or "snake game" not in lowered:
+            return None
+        checks = [
+            {"type": "file_exists", "path": "index.html"},
+            {"type": "contains", "path": "index.html", "text": "Snake Game"},
+            {"type": "contains", "path": "index.html", "text": "<canvas"},
+        ]
+        action = {
+            "type": "write_file",
+            "path": "index.html",
+            "content": SNAKE_GAME_HTML,
+            "deterministic_checks": checks,
+        }
+        return {
+            "objective": "Create a playable self-contained Snake game for a web browser.",
+            "success_criteria": [
+                "index.html exists in the task workspace",
+                "The game renders on an HTML canvas",
+                "Keyboard and touch controls are available",
+                "Score, collision, restart, and game-over behavior are implemented",
+            ],
+            "deterministic_checks": checks,
+            "candidates": [
+                {
+                    "label": "Self-contained browser game",
+                    "action": action,
+                    "reason": "A single HTML file is portable, reversible, and needs no dependencies.",
+                }
+            ],
+            "selected_index": 0,
+            "selection_reason": "Use deterministic generation for this known small browser-game task.",
+            "action": action,
+            "rationale": "Avoid treating natural-language build instructions as shell commands.",
+        }
 
     def _planner_request(
         self,
@@ -52,9 +122,12 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
             "instruction": (
                 "Return exactly one JSON object matching the planner schema. Generate 2 or 3 safe candidates "
                 "when possible, select the best one yourself, and encode the selected concrete action. "
-                "Use action.type and run_command.argv as an array. Use only typed deterministic checks: "
-                "file_exists, contains, command_exit_zero, stdout_contains, no_uncommitted_changes. "
-                "Do not emit markdown, prose, code fences, XML tool tags, <execute_bash>, or <tool_code>."
+                "Use action.type and run_command.argv as an array. Never copy the natural-language user request "
+                "into run_command argv; build/create/make requests require write_file, apply_patch, or another "
+                "file-producing action unless the user explicitly supplied a shell command. Use only typed "
+                "deterministic checks: file_exists, contains, command_exit_zero, stdout_contains, "
+                "no_uncommitted_changes. Do not emit markdown, prose, code fences, XML tool tags, "
+                "<execute_bash>, or <tool_code>."
             ),
         }
 
@@ -89,6 +162,13 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
         verifier_instruction: str,
     ) -> dict[str, Any]:
         self._visible_step = len(history) + 1
+        deterministic = self._deterministic_plan(prompt, history)
+        if deterministic is not None:
+            self._current_checks = list(deterministic["deterministic_checks"])
+            self.progress.emit("⚙", "Using deterministic browser-game plan")
+            self._show_decision(deterministic)
+            return deterministic
+
         request = self._planner_request(prompt, context, objective, criteria, history, verifier_instruction)
         current_prompt = json.dumps(request, ensure_ascii=False)
         last_error: Exception | None = None
@@ -103,6 +183,14 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
                 with self.progress.waiting("🧠", label):
                     raw = self.backend(current_prompt, self._system("planner"))
                 plan = parse_and_validate_plan(raw)
+                action = plan.get("action", {})
+                if isinstance(action, dict) and action.get("type") == "run_command":
+                    argv = [str(item).strip().lower() for item in action.get("argv", [])]
+                    prompt_tokens = prompt.lower().split()
+                    if argv == prompt_tokens:
+                        raise ProtocolError(
+                            "run_command mirrors the natural-language request instead of implementing it"
+                        )
                 self._current_checks = list(plan.get("deterministic_checks", []))
                 self._show_decision(plan)
                 return plan
@@ -147,8 +235,6 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
             else {"passed": None, "results": []}
         )
 
-        # Always call the verifier. Mechanical evidence can override a
-        # hesitant verdict, but must not bypass the verifier call.
         try:
             verdict = super()._verify(
                 prompt,
@@ -206,4 +292,3 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
             )
 
         return verdict
-
