@@ -21,13 +21,17 @@ def _user_start_tips() -> str:
     return (
         "Sophyane checks provider credentials before starting. Use `sophyane --setup` to switch company/model, replace or forget API keys, or configure local models.\n"
         "Only explicit build/fix/run requests may execute tools. Advice and normal chat never run shell commands.\n"
+        "Terminal demos attach to the real terminal so keyboard controls and live output work.\n"
         "Updates preserve repositories and user work.\n"
     )
 
 
 def main() -> int:
-    # Execution routing is owned by the active TUI. Do not monkey-patch
-    # SophyaneAgent globally: doing so causes advice/chat responses to execute.
+    # Install only execution-runtime compatibility. Do not patch SophyaneAgent:
+    # advice and chat routing must remain non-executing.
+    from sophyane.runtime_interactive_patch import install_runtime_patch
+
+    install_runtime_patch()
     print(_runtime_identity(), file=sys.stderr, flush=True)
     if len(sys.argv) <= 1:
         print(_user_start_tips(), file=sys.stderr, flush=True)
