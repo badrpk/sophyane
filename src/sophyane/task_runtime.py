@@ -8,10 +8,45 @@ from pathlib import Path
 from typing import Any, Callable
 
 
+_LANGUAGE_ALIASES = {
+    "js": "JavaScript",
+    "javascript": "JavaScript",
+    "ts": "TypeScript",
+    "py": "Python",
+    "python3": "Python",
+    "cpp": "C++",
+    "cxx": "C++",
+    "c++": "C++",
+    "csharp": "C#",
+    "cs": "C#",
+    "golang": "Go",
+    "sh": "Bash",
+    "shell": "Bash",
+    "bash": "Bash",
+    "html": "HTML/CSS/JavaScript",
+    "web": "HTML/CSS/JavaScript",
+    "choose best": "choose best",
+    "best": "choose best",
+}
+
+
+def normalize_language(value: str) -> str:
+    raw = value.strip()
+    return _LANGUAGE_ALIASES.get(raw.lower(), raw)
+
+
+def _requests_terminal_output(message: str) -> bool:
+    text = message.lower()
+    return any(token in text for token in ("in bash", "in terminal", "terminal demo", "console demo", "play in bash", "play in terminal"))
+
+
 def coding_request_needs_language(message: str) -> bool:
     text = message.lower()
     coding = any(word in text for word in ("build", "make", "create", "develop", "game", "app", "website", "api", "script", "program"))
-    explicit = any(word in text for word in ("python", "javascript", "typescript", "html", "css", "react", "vue", "java", "kotlin", "swift", "rust", "golang", "c++", "c#", "php"))
+    explicit = any(word in text for word in (
+        "python", " py ", "javascript", " js ", "typescript", " ts ", "html", "css", "react", "vue",
+        "java", "kotlin", "swift", "rust", "golang", " go ", "c++", "cpp", "c#", "php", "bash", "shell"
+    ))
     return coding and not explicit
 
 
@@ -82,7 +117,7 @@ def selected_action(plan: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def run_structured_loop(*, initial_text: str, original_request: str, ask: Callable[[str], Any], workspace: Path | None = None, max_steps: int = 6) -> str:
+def run_structured_loop(*, initial_text: str, original_request: str, ask: Callable[[str], Any], workspace: Path | None = None, max_steps: int = 8) -> str:
     workspace = (workspace or Path.cwd()).resolve()
     current = initial_text
     evidence: list[str] = []
@@ -102,7 +137,8 @@ def run_structured_loop(*, initial_text: str, original_request: str, ask: Callab
             "Continue the same user task recursively using the real execution result. "
             "Return exactly one JSON object with objective, success_criteria, deterministic_checks, candidates, "
             "selected_index, selection_reason, and action. Choose the next smallest executable action. "
-            "After building, run deterministic checks; repair failures; when verified, use action type respond.\n\n"
+            "After building, run deterministic checks; repair failures; when verified, use action type respond. "
+            "Do not ask again for a language or framework because it has already been selected.\n\n"
             f"Original request: {original_request}\n\nExecution result:\n{result}"
         )
         response = ask(followup)
@@ -122,7 +158,18 @@ def install_agent_hooks() -> None:
         pending = getattr(self, "_pending_coding_request", "")
         if pending:
             setattr(self, "_pending_coding_request", "")
-            combined = f"{pending}\n\nUser-selected language/framework: {message.strip()}"
+            language = normalize_language(message)
+            terminal_note = ""
+            if _requests_terminal_output(pending):
+                terminal_note = (
+                    "\nThe user explicitly requested a Bash/terminal demo. Build a terminal-playable program and run it in the terminal. "
+                    "Do not create or open a browser demo unless the user later asks for one."
+                )
+            combined = (
+                f"{pending}\n\nSelected implementation language/framework: {language}."
+                f"{terminal_note}\nThis selection is final for this task. Do not ask for the language/framework again. "
+                "Start with the first executable JSON action now."
+            )
             response = original_ask(self, combined)
             response.text = run_structured_loop(
                 initial_text=response.text,
@@ -133,10 +180,12 @@ def install_agent_hooks() -> None:
 
         if coding_request_needs_language(message):
             setattr(self, "_pending_coding_request", message)
-            return AgentResponse(
-                "Which language or framework should I use? For a browser game, you can answer: "
-                "HTML/CSS/JavaScript. You may also say ‘choose best’ and I will select automatically."
-            )
+            destination = "terminal" if _requests_terminal_output(message) else "browser"
+            if destination == "terminal":
+                hint = "For a terminal game, choose Python, JavaScript/Node.js, C++, Rust, or say ‘choose best’."
+            else:
+                hint = "For a browser game, choose HTML/CSS/JavaScript for direct browser play, or C++ for WebAssembly/Emscripten."
+            return AgentResponse(f"Which language or framework should I use? {hint}")
 
         response = original_ask(self, message)
         if extract_plan(response.text):
