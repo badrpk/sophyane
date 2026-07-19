@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import webbrowser
 from pathlib import Path
@@ -12,7 +11,7 @@ from typing import Any, Callable
 def coding_request_needs_language(message: str) -> bool:
     text = message.lower()
     coding = any(word in text for word in ("build", "make", "create", "develop", "game", "app", "website", "api", "script", "program"))
-    explicit = any(word in text for word in ("python", "javascript", "typescript", "html", "css", "react", "vue", "java", "kotlin", "swift", "rust", "go ", "c++", "c#", "php"))
+    explicit = any(word in text for word in ("python", "javascript", "typescript", "html", "css", "react", "vue", "java", "kotlin", "swift", "rust", "golang", "c++", "c#", "php"))
     return coding and not explicit
 
 
@@ -61,8 +60,7 @@ def execute_action(action: dict[str, Any], workspace: Path) -> str:
     if kind in {"open_browser", "browser"}:
         url = str(action.get("url") or "").strip()
         if not url:
-            candidate = workspace / "index.html"
-            url = candidate.resolve().as_uri()
+            url = (workspace / "index.html").resolve().as_uri()
         opened = webbrowser.open(url)
         return f"Browser open requested for {url}; accepted={opened}."
     return f"Unsupported action type: {kind or 'missing'}"
@@ -84,14 +82,7 @@ def selected_action(plan: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def run_structured_loop(
-    *,
-    initial_text: str,
-    original_request: str,
-    ask: Callable[[str], Any],
-    workspace: Path | None = None,
-    max_steps: int = 6,
-) -> str:
+def run_structured_loop(*, initial_text: str, original_request: str, ask: Callable[[str], Any], workspace: Path | None = None, max_steps: int = 6) -> str:
     workspace = (workspace or Path.cwd()).resolve()
     current = initial_text
     evidence: list[str] = []
@@ -108,12 +99,53 @@ def run_structured_loop(
         if kind in {"respond", "message", "open_browser", "browser"}:
             return (result or str(action.get("message") or "")) + "\n\nExecution evidence:\n" + "\n".join(evidence)
         followup = (
-            "Continue the same user task recursively. Use the real execution result below. "
-            "Return one JSON object with objective, success_criteria, deterministic_checks, candidates, "
+            "Continue the same user task recursively using the real execution result. "
+            "Return exactly one JSON object with objective, success_criteria, deterministic_checks, candidates, "
             "selected_index, selection_reason, and action. Choose the next smallest executable action. "
-            "When all criteria are verified, use action type respond with a concise completion report.\n\n"
+            "After building, run deterministic checks; repair failures; when verified, use action type respond.\n\n"
             f"Original request: {original_request}\n\nExecution result:\n{result}"
         )
         response = ask(followup)
         current = getattr(response, "text", str(response))
     return "Stopped after bounded execution loop.\n\n" + "\n".join(evidence)
+
+
+def install_agent_hooks() -> None:
+    """Install once so every CLI surface gets clarification and execution loops."""
+    from sophyane.agent import AgentResponse, SophyaneAgent
+
+    if getattr(SophyaneAgent, "_task_runtime_installed", False):
+        return
+    original_ask = SophyaneAgent.ask
+
+    def wrapped(self: Any, message: str) -> Any:
+        pending = getattr(self, "_pending_coding_request", "")
+        if pending:
+            setattr(self, "_pending_coding_request", "")
+            combined = f"{pending}\n\nUser-selected language/framework: {message.strip()}"
+            response = original_ask(self, combined)
+            response.text = run_structured_loop(
+                initial_text=response.text,
+                original_request=combined,
+                ask=lambda prompt: original_ask(self, prompt),
+            )
+            return response
+
+        if coding_request_needs_language(message):
+            setattr(self, "_pending_coding_request", message)
+            return AgentResponse(
+                "Which language or framework should I use? For a browser game, you can answer: "
+                "HTML/CSS/JavaScript. You may also say ‘choose best’ and I will select automatically."
+            )
+
+        response = original_ask(self, message)
+        if extract_plan(response.text):
+            response.text = run_structured_loop(
+                initial_text=response.text,
+                original_request=message,
+                ask=lambda prompt: original_ask(self, prompt),
+            )
+        return response
+
+    SophyaneAgent.ask = wrapped
+    SophyaneAgent._task_runtime_installed = True
