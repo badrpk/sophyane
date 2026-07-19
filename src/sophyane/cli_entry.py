@@ -32,11 +32,13 @@ def main() -> int:
     from sophyane.runtime_interactive_patch import install_runtime_patch
     from sophyane.runtime_orchestration_patch import install_orchestration_patch
     from sophyane.runtime_safety import install_runtime_safety
+    from sophyane.runtime_stagnation_patch import install_stagnation_patch
 
     install_runtime_patch()
     install_runtime_safety()
     install_browser_patch()
     install_orchestration_patch()
+    install_stagnation_patch()
     print(_runtime_identity(), file=sys.stderr, flush=True)
     if len(sys.argv) <= 1:
         print(_user_start_tips(), file=sys.stderr, flush=True)
