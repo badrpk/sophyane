@@ -40,21 +40,37 @@ class LocalGgufProvider(Provider):
         prompt = (prompt or "")[:4000]
         try:
             return self._generate_via_server(prompt, system_prompt)
-        except Exception as server_error:  # noqa: BLE001
+        except Exception as first_server_error:  # noqa: BLE001
             if cancelled():
-                raise ProviderError("local generation cancelled") from server_error
+                raise ProviderError("local generation cancelled") from first_server_error
+
+            # The CLI entry point starts llama-server in the background. A user
+            # can submit a prompt before model loading completes, so wait once
+            # for that same persistent process instead of immediately loading a
+            # second copy through llama-cli.
+            try:
+                from sophyane.local_server import ensure_server_background, wait_until_ready
+
+                started, _ = ensure_server_background()
+                if started and wait_until_ready(timeout=30.0):
+                    return self._generate_via_server(prompt, system_prompt)
+            except Exception:
+                pass
+
+            if cancelled():
+                raise ProviderError("local generation cancelled") from first_server_error
             combined_len = len(prompt) + len(system_prompt)
             if self.cli_path and self.gguf_path and combined_len <= 5000:
                 try:
                     return self._generate_via_cli(prompt, system_prompt)
                 except Exception as cli_error:  # noqa: BLE001
                     raise ProviderError(
-                        f"local_gguf server failed ({server_error}); cli failed ({cli_error})"
+                        f"local_gguf server failed ({first_server_error}); cli failed ({cli_error})"
                     ) from cli_error
             raise ProviderError(
-                f"local_gguf server unavailable: {server_error}. Run `sophyane /local` "
+                f"local_gguf server unavailable: {first_server_error}. Run `sophyane /local` "
                 "or ensure llama-server is listening on :8766."
-            ) from server_error
+            ) from first_server_error
 
     def _generate_via_server(self, prompt: str, system_prompt: str) -> str:
         response = post_json(
