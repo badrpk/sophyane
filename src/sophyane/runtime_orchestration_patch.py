@@ -1,4 +1,4 @@
-"""Higher-level routing and execution recovery for Termux agent workflows."""
+"""Execution recovery helpers shared by current and older Sophyane TUIs."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,34 +7,32 @@ from typing import Any
 
 def install_orchestration_patch() -> None:
     from sophyane import execution_runtime as runtime
-    from sophyane import tui_v2
 
     if getattr(runtime, "_orchestration_installed", False):
         return
 
-    original_execution_requested = tui_v2._execution_requested
-    original_references_previous = tui_v2._references_previous_project
+    # Routing/project-continuation logic now lives directly in tui_v2. Older
+    # installs may still expose _execution_requested, so extend it only when
+    # that hook exists. Never assume removed private helpers are available.
+    try:
+        from sophyane import tui_v2
+    except ImportError:
+        tui_v2 = None
 
-    def execution_requested(message: str) -> bool:
-        text = " ".join(message.lower().split())
-        extra = (
-            "diagnose", "debug", "giving error", "has error", "error in", "repair",
-            "optimize", "profile", "audit", "integrate", "simulate", "benchmark",
-            "self-improvement", "self improvement", "start a persistent", "monitor",
-            "implement", "demonstrate", "apply reductions", "re-test", "retest",
-        )
-        return original_execution_requested(message) or any(marker in text for marker in extra)
+    if tui_v2 is not None and hasattr(tui_v2, "_execution_requested"):
+        original_execution_requested = tui_v2._execution_requested
 
-    def references_previous(message: str) -> bool:
-        text = " ".join(message.lower().split())
-        extra = (
-            "giving error", "has error", "error in it", "fix the error", "diagnose it",
-            "last task", "last execution", "last 3", "previous task", "generated game",
-        )
-        return original_references_previous(message) or any(marker in text for marker in extra)
+        def execution_requested(message: str) -> bool:
+            text = " ".join(message.lower().split())
+            extra = (
+                "diagnose", "debug", "giving error", "has error", "error in", "repair",
+                "optimize", "profile", "audit", "integrate", "simulate", "benchmark",
+                "self-improvement", "self improvement", "start a persistent", "monitor",
+                "implement", "demonstrate", "apply reductions", "re-test", "retest",
+            )
+            return original_execution_requested(message) or any(marker in text for marker in extra)
 
-    tui_v2._execution_requested = execution_requested
-    tui_v2._references_previous_project = references_previous
+        tui_v2._execution_requested = execution_requested
 
     original_execute = runtime.execute_action
 
