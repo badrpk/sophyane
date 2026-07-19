@@ -33,3 +33,7 @@ def main() -> int:
     from sophyane.v13_cli import main as run_cli
 
     return run_cli()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
