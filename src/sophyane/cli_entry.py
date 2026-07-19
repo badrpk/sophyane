@@ -20,15 +20,14 @@ def _runtime_identity() -> str:
 def _user_start_tips() -> str:
     return (
         "Sophyane checks provider credentials before starting. Use `sophyane --setup` to switch company/model, replace or forget API keys, or configure local models.\n"
-        "Coding tasks use a bounded build → verify → repair loop and ask for a language/framework when the request does not specify one.\n"
+        "Only explicit build/fix/run requests may execute tools. Advice and normal chat never run shell commands.\n"
         "Updates preserve repositories and user work.\n"
     )
 
 
 def main() -> int:
-    from sophyane.task_runtime import install_agent_hooks
-
-    install_agent_hooks()
+    # Execution routing is owned by the active TUI. Do not monkey-patch
+    # SophyaneAgent globally: doing so causes advice/chat responses to execute.
     print(_runtime_identity(), file=sys.stderr, flush=True)
     if len(sys.argv) <= 1:
         print(_user_start_tips(), file=sys.stderr, flush=True)
