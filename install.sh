@@ -67,13 +67,11 @@ mv "$NEW_SYSTEM" "$SYSTEM"
 
 info "Building runtime at final installation path..."
 python3 -m venv "$VENV"
-"$VENV/bin/python" -m pip install --disable-pip-version-check --upgrade pip setuptools wheel >/dev/null
-"$VENV/bin/python" -m pip install --disable-pip-version-check "$SYSTEM" >/dev/null
+export PYTHONNOUSERSITE=1
+unset PYTHONPATH PYTHONHOME
+"$VENV/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --upgrade pip setuptools wheel >/dev/null
+"$VENV/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --force-reinstall "$SYSTEM" >/dev/null
 
-# Preserve a working native llama.cpp runtime across Sophyane updates. Android
-# binaries compiled inside Termux are ELF files using /system/bin/linker64. Do
-# not overwrite them with desktop binaries or shell wrappers. Only create
-# multiplexer wrappers when a genuine executable named `llama` exists.
 LLAMA_RUNTIME="$BASE/models/llama.cpp/runtime"
 if [ -d "$LLAMA_RUNTIME" ]; then
   if [ -x "$LLAMA_RUNTIME/llama-server" ] && head -c 4 "$LLAMA_RUNTIME/llama-server" 2>/dev/null | grep -q $'\177ELF'; then
@@ -101,8 +99,6 @@ WRAP
   fi
 fi
 
-# Some Android/Termux Python builds can leave absolute build-time paths in venv
-# launchers. Normalize every text launcher to the final venv path.
 if grep -RIlF "$TMP" "$VENV/bin" "$VENV/pyvenv.cfg" 2>/dev/null | grep -q .; then
   grep -RIlF "$TMP" "$VENV/bin" "$VENV/pyvenv.cfg" 2>/dev/null |
     while IFS= read -r file; do
@@ -116,6 +112,8 @@ set -Eeuo pipefail
 BASE="${SOPHYANE_HOME:-$HOME/.local/share/sophyane}"
 INSTALL_URL="https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh"
 REPO="https://github.com/badrpk/sophyane.git"
+export PYTHONNOUSERSITE=1
+unset PYTHONPATH PYTHONHOME
 check_update() {
   [ "${SOPHYANE_SKIP_UPDATE_CHECK:-0}" = "1" ] && return 0
   command -v git >/dev/null 2>&1 || return 0
@@ -142,7 +140,7 @@ check_update() {
   fi
 }
 check_update
-exec "$BASE/venv/bin/python" -m sophyane.cli_entry "$@"
+exec "$BASE/venv/bin/python" -I -m sophyane.cli_entry "$@"
 WRAP
 chmod 0755 "$BIN/sophyane"
 
@@ -159,7 +157,24 @@ TMP=""
 if grep -RIl '/tmp/' "$VENV/bin" "$VENV/pyvenv.cfg" 2>/dev/null | grep -q .; then
   fail "Runtime still contains a temporary-path reference."
 fi
-"$VENV/bin/python" -m sophyane.cli_entry --version >/dev/null || fail "New Sophyane runtime failed post-cleanup validation."
+
+"$VENV/bin/python" -I - <<'PY'
+import inspect
+from pathlib import Path
+import sophyane.execution_runtime as er
+import sophyane.tui_v2 as tui
+root = Path(er.__file__).resolve()
+assert "site-packages" in str(root), root
+ers = inspect.getsource(er)
+tuis = inspect.getsource(tui)
+assert "ThreadingHTTPServer" in ers, "missing workspace HTTP server"
+assert "SHA-256 matched" in ers, "missing served-file hash verification"
+assert "_explicit_new_benchmark" in tuis, "missing benchmark routing"
+assert 'r"\\bcreate\\b"' in tuis, "missing create execution routing"
+print(root)
+PY
+
+"$VENV/bin/python" -I -m sophyane.cli_entry --version >/dev/null || fail "New Sophyane runtime failed post-cleanup validation."
 SOPHYANE_SKIP_UPDATE_CHECK=1 "$BIN/sophyane" --version >/dev/null || fail "Installed Sophyane launcher failed validation."
 
 printf '%s\n' "$COMMIT" > "$BASE/installed-commit"
@@ -190,6 +205,7 @@ hash -r 2>/dev/null || true
 
 info ""
 info "✅ Sophyane $VERSION is installed and current"
+info "   Commit: ${COMMIT:0:12}"
 info "   System: $SYSTEM"
 info "   User work: unchanged"
 info "   Old Sophyane versions: removed"
