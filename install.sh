@@ -1,198 +1,141 @@
 #!/usr/bin/env bash
-# Sophyane public installer — always installs the **latest** released version
-# from GitHub and sets up a venv + CLI wrappers + optional C++ train core.
+# Universal Sophyane installer/updater.
+# Always installs the latest main branch, preserves user work, and removes old system copies.
 #
-# Public one-liner (main branch always hosts this script):
-#   curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
-#
-# Pin a version (optional):
-#   SOPHYANE_VERSION=16.9.0 curl -fsSL ... | sh
-# Pin a commit (optional):
-#   SOPHYANE_COMMIT=<sha> curl -fsSL ... | sh
+# Universal link:
+#   curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | bash
 set -Eeuo pipefail
 
-REPO_HTTPS="https://github.com/badrpk/sophyane.git"
-REPO_RAW="https://raw.githubusercontent.com/badrpk/sophyane"
+REPO="https://github.com/badrpk/sophyane.git"
+RAW="https://raw.githubusercontent.com/badrpk/sophyane/main"
 BASE="${SOPHYANE_HOME:-$HOME/.local/share/sophyane}"
 BIN="${SOPHYANE_BIN:-$HOME/.local/bin}"
-RELEASES="$BASE/releases"
+SYSTEM="$BASE/system"
 VENV="$BASE/venv"
-TMP_DIR=""
+TMP=""
 
 cleanup() {
-  [ -n "${TMP_DIR:-}" ] && rm -rf "$TMP_DIR"
+  [ -n "${TMP:-}" ] && rm -rf "$TMP"
 }
 trap cleanup EXIT
 
-fail() {
-  printf 'Error: %s\n' "$*" >&2
-  exit 1
-}
-
+fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 info() { printf '%s\n' "$*"; }
+need() { command -v "$1" >/dev/null 2>&1 || fail "'$1' is required."; }
 
-need_cmd() {
-  command -v "$1" >/dev/null 2>&1 || fail "'$1' is required. Install it and re-run."
-}
+need git
+need python3
 
-need_cmd git
-need_cmd python3
+info "=== Sophyane universal installer ==="
+info "Installing latest Sophyane from main..."
 
-# Optional but recommended
-HAS_GPP=0
-command -v g++ >/dev/null 2>&1 && HAS_GPP=1
-command -v c++ >/dev/null 2>&1 && HAS_GPP=1
-HAS_CURL=0
-command -v curl >/dev/null 2>&1 && HAS_CURL=1
+TMP="$(mktemp -d)"
+SOURCE="$TMP/source"
+NEW_SYSTEM="$TMP/system"
+NEW_VENV="$TMP/venv"
 
-info "=== Sophyane installer (always latest release) ==="
-info "Checking GitHub for the newest version..."
-
-# Collect candidate versions from release branches AND tags
-VERSION_LIST="$(
-  {
-    git ls-remote --heads "$REPO_HTTPS" 'refs/heads/release/v*' 2>/dev/null |
-      awk '{sub("refs/heads/release/v", "", $2); print $2}'
-    git ls-remote --tags "$REPO_HTTPS" 'refs/tags/v*' 2>/dev/null |
-      awk '{
-        sub("refs/tags/v", "", $2);
-        sub("\\^\\{\\}", "", $2);
-        print $2
-      }'
-  } | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -u | sort -V
+git clone --quiet --depth 1 --single-branch --branch main "$REPO" "$SOURCE"
+COMMIT="$(git -C "$SOURCE" rev-parse HEAD)"
+VERSION="$(python3 - "$SOURCE/pyproject.toml" <<'PY'
+import re, sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.M)
+print(match.group(1) if match else "unknown")
+PY
 )"
 
-if [ -n "${SOPHYANE_VERSION:-}" ]; then
-  VERSION="${SOPHYANE_VERSION#v}"
-else
-  VERSION="$(printf '%s\n' "$VERSION_LIST" | tail -n 1)"
-fi
+[ -f "$SOURCE/pyproject.toml" ] || fail "Repository is not an installable Sophyane tree."
 
-[ -n "$VERSION" ] || fail "No release/vX.Y.Z branch or vX.Y.Z tag found on GitHub"
+cp -a "$SOURCE/." "$NEW_SYSTEM/"
+rm -rf "$NEW_SYSTEM/.git"
 
-# Prefer release branch; fall back to tag; then main (only if forced)
-BRANCH="release/v$VERSION"
-TAG="v$VERSION"
-REF=""
-REF_KIND=""
+info "Building isolated runtime..."
+python3 -m venv "$NEW_VENV"
+"$NEW_VENV/bin/python" -m pip install --disable-pip-version-check --upgrade pip setuptools wheel >/dev/null
+"$NEW_VENV/bin/python" -m pip install --disable-pip-version-check "$NEW_SYSTEM" >/dev/null
+"$NEW_VENV/bin/sophyane" --version >/dev/null || fail "New Sophyane runtime failed validation. Existing installation was not changed."
 
-if git ls-remote --heads "$REPO_HTTPS" "refs/heads/$BRANCH" | grep -q .; then
-  REF="$BRANCH"
-  REF_KIND="branch"
-elif git ls-remote --tags "$REPO_HTTPS" "refs/tags/$TAG" | grep -q .; then
-  REF="$TAG"
-  REF_KIND="tag"
-elif [ "${SOPHYANE_ALLOW_MAIN:-}" = "1" ]; then
-  REF="main"
-  REF_KIND="branch"
-  info "Note: using main (SOPHYANE_ALLOW_MAIN=1); prefer tagged releases for production."
-else
-  fail "Could not find $BRANCH or tag $TAG on GitHub"
-fi
+mkdir -p "$BASE" "$BIN"
 
-if [ -n "${SOPHYANE_COMMIT:-}" ]; then
-  RELEASE_COMMIT="$SOPHYANE_COMMIT"
-else
-  if [ "$REF_KIND" = "tag" ]; then
-    RELEASE_COMMIT="$(git ls-remote --tags "$REPO_HTTPS" "refs/tags/$REF" | awk 'NR==1 {print $1}')"
-  else
-    RELEASE_COMMIT="$(git ls-remote --heads "$REPO_HTTPS" "refs/heads/$REF" | awk 'NR==1 {print $1}')"
-  fi
-fi
-[ -n "$RELEASE_COMMIT" ] || fail "Could not resolve commit for $REF"
+# Preserve all user-owned data and repositories. Only Sophyane-managed system paths are replaced.
+# User data remains in ~/.sophyane, project directories, and any path outside the managed paths below.
+OLD_SYSTEM="$BASE/.old-system-$$"
+OLD_VENV="$BASE/.old-venv-$$"
+rm -rf "$OLD_SYSTEM" "$OLD_VENV"
+[ -e "$SYSTEM" ] && mv "$SYSTEM" "$OLD_SYSTEM"
+[ -e "$VENV" ] && mv "$VENV" "$OLD_VENV"
+mv "$NEW_SYSTEM" "$SYSTEM"
+mv "$NEW_VENV" "$VENV"
 
-info "Latest version selected: v$VERSION"
-info "Source ref:             $REF ($REF_KIND)"
-info "Pinned commit:          $RELEASE_COMMIT"
-info "Install root:           $BASE"
-
-TMP_DIR="$(mktemp -d)"
-SOURCE="$TMP_DIR/source"
-TARGET="$RELEASES/$VERSION-$RELEASE_COMMIT"
-
-info "Cloning Sophyane $REF..."
-if [ "$REF_KIND" = "tag" ]; then
-  git clone --quiet --depth 1 --branch "$REF" --single-branch "$REPO_HTTPS" "$SOURCE"
-else
-  git clone --quiet --depth 1 --branch "$REF" --single-branch "$REPO_HTTPS" "$SOURCE"
-fi
-
-ACTUAL_COMMIT="$(git -C "$SOURCE" rev-parse HEAD)"
-if [ -z "${SOPHYANE_COMMIT:-}" ] && [ "$ACTUAL_COMMIT" != "$RELEASE_COMMIT" ]; then
-  # shallow clone of moving branch tip can differ if race; re-pin to actual
-  info "Note: resolved tip $ACTUAL_COMMIT (remote advertised $RELEASE_COMMIT)"
-  RELEASE_COMMIT="$ACTUAL_COMMIT"
-  TARGET="$RELEASES/$VERSION-$RELEASE_COMMIT"
-fi
-
-if [ ! -f "$SOURCE/pyproject.toml" ] && [ ! -f "$SOURCE/setup.py" ]; then
-  fail "Selected tree is not an installable Python package"
-fi
-
-# Preserve user data; only replace code tree + venv
-mkdir -p "$BASE" "$BIN" "$RELEASES"
-rm -rf "$TARGET"
-mkdir -p "$TARGET"
-cp -a "$SOURCE/." "$TARGET/"
-
-info "Creating virtualenv and installing package + build tooling..."
-rm -rf "$VENV"
-python3 -m venv "$VENV"
-# Dependencies: Sophyane is stdlib-first; still upgrade packaging tools for reliability
-"$VENV/bin/python" -m pip install --disable-pip-version-check --upgrade pip setuptools wheel
-# Install package (editable not needed for releases). Include nothing mandatory.
-"$VENV/bin/python" -m pip install --disable-pip-version-check "$TARGET"
-# Optional: pytest available for self-check if user wants (lightweight)
-if [ "${SOPHYANE_INSTALL_DEV:-}" = "1" ]; then
-  "$VENV/bin/python" -m pip install --disable-pip-version-check pytest >/dev/null 2>&1 || true
-fi
-
-ln -sfn "$TARGET" "$BASE/current"
-
-# CLI wrappers
-cat > "$BIN/sophyane" <<EOF
+cat > "$BIN/sophyane" <<'WRAP'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-exec "$VENV/bin/sophyane" "\$@"
-EOF
+BASE="${SOPHYANE_HOME:-$HOME/.local/share/sophyane}"
+BIN="${SOPHYANE_BIN:-$HOME/.local/bin}"
+INSTALL_URL="https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh"
+REPO="https://github.com/badrpk/sophyane.git"
+
+check_update() {
+  [ "${SOPHYANE_SKIP_UPDATE_CHECK:-0}" = "1" ] && return 0
+  command -v git >/dev/null 2>&1 || return 0
+  local installed remote answer
+  installed="$(cat "$BASE/installed-commit" 2>/dev/null || true)"
+  remote="$(git ls-remote "$REPO" refs/heads/main 2>/dev/null | awk 'NR==1 {print $1}')"
+  [ -z "$installed" ] || [ -z "$remote" ] || [ "$installed" = "$remote" ] && return 0
+
+  printf '\nSophyane update available.\n'
+  printf 'Installed: %.12s\nLatest:    %.12s\n' "$installed" "$remote"
+  if [ -t 0 ] && [ -t 1 ]; then
+    printf 'Update now? Your repositories and work files will remain intact. [Y/n] '
+    read -r answer
+    case "${answer:-Y}" in
+      n|N|no|NO) return 0 ;;
+    esac
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL "$INSTALL_URL" | bash
+    elif command -v wget >/dev/null 2>&1; then
+      wget -qO- "$INSTALL_URL" | bash
+    else
+      printf 'Install curl or wget to update.\n' >&2
+      return 0
+    fi
+  else
+    printf 'Run: curl -fsSL %s | bash\n' "$INSTALL_URL"
+  fi
+}
+
+check_update
+exec "$BASE/venv/bin/sophyane" "$@"
+WRAP
 chmod 0755 "$BIN/sophyane"
 
-cat > "$BIN/sophyane-browser" <<EOF
+cat > "$BIN/sophyane-browser" <<'WRAP'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-exec "$VENV/bin/sophyane" --browser "\$@"
-EOF
+exec "${SOPHYANE_BIN:-$HOME/.local/bin}/sophyane" --browser "$@"
+WRAP
 chmod 0755 "$BIN/sophyane-browser"
 
-# Optional pure-C++ continual train core (hardware-efficient)
-if [ "$HAS_GPP" -eq 1 ] && [ -f "$TARGET/sdk/cpp/continual/src/train_core.cpp" ]; then
-  info "Building C++ train core (sophyane-train-core)..."
-  if "$BIN/sophyane" --train-build-core >/tmp/sophyane-train-build.log 2>&1; then
-    info "C++ train core: OK"
-  else
-    info "C++ train core: skipped (see /tmp/sophyane-train-build.log)"
-  fi
-else
-  info "C++ toolchain not found or sources missing — train core can be built later with: sophyane --train-build-core"
-fi
-
-cat > "$BASE/installed-release" <<EOF
+printf '%s\n' "$COMMIT" > "$BASE/installed-commit"
+printf '%s\n' "$VERSION" > "$BASE/installed-version"
+cat > "$BASE/install-info" <<EOF
 VERSION=$VERSION
-REF=$REF
-REF_KIND=$REF_KIND
-COMMIT=$RELEASE_COMMIT
-INSTALLED_AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-PUBLIC_INSTALL=curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
-REPO=https://github.com/badrpk/sophyane
+COMMIT=$COMMIT
+SOURCE=main
+UPDATED_AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+INSTALL_URL=$RAW/install.sh
 EOF
 
-# Also expose a tiny LATEST pointer for tools
-printf 'v%s\n%s\n' "$VERSION" "$RELEASE_COMMIT" > "$BASE/LATEST"
+# Remove all obsolete Sophyane system copies created by older installers.
+rm -rf "$OLD_SYSTEM" "$OLD_VENV"
+rm -rf "$BASE/releases" "$BASE/current" "$BASE/LATEST" "$BASE/installed-release"
+find "$BASE" -maxdepth 1 -type d \( -name '.old-system-*' -o -name '.old-venv-*' \) -exec rm -rf {} + 2>/dev/null || true
 
 case ":$PATH:" in
   *":$BIN:"*) ;;
   *)
-    if [ -f "$HOME/.bashrc" ]; then
+    if [ -f "$HOME/.bashrc" ] && ! grep -Fq "$BIN" "$HOME/.bashrc"; then
       printf '\n# Sophyane CLI\nexport PATH="%s:$PATH"\n' "$BIN" >> "$HOME/.bashrc"
     fi
     export PATH="$BIN:$PATH"
@@ -200,40 +143,11 @@ case ":$PATH:" in
 esac
 
 hash -r 2>/dev/null || true
-
 info ""
-info "Verifying install..."
-"$BIN/sophyane" --version || fail "sophyane --version failed"
-if "$BIN/sophyane" --doctor >/tmp/sophyane-doctor.log 2>&1; then
-  info "Doctor: OK"
-else
-  info "Doctor: completed with notes (see /tmp/sophyane-doctor.log)"
-fi
-
-# Lightweight post-install audit when not on tiny CI
-if [ "${SOPHYANE_SKIP_AUDIT:-}" != "1" ]; then
-  if "$BIN/sophyane" --audit >/tmp/sophyane-audit.log 2>&1; then
-    info "Feature audit: OK"
-  else
-    info "Feature audit: partial (see /tmp/sophyane-audit.log) — core CLI is installed"
-  fi
-fi
-
-info ""
-info "✅ Sophyane v${VERSION} installed"
-info "   Commit:  $RELEASE_COMMIT"
-info "   Code:    $TARGET"
-info "   CLI:     $BIN/sophyane"
-info "   Repo:    https://github.com/badrpk/sophyane"
-info "   Upgrade: curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh"
-info ""
-info "Quick start:"
-info "  sophyane --help"
-info "  sophyane --audit"
-info "  sophyane --exam-tough100 --expert-only"
-info "  sophyane --boot"
-info "  sophyane-browser"
-
-if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && [ "${SOPHYANE_NO_BROWSER:-}" != "1" ]; then
-  "$BIN/sophyane" --browser >/tmp/sophyane-browser-install.log 2>&1 &
-fi
+info "✅ Sophyane $VERSION is installed and current"
+info "   System: $SYSTEM"
+info "   User work: unchanged"
+info "   Old Sophyane versions: removed"
+info "   Start: sophyane"
+info "   Universal install/update link:"
+info "   curl -fsSL $RAW/install.sh | bash"
