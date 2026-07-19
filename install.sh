@@ -70,33 +70,35 @@ python3 -m venv "$VENV"
 "$VENV/bin/python" -m pip install --disable-pip-version-check --upgrade pip setuptools wheel >/dev/null
 "$VENV/bin/python" -m pip install --disable-pip-version-check "$SYSTEM" >/dev/null
 
-# Repair llama.cpp wrappers left by older Android bootstrap versions. The
-# runtime ships one multiplexer binary named `llama`; wrappers must invoke its
-# subcommands. A wrapper that executes `llama-server` from its own directory
-# recursively calls itself until Android reports "Argument list too long".
+# Preserve a working native llama.cpp runtime across Sophyane updates. Android
+# binaries compiled inside Termux are ELF files using /system/bin/linker64. Do
+# not overwrite them with desktop binaries or shell wrappers. Only create
+# multiplexer wrappers when a genuine executable named `llama` exists.
 LLAMA_RUNTIME="$BASE/models/llama.cpp/runtime"
-if [ -x "$LLAMA_RUNTIME/llama" ]; then
-  cat > "$LLAMA_RUNTIME/llama-cli" <<'WRAP'
+if [ -d "$LLAMA_RUNTIME" ]; then
+  if [ -x "$LLAMA_RUNTIME/llama-server" ] && head -c 4 "$LLAMA_RUNTIME/llama-server" 2>/dev/null | grep -q $'\177ELF'; then
+    ln -sfn "$LLAMA_RUNTIME/llama-server" "$BIN/llama-server"
+    [ -x "$LLAMA_RUNTIME/llama-cli" ] && ln -sfn "$LLAMA_RUNTIME/llama-cli" "$BIN/llama-cli"
+    info "Preserving native local inference runtime."
+  elif [ -x "$LLAMA_RUNTIME/llama" ] && head -c 4 "$LLAMA_RUNTIME/llama" 2>/dev/null | grep -q $'\177ELF'; then
+    cat > "$LLAMA_RUNTIME/llama-cli" <<'WRAP'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 RUNTIME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export LD_LIBRARY_PATH="$RUNTIME${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec "$RUNTIME/llama" cli "$@"
 WRAP
-  cat > "$LLAMA_RUNTIME/llama-server" <<'WRAP'
+    cat > "$LLAMA_RUNTIME/llama-server" <<'WRAP'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 RUNTIME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export LD_LIBRARY_PATH="$RUNTIME${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec "$RUNTIME/llama" server "$@"
 WRAP
-  chmod 0755 "$LLAMA_RUNTIME/llama-cli" "$LLAMA_RUNTIME/llama-server"
-  ln -sfn "$LLAMA_RUNTIME/llama-cli" "$BIN/llama-cli"
-  ln -sfn "$LLAMA_RUNTIME/llama-server" "$BIN/llama-server"
-  pkill -f 'llama-server|llama-cli' 2>/dev/null || true
-  rm -f "$HOME/.local/state/sophyane/llama-server.pid" \
-        "$HOME/.local/state/sophyane/llama-server.started" \
-        "$HOME/.local/state/sophyane/llama-server.starting"
+    chmod 0755 "$LLAMA_RUNTIME/llama-cli" "$LLAMA_RUNTIME/llama-server"
+    ln -sfn "$LLAMA_RUNTIME/llama-cli" "$BIN/llama-cli"
+    ln -sfn "$LLAMA_RUNTIME/llama-server" "$BIN/llama-server"
+  fi
 fi
 
 # Some Android/Termux Python builds can leave absolute build-time paths in venv
@@ -140,8 +142,6 @@ check_update() {
   fi
 }
 check_update
-# Invoke the module through the final Python path; do not depend on a generated
-# console-script shebang that may contain an obsolete installation path.
 exec "$BASE/venv/bin/python" -m sophyane.cli_entry "$@"
 WRAP
 chmod 0755 "$BIN/sophyane"
@@ -153,8 +153,6 @@ exec "${SOPHYANE_BIN:-$HOME/.local/bin}/sophyane" --browser "$@"
 WRAP
 chmod 0755 "$BIN/sophyane-browser"
 
-# Delete the build tree before validation. This proves no installed launcher
-# depends on temporary files and catches the exact failure seen on Termux.
 rm -rf "$TMP"
 TMP=""
 
