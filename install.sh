@@ -70,6 +70,35 @@ python3 -m venv "$VENV"
 "$VENV/bin/python" -m pip install --disable-pip-version-check --upgrade pip setuptools wheel >/dev/null
 "$VENV/bin/python" -m pip install --disable-pip-version-check "$SYSTEM" >/dev/null
 
+# Repair llama.cpp wrappers left by older Android bootstrap versions. The
+# runtime ships one multiplexer binary named `llama`; wrappers must invoke its
+# subcommands. A wrapper that executes `llama-server` from its own directory
+# recursively calls itself until Android reports "Argument list too long".
+LLAMA_RUNTIME="$BASE/models/llama.cpp/runtime"
+if [ -x "$LLAMA_RUNTIME/llama" ]; then
+  cat > "$LLAMA_RUNTIME/llama-cli" <<'WRAP'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+RUNTIME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export LD_LIBRARY_PATH="$RUNTIME${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$RUNTIME/llama" cli "$@"
+WRAP
+  cat > "$LLAMA_RUNTIME/llama-server" <<'WRAP'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+RUNTIME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export LD_LIBRARY_PATH="$RUNTIME${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$RUNTIME/llama" server "$@"
+WRAP
+  chmod 0755 "$LLAMA_RUNTIME/llama-cli" "$LLAMA_RUNTIME/llama-server"
+  ln -sfn "$LLAMA_RUNTIME/llama-cli" "$BIN/llama-cli"
+  ln -sfn "$LLAMA_RUNTIME/llama-server" "$BIN/llama-server"
+  pkill -f 'llama-server|llama-cli' 2>/dev/null || true
+  rm -f "$HOME/.local/state/sophyane/llama-server.pid" \
+        "$HOME/.local/state/sophyane/llama-server.started" \
+        "$HOME/.local/state/sophyane/llama-server.starting"
+fi
+
 # Some Android/Termux Python builds can leave absolute build-time paths in venv
 # launchers. Normalize every text launcher to the final venv path.
 if grep -RIlF "$TMP" "$VENV/bin" "$VENV/pyvenv.cfg" 2>/dev/null | grep -q .; then
