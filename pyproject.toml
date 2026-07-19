@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sophyane"
-version = "18.1.1"
+version = "18.1.2"
 description = "Repository-aware autonomous coding agent with semantic indexing, precise patches, batched execution and deterministic verification"
 readme = "README.md"
 requires-python = ">=3.10"
