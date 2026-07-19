@@ -14,6 +14,7 @@ from sophyane.providers.base import Provider, ProviderError, ProviderMetadata
 
 LOGGER = logging.getLogger("sophyane")
 LLM_CONFIG_FILE = CONFIG_DIR / "llm.json"
+LOCAL_PROVIDER_IDS = {"local_gguf", "ollama"}
 
 # Canonical default order when llm.json is missing or incomplete.
 DEFAULT_FALLBACK_ORDER = (
@@ -30,10 +31,7 @@ DEFAULT_FALLBACK_ORDER = (
 
 
 class FallbackProvider(Provider):
-    """Try providers in order until one succeeds.
-
-    Quota, auth, and network failures fall through to the next provider.
-    """
+    """Try providers in order until one succeeds."""
 
     metadata = ProviderMetadata(
         provider_id="fallback",
@@ -69,7 +67,6 @@ class FallbackProvider(Provider):
         return tuple(name for name, _ in self._providers)
 
     def get_token_usage(self) -> dict[str, int]:
-        """Aggregate usage exposed by providers used in this process."""
         totals = {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -96,7 +93,7 @@ class FallbackProvider(Provider):
             started = time.perf_counter()
             try:
                 text = provider.generate(prompt, system_prompt)
-            except Exception as error:  # noqa: BLE001 — fall through intentionally
+            except Exception as error:  # noqa: BLE001
                 latency_ms = (time.perf_counter() - started) * 1000
                 message = f"{name}: {type(error).__name__}: {error}"
                 errors.append(message)
@@ -119,8 +116,17 @@ class FallbackProvider(Provider):
                 )
             return text
 
-        # Automatic open-model rescue: Ollama first, then Hugging Face GGUF
-        # + GitHub llama.cpp when frontier APIs have no credits.
+        # A configured local provider has already attempted the local runtime.
+        # Never recurse into Ollama/bootstrap logic after that failure; return
+        # control promptly so Termux remains responsive.
+        if self.primary in LOCAL_PROVIDER_IDS:
+            self.last_errors = errors
+            raise ProviderError(
+                f"Configured local provider '{self.primary}' failed.\n- "
+                + "\n- ".join(errors)
+                + "\nStart llama-server on port 8766 or verify the GGUF CLI/runtime path."
+            )
+
         joined = "\n".join(errors)
         try:
             from sophyane.local_runtime import (
@@ -131,7 +137,7 @@ class FallbackProvider(Provider):
 
             if is_credit_or_auth_failure(joined):
                 LOGGER.warning(
-                    "All configured providers failed; bootstrapping local open model"
+                    "All configured cloud providers failed; bootstrapping local open model"
                 )
                 result = ensure_local_open_model()
                 if result.ok:
@@ -153,7 +159,7 @@ class FallbackProvider(Provider):
                                 "endpoint": str(
                                     state.get("endpoint")
                                     or result.ollama_url
-                                    or "http://127.0.0.1:8765"
+                                    or "http://127.0.0.1:8766"
                                 ),
                                 "gguf_path": str(state.get("gguf_path") or ""),
                                 "cli_path": str(state.get("cli") or ""),
@@ -166,11 +172,6 @@ class FallbackProvider(Provider):
                     self._providers = [(provider_id, local)] + [
                         item for item in self._providers if item[0] != provider_id
                     ]
-                    LOGGER.info(
-                        "Serving via auto-installed local model %s/%s",
-                        provider_id,
-                        result.model,
-                    )
                     return text
                 errors.append(f"local_bootstrap: {result.message}")
         except Exception as bootstrap_error:  # noqa: BLE001
@@ -179,15 +180,13 @@ class FallbackProvider(Provider):
 
         self.last_errors = errors
         raise ProviderError(
-            "All LLM providers failed. "
-            "Top up API credits, or run `sophyane /local` to install "
-            "Ollama or a Hugging Face GGUF open model.\n- "
+            "All LLM providers failed. Top up API credits, or run "
+            "`sophyane /local` to install a local model.\n- "
             + "\n- ".join(errors)
         )
 
 
 def load_llm_config() -> dict[str, Any]:
-    """Load llm.json; seed Gemini-first defaults on first run."""
     try:
         from sophyane.config import default_llm_config, ensure_default_llm_files
 
@@ -216,8 +215,17 @@ def resolve_provider_order(
     *,
     llm_config: dict[str, Any] | None = None,
 ) -> list[str]:
-    """Build a de-duplicated provider attempt order."""
+    """Build a de-duplicated provider attempt order.
+
+    Local providers are single-provider by default. Users may opt into an
+    explicit fallback chain with ``allow_local_fallbacks: true`` in llm.json.
+    """
     cfg = llm_config if llm_config is not None else load_llm_config()
+    primary = str(primary or "").strip().lower()
+
+    if primary in LOCAL_PROVIDER_IDS and not bool(cfg.get("allow_local_fallbacks", False)):
+        return [primary]
+
     order: list[str] = []
 
     def add(name: str) -> None:
@@ -227,18 +235,10 @@ def resolve_provider_order(
 
     add(primary)
     add(str(cfg.get("active_provider", "")))
-
     for name in cfg.get("fallback_order", []) or []:
         add(str(name))
-
     for name in DEFAULT_FALLBACK_ORDER:
         add(name)
-
-    # Prefer local last when cloud is preferred, but always include locals.
-    if "ollama" not in order:
-        order.append("ollama")
-    if "local_gguf" not in order:
-        order.append("local_gguf")
     return order
 
 
@@ -246,7 +246,6 @@ def build_fallback_provider(
     loader: Any,
     config: dict[str, Any],
 ) -> FallbackProvider:
-    """Instantiate every available provider and wrap them in FallbackProvider."""
     from sophyane.plugin_loader import PluginLoader
 
     if not isinstance(loader, PluginLoader):
@@ -268,8 +267,6 @@ def build_fallback_provider(
         provider_class = discovered.get(provider_id)
         if provider_class is None:
             continue
-
-        # Skip explicitly disabled providers from llm.json.
         pcfg = providers_cfg.get(provider_id) or {}
         if isinstance(pcfg, dict) and pcfg.get("enabled") is False:
             continue
@@ -279,7 +276,6 @@ def build_fallback_provider(
         if metadata.requires_api_key:
             api_key = get_secret(provider_id, metadata.environment_variable)
             if not api_key:
-                # Secondary env aliases commonly used for Gemini.
                 if provider_id == "gemini":
                     api_key = get_secret("gemini", "GOOGLE_API_KEY")
                 if not api_key:
@@ -309,9 +305,7 @@ def build_fallback_provider(
                     create_kwargs["cli_path"] = str(state["cli"])
                 if state.get("endpoint"):
                     create_kwargs["endpoint"] = str(state["endpoint"])
-                if state.get("model") and not (
-                    provider_id == primary and default_model
-                ):
+                if state.get("model") and not (provider_id == primary and default_model):
                     create_kwargs["model"] = str(state["model"])
             except Exception as error:  # noqa: BLE001
                 LOGGER.warning("local_gguf state load failed: %s", error)
@@ -325,8 +319,7 @@ def build_fallback_provider(
 
     if not chain:
         raise ProviderError(
-            "No usable LLM providers are configured. "
-            "Run `sophyane --setup`, `sophyane /local`, or start Ollama."
+            "No usable LLM providers are configured. Run `sophyane --setup` or `sophyane /local`."
         )
 
     return FallbackProvider(chain, primary=primary or chain[0][0])
