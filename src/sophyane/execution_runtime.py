@@ -5,13 +5,13 @@ import json
 import os
 import shutil
 import subprocess
-import threading
 import time
 import webbrowser
 from pathlib import Path
 from typing import Any, Callable
 
 Progress = Callable[[str], None]
+MAX_CAPTURE = 12000
 
 
 def coding_request_needs_language(message: str) -> bool:
@@ -20,7 +20,7 @@ def coding_request_needs_language(message: str) -> bool:
         "build", "make", "create", "develop", "game", "app", "website", "api", "script", "program"
     ))
     explicit = any(word in text for word in (
-        "python", "javascript", "typescript", "html", "css", "react", "vue", "java", "kotlin", "swift", "rust", "golang", "c++", "c#", "php"
+        "python", "javascript", " js ", "typescript", " ts ", "html", "css", "react", "vue", "java", "kotlin", "swift", "rust", "golang", "c++", "cpp", "c#", "php", "bash", "shell"
     ))
     return coding and not explicit
 
@@ -48,6 +48,12 @@ def _safe_target(path: str, workspace: Path) -> Path:
     return target
 
 
+def _clip(value: str) -> str:
+    if len(value) <= MAX_CAPTURE:
+        return value
+    return value[:MAX_CAPTURE] + f"\n… output truncated ({len(value) - MAX_CAPTURE} more characters)"
+
+
 def _run_with_heartbeat(command: str, workspace: Path, progress: Progress) -> str:
     process = subprocess.Popen(
         command,
@@ -58,17 +64,20 @@ def _run_with_heartbeat(command: str, workspace: Path, progress: Progress) -> st
         stderr=subprocess.PIPE,
     )
     started = time.monotonic()
+    next_update = 0
     while process.poll() is None:
         elapsed = int(time.monotonic() - started)
-        progress(f"Running command ({elapsed}s): {command}")
-        time.sleep(5)
+        if elapsed >= next_update:
+            progress(f"Running command ({elapsed}s): {command}")
+            next_update += 5
+        time.sleep(1)
         if elapsed >= 180:
             process.kill()
             break
     stdout, stderr = process.communicate()
     return (
         f"Command: {command}\nExit code: {process.returncode}\n"
-        f"STDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+        f"STDOUT:\n{_clip(stdout)}\nSTDERR:\n{_clip(stderr)}"
     )
 
 
@@ -81,7 +90,6 @@ def _open_browser(workspace: Path, url: str, progress: Progress) -> str:
             url = "http://127.0.0.1:8000/"
 
     if url.startswith("file:") and (workspace / "index.html").exists():
-        # Browser security is more reliable through HTTP, especially on Android.
         subprocess.Popen(
             [os.environ.get("PYTHON", "python3"), "-m", "http.server", "8000", "--bind", "127.0.0.1"],
             cwd=workspace,
@@ -106,30 +114,30 @@ def _open_browser(workspace: Path, url: str, progress: Progress) -> str:
     return f"Browser open requested for {url}; accepted={opened}."
 
 
-def execute_action(action: dict[str, Any], workspace: Path, progress: Progress) -> str:
+def execute_action(action: dict[str, Any], workspace: Path, progress: Progress) -> tuple[bool, str]:
     kind = str(action.get("type") or action.get("action") or "").strip().lower()
     progress(f"Action: {kind or 'unknown'}")
     if kind in {"respond", "message"}:
-        return str(action.get("message") or action.get("content") or "")
+        return True, str(action.get("message") or action.get("content") or "")
     if kind == "write_file":
         target = _safe_target(str(action.get("path") or ""), workspace)
         target.parent.mkdir(parents=True, exist_ok=True)
         content = str(action.get("content") or "")
         target.write_text(content, encoding="utf-8")
         progress(f"Wrote {target} ({len(content)} characters)")
-        return f"Wrote {target} ({target.stat().st_size} bytes)."
+        return True, f"Wrote {target} ({target.stat().st_size} bytes)."
     if kind == "mkdir":
         target = _safe_target(str(action.get("path") or ""), workspace)
         target.mkdir(parents=True, exist_ok=True)
-        return f"Created directory {target}."
-    if kind in {"run", "shell", "run_command"}:
-        command = str(action.get("command") or "").strip()
+        return True, f"Created directory {target}."
+    if kind in {"run", "shell", "run_command", "bash"}:
+        command = str(action.get("command") or action.get("content") or "").strip()
         if not command:
-            return "No command supplied."
-        return _run_with_heartbeat(command, workspace, progress)
+            return False, "Command action did not contain a command."
+        return True, _run_with_heartbeat(command, workspace, progress)
     if kind in {"open_browser", "browser"}:
-        return _open_browser(workspace, str(action.get("url") or "").strip(), progress)
-    return f"Unsupported action type: {kind or 'missing'}"
+        return True, _open_browser(workspace, str(action.get("url") or "").strip(), progress)
+    return False, f"Unsupported or missing action type: {kind or 'missing'}"
 
 
 def selected_action(plan: dict[str, Any]) -> dict[str, Any] | None:
@@ -167,20 +175,22 @@ def run_structured_loop(
             return current if not evidence else current + "\n\nExecution evidence:\n" + "\n".join(evidence)
         action = selected_action(plan)
         if not action:
-            return "Structured plan did not contain an executable action.\n" + current
+            return "Execution stopped safely: structured plan contained no executable action."
         progress(f"Step {step}/{max_steps}: preparing {action.get('type', 'action')}")
-        result = execute_action(action, workspace, progress)
+        ok, result = execute_action(action, workspace, progress)
         evidence.append(f"Step {step}: {result}")
-        kind = str(action.get("type") or "").lower()
+        if not ok:
+            return "Execution stopped safely.\n\n" + "\n".join(evidence)
+        kind = str(action.get("type") or action.get("action") or "").lower()
         if kind in {"respond", "message", "open_browser", "browser"}:
             return (result or str(action.get("message") or "")) + "\n\nExecution evidence:\n" + "\n".join(evidence)
         followup = (
-            "Continue the same user task. Use the real execution result below. "
+            "Continue the same user task using only the isolated workspace. Use the real execution result below. "
             "Return exactly one JSON object with objective, success_criteria, deterministic_checks, candidates, "
-            "selected_index, selection_reason, and action. Choose the next smallest executable action. "
-            "Do not repeat completed actions. When all criteria are verified, use action type respond. "
-            "For browser demos, ensure an open_browser action is eventually used.\n\n"
-            f"Original request: {original_request}\n\nExecution result:\n{result}"
+            "selected_index, selection_reason, and one valid action. Valid action types are write_file, mkdir, "
+            "run_command, open_browser, and respond. Do not inspect parent directories or repeat completed actions. "
+            "When all criteria are verified, use action type respond.\n\n"
+            f"Workspace: {workspace}\nOriginal request: {original_request}\n\nExecution result:\n{result}"
         )
         progress(f"Step {step}/{max_steps}: asking model for next action")
         response = ask(followup)
