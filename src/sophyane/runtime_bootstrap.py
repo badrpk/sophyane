@@ -12,6 +12,7 @@ from sophyane.config import (
     DEFAULT_MODEL,
     get_secret,
     load_config,
+    load_secrets,
     save_config,
     save_secret,
 )
@@ -43,12 +44,7 @@ def detect_device() -> dict[str, Any]:
 
 
 def bootstrap_runtime() -> dict[str, Any]:
-    """Normalize stale configuration and persist environment credentials.
-
-    This function is deliberately dependency-free and safe to run at every CLI
-    startup. It never overwrites a valid explicit model except known stale model
-    aliases that are not available through the public Gemini API.
-    """
+    """Normalize stale configuration and persist environment credentials."""
     device = detect_device()
     config = load_config()
     changed = False
@@ -65,8 +61,6 @@ def bootstrap_runtime() -> dict[str, Any]:
 
     memory_mb = device.get("memory_mb")
     if device["termux"]:
-        # Conservative defaults prevent Android process kills and long apparent
-        # hangs, while preserving explicit smaller user settings.
         if int(config.get("timeout", 60) or 60) > 120:
             config["timeout"] = 120
             changed = True
@@ -74,18 +68,21 @@ def bootstrap_runtime() -> dict[str, Any]:
         if int(config.get("max_tokens", 4096) or 4096) > recommended_tokens:
             config["max_tokens"] = recommended_tokens
             changed = True
-        config["runtime_profile"] = "termux"
-    else:
-        config.setdefault("runtime_profile", "desktop")
+        if config.get("runtime_profile") != "termux":
+            config["runtime_profile"] = "termux"
+            changed = True
+    elif not config.get("runtime_profile"):
+        config["runtime_profile"] = "desktop"
+        changed = True
 
-    # A key exported during setup should keep working in future shells without
-    # requiring users to understand Python environments.
-    if provider == "gemini" and not get_secret("gemini", "GEMINI_API_KEY"):
+    # Persist an exported key so subsequent shells work without re-exporting it.
+    if provider == "gemini":
         env_key = (
             os.getenv("GEMINI_API_KEY", "").strip()
             or os.getenv("GOOGLE_API_KEY", "").strip()
         )
-        if env_key:
+        stored = load_secrets()
+        if env_key and not str(stored.get("gemini", "")).strip():
             save_secret("gemini", env_key)
 
     if changed:
