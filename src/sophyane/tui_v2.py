@@ -1,4 +1,4 @@
-"""Observable Sophyane terminal interface with explicit execution routing."""
+"""Observable Sophyane terminal interface with persistent project sessions."""
 from __future__ import annotations
 
 import json
@@ -34,23 +34,31 @@ def _execution_requested(message: str) -> bool:
     if any(marker in text for marker in advice):
         return False
     actions = (
-        r"\bbuild\b", r"\bmake\b", r"\bcreate\b", r"\bdevelop\b",
-        r"\bimplement\b", r"\bwrite\b", r"\bfix\b", r"\bpatch\b",
-        r"\bcompile\b", r"\brun\b", r"\btest\b", r"\bdeploy\b",
-        r"\bopen\b", r"\bshow\b.*\bdemo\b", r"\bcontinue\b",
-        r"\bconvert\b", r"\binstall\b", r"\badd\b.*\bicon\b",
-        r"\bexecute\b", r"\bstart\b.*\boption\b",
+        r"\bbuild\b", r"\bmake\b", r"\bcreate\b", r"\bdesign\b", r"\bdevelop\b",
+        r"\bimplement\b", r"\bwrite\b", r"\bfix\b", r"\brepair\b", r"\bpatch\b",
+        r"\bcompile\b", r"\brun\b", r"\btest\b", r"\bre-test\b", r"\bdeploy\b",
+        r"\bopen\b", r"\bshow\b.*\bdemo\b", r"\bcontinue\b", r"\bresume\b",
+        r"\bconvert\b", r"\binstall\b", r"\bintegrate\b", r"\boptimi[sz]e\b",
+        r"\baudit\b", r"\bprofile\b", r"\bmonitor\b", r"\bsimulate\b",
+        r"\bdemonstrate\b", r"\bexecute\b", r"\bstart building\b",
     )
     return any(re.search(pattern, text) for pattern in actions)
 
 
-def _references_previous_project(message: str) -> bool:
+def _project_continuation(message: str, has_project: bool) -> bool:
+    if not has_project:
+        return False
     text = " ".join(message.lower().split())
+    if re.match(r"^\s*(?:[-*•]|\d+[.)])\s+", message):
+        return True
     markers = (
-        "above", "previous", "same project", "this project", "this in",
-        "it in browser", "open output", "open demo", "browser demo", "run it",
-        "show it", "continue", "compile it", "test it", "fix it", "of this",
-        "create icon", "add icon", "this software", "this app", "option 1",
+        "above", "previous", "same project", "this project", "this in", "it in browser",
+        "open output", "open demo", "browser demo", "run it", "show it", "continue",
+        "resume", "compile it", "test it", "fix it", "giving error", "has error",
+        "of this", "create icon", "add icon", "this software", "this app", "option 1",
+        "must survive", "persistent sqlite", "dynamic fallback", "full integration",
+        "self-improvement loop", "security:", "provide:", "start building it",
+        "use c++", "show every action", "without downtime", "working prototype",
     )
     return any(marker in text for marker in markers)
 
@@ -69,7 +77,7 @@ def _render_nonexecuting_response(text: str) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     objective = str(plan.get("objective") or "").strip()
-    if objective.lower().startswith(("explain ", "interpret ", "explore ", "analyze ", "provide ", "respond ")):
+    if objective.lower().startswith(("explain ", "interpret ", "explore ", "analyze ", "provide ", "respond ", "read ", "implement ", "build ")):
         return "The provider returned an instruction instead of an answer. Use /inspect to view the raw reply."
     return objective or "I could not produce a direct answer. Use /inspect or switch model with /setup."
 
@@ -81,6 +89,7 @@ class ObservableTUI:
         self.handle_internal = handle_internal
         self.active_workspace: Path | None = None
         self.active_request = ""
+        self.project_requirements: list[str] = []
         self.history: list[tuple[str, str]] = []
         self.last_raw = ""
         self.last_prompt = ""
@@ -122,15 +131,18 @@ class ObservableTUI:
                 if elapsed >= timeout:
                     raise TimeoutError(f"{self.config.get('provider')} did not respond within {timeout}s.")
 
-    def _workspace_for(self, message: str) -> Path:
-        if self.active_workspace and _references_previous_project(message):
-            self.progress(f"Reusing workspace: {self.active_workspace}")
-            return self.active_workspace
+    def _new_workspace(self) -> Path:
         workspace = Path.home() / ".sophyane" / "workspaces" / f"task-{int(time.time())}"
         workspace.mkdir(parents=True, exist_ok=True)
         self.active_workspace = workspace
         self.progress(f"Workspace: {workspace}")
         return workspace
+
+    def _workspace_for(self, continuing: bool) -> Path:
+        if continuing and self.active_workspace:
+            self.progress(f"Reusing workspace: {self.active_workspace}")
+            return self.active_workspace
+        return self._new_workspace()
 
     def _context_prompt(self, message: str) -> str:
         recent = self.history[-6:]
@@ -146,12 +158,9 @@ class ObservableTUI:
             f"Provider/model: {self.config.get('provider')} / {self.config.get('model')}",
             f"Provider time: {self.last_elapsed:.2f}s",
             f"Active workspace: {self.active_workspace or 'none'}",
-            "",
-            "Prompt sent to model:",
-            self.last_prompt or "(none)",
-            "",
-            "Raw model response:",
-            self.last_raw or "(none)",
+            f"Project requirements: {len(self.project_requirements)}",
+            "", "Prompt sent to model:", self.last_prompt or "(none)",
+            "", "Raw model response:", self.last_raw or "(none)",
         ]
         if plan:
             action = selected_action(plan)
@@ -160,10 +169,10 @@ class ObservableTUI:
         if self.active_workspace and self.active_workspace.exists():
             files = [p for p in sorted(self.active_workspace.rglob("*")) if p.is_file()]
             lines.extend(["", "Workspace files:"])
-            for path in files[:20]:
+            for path in files[:30]:
                 lines.append(f"- {path.relative_to(self.active_workspace)} ({path.stat().st_size} bytes)")
-            code_files = [p for p in files if p.suffix.lower() in {".py", ".js", ".ts", ".html", ".css", ".cpp", ".c", ".h", ".rs", ".java"}]
-            for path in code_files[:3]:
+            code_files = [p for p in files if p.suffix.lower() in {".py", ".js", ".ts", ".html", ".css", ".cpp", ".c", ".h", ".rs", ".java", ".sh", ".txt"}]
+            for path in code_files[:4]:
                 try:
                     content = path.read_text(encoding="utf-8")
                 except Exception:
@@ -174,7 +183,7 @@ class ObservableTUI:
     def run(self) -> int:
         print(f"\n◆ Sophyane {__version__}")
         print(f"provider {self.config.get('provider')}  model {self.config.get('model')}")
-        print("Defaults are automatic. /inspect shows raw plan, selected action, code and timing. /trace toggles raw replies. /quit exits.\n")
+        print("Projects keep one workspace across bullet requirements. /new starts a fresh project. /inspect shows raw plan and code. /quit exits.\n")
         while True:
             try:
                 message = input("❯ ").strip()
@@ -187,6 +196,12 @@ class ObservableTUI:
             if normalized in {"exit", "quit", "/quit", "/exit", "ecit"}:
                 print("Goodbye.")
                 return 0
+            if normalized == "/new":
+                self.active_workspace = None
+                self.active_request = ""
+                self.project_requirements.clear()
+                self.emit("system", "Project session cleared. The next build request will use a new workspace.")
+                continue
             if normalized == "/inspect":
                 self.emit("inspection", self._inspect())
                 continue
@@ -208,26 +223,34 @@ class ObservableTUI:
                 self.emit("Sophyane", quick)
                 continue
 
-            executable = _execution_requested(message)
+            continuing = _project_continuation(message, bool(self.active_request and self.active_workspace))
+            executable = _execution_requested(message) or continuing
             context_message = self._context_prompt(message)
             if executable:
                 self.last_mode = "execution"
-                if _references_previous_project(message) and self.active_request:
+                if continuing:
+                    self.project_requirements.append(message)
+                    requirements = "\n".join(f"- {item}" for item in self.project_requirements[-20:])
                     request_for_model = (
-                        f"Continue the existing project. New instruction: {context_message}\n\n"
-                        f"Original request: {self.active_request}\nExisting workspace: {self.active_workspace}\n"
-                        "Return exactly one compact JSON action. Never place more than 1200 characters in file content; use append_file chunks."
+                        f"Continue the SAME existing project in the SAME workspace. New requirement/instruction: {context_message}\n\n"
+                        f"Original project request: {self.active_request}\nExisting workspace: {self.active_workspace}\n"
+                        f"Accumulated requirements:\n{requirements}\n\n"
+                        "Inspect and modify only this existing workspace. Do not start over or assume files from another workspace. "
+                        "Return exactly one compact JSON action. Use relative paths. Use append_file for genuine continuations; "
+                        "compile/test concrete files and finish with respond when the requested increment is verified."
                     )
                 else:
                     self.active_request = message
+                    self.project_requirements = [message]
                     request_for_model = (
-                        f"Execute this request: {context_message}\n\nChoose practical defaults automatically. "
-                        "Return exactly one compact JSON action. Never place more than 1200 characters in file content; use append_file chunks."
+                        f"Execute this new project request: {context_message}\n\nChoose practical defaults automatically. "
+                        "Build incrementally in one workspace. Return exactly one compact JSON action. Use relative paths, "
+                        "keep file chunks small, compile/test, and finish with respond when the current increment is verified."
                     )
             else:
                 self.last_mode = "chat"
                 request_for_model = (
-                    "Answer the current user directly, using the conversation context. Do not return a plan, objective, JSON, "
+                    "Answer the current user directly using conversation context. Do not return a plan, objective, JSON, "
                     f"tool action, or instruction to another assistant.\n\n{context_message}"
                 )
 
@@ -247,17 +270,17 @@ class ObservableTUI:
                 if extract_plan(text) or text.lstrip().startswith("{"):
                     self.progress("Structured plan received; executing")
                     try:
-                        workspace = self._workspace_for(message)
+                        workspace = self._workspace_for(continuing)
                         text = run_structured_loop(
                             initial_text=text,
                             original_request=request_for_model,
                             ask=lambda prompt: self.call_provider(prompt),
                             workspace=workspace,
-                            max_steps=12,
+                            max_steps=16,
                             progress=self.progress,
                         )
                     except Exception as error:  # noqa: BLE001
-                        text = f"Execution loop failed: {error}"
+                        text = f"Execution loop failed safely: {error}"
                 else:
                     text = "Execution did not start because the provider returned no executable action. Use /inspect to review the raw reply."
             else:
