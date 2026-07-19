@@ -1,415 +1,225 @@
-# Sophyane — Cross-Platform Local Agentic AI Harness
+# Sophyane — Local and Frontier Agentic AI Runtime
 
-**Version: 18.0.0** · Public open source — [download / contribute](COMMUNITY.md)
+**Version 18.0.0** · Open source · [Download Sophyane](DOWNLOAD.md)
 
-## Universal download
+Sophyane is one deterministic autonomous coding runtime with two operating editions:
 
-Open one link on any device: **https://github.com/badrpk/sophyane/blob/main/DOWNLOAD.md**
+| Edition | Primary machine | LLMs | Primary role |
+|---|---|---|---|
+| **Sophyane Local** | Android phone with Termux | Local GGUF through `llama-server`, or Ollama | Private, offline, low-cost local inference and phone-side development |
+| **Sophyane Frontier** | Chromebook Linux/Penguin | Gemini, OpenAI, Anthropic Claude, xAI Grok, Groq, OpenRouter, DeepSeek | Frontier-model development, repository maintenance, testing, and GitHub updates |
 
-The page detects no platform and downloads no executable automatically; it provides
-the verified installer command for Windows, macOS, Linux, ChromeOS, Android/Termux,
-UserLAnd, and the browser-based iPhone/iPad experience.
+These are not separate incompatible projects. They share the same repository, runtime, file protocol, deterministic build pipeline, and release history. The configured provider determines which edition is active.
 
-Sophyane is a lightweight, multi-provider AI harness with persistent memory, safe local tools, repository awareness, provider plugins, diagnostics, and a mobile-friendly browser interface.
+## Download
 
+Open the edition-aware download page:
 
-## Cloud portal (API keys + investor site)
+**https://github.com/badrpk/sophyane/blob/main/DOWNLOAD.md**
 
-```bash
-sophyane --cloud-serve --cloud-port 8780
-# open http://127.0.0.1:8780/  ·  get keys at /get-api.html
-# Namecheap: sophyane --namecheap-longest && sophyane --namecheap-setup-site --static-ipv4 x.x.x.x
-```
-
-See [docs/CLOUD_PORTAL.md](docs/CLOUD_PORTAL.md).
-
-
-## Sophyane Browser (download from GitHub)
-
-AI browser shell (ask + sources + agent tools) — open source and **downloadable from this repository**.
+Universal installer for Linux, macOS, ChromeOS Linux/Penguin, Android Termux, and UserLAnd:
 
 ```bash
-# Linux / macOS / ChromeOS Linux
-curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/browser/install.sh | sh
-sophyane-browser
+curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | bash
 ```
 
-- Folder: [`browser/`](browser/)
-- Releases: https://github.com/badrpk/sophyane/releases
-- New-tab mode (no Chromium required): `SOPHYANE_BROWSER_MODE=tab sophyane-browser`
-
-## Full agent capabilities (v17+)
-
-```bash
-# Always-latest public install
-curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
-
-sophyane --capabilities   # full modern-agent matrix
-sophyane --skills
-sophyane --rag-add README.md && sophyane --rag-query "agent"
-sophyane --repl 'print(2+2)'
-sophyane --mcp-list
-sophyane --schedule-list
-sophyane --budget-status
-sophyane --hitl-list
-```
-
-See [docs/AGENT_CAPABILITIES.md](docs/AGENT_CAPABILITIES.md).
-
-## Why Sophyane
-
-- **Grok-style CLI** — banner, slash commands (`/help`, `/model`, `/status`, `/doctor`, `/new`, `/quit`, …), spinner, session scrollback
-- **Automatic open-model rescue** — if frontier API keys hit quota/credit/auth failures, Sophyane profiles your hardware, installs Ollama when needed, pulls a RAM-fit open model, starts serving, and continues the session
-- Works with Google Gemini, OpenAI, Claude, Groq, xAI Grok, DeepSeek, OpenRouter, and local Ollama
-- Multi-provider fallback chain driven by `~/.config/sophyane/llm.json`
-- First-run provider wizard securely asks for the API key
-- Persistent SQLite memory
-- Safe local system and repository tools + sandboxed harness execution
-- Plugin-based provider architecture
-- CLI plus browser interface
-- Zero mandatory third-party runtime dependencies
-- Tested on Windows, macOS, and Linux through GitHub Actions
-
-## Grok-style interactive CLI
-
-```bash
-sophyane
-```
-
-```
-  ◆ Sophyane 16.1.0
-  Terminal agentic harness  ·  Grok-style CLI
-  provider openai  model gpt-5-mini  hw nano/2700MB
-  Type a message · /help for commands · /local for open models · /quit to exit
-
-❯ refactor the auth module
-```
-
-Useful slash commands:
-
-| Command | Action |
-|---------|--------|
-| `/help` | Command palette |
-| `/status` | Provider, model, fallback chain |
-| `/model [name]` | Show recommendations or switch model |
-| `/local` | Force hardware-fit open model install + serve |
-| `/doctor` | Diagnostics |
-| `/new` | Clear session scrollback |
-| `/session-info` | Hardware + session stats |
-| `/quit` | Exit |
-
-## Appliance boot (SoC / chip / gateway)
-
-Install Sophyane on Linux-capable processors and boot like an appliance:
-
-```bash
-sophyane --boot                          # ethernet + kernel + mesh + API
-sophyane --boot --wifi-ssid MYWIFI --wifi-psk 'secret'
-sophyane --install-chip && sophyane --install-appliance-unit
-sophyane --audit                         # verify every major feature
-
-# Continual federated training (C++ core, existing GGUF weights, user-device compute)
-sophyane --train-opt-in
-sophyane --train-step                    # local C++ PEFT step
-sophyane --train-round                   # step + mesh + FedAvg
-sophyane --train-status
-```
-
-See [docs/APPLIANCE_BOOT.md](docs/APPLIANCE_BOOT.md).
-
-## Sophyane Browser + daily self-improvement
-
-```bash
-sophyane-browser                 # Chromium profile + home UI
-sophyane --fetch https://...     # scrape web
-sophyane --learn https://...     # scrape → hash-chain improvement
-sophyane --improve-export        # daily epoch to improvements/
-```
-
-See [docs/BROWSER_AND_SELF_IMPROVE.md](docs/BROWSER_AND_SELF_IMPROVE.md).
-
-## Mesh (USB · WiFi · shared compute/storage)
-
-Connect devices that run Sophyane — or install a clone — then share control,
-compute, and storage:
-
-```bash
-sophyane --mesh-serve              # peer API on :8777
-sophyane --mesh-discover           # WiFi/LAN + USB/ADB
-sophyane --mesh-install HOST --yes # clone Sophyane onto peer
-sophyane --mesh-compute "hello"    # use another device's compute
-```
-
-See [docs/MESH.md](docs/MESH.md).
-
-## AI Kernel (intelligence control plane)
-
-Sophyane includes a **userspace AI Kernel** that coordinates hardware adapters,
-open-source stacks (CUDA/llama.cpp/…), app factories, and ERP connectors:
-
-```bash
-sophyane --kernel
-sophyane --create-app web --app-name "My Site"
-sophyane --create-app android --app-name "FieldApp"
-sophyane --erp oracle   # set ORACLE_ERP_BASE_URL + token
-```
-
-See [docs/AI_KERNEL.md](docs/AI_KERNEL.md).
-
-## Hardware & multi-language API
-
-Sophyane integrates with major chip ecosystems **at the host/gateway layer** and
-exposes one API for **Python, C++, and JavaScript**:
-
-```bash
-sophyane --hardware           # vendor + open-source compatibility report
-sophyane --hardware-json
-sophyane --hardware-api       # HTTP API on :8770 for C++/JS/Python clients
-```
-
-See [docs/HARDWARE_SOFTWARE_API.md](docs/HARDWARE_SOFTWARE_API.md) and `sdk/`.
-
-## Portability (PC · phone · cloud · IoT)
-
-Sophyane adapts by **equipment class** — from constrained edge gateways to full workstations:
-
-| Surface | How |
-|---------|-----|
-| Linux / macOS | `install.sh` |
-| Windows | `install.ps1` |
-| Android | Termux + `install.sh` (mobile profile) |
-| iOS | Web UI or SSH companion host |
-| Cloud VM | install + systemd daemon timer |
-| PLC / meter gateway | Linux edge host + edge profile |
-
-```bash
-sophyane --platform      # OS, RAM, equipment class, recommended profile
-sophyane --edge-health   # JSON health for edge/IoT deployments
-```
-
-See [docs/PORTABILITY.md](docs/PORTABILITY.md) for phone→PC→cloud→IoT architecture and industrial safety notes.
-
-## Competitive exams
-
-```bash
-python benchmarks/competitive_matrix.py
-python benchmarks/harness_acceptance.py
-cat docs/COMPETITIVE_EXAM.md
-```
-
-## Automatic local open models
-
-When every configured cloud provider fails with quota, billing, or auth errors, Sophyane:
-
-1. Profiles CPU / RAM / free disk (tiers: `nano`, `micro`, `small`, `standard`)
-2. **Tries Ollama** — install into `~/.local/bin`, `ollama serve`, pull a tier-fit model
-3. **If Ollama fails** (download too large, no space, binary broken) → **Hugging Face GGUF**
-   - Picks a hardware-fit GGUF (e.g. Qwen2.5-0.5B / TinyLlama / SmolLM2 on thin Chromebooks)
-   - Downloads from Hugging Face (`huggingface.co/.../resolve/main/*.gguf`)
-   - Optional GitHub release mirrors when configured
-4. Installs **llama.cpp** `llama-server` + `llama-cli` from GitHub releases (`ggml-org/llama.cpp`)
-5. Starts a local OpenAI-compatible server on `127.0.0.1:8765`
-6. Switches config to `provider=local_gguf` (or `ollama`) and retries the request
-
-Force it any time:
-
-```bash
-sophyane /local
-# or inside the TUI:
-/local
-```
-
-## Fastest installation
-
-### Linux, macOS, ChromeOS Linux, UserLAnd, and Termux
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
-```
-
-Then open a new terminal and run:
-
-```bash
-sophyane
-```
-
-Termux users may first install curl:
-
-```bash
-pkg update && pkg install curl
-```
-
-### Windows PowerShell
-
-Open PowerShell and run:
+Windows PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/badrpk/sophyane/main/install.ps1 | iex
 ```
 
-Then open a new terminal:
+## Sophyane Local
 
-```powershell
-sophyane
-```
-
-### Manual installation
+Sophyane Local runs inference on the device. It is the recommended edition for the Android phone and Termux environment.
 
 ```bash
-git clone https://github.com/badrpk/sophyane.git
-cd sophyane
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install .
+pkg update && pkg install curl
+curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | bash
+sophyane /local
+```
+
+Inside the interactive CLI:
+
+```text
+/local
+```
+
+Typical local providers:
+
+```text
+local_gguf
+ollama
+```
+
+The local GGUF path prefers an OpenAI-compatible `llama-server` endpoint and can use `llama-cli` as a bounded fallback where the platform supports it. On constrained devices, Sophyane keeps prompts and output bounded and displays progress heartbeats during long provider requests.
+
+### Phone-managed updates
+
+The Android phone is the primary maintenance environment for Sophyane Local behavior, Termux compatibility, GGUF model serving, and constrained-device performance.
+
+```bash
+cd "$HOME/sophyane"
+git pull --ff-only
+python -m pip install --upgrade .
+sophyane --doctor
+```
+
+## Sophyane Frontier
+
+Sophyane Frontier uses hosted frontier LLMs for stronger reasoning, larger coding tasks, repository work, and cloud-backed inference.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | bash
+sophyane --setup
+```
+
+Supported frontier providers include:
+
+```text
+Google Gemini
+OpenAI
+Anthropic Claude
+xAI Grok
+Groq
+OpenRouter
+DeepSeek
+```
+
+Example:
+
+```bash
+export GEMINI_API_KEY="your_key"
 sophyane
 ```
 
-Windows activation:
+### Chromebook/Penguin-managed updates
 
-```powershell
-.venv\Scripts\Activate.ps1
-python -m pip install .
+The Chromebook Linux/Penguin checkout is the primary maintenance environment for Sophyane Frontier, frontier-provider integrations, automated tests, documentation, and GitHub updates.
+
+```bash
+cd "$HOME/sophyane"
+git pull --ff-only
+python -m pip install --upgrade .
+python -m pytest
+sophyane --doctor
+```
+
+## Deterministic autonomous coding architecture
+
+The LLM does not own the shell, compiler, package manager, or build system. It generates project files; the Sophyane runtime performs deterministic execution and verification.
+
+```text
+LLM
+ ↓
+emit project files
+ ↓
+runtime extracts files
+ ↓
+write workspace
+ ↓
+detect language and build system
+ ↓
+runtime installs or selects toolchain
+ ↓
+runtime builds and tests
+ ↓
+runtime collects diagnostics
+ ↓
+LLM repairs files
+```
+
+The runtime owns command construction and execution for tools such as CMake, Ninja, Cargo, GCC/Clang, npm, and pip.
+
+## Key capabilities
+
+- Deterministic file extraction from Markdown and JSON-like model responses
+- Automatic language and build-system detection
+- Runtime-owned builds and verification
+- Diagnostic-driven repair loops
+- Workspace completeness checks before invoking build tools
+- Local GGUF and Ollama support
+- Frontier-provider fallback chains
+- Persistent local memory
+- Repository-aware file tools
+- CLI and browser interfaces
+- Mobile, Chromebook, desktop, cloud, and edge deployment profiles
+
+## First run and provider selection
+
+Run the setup wizard:
+
+```bash
+sophyane --setup
+```
+
+Inspect the active edition and provider:
+
+```bash
+sophyane --status
+sophyane --providers
+sophyane --doctor
+```
+
+Typical identity:
+
+```text
+Sophyane Local:    provider local_gguf or ollama
+Sophyane Frontier: provider gemini, openai, anthropic, xai, groq, openrouter, or deepseek
+```
+
+Provider configuration is stored under the user's private Sophyane configuration directory. API keys are not committed to this repository.
+
+## Interactive CLI
+
+```bash
 sophyane
 ```
 
-Do not install into Debian's system Python. Sophyane's installer automatically creates an isolated virtual environment and avoids PEP 668 errors.
+Useful commands:
 
-## Browser and mobile interface
+| Command | Action |
+|---|---|
+| `/help` | Show the command palette |
+| `/status` | Show provider, model, and fallback state |
+| `/model [name]` | Inspect or switch models |
+| `/local` | Install or activate a hardware-fit local model |
+| `/doctor` | Run diagnostics |
+| `/repo` | Inspect repository context |
+| `/files` | List relevant files |
+| `/new` | Start a clean session |
+| `/quit` | Exit |
 
-Start the private local browser interface:
+## Browser interface
+
+Start the local browser interface:
 
 ```bash
 sophyane-web
 ```
 
-It opens at:
+Default address:
 
 ```text
 http://127.0.0.1:8765
 ```
 
-To access it from an Android phone, iPhone, iPad, or another computer on the same trusted network:
+For access from another trusted device on the same network:
 
 ```bash
 sophyane-web --host 0.0.0.0
 ```
 
-Then open the host computer's LAN address, for example:
+Do not expose the built-in web server directly to the public internet without an authenticated reverse proxy or trusted VPN.
 
-```text
-http://192.168.1.25:8765
-```
+## Platform roles
 
-Do not expose the built-in web server directly to the public internet. Use a trusted VPN or an authenticated reverse proxy for remote access.
-
-### Platform notes
-
-| Platform | Local CLI | Browser UI |
-|---|---:|---:|
-| Windows 10/11 | Yes | Yes |
-| macOS | Yes | Yes |
-| Linux | Yes | Yes |
-| ChromeOS Linux/Penguin | Yes | Yes |
-| Android Termux | Yes | Yes |
-| Android UserLAnd | Yes | Yes |
-| iPhone/iPad | Not natively | Yes, through Safari connected to a Sophyane host |
-
-Apple does not allow a normal always-on Python CLI installation on stock iOS. The supported iPhone/iPad experience is the responsive browser interface served by Windows, macOS, Linux, Android Termux, a VPS, or a home server.
-
-## First run
-
-**Default LLM is Google Gemini** (`gemini-2.5-flash`). After install or a fresh clone, Sophyane writes Gemini-first defaults under `~/.config/sophyane/` (no API keys are stored in this repository).
-
-Set your key (required for cloud replies):
-
-```bash
-export GEMINI_API_KEY="your_key_from_https://aistudio.google.com/apikey"
-# or
-export GOOGLE_API_KEY="your_key"
-# or
-sophyane --setup
-```
-
-Keys are stored only in the private user config directory (`~/.config/sophyane/secrets.json`), never in git.
-
-You can still switch providers. Fallback order when the active provider fails:
-
-```text
-gemini → xai → openai → anthropic → groq → openrouter → deepseek → ollama → local_gguf
-```
-
-Optional first-run menu (still available via `sophyane --setup`):
-
-```text
-1. Anthropic Claude
-2. DeepSeek
-3. Google Gemini   ← default
-4. Groq
-5. Ollama (local)
-6. OpenAI
-7. OpenRouter
-8. xAI Grok
-```
-
-## Common commands
-
-```bash
-sophyane --version
-sophyane --providers
-sophyane --status
-sophyane --setup
-sophyane --doctor
-sophyane-web
-```
-
-Interactive commands:
-
-```text
-tools
-status
-memory
-/remember My main project is SHMRY.
-/system
-/repo
-/files
-/read path/to/file
-/shell uname -a
-/doctor
-/exit
-```
-
-## Examples
-
-```bash
-sophyane "What is my main project?"
-sophyane "Check my system configuration"
-sophyane "Analyze the src/ directory and map internal imports"
-sophyane "/remember My preferred language is Python."
-```
-
-## Updating
-
-Installer-based installations can be updated by running the same installer again.
-
-Linux/macOS/Termux/UserLAnd:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
-```
-
-Windows:
-
-```powershell
-irm https://raw.githubusercontent.com/badrpk/sophyane/main/install.ps1 | iex
-```
-
-Repository installations:
-
-```bash
-git pull --ff-only
-python -m pip install --upgrade .
-```
+| Platform | Recommended edition | Notes |
+|---|---|---|
+| Android Termux phone | Sophyane Local | Primary local-model and constrained-device maintenance environment |
+| Chromebook Linux/Penguin | Sophyane Frontier | Primary frontier-provider, testing, documentation, and GitHub environment |
+| Linux/macOS/Windows | Either | Choose local or hosted providers based on hardware and privacy requirements |
+| iPhone/iPad | Browser client | Connect Safari to a Sophyane host |
 
 ## Development
 
@@ -423,32 +233,40 @@ python -m pytest
 sophyane --doctor
 ```
 
-Every push and pull request is tested across Windows, macOS, and Linux with Python 3.10 through 3.13.
+## Updating
+
+Installer-based installation:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | bash
+```
+
+Repository checkout:
+
+```bash
+git pull --ff-only
+python -m pip install --upgrade .
+```
 
 ## Privacy and safety
 
-- API keys are never committed to Git
-- Memory is stored locally in SQLite
+- API keys are stored outside the repository
+- Local-model inference can remain entirely on-device
+- User memory is stored locally
 - Destructive shell commands are blocked
-- Approved shell commands require confirmation
-- The web interface binds to localhost by default
-- Sophyane logs failures for diagnostics
+- The runtime, not the LLM, owns command execution
+- The browser interface binds to localhost by default
+- Provider and build failures are retained as diagnostics
 
-## Community
+## Documentation
 
-Contributions are welcome:
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests
-4. Submit a pull request
-
-Please use GitHub Issues for bug reports, platform compatibility problems, feature requests, and provider requests.
+- [Download and edition selection](DOWNLOAD.md)
+- [Agent capabilities](docs/AGENT_CAPABILITIES.md)
+- [Portability](docs/PORTABILITY.md)
+- [Hardware and software API](docs/HARDWARE_SOFTWARE_API.md)
+- [Browser and self-improvement](docs/BROWSER_AND_SELF_IMPROVE.md)
+- [Community and contribution guide](COMMUNITY.md)
 
 ## License
 
-MIT License. See `LICENSE`.
-
-## Full portfolio
-
-See [PORTFOLIO_INDEX.md](PORTFOLIO_INDEX.md) for all public badrpk products.
+MIT License. See [LICENSE](LICENSE).
