@@ -28,6 +28,8 @@ def _simple_chat_reply(message: str) -> str | None:
         return "Hello! What would you like me to build, fix, research, or explain?"
     if text in {"thanks", "thank you", "thx"}:
         return "You’re welcome."
+    if text in {"sophyane --version", "sophyane -v", "--version", "version"}:
+        return f"Sophyane {__version__}"
     return None
 
 
@@ -41,6 +43,12 @@ def _execution_requested(message: str) -> bool:
     )
     if any(marker in text for marker in advice):
         return False
+    # Imperative build/edit verbs are execution even when preceded by a benchmark number.
+    if re.match(
+        r"^\s*(?:\d+[.)]\s+)?(?:build|make|create|design|develop|implement|write|fix|repair|patch|compile|run|test|deploy|open|continue|resume|convert|install|integrate|optimi[sz]e|audit|profile|monitor|simulate|demonstrate|execute|add|remove|change|update|improve|style|reopen|replace|modify)\b",
+        text,
+    ):
+        return True
     actions = (
         r"\bbuild\b", r"\bmake\b", r"\bcreate\b", r"\bdesign\b", r"\bdevelop\b",
         r"\bimplement\b", r"\bwrite\b", r"\bfix\b", r"\brepair\b", r"\bpatch\b",
@@ -165,7 +173,6 @@ class ObservableTUI:
         return self._new_workspace()
 
     def _context_prompt(self, message: str, *, continuing: bool) -> str:
-        # A 1024-token local model cannot afford full transcript replay.
         if self.small_local:
             if continuing and self.active_request:
                 return f"Project: {self.active_request[:180]}\nChange: {message[:320]}"
@@ -294,7 +301,6 @@ class ObservableTUI:
             else:
                 text = _render_nonexecuting_response(text)
 
-            # Keep only tiny summaries for future chat; execution context comes from workspace.
             self.history.extend([("user", message[:300]), ("assistant", text[:500])])
             self.history = self.history[-4:]
             self.emit("Sophyane", text)
