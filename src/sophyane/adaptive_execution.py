@@ -1,12 +1,13 @@
 """Provider-driven adaptive execution for the observable Sophyane TUI.
 
 No application templates live here. Any configured local or frontier provider supplies
-code as generic file bundles or actions; this layer safely writes, runs, verifies and
-repairs those artifacts inside an isolated workspace.
+code as generic file bundles, raw artifacts, or actions; this layer safely writes, runs,
+verifies and repairs those artifacts inside an isolated workspace.
 """
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import shutil
 from pathlib import Path
@@ -55,6 +56,8 @@ def _command_problem(action: dict[str, Any], workspace: Path) -> str:
     first = tokens[0]
     if first.lower() in {"build", "create", "develop", "design", "implement", "write", "fix", "repair", "generate"}:
         return "natural-language build instruction was returned as a shell command"
+    if first == "cd":
+        return "changing directories is unnecessary; commands already run inside the isolated workspace"
     if first == "make" and not any((workspace / name).is_file() for name in ("Makefile", "makefile", "GNUmakefile")):
         return "make was requested before a Makefile exists; generate project files first"
     executable = Path(first)
@@ -91,14 +94,67 @@ def _files(workspace: Path) -> list[str]:
     return [str(path.relative_to(workspace)) for path in sorted(workspace.rglob("*")) if path.is_file()]
 
 
+def _browser_request(request: str) -> bool:
+    lowered = request.lower()
+    return any(marker in lowered for marker in ("browser", "website", "web app", "web game", "html", "show demo"))
+
+
+def _extract_html(text: str) -> str | None:
+    value = text.strip()
+    fenced = re.search(r"```(?:html)?\s*(<!doctype html[\s\S]*?</html>)\s*```", value, re.I)
+    if fenced:
+        value = fenced.group(1).strip()
+    else:
+        start = value.lower().find("<!doctype html")
+        if start < 0:
+            start = value.lower().find("<html")
+        end = value.lower().rfind("</html>")
+        if start >= 0 and end > start:
+            value = value[start : end + len("</html>")].strip()
+    lowered = value.lower()
+    if len(value) >= 300 and ("<!doctype html" in lowered or "<html" in lowered) and "</html>" in lowered:
+        return value
+    return None
+
+
+def _raw_browser_prompt(original_request: str) -> str:
+    return (
+        "Create the complete requested browser application. Return ONLY the full contents of one self-contained index.html file. "
+        "Do not return JSON, markdown fences, explanations, shell commands, cd, make, or installation instructions. Include all "
+        "HTML, CSS, and JavaScript inline. The result must be immediately usable in a modern mobile browser and include sensible "
+        "touch controls when interaction is required. Implement the user's request completely.\n\n"
+        f"USER REQUEST:\n{original_request}"
+    )
+
+
+def _browser_artifact_problem(workspace: Path, original_request: str) -> str:
+    target = workspace / "index.html"
+    if not target.is_file():
+        return "index.html does not exist"
+    try:
+        content = target.read_text(encoding="utf-8")
+    except Exception as error:
+        return f"index.html cannot be read: {error}"
+    lowered = content.lower()
+    if len(content) < 300:
+        return "index.html is too small to be a complete application"
+    if "<html" not in lowered or "</html>" not in lowered:
+        return "index.html is not a complete HTML document"
+    if "game" in original_request.lower() and "<script" not in lowered:
+        return "game request has no JavaScript implementation"
+    return ""
+
+
 def _completion_problem(original_request: str, workspace: Path, evidence: list[str]) -> str:
     files = _files(workspace)
     meaningful = [name for name in files if Path(name).name.lower() not in {"makefile", "readme.md", "readme.txt"}]
     request = original_request.lower()
     if not meaningful:
         return "no meaningful software artifact exists; a Makefile or README alone is not the requested deliverable"
-    if any(word in request for word in ("browser", "website", "web app", "web game", "html")) and "index.html" not in files:
-        return "browser deliverable is missing index.html"
+    if _browser_request(original_request):
+        browser_problem = _browser_artifact_problem(workspace, original_request)
+        if browser_problem:
+            return browser_problem
     if "game" in request and not any(Path(name).suffix.lower() in {".html", ".js", ".py", ".cpp", ".c", ".java", ".rs"} for name in meaningful):
         return "game source or browser artifact is missing"
     verified = any("Exit code: 0" in item or "Browser command:" in item or "Browser open requested" in item for item in evidence)
@@ -113,8 +169,8 @@ def _generation_prompt(workspace: Path, original_request: str, broken: str, evid
         "the user's words. Return exactly one compact JSON object and no markdown. Prefer: "
         '{"objective":"...","success_criteria":["..."],"files":[{"path":"relative/path","content":"complete code"}]}. '
         "You may instead return one action using write_file, append_file, mkdir, run_command, open_browser, or respond. "
-        "Generate meaningful source/application files before build metadata or commands. A Makefile or README alone never "
-        "satisfies an application request. Never claim completion without a successful real test/run/browser result. "
+        "Generate meaningful source/application files before build metadata or commands. Never use cd. A Makefile or README alone "
+        "never satisfies an application request. Never claim completion without a successful real test/run/browser result. "
         "All paths must be relative. Never return natural-language commands such as 'make snake game'.\n\n"
         f"Workspace: {workspace}\nExisting files: {_files(workspace) or ['(empty)']}\n"
         f"User request:\n{original_request}\n\nPrevious invalid response/action:\n{broken[:1800]}\n\n"
@@ -125,10 +181,10 @@ def _generation_prompt(workspace: Path, original_request: str, broken: str, evid
 def _followup_prompt(workspace: Path, original_request: str, result: str, evidence: list[str]) -> str:
     return (
         "Continue implementing and mechanically verifying the same software request. Return exactly one JSON object with "
-        "either a files array or one action. Generate/edit meaningful source files before commands. Use run_command only "
-        "for a real compiler, interpreter, test, health check, or project command. Use open_browser only after index.html exists. "
-        "Do not use respond until the requested deliverable exists and verification succeeded. A Makefile or README alone is "
-        "not completion. Never copy the user's natural-language request into a command.\n\n"
+        "either a files array or one action. Generate/edit meaningful source files before commands. Never use cd. Use run_command "
+        "only for a real compiler, interpreter, test, health check, or project command. Use open_browser only after index.html exists. "
+        "Do not use respond until the requested deliverable exists and verification succeeded. A Makefile or README alone is not "
+        "completion. Never copy the user's natural-language request into a command.\n\n"
         f"Workspace: {workspace}\nFiles: {_files(workspace)}\nOriginal request:\n{original_request}\n\n"
         f"Latest result:\n{result}\n\nEvidence:\n{chr(10).join(evidence[-10:])}"
     )
@@ -143,10 +199,23 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     current = initial_text
     evidence: list[str] = []
     repairs = 0
+    raw_browser_attempted = False
 
     for step in range(1, max_steps + 1):
         plan = runtime.extract_plan(current)
         action = _selected_action(runtime, plan) if plan else None
+
+        if not action and _browser_request(original_request) and not (workspace / "index.html").exists() and not raw_browser_attempted:
+            raw_browser_attempted = True
+            progress("Requesting raw provider-generated browser artifact")
+            response = ask(_raw_browser_prompt(original_request))
+            raw = getattr(response, "text", str(response))
+            html = _extract_html(raw)
+            if html:
+                current = json.dumps({"files": [{"path": "index.html", "content": html}]}, ensure_ascii=False)
+                continue
+            current = raw
+
         if not action:
             if repairs >= 4:
                 return "Execution stopped safely: provider repeatedly returned no executable files or action.\n\n" + "\n".join(evidence)
@@ -170,6 +239,14 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
         ok, result = _execute(runtime, action, workspace, progress)
         evidence.append(f"Step {step}: {result}")
         if not ok:
+            if _browser_request(original_request) and not (workspace / "index.html").exists() and not raw_browser_attempted:
+                raw_browser_attempted = True
+                progress("Structured action failed; requesting raw provider-generated browser artifact")
+                response = ask(_raw_browser_prompt(original_request))
+                raw = getattr(response, "text", str(response))
+                html = _extract_html(raw)
+                current = json.dumps({"files": [{"path": "index.html", "content": html}]}, ensure_ascii=False) if html else raw
+                continue
             if repairs >= 4:
                 return "Execution stopped safely after bounded repair attempts.\n\n" + "\n".join(evidence)
             repairs += 1
@@ -177,6 +254,17 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             response = ask(_generation_prompt(workspace, original_request, json.dumps(plan)[:1800] if plan else current, evidence))
             current = getattr(response, "text", str(response))
             continue
+
+        if _browser_request(original_request) and (workspace / "index.html").is_file():
+            problem = _browser_artifact_problem(workspace, original_request)
+            if not problem:
+                progress("Browser artifact passed structural verification; opening demo")
+                opened, browser_result = _execute(runtime, {"type": "open_browser"}, workspace, progress)
+                evidence.append(f"Browser verification: {browser_result}")
+                if opened:
+                    return "Browser application generated, structurally verified, and opened.\n\nExecution evidence:\n" + "\n".join(evidence)
+            else:
+                evidence.append(f"Browser structural verification failed: {problem}")
 
         if kind in {"respond", "message", "open_browser", "browser"}:
             return (result or "Completed.") + "\n\nExecution evidence:\n" + "\n".join(evidence)
