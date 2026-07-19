@@ -9,8 +9,23 @@ from typing import Any
 def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     """Launch the observable TUI with provider-driven adaptive execution."""
     from sophyane.adaptive_execution import install, run_adaptive_loop
+    from sophyane import execution_runtime
+    from sophyane.browser_runtime_v2 import open_verified_browser
 
     install()
+
+    # Force every browser action through the new uniquely named verified launcher.
+    # This bypasses any stale bytecode from earlier port-8000 implementations.
+    original_execute_action = execution_runtime.execute_action
+
+    def execute_action_with_verified_browser(action: dict[str, Any], workspace: Any, progress: Any):
+        kind = str(action.get("type") or action.get("action") or "").strip().lower()
+        if kind in {"open_browser", "browser"}:
+            return open_verified_browser(workspace, progress)
+        return original_execute_action(action, workspace, progress)
+
+    execution_runtime.execute_action = execute_action_with_verified_browser
+
     from sophyane import tui_v2
 
     # Bind explicitly because tui_v2 imports this function by value.
