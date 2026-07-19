@@ -30,6 +30,7 @@ def _user_start_tips() -> str:
 def main() -> int:
     from sophyane.runtime_browser_patch import install_browser_patch
     from sophyane.runtime_interactive_patch import install_runtime_patch
+    from sophyane.runtime_interrupt_patch import install_interrupt_patch
     from sophyane.runtime_orchestration_patch import install_orchestration_patch
     from sophyane.runtime_safety import install_runtime_safety
     from sophyane.runtime_stagnation_patch import install_stagnation_patch
@@ -39,11 +40,16 @@ def main() -> int:
     install_browser_patch()
     install_orchestration_patch()
     install_stagnation_patch()
+    install_interrupt_patch()
     print(_runtime_identity(), file=sys.stderr, flush=True)
     if len(sys.argv) <= 1:
         print(_user_start_tips(), file=sys.stderr, flush=True)
     from sophyane.v13_cli import main as run_cli
-    return run_cli()
+    try:
+        return run_cli()
+    finally:
+        from sophyane.runtime_cancel import cancel_all
+        cancel_all()
 
 
 if __name__ == "__main__":
