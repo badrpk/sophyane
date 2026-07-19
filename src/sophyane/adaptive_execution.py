@@ -1,7 +1,7 @@
 """Provider-driven adaptive execution for Sophyane.
 
-Application code always comes from the configured local/frontier provider. This module
-only adapts model output into safe workspace artifacts, execution and verification.
+Application code always comes from the configured provider. This module only adapts
+model output into safe workspace artifacts, execution and mechanical verification.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ def _files(workspace: Path) -> list[str]:
 
 def _browser_request(request: str) -> bool:
     text = request.lower()
-    return any(word in text for word in ("browser", "website", "web app", "html", "game"))
+    return any(word in text for word in ("browser", "website", "web app", "html", "game", "design", "touch controls"))
 
 
 def _extract_html(text: str) -> str | None:
@@ -28,10 +28,11 @@ def _extract_html(text: str) -> str | None:
     if fenced:
         value = fenced.group(1).strip()
     else:
-        start = value.lower().find("<!doctype html")
+        lower = value.lower()
+        start = lower.find("<!doctype html")
         if start < 0:
-            start = value.lower().find("<html")
-        end = value.lower().rfind("</html>")
+            start = lower.find("<html")
+        end = lower.rfind("</html>")
         if start >= 0 and end > start:
             value = value[start : end + len("</html>")]
     lower = value.lower()
@@ -40,40 +41,65 @@ def _extract_html(text: str) -> str | None:
     return None
 
 
-def _raw_html_prompt(original_request: str) -> str:
-    # Deliberately tiny for 1B–2B local models and 1024-token contexts.
+def _raw_html_prompt(original_request: str, existing: str = "") -> str:
+    # Tiny contract for 1B–2B models and 1024-token contexts.
+    if existing:
+        return (
+            "Rewrite this existing browser project as ONE complete self-contained index.html. "
+            "Apply the requested change, preserve working features, include CSS and JavaScript inline, and output raw HTML only. "
+            "No JSON, markdown, explanation, shell commands, cd, or make.\n"
+            f"CHANGE: {original_request[-240:]}\nEXISTING HTML:\n{existing[:1800]}"
+        )
     return (
         "Create the requested browser project as ONE complete self-contained index.html. "
-        "Include all CSS and JavaScript inside the file. Make it functional and mobile-friendly. "
-        "Output raw HTML only, starting with <!doctype html> and ending with </html>. "
-        "No JSON, markdown, explanation, shell commands, cd, make, or filenames.\n\n"
-        f"REQUEST: {original_request[-500:]}"
+        "Include CSS and JavaScript inline. Make it functional and mobile-friendly. "
+        "Output raw HTML only from <!doctype html> through </html>. No JSON, markdown, explanation, shell, cd, or make.\n"
+        f"REQUEST: {original_request[-400:]}"
     )
+
+
+def _validate_html(html: str, request: str) -> str:
+    lower = html.lower()
+    if len(html.encode("utf-8")) < 300:
+        return "HTML is too small to be a meaningful application"
+    if "<body" not in lower or "</html>" not in lower:
+        return "HTML structure is incomplete"
+    if "game" in request.lower() and "<script" not in lower:
+        return "game artifact contains no JavaScript"
+    return ""
 
 
 def _one_shot_browser_artifact(*, ask: Callable[[str], Any], original_request: str,
                                workspace: Path, progress: Callable[[str], None]) -> str | None:
-    progress("Requesting one-shot provider-generated HTML artifact")
-    response = ask(_raw_html_prompt(original_request))
+    target = workspace / "index.html"
+    existing = ""
+    if target.exists():
+        try:
+            existing = target.read_text(encoding="utf-8")
+        except Exception:
+            existing = ""
+    progress("Requesting one-shot provider-generated HTML edit" if existing else "Requesting one-shot provider-generated HTML artifact")
+    response = ask(_raw_html_prompt(original_request, existing))
     raw = getattr(response, "text", str(response))
     html = _extract_html(raw)
     if html is None:
         return None
-    lower = html.lower()
-    if "game" in original_request.lower() and "<script" not in lower:
+    problem = _validate_html(html, original_request)
+    if problem:
+        progress(f"Provider HTML rejected: {problem}")
         return None
-    target = workspace / "index.html"
-    target.write_text(html, encoding="utf-8")
+    # Atomic replacement prevents stacked duplicate HTML documents.
+    temporary = target.with_suffix(".html.tmp")
+    temporary.write_text(html, encoding="utf-8")
+    temporary.replace(target)
     progress(f"Wrote {target} ({target.stat().st_size} bytes)")
-    if target.stat().st_size < 300 or "<body" not in lower:
-        return None
     from sophyane import execution_runtime as runtime
     progress("Browser artifact passed structural verification; opening demo")
     ok, result = runtime.execute_action({"type": "open_browser"}, workspace, progress)
     if not ok:
         return None
     return (
-        "Created and opened the provider-generated browser project.\n\n"
+        "Updated and opened the provider-generated browser project.\n\n"
         f"Workspace: {workspace}\nFile: index.html\n\nExecution evidence:\n"
         f"- index.html exists ({target.stat().st_size} bytes)\n- HTML structure verified\n- {result}"
     )
@@ -83,12 +109,12 @@ def _file_bundle_action(plan: dict[str, Any]) -> dict[str, Any] | None:
     files = plan.get("files")
     if not isinstance(files, list) or not files:
         return None
-    actions = []
+    actions: list[dict[str, Any]] = []
     for item in files:
         if isinstance(item, dict):
             path = str(item.get("path") or item.get("file") or "").strip()
             content = item.get("content")
-            if path and isinstance(content, str):
+            if path and isinstance(content, str) and content:
                 actions.append({"type": "write_file", "path": path, "content": content})
     return {"type": "batch", "actions": actions} if actions else None
 
@@ -131,11 +157,12 @@ def _command_problem(action: dict[str, Any], workspace: Path) -> str:
 
 def _execute(runtime: Any, action: dict[str, Any], workspace: Path,
              progress: Callable[[str], None]) -> tuple[bool, str]:
-    if str(action.get("type") or "").lower() == "batch":
+    kind = str(action.get("type") or "").lower()
+    if kind == "batch":
         children = action.get("actions")
         if not isinstance(children, list) or not children:
             return False, "Batch action contained no actions."
-        results = []
+        results: list[str] = []
         for i, child in enumerate(children, 1):
             if not isinstance(child, dict):
                 return False, f"Batch item {i} is invalid."
@@ -145,6 +172,20 @@ def _execute(runtime: Any, action: dict[str, Any], workspace: Path,
             if not ok:
                 return False, "\n".join(results)
         return True, "\n".join(results)
+
+    if kind in {"write_file", "append_file"}:
+        path = str(action.get("path") or action.get("file") or "").strip()
+        content = str(action.get("content") or action.get("text") or "")
+        if not path:
+            return False, "File action rejected: missing path."
+        if not content:
+            return False, "File action rejected: empty content."
+        # A complete HTML document must replace, never append to, another document.
+        if kind == "append_file" and Path(path).suffix.lower() == ".html" and re.search(r"<!doctype\s+html|<html", content, re.I):
+            action = dict(action)
+            action["type"] = "write_file"
+            progress(f"Converted complete HTML append to atomic replacement for {path}")
+
     problem = _command_problem(action, workspace)
     if problem:
         return False, f"Rejected unsafe/invalid command action: {problem}."
@@ -155,8 +196,8 @@ def _compact_repair_prompt(request: str, files: list[str], result: str) -> str:
     return (
         "Return one compact JSON object only. Generate real source files before commands. "
         "Use {\"files\":[{\"path\":\"relative\",\"content\":\"complete code\"}]} or one action. "
-        "Never use cd or repeat the user's words as a command.\n"
-        f"Request: {request[-500:]}\nFiles: {files[-20:]}\nLast result: {result[-700:]}"
+        "Never use cd or repeat user words as a command. Never append a complete file; write_file replaces it.\n"
+        f"Request: {request[-320:]}\nFiles: {files[-12:]}\nLast result: {result[-450:]}"
     )
 
 
@@ -168,9 +209,9 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     workspace.mkdir(parents=True, exist_ok=True)
     progress = progress or (lambda _message: None)
 
-    # Small local models perform far better with one raw-artifact request than several
-    # nested JSON planning/repair calls. Games default to a portable browser artifact.
-    if _browser_request(original_request) and not (workspace / "index.html").exists():
+    # Browser requests and edits use one compact full-artifact call. This avoids long JSON
+    # negotiation and prevents malformed incremental appends on small local models.
+    if _browser_request(original_request):
         try:
             completed = _one_shot_browser_artifact(
                 ask=ask, original_request=original_request, workspace=workspace, progress=progress
