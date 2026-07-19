@@ -1,5 +1,4 @@
 """Local GGUF provider via llama-server (OpenAI-compatible) or llama-cli."""
-
 from __future__ import annotations
 
 import json
@@ -10,6 +9,7 @@ from pathlib import Path
 
 from sophyane.providers.base import Provider, ProviderError, ProviderMetadata
 from sophyane.providers.http import post_json
+from sophyane.runtime_cancel import cancelled, register, unregister
 
 DEFAULT_ENDPOINT = os.environ.get("SOPHYANE_LLAMA_SERVER", "http://127.0.0.1:8766").rstrip("/")
 
@@ -25,28 +25,24 @@ class LocalGgufProvider(Provider):
         requires_api_key=False,
     )
 
-    def __init__(
-        self,
-        api_key: str = "",
-        model: str = "local-gguf",
-        timeout: int = 300,
-        temperature: float = 0.3,
-        max_tokens: int = 1024,
-        endpoint: str = "",
-        gguf_path: str = "",
-        cli_path: str = "",
-    ) -> None:
+    def __init__(self, api_key: str = "", model: str = "local-gguf", timeout: int = 300,
+                 temperature: float = 0.3, max_tokens: int = 1024, endpoint: str = "",
+                 gguf_path: str = "", cli_path: str = "") -> None:
         super().__init__(api_key, model, timeout, temperature, max_tokens)
         self.endpoint = (endpoint or DEFAULT_ENDPOINT).rstrip("/")
         self.gguf_path = gguf_path or os.environ.get("SOPHYANE_GGUF_PATH", "")
         self.cli_path = cli_path or os.environ.get("SOPHYANE_LLAMA_CLI", "")
 
     def generate(self, prompt: str, system_prompt: str) -> str:
+        if cancelled():
+            raise ProviderError("local generation cancelled")
         system_prompt = (system_prompt or "")[:800]
         prompt = (prompt or "")[:4000]
         try:
             return self._generate_via_server(prompt, system_prompt)
         except Exception as server_error:  # noqa: BLE001
+            if cancelled():
+                raise ProviderError("local generation cancelled") from server_error
             combined_len = len(prompt) + len(system_prompt)
             if self.cli_path and self.gguf_path and combined_len <= 5000:
                 try:
@@ -63,18 +59,11 @@ class LocalGgufProvider(Provider):
     def _generate_via_server(self, prompt: str, system_prompt: str) -> str:
         response = post_json(
             f"{self.endpoint}/v1/chat/completions",
-            {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": self.temperature,
-                "max_tokens": min(self.max_tokens, 512),
-                "stream": False,
-            },
-            headers={"Authorization": "Bearer local"},
-            timeout=min(self.timeout, 90),
+            {"model": self.model, "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}],
+             "temperature": self.temperature, "max_tokens": min(self.max_tokens, 512), "stream": False},
+            headers={"Authorization": "Bearer local"}, timeout=min(self.timeout, 45),
         )
         try:
             content = response["choices"][0]["message"]["content"]
@@ -87,14 +76,12 @@ class LocalGgufProvider(Provider):
     @staticmethod
     def _clean_cli_output(text: str) -> str:
         text = (text or "").replace("\r", "\n")
-        # Prefer the last fenced JSON object when a small local model adds prose.
         fenced = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.S | re.I)
         if fenced:
             return fenced[-1].strip()
-        # Otherwise keep the last complete JSON-looking object.
         starts = [m.start() for m in re.finditer(r"\{", text)]
         for start in reversed(starts):
-            candidate = text[start : text.rfind("}") + 1].strip()
+            candidate = text[start:text.rfind("}") + 1].strip()
             if candidate:
                 try:
                     json.loads(candidate)
@@ -108,51 +95,45 @@ class LocalGgufProvider(Provider):
         return text.strip()
 
     def _run_cli(self, cmd: list[str], deadline: int) -> tuple[int, str, str]:
+        kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE,
+                  "stderr": subprocess.PIPE, "text": True}
+        if os.name == "posix":
+            kwargs["start_new_session"] = True
+        process = subprocess.Popen(cmd, **kwargs)
+        register(process)
         try:
-            completed = subprocess.run(
-                cmd,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                timeout=deadline,
-                check=False,
-            )
-            return completed.returncode, completed.stdout or "", completed.stderr or ""
-        except subprocess.TimeoutExpired as error:
-            # Some llama.cpp wrappers remain in conversation mode after already
-            # printing a complete answer. Recover that answer instead of losing it.
-            stdout = error.stdout or ""
-            stderr = error.stderr or ""
-            if isinstance(stdout, bytes):
-                stdout = stdout.decode(errors="replace")
-            if isinstance(stderr, bytes):
-                stderr = stderr.decode(errors="replace")
-            cleaned = self._clean_cli_output(stdout)
+            stdout, stderr = process.communicate(timeout=deadline)
+            return process.returncode or 0, stdout or "", stderr or ""
+        except subprocess.TimeoutExpired:
+            try:
+                process.terminate()
+                stdout, stderr = process.communicate(timeout=1.5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                stdout, stderr = process.communicate()
+            cleaned = self._clean_cli_output(stdout or "")
             if cleaned:
-                return 0, cleaned, stderr
-            raise ProviderError(f"llama-cli produced no complete answer within {deadline}s") from error
+                return 0, cleaned, stderr or ""
+            if cancelled():
+                raise ProviderError("llama-cli cancelled")
+            raise ProviderError(f"llama-cli produced no complete answer within {deadline}s")
+        finally:
+            unregister(process)
 
     def _generate_via_cli(self, prompt: str, system_prompt: str) -> str:
         full = f"{system_prompt.strip()}\n\nUser: {prompt}\nAssistant:"
-        tokens = str(max(32, min(self.max_tokens, 384)))
-        deadline = max(20, min(int(self.timeout), 50))
+        tokens = str(max(32, min(self.max_tokens, 256)))
+        deadline = max(15, min(int(self.timeout), 40))
         variants = [
-            [
-                self.cli_path, "-m", self.gguf_path, "-p", full, "-n", tokens,
-                "--temp", str(self.temperature), "--single-turn", "--simple-io",
-                "--no-display-prompt",
-            ],
-            [
-                self.cli_path, "-m", self.gguf_path, "-p", full, "-n", tokens,
-                "--temp", str(self.temperature), "-no-cnv",
-            ],
-            [
-                self.cli_path, "-m", self.gguf_path, "-p", full, "-n", tokens,
-                "--temp", str(self.temperature),
-            ],
+            [self.cli_path, "-m", self.gguf_path, "-p", full, "-n", tokens,
+             "--temp", str(self.temperature), "--single-turn", "--simple-io", "--no-display-prompt"],
+            [self.cli_path, "-m", self.gguf_path, "-p", full, "-n", tokens,
+             "--temp", str(self.temperature), "-no-cnv"],
         ]
         errors: list[str] = []
         for cmd in variants:
+            if cancelled():
+                raise ProviderError("llama-cli cancelled")
             code, stdout, stderr = self._run_cli(cmd, deadline)
             text = self._clean_cli_output(stdout)
             if code == 0 and text:
