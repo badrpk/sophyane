@@ -11,9 +11,6 @@ def install_orchestration_patch() -> None:
     if getattr(runtime, "_orchestration_installed", False):
         return
 
-    # Routing/project-continuation logic now lives directly in tui_v2. Older
-    # installs may still expose _execution_requested, so extend it only when
-    # that hook exists. Never assume removed private helpers are available.
     try:
         from sophyane import tui_v2
     except ImportError:
@@ -23,6 +20,17 @@ def install_orchestration_patch() -> None:
         original_execution_requested = tui_v2._execution_requested
 
         def execution_requested(message: str) -> bool:
+            # Native classification is deterministic, requires no model tokens,
+            # and fixes terse build requests such as "snake game".
+            try:
+                from sophyane.native_kernel import classify
+                native_mode = classify(message)
+            except Exception:  # noqa: BLE001
+                native_mode = None
+            if native_mode == "execution":
+                return True
+            if native_mode == "chat":
+                return False
             text = " ".join(message.lower().split())
             extra = (
                 "diagnose", "debug", "giving error", "has error", "error in", "repair",
