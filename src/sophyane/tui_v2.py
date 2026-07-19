@@ -1,7 +1,8 @@
-"""Observable Sophyane terminal interface with real action execution."""
+"""Observable Sophyane terminal interface with explicit execution routing."""
 from __future__ import annotations
 
 import queue
+import re
 import sys
 import threading
 import time
@@ -12,6 +13,7 @@ from sophyane.execution_runtime import (
     coding_request_needs_language,
     extract_plan,
     run_structured_loop,
+    selected_action,
 )
 from sophyane.version import __version__
 
@@ -23,6 +25,40 @@ def _simple_chat_reply(message: str) -> str | None:
     if text in {"thanks", "thank you", "thx"}:
         return "You’re welcome."
     return None
+
+
+def _execution_requested(message: str) -> bool:
+    """Only explicit imperative work requests may execute local actions."""
+    text = " ".join(message.lower().split())
+    advice_markers = (
+        "what should", "which project", "project should", "ideas", "recommend",
+        "suggest", "explain", "tell me about", "what is", "how does", "can i",
+    )
+    if any(marker in text for marker in advice_markers):
+        return False
+    action_markers = (
+        r"\bbuild\b", r"\bmake\b", r"\bcreate\b", r"\bdevelop\b",
+        r"\bimplement\b", r"\bwrite\b", r"\bfix\b", r"\bpatch\b",
+        r"\bcompile\b", r"\brun\b", r"\btest\b", r"\bdeploy\b",
+        r"\bopen\b.*\bbrowser\b", r"\bshow\b.*\bdemo\b",
+    )
+    return any(re.search(pattern, text) for pattern in action_markers)
+
+
+def _render_nonexecuting_response(text: str) -> str:
+    """Gemini may return the shared JSON schema even for chat; never execute it."""
+    plan = extract_plan(text)
+    if not plan:
+        return text
+    action = selected_action(plan)
+    if isinstance(action, dict):
+        kind = str(action.get("type") or action.get("action") or "").lower()
+        if kind in {"respond", "message"}:
+            return str(action.get("message") or action.get("content") or "").strip()
+    # Extract useful prose from the plan instead of exposing or executing commands.
+    objective = str(plan.get("objective") or "").strip()
+    reason = str(plan.get("selection_reason") or "").strip()
+    return objective or reason or "I could not produce a normal chat response. Please retry or switch model with /setup."
 
 
 class ObservableTUI:
@@ -71,7 +107,7 @@ class ObservableTUI:
     def run(self) -> int:
         print(f"\n◆ Sophyane {__version__}")
         print(f"provider {self.config.get('provider')}  model {self.config.get('model')}")
-        print("Chat replies stay lightweight. Coding tasks show actions, commands and 5-second progress. /quit to exit.\n")
+        print("Chat never runs tools. Explicit build/fix/run tasks show actions and 5-second progress. /quit to exit.\n")
         while True:
             try:
                 raw = input("❯ ")
@@ -94,7 +130,7 @@ class ObservableTUI:
                 original = self.pending_request
                 self.pending_request = ""
                 message = f"{original}\n\nUser selected implementation language/framework: {message}"
-            elif coding_request_needs_language(message):
+            elif coding_request_needs_language(message) and _execution_requested(message):
                 self.pending_request = message
                 terminal = any(token in message.lower() for token in ("bash", "terminal", "console"))
                 suggestion = (
@@ -111,11 +147,8 @@ class ObservableTUI:
                 self.emit("Sophyane", quick)
                 continue
 
-            is_coding = any(
-                token in message.lower()
-                for token in ("build", "make", "create", "develop", "game", "app", "website", "api", "script", "program", "fix", "code")
-            )
-            self.progress("Thinking and planning" if is_coding else "Getting response")
+            executable = _execution_requested(message)
+            self.progress("Thinking and planning" if executable else "Getting response")
             try:
                 response = self.call_provider(message)
                 text = getattr(response, "text", str(response))
@@ -129,19 +162,24 @@ class ObservableTUI:
                 self.emit("system", body)
                 continue
 
-            if is_coding and extract_plan(text):
-                self.progress("Structured plan received; executing instead of printing JSON")
+            if executable and extract_plan(text):
+                self.progress("Structured plan received; executing")
                 try:
+                    workspace = Path.home() / ".sophyane" / "workspaces" / f"task-{int(time.time())}"
+                    workspace.mkdir(parents=True, exist_ok=True)
+                    self.progress(f"Workspace: {workspace}")
                     text = run_structured_loop(
                         initial_text=text,
                         original_request=message,
                         ask=lambda prompt: self.call_provider(prompt),
-                        workspace=Path.cwd(),
+                        workspace=workspace,
                         max_steps=8,
                         progress=self.progress,
                     )
                 except Exception as error:  # noqa: BLE001
                     text = f"Execution loop failed: {error}"
+            else:
+                text = _render_nonexecuting_response(text)
             self.emit("Sophyane", text)
 
 
