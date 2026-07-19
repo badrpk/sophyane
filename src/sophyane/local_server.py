@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import time
@@ -14,6 +15,8 @@ RUNTIME_DIR = Path.home() / ".local" / "state" / "sophyane"
 STATE_FILE = RUNTIME_DIR / "gguf_runtime.json"
 LOG_FILE = RUNTIME_DIR / "llama-server.log"
 PID_FILE = RUNTIME_DIR / "llama-server.pid"
+START_FILE = RUNTIME_DIR / "llama-server.started"
+STALL_SECONDS = 90.0
 
 
 def _state() -> dict:
@@ -66,7 +69,51 @@ def _read_pid() -> int:
         return 0
 
 
-def _log_tail(limit: int = 1200) -> str:
+def _started_at() -> float:
+    try:
+        return float(START_FILE.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return 0.0
+
+
+def _startup_age() -> float:
+    started = _started_at()
+    return max(0.0, time.time() - started) if started else 0.0
+
+
+def _clear_runtime_state() -> None:
+    for path in (PID_FILE, START_FILE):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def _terminate_process_group(pid: int) -> None:
+    if not _pid_alive(pid):
+        return
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except OSError:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            return
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if not _pid_alive(pid):
+            return
+        time.sleep(0.1)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except OSError:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def _log_tail(limit: int = 1600) -> str:
     try:
         text = LOG_FILE.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -97,25 +144,89 @@ def _server_path(state: dict) -> Path | None:
 
 
 def server_status() -> tuple[str, str]:
-    """Return ready, loading, stopped, or failed with a useful explanation."""
+    """Return ready, loading, stalled, stopped, or failed."""
     port = _configured_port()
     if _listening(port):
         return "ready", f"llama-server is listening on {port}"
     pid = _read_pid()
     if _pid_alive(pid):
-        return "loading", f"llama-server process {pid} is loading on {port}"
+        age = _startup_age()
+        if age >= STALL_SECONDS:
+            return (
+                "stalled",
+                f"llama-server process {pid} has not opened {port} after {int(age)}s. "
+                f"Log: {_log_tail()}",
+            )
+        return "loading", f"llama-server process {pid} is loading on {port} ({int(age)}s)"
     if pid:
         return "failed", f"llama-server process {pid} exited before listening. Log: {_log_tail()}"
     return "stopped", f"llama-server is not running on {port}"
 
 
+def _launch(state: dict, port: int, *, minimal: bool = False) -> tuple[bool, str]:
+    gguf = Path(str(state.get("gguf_path") or "")).expanduser()
+    server = _server_path(state)
+    if not gguf.is_file():
+        return False, f"GGUF model file is missing: {gguf}"
+    if server is None:
+        return False, "llama-server executable is missing"
+
+    command = [
+        str(server), "-m", str(gguf),
+        "--host", "127.0.0.1", "--port", str(port),
+    ]
+    if not minimal:
+        command += ["-c", str(int(state.get("context") or 2048))]
+        gpu_layers = int(state.get("gpu_layers") or 0)
+        if gpu_layers:
+            command += ["-ngl", str(gpu_layers)]
+
+    _clear_runtime_state()
+    with LOG_FILE.open("ab", buffering=0) as log:
+        mode = "minimal retry" if minimal else "normal"
+        log.write(
+            f"\n=== Sophyane llama-server start {time.strftime('%Y-%m-%d %H:%M:%S')} ({mode}) ===\n".encode()
+        )
+        log.write(("COMMAND: " + " ".join(command) + "\n").encode())
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                close_fds=True,
+            )
+        except OSError as error:
+            return False, f"could not start llama-server: {error}"
+
+    PID_FILE.write_text(str(process.pid), encoding="utf-8")
+    START_FILE.write_text(str(time.time()), encoding="utf-8")
+    for _ in range(12):
+        time.sleep(0.25)
+        if _listening(port):
+            return True, f"llama-server ready on {port} (pid {process.pid})"
+        code = process.poll()
+        if code is not None:
+            _clear_runtime_state()
+            return False, (
+                f"llama-server exited with code {code} before listening on {port}. "
+                f"Log: {_log_tail()}"
+            )
+    return True, f"llama-server process {process.pid} is loading on {port}"
+
+
 def ensure_server_background() -> tuple[bool, str]:
-    """Start one detached llama-server and verify it did not exit immediately."""
+    """Start one detached llama-server and recover one stalled startup."""
     state = _state()
     port = _configured_port()
     status, message = server_status()
     if status in {"ready", "loading"}:
         return True, message
+    if status == "stalled":
+        old_pid = _read_pid()
+        _terminate_process_group(old_pid)
+        _clear_runtime_state()
 
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     lock_path = RUNTIME_DIR / "llama-server.starting"
@@ -126,55 +237,10 @@ def ensure_server_background() -> tuple[bool, str]:
 
     try:
         os.write(lock_fd, str(os.getpid()).encode())
-        gguf = Path(str(state.get("gguf_path") or "")).expanduser()
-        server = _server_path(state)
-        if not gguf.is_file():
-            return False, f"GGUF model file is missing: {gguf}"
-        if server is None:
-            return False, "llama-server executable is missing"
-
-        # Clear stale state and separate each launch in the log.
-        try:
-            PID_FILE.unlink()
-        except OSError:
-            pass
-        with LOG_FILE.open("ab", buffering=0) as log:
-            log.write(f"\n=== Sophyane llama-server start {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n".encode())
-            command = [
-                str(server), "-m", str(gguf),
-                "--host", "127.0.0.1", "--port", str(port),
-                "-c", str(int(state.get("context") or 2048)),
-                "-ngl", str(int(state.get("gpu_layers") or 0)),
-            ]
-            try:
-                process = subprocess.Popen(
-                    command,
-                    stdin=subprocess.DEVNULL,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                    close_fds=True,
-                )
-            except OSError as error:
-                return False, f"could not start llama-server: {error}"
-        PID_FILE.write_text(str(process.pid), encoding="utf-8")
-
-        # Catch bad flags, missing shared libraries, OOM and wrapper failures now.
-        for _ in range(8):
-            time.sleep(0.25)
-            if _listening(port):
-                return True, f"llama-server ready on {port} (pid {process.pid})"
-            code = process.poll()
-            if code is not None:
-                try:
-                    PID_FILE.unlink()
-                except OSError:
-                    pass
-                return False, (
-                    f"llama-server exited with code {code} before listening on {port}. "
-                    f"Log: {_log_tail()}"
-                )
-        return True, f"llama-server process {process.pid} is loading on {port}"
+        ok, launch_message = _launch(state, port, minimal=(status == "stalled"))
+        if ok:
+            return True, launch_message
+        return False, launch_message
     finally:
         os.close(lock_fd)
         try:
@@ -189,8 +255,8 @@ def wait_until_ready(timeout: float = 20.0) -> bool:
     while time.monotonic() < deadline:
         if _listening(port):
             return True
-        pid = _read_pid()
-        if pid and not _pid_alive(pid):
+        status, _ = server_status()
+        if status in {"failed", "stalled", "stopped"}:
             return False
         time.sleep(0.5)
     return False
