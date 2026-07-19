@@ -20,6 +20,8 @@ DEFAULT_ENDPOINT = os.environ.get(
     "http://127.0.0.1:8766",
 ).rstrip("/")
 
+LOCAL_RESPONSE_TOKEN_CAP = 350
+
 
 class LocalGgufProvider(Provider):
     """Talk to a local llama.cpp server or fall back to one-shot llama-cli."""
@@ -73,6 +75,10 @@ class LocalGgufProvider(Provider):
                 "or free RAM and ensure llama-server is listening on :8766."
             ) from server_error
 
+    def _bounded_max_tokens(self) -> int:
+        """Bound local generation so constrained devices cannot run indefinitely."""
+        return max(32, min(self.max_tokens, LOCAL_RESPONSE_TOKEN_CAP))
+
     def _generate_via_server(self, prompt: str, system_prompt: str) -> str:
         response = post_json(
             f"{self.endpoint}/v1/chat/completions",
@@ -83,7 +89,7 @@ class LocalGgufProvider(Provider):
                     {"role": "user", "content": prompt},
                 ],
                 "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
+                "max_tokens": self._bounded_max_tokens(),
                 "stream": False,
             },
             headers={"Authorization": "Bearer local"},
@@ -108,7 +114,7 @@ class LocalGgufProvider(Provider):
             "-p",
             full,
             "-n",
-            str(max(32, min(self.max_tokens, 512))),
+            str(self._bounded_max_tokens()),
             "--temp",
             str(self.temperature),
             "-no-cnv",
@@ -130,7 +136,7 @@ class LocalGgufProvider(Provider):
                 "-p",
                 full,
                 "-n",
-                str(max(32, min(self.max_tokens, 512))),
+                str(self._bounded_max_tokens()),
                 "--temp",
                 str(self.temperature),
             ]

@@ -1,9 +1,9 @@
 """Dynamic provider discovery and safe instantiation."""
-
 from __future__ import annotations
 
 import importlib
 import inspect
+import os
 import pkgutil
 from typing import Type
 
@@ -30,16 +30,17 @@ class PluginLoader:
             "openai_compatible",
             "fallback",  # composite wrapper, not a leaf plugin
         }
+        local_edition = os.environ.get("SOPHYANE_EDITION", "").strip().lower() == "local"
+        local_modules = {"local_gguf", "ollama"}
 
-        for module_info in pkgutil.iter_modules(
-            sophyane.providers.__path__
-        ):
+        for module_info in pkgutil.iter_modules(sophyane.providers.__path__):
             module_name = module_info.name
 
             if module_name.startswith("_"):
                 continue
-
             if module_name in ignored_modules:
+                continue
+            if local_edition and module_name not in local_modules:
                 continue
 
             qualified_name = f"sophyane.providers.{module_name}"
@@ -48,30 +49,20 @@ class PluginLoader:
                 module = importlib.import_module(qualified_name)
             except Exception as error:
                 self.errors[module_name] = str(error)
-                LOGGER.exception(
-                    "Provider plugin import failed: %s",
-                    qualified_name,
-                )
+                LOGGER.exception("Provider plugin import failed: %s", qualified_name)
                 continue
 
-            for _, candidate in inspect.getmembers(
-                module,
-                inspect.isclass,
-            ):
+            for _, candidate in inspect.getmembers(module, inspect.isclass):
                 if candidate is Provider:
                     continue
-
                 if not issubclass(candidate, Provider):
                     continue
-
                 if candidate.__module__ != module.__name__:
                     continue
 
                 metadata = getattr(candidate, "metadata", None)
-
                 if not metadata:
                     continue
-
                 self._providers[metadata.provider_id] = candidate
 
         return dict(self._providers)
@@ -80,16 +71,10 @@ class PluginLoader:
     def providers(self) -> dict[str, Type[Provider]]:
         if not self._providers:
             self.discover()
-
         return dict(self._providers)
 
-    def create(
-        self,
-        provider_id: str,
-        **kwargs: object,
-    ) -> Provider:
+    def create(self, provider_id: str, **kwargs: object) -> Provider:
         provider_class = self.providers.get(provider_id)
-
         if provider_class is None:
             raise KeyError(f"Unknown provider: {provider_id}")
 
@@ -98,24 +83,19 @@ class PluginLoader:
             signature.bind_partial(None, **kwargs)
         except TypeError as error:
             LOGGER.exception(
-                "Invalid arguments for provider %s; signature=%s; "
-                "arguments=%s",
+                "Invalid arguments for provider %s; signature=%s; arguments=%s",
                 provider_id,
                 inspect.signature(provider_class.__init__),
                 sorted(kwargs),
             )
             raise TypeError(
                 f"{provider_class.__name__} rejected its configuration. "
-                f"Expected signature: "
-                f"{inspect.signature(provider_class.__init__)}. "
+                f"Expected signature: {inspect.signature(provider_class.__init__)}. "
                 f"Received: {sorted(kwargs)}. Original error: {error}"
             ) from error
 
         try:
             return provider_class(**kwargs)
         except Exception:
-            LOGGER.exception(
-                "Provider initialization failed: %s",
-                provider_id,
-            )
+            LOGGER.exception("Provider initialization failed: %s", provider_id)
             raise
