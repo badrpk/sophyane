@@ -65,12 +65,19 @@ rm -rf "$OLD_SYSTEM" "$OLD_VENV"
 SWAPPED=1
 mv "$NEW_SYSTEM" "$SYSTEM"
 
-# Python virtual environments are not relocatable: create it only at final path.
 info "Building runtime at final installation path..."
 python3 -m venv "$VENV"
 "$VENV/bin/python" -m pip install --disable-pip-version-check --upgrade pip setuptools wheel >/dev/null
 "$VENV/bin/python" -m pip install --disable-pip-version-check "$SYSTEM" >/dev/null
-"$VENV/bin/sophyane" --version >/dev/null || fail "New Sophyane runtime failed validation."
+
+# Some Android/Termux Python builds can leave absolute build-time paths in venv
+# launchers. Normalize every text launcher to the final venv path.
+if grep -RIlF "$TMP" "$VENV/bin" "$VENV/pyvenv.cfg" 2>/dev/null | grep -q .; then
+  grep -RIlF "$TMP" "$VENV/bin" "$VENV/pyvenv.cfg" 2>/dev/null |
+    while IFS= read -r file; do
+      sed -i "s|$TMP/venv|$VENV|g; s|$TMP|$BASE|g" "$file"
+    done
+fi
 
 cat > "$BIN/sophyane" <<'WRAP'
 #!/usr/bin/env bash
@@ -104,7 +111,9 @@ check_update() {
   fi
 }
 check_update
-exec "$BASE/venv/bin/sophyane" "$@"
+# Invoke the module through the final Python path; do not depend on a generated
+# console-script shebang that may contain an obsolete installation path.
+exec "$BASE/venv/bin/python" -m sophyane.cli_entry "$@"
 WRAP
 chmod 0755 "$BIN/sophyane"
 
@@ -114,6 +123,17 @@ set -Eeuo pipefail
 exec "${SOPHYANE_BIN:-$HOME/.local/bin}/sophyane" --browser "$@"
 WRAP
 chmod 0755 "$BIN/sophyane-browser"
+
+# Delete the build tree before validation. This proves no installed launcher
+# depends on temporary files and catches the exact failure seen on Termux.
+rm -rf "$TMP"
+TMP=""
+
+if grep -RIl '/tmp/' "$VENV/bin" "$VENV/pyvenv.cfg" 2>/dev/null | grep -q .; then
+  fail "Runtime still contains a temporary-path reference."
+fi
+"$VENV/bin/python" -m sophyane.cli_entry --version >/dev/null || fail "New Sophyane runtime failed post-cleanup validation."
+SOPHYANE_SKIP_UPDATE_CHECK=1 "$BIN/sophyane" --version >/dev/null || fail "Installed Sophyane launcher failed validation."
 
 printf '%s\n' "$COMMIT" > "$BASE/installed-commit"
 printf '%s\n' "$VERSION" > "$BASE/installed-version"
@@ -125,7 +145,6 @@ UPDATED_AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 INSTALL_URL=$RAW/install.sh
 EOF
 
-# New installation is valid; old managed copies can now be deleted.
 SWAPPED=0
 rm -rf "$OLD_SYSTEM" "$OLD_VENV"
 rm -rf "$BASE/releases" "$BASE/current" "$BASE/LATEST" "$BASE/installed-release"
