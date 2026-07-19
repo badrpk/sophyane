@@ -72,7 +72,6 @@ cat > "$BIN/sophyane" <<'WRAP'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 BASE="${SOPHYANE_HOME:-$HOME/.local/share/sophyane}"
-BIN="${SOPHYANE_BIN:-$HOME/.local/bin}"
 INSTALL_URL="https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh"
 REPO="https://github.com/badrpk/sophyane.git"
 
@@ -82,7 +81,9 @@ check_update() {
   local installed remote answer
   installed="$(cat "$BASE/installed-commit" 2>/dev/null || true)"
   remote="$(git ls-remote "$REPO" refs/heads/main 2>/dev/null | awk 'NR==1 {print $1}')"
-  [ -z "$installed" ] || [ -z "$remote" ] || [ "$installed" = "$remote" ] && return 0
+  if [ -z "$installed" ] || [ -z "$remote" ] || [ "$installed" = "$remote" ]; then
+    return 0
+  fi
 
   printf '\nSophyane update available.\n'
   printf 'Installed: %.12s\nLatest:    %.12s\n' "$installed" "$remote"
