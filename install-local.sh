@@ -10,6 +10,9 @@ BIN="${SOPHYANE_BIN:-$HOME/.local/bin}"
 VENV="$BASE/venv"
 SOURCE="$BASE/source"
 LOG_DIR="${TMPDIR:-$HOME/.cache/sophyane-local}/logs"
+MODELS_BASE="$HOME/.local/share/sophyane/models"
+LLAMA_SRC="$MODELS_BASE/llama.cpp/source-termux"
+LLAMA_RUNTIME="$MODELS_BASE/llama.cpp/runtime"
 
 fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 info() { printf '%s\n' "$*"; }
@@ -33,6 +36,34 @@ rm -rf "$VENV"
 python3 -m venv "$VENV"
 "$VENV/bin/python" -m pip install --disable-pip-version-check --upgrade pip setuptools wheel
 "$VENV/bin/python" -m pip install --disable-pip-version-check "$SOURCE"
+
+# Android/Termux uses Bionic libc. Ubuntu llama.cpp release archives require glibc
+# and fail with: libc.so.6 not found. Build native binaries inside Termux instead.
+if [ "${PREFIX:-}" != "" ] && [ -d "${PREFIX:-}/bin" ]; then
+  info "Preparing native Termux llama.cpp backend..."
+  if command -v pkg >/dev/null 2>&1; then
+    pkg install -y clang cmake ninja git >/dev/null
+  fi
+  rm -rf "$LLAMA_SRC"
+  git clone --quiet --depth 1 https://github.com/ggml-org/llama.cpp.git "$LLAMA_SRC"
+  cmake -S "$LLAMA_SRC" -B "$LLAMA_SRC/build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DGGML_OPENMP=OFF \
+    -DLLAMA_CURL=OFF \
+    -DBUILD_SHARED_LIBS=OFF \
+    >"$LOG_DIR/llama-cmake.log" 2>&1
+  cmake --build "$LLAMA_SRC/build" --target llama-cli llama-server \
+    -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" \
+    >"$LOG_DIR/llama-build.log" 2>&1
+  mkdir -p "$LLAMA_RUNTIME"
+  rm -rf "$LLAMA_RUNTIME"/*
+  cp "$LLAMA_SRC/build/bin/llama-cli" "$LLAMA_RUNTIME/llama-cli"
+  cp "$LLAMA_SRC/build/bin/llama-server" "$LLAMA_RUNTIME/llama-server"
+  chmod 0755 "$LLAMA_RUNTIME/llama-cli" "$LLAMA_RUNTIME/llama-server"
+  ln -sfn "$LLAMA_RUNTIME/llama-cli" "$BIN/llama-cli"
+  ln -sfn "$LLAMA_RUNTIME/llama-server" "$BIN/llama-server"
+  info "Native Termux llama.cpp backend installed."
+fi
 
 cat > "$BIN/sophyane-local" <<EOF
 #!/usr/bin/env bash
