@@ -35,6 +35,16 @@ def _listening(port: int) -> bool:
         return False
 
 
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
 def _server_path(state: dict) -> Path | None:
     candidates: list[Path] = []
     for key in ("server", "llama_server", "server_path"):
@@ -43,12 +53,10 @@ def _server_path(state: dict) -> Path | None:
     if state.get("cli"):
         cli = Path(str(state["cli"])).expanduser()
         candidates.extend([cli.with_name("llama-server"), cli.parent / "llama-server"])
-    candidates.extend(
-        [
-            Path.home() / ".local/share/sophyane/models/llama.cpp/runtime/llama-server",
-            Path.home() / "llama.cpp/build/bin/llama-server",
-        ]
-    )
+    candidates.extend([
+        Path.home() / ".local/share/sophyane/models/llama.cpp/runtime/llama-server",
+        Path.home() / "llama.cpp/build/bin/llama-server",
+    ])
     command = shutil.which("llama-server")
     if command:
         candidates.append(Path(command))
@@ -59,47 +67,64 @@ def _server_path(state: dict) -> Path | None:
 
 
 def ensure_server_background() -> tuple[bool, str]:
-    """Start llama-server detached if local runtime state is complete.
-
-    This function is intentionally non-blocking. The model loads while the user
-    reaches the prompt; provider requests continue to probe the same endpoint.
-    """
+    """Start exactly one detached llama-server when local state is complete."""
     state = _state()
     endpoint = str(state.get("endpoint") or os.environ.get("SOPHYANE_LLAMA_SERVER") or "http://127.0.0.1:8766")
     port = _port(endpoint)
     if _listening(port):
         return True, f"llama-server already listening on {port}"
 
-    gguf = Path(str(state.get("gguf_path") or "")).expanduser()
-    server = _server_path(state)
-    if not gguf.is_file():
-        return False, "GGUF model file is missing"
-    if server is None:
-        return False, "llama-server executable is missing"
-
     runtime_dir = Path.home() / ".local" / "state" / "sophyane"
     runtime_dir.mkdir(parents=True, exist_ok=True)
     log_path = runtime_dir / "llama-server.log"
     pid_path = runtime_dir / "llama-server.pid"
+    lock_path = runtime_dir / "llama-server.starting"
 
-    command = [
-        str(server), "-m", str(gguf), "--host", "127.0.0.1", "--port", str(port),
-        "-c", str(int(state.get("context") or 2048)), "-ngl", str(int(state.get("gpu_layers") or 0)),
-    ]
     try:
-        log = log_path.open("ab", buffering=0)
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            close_fds=True,
-        )
-    except OSError as error:
-        return False, f"could not start llama-server: {error}"
-    pid_path.write_text(str(process.pid), encoding="utf-8")
-    return True, f"starting llama-server pid {process.pid} on {port}"
+        existing_pid = int(pid_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        existing_pid = 0
+    if _pid_alive(existing_pid):
+        return True, f"llama-server process {existing_pid} is still starting on {port}"
+
+    try:
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return True, f"llama-server startup already in progress on {port}"
+
+    try:
+        os.write(lock_fd, str(os.getpid()).encode())
+        gguf = Path(str(state.get("gguf_path") or "")).expanduser()
+        server = _server_path(state)
+        if not gguf.is_file():
+            return False, "GGUF model file is missing"
+        if server is None:
+            return False, "llama-server executable is missing"
+
+        command = [
+            str(server), "-m", str(gguf), "--host", "127.0.0.1", "--port", str(port),
+            "-c", str(int(state.get("context") or 2048)), "-ngl", str(int(state.get("gpu_layers") or 0)),
+        ]
+        try:
+            log = log_path.open("ab", buffering=0)
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                close_fds=True,
+            )
+        except OSError as error:
+            return False, f"could not start llama-server: {error}"
+        pid_path.write_text(str(process.pid), encoding="utf-8")
+        return True, f"starting llama-server pid {process.pid} on {port}"
+    finally:
+        os.close(lock_fd)
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
 
 
 def wait_until_ready(timeout: float = 45.0) -> bool:
