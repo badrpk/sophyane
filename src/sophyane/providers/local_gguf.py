@@ -36,7 +36,7 @@ class LocalGgufProvider(Provider):
         if cancelled():
             raise ProviderError("local generation cancelled")
         started_at = time.monotonic()
-        total_budget = max(20.0, min(float(self.timeout), 54.0))
+        total_budget = max(20.0, min(float(self.timeout), 90.0))
         system_prompt = (system_prompt or "")[:800]
         prompt = (prompt or "")[:4000]
         try:
@@ -63,7 +63,7 @@ class LocalGgufProvider(Provider):
                 # same GGUF. Two simultaneous model copies can exhaust Android RAM.
                 if server_loading:
                     remaining = total_budget - (time.monotonic() - started_at)
-                    wait_budget = max(1.0, min(46.0, remaining - 8.0))
+                    wait_budget = max(1.0, min(70.0, remaining - 8.0))
                     if wait_until_ready(timeout=wait_budget):
                         remaining = total_budget - (time.monotonic() - started_at)
                         if remaining > 2.0:
@@ -101,7 +101,7 @@ class LocalGgufProvider(Provider):
                     return self._generate_via_cli(
                         prompt,
                         system_prompt,
-                        deadline=max(10, min(28, int(remaining))),
+                        deadline=max(10, min(40, int(remaining))),
                     )
                 except Exception as cli_error:  # noqa: BLE001
                     raise ProviderError(
@@ -130,11 +130,13 @@ class LocalGgufProvider(Provider):
                     {"role": "user", "content": prompt},
                 ],
                 "temperature": self.temperature,
-                "max_tokens": min(self.max_tokens, 384),
+                # Browser artifacts commonly need more than the old 384-token cap.
+                # The user configuration still provides the outer bound.
+                "max_tokens": min(self.max_tokens, 768),
                 "stream": False,
             },
             headers={"Authorization": "Bearer local"},
-            timeout=request_timeout or min(self.timeout, 50),
+            timeout=request_timeout or min(self.timeout, 85),
         )
         try:
             content = response["choices"][0]["message"]["content"]
@@ -202,10 +204,10 @@ class LocalGgufProvider(Provider):
         prompt: str,
         system_prompt: str,
         *,
-        deadline: int = 28,
+        deadline: int = 40,
     ) -> str:
         full = f"{system_prompt.strip()}\n\nUser: {prompt}\nAssistant:"
-        tokens = str(max(32, min(self.max_tokens, 192)))
+        tokens = str(max(32, min(self.max_tokens, 384)))
         variants = [
             [self.cli_path, "-m", self.gguf_path, "-p", full, "-n", tokens,
              "--temp", str(self.temperature), "--single-turn", "--simple-io",
