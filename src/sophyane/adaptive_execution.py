@@ -56,7 +56,6 @@ def _extract_partial_html(text: str) -> str | None:
 
 
 def _raw_html_prompt(original_request: str, existing: str = "") -> str:
-    # Tiny contract for 1B–2B models and constrained contexts.
     if existing:
         return (
             "Rewrite this existing browser project as ONE complete self-contained index.html. "
@@ -67,18 +66,21 @@ def _raw_html_prompt(original_request: str, existing: str = "") -> str:
     return (
         "Create ONE compact self-contained index.html for the request. Put CSS and JavaScript inline. "
         "Use no external files, images, libraries, or fonts. Output raw HTML only, beginning <!doctype html> and ending </html>. "
-        "No JSON, markdown, explanation, shell commands, cd, or make. Prefer short variable names and compact code.\n"
+        "Close every script and body tag. No JSON, markdown, explanation, shell commands, cd, or make. "
+        "Prefer short variable names and compact code.\n"
         f"REQUEST: {original_request[-360:]}"
     )
 
 
-def _html_continuation_prompt(partial: str) -> str:
-    tail = partial[-1800:]
+def _html_continuation_prompt(partial: str, problem: str = "") -> str:
+    tail = partial[-1600:]
+    issue = f" The current structural problem is: {problem}." if problem else ""
     return (
-        "Continue the unfinished index.html below from exactly where it stopped. "
-        "Output ONLY the missing continuation; do not repeat <!doctype html>, <html>, <head>, or earlier code. "
-        "Finish all open CSS/JavaScript/HTML and end with </html>. No markdown or explanation.\n"
-        f"UNFINISHED TAIL:\n{tail}"
+        "Continue the unfinished index.html from exactly after its final character."
+        f"{issue} Output ONLY missing JavaScript/HTML; never repeat earlier code or opening tags. "
+        "Complete the current function and game loop, close every open brace, then close </script>, </body>, and </html>. "
+        "End immediately after </html>. No markdown or explanation.\n"
+        f"FINAL TAIL:\n{tail}"
     )
 
 
@@ -98,14 +100,90 @@ def _join_html_continuation(partial: str, continuation: str) -> str:
     return partial.rstrip() + "\n" + addition.lstrip()
 
 
+def _prepare_for_continuation(html: str) -> str:
+    """Remove premature document closers so continuation lands inside the document."""
+    value = html.rstrip()
+    value = re.sub(r"</html>\s*$", "", value, flags=re.I)
+    if value.lower().count("<body") > value.lower().count("</body>"):
+        value = re.sub(r"</body>\s*$", "", value, flags=re.I)
+    return value.rstrip()
+
+
+def _javascript_balance_problem(source: str) -> str:
+    """Detect obvious truncation while ignoring strings and comments."""
+    stack: list[str] = []
+    pairs = {")": "(", "]": "[", "}": "{"}
+    quote = ""
+    escaped = False
+    line_comment = False
+    block_comment = False
+    i = 0
+    while i < len(source):
+        ch = source[i]
+        nxt = source[i + 1] if i + 1 < len(source) else ""
+        if line_comment:
+            if ch == "\n":
+                line_comment = False
+            i += 1
+            continue
+        if block_comment:
+            if ch == "*" and nxt == "/":
+                block_comment = False
+                i += 2
+            else:
+                i += 1
+            continue
+        if quote:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = ""
+            i += 1
+            continue
+        if ch in ("'", "\"", "`"):
+            quote = ch
+        elif ch == "/" and nxt == "/":
+            line_comment = True
+            i += 2
+            continue
+        elif ch == "/" and nxt == "*":
+            block_comment = True
+            i += 2
+            continue
+        elif ch in "([{":
+            stack.append(ch)
+        elif ch in ")]}":
+            if not stack or stack[-1] != pairs[ch]:
+                return f"JavaScript has an unmatched {ch}"
+            stack.pop()
+        i += 1
+    if quote:
+        return "JavaScript ends inside a string"
+    if block_comment:
+        return "JavaScript ends inside a block comment"
+    if stack:
+        return f"JavaScript has {len(stack)} unclosed bracket(s)"
+    return ""
+
+
 def _validate_html(html: str, request: str) -> str:
     lower = html.lower()
     if len(html.encode("utf-8")) < 300:
         return "HTML is too small to be a meaningful application"
     if "<body" not in lower or "</html>" not in lower:
         return "HTML structure is incomplete"
+    if lower.count("<body") != lower.count("</body>"):
+        return "HTML body tag is not closed"
+    if lower.count("<script") != lower.count("</script>"):
+        return "HTML script tag is not closed"
     if "game" in request.lower() and "<script" not in lower:
         return "game artifact contains no JavaScript"
+    for match in re.finditer(r"<script\b[^>]*>(.*?)</script>", html, re.I | re.S):
+        problem = _javascript_balance_problem(match.group(1))
+        if problem:
+            return problem
     return ""
 
 
@@ -122,30 +200,38 @@ def _one_shot_browser_artifact(*, ask: Callable[[str], Any], original_request: s
     response = ask(_raw_html_prompt(original_request, existing))
     raw = getattr(response, "text", str(response))
     html = _extract_html(raw)
+    partial = _extract_partial_html(raw)
+
+    for attempt in range(1, 3):
+        problem = _validate_html(html, original_request) if html is not None else "document has no closing </html>"
+        if html is not None and not problem:
+            break
+        if partial is None and html is not None:
+            partial = _prepare_for_continuation(html)
+        elif partial is not None:
+            partial = _prepare_for_continuation(partial)
+        if partial is None:
+            break
+        progress(
+            f"Repairing incomplete provider HTML ({attempt}/2; {len(partial)} characters preserved): {problem}"
+        )
+        response = ask(_html_continuation_prompt(partial, problem))
+        continuation = getattr(response, "text", str(response))
+        partial = _join_html_continuation(partial, continuation)
+        html = _extract_html(partial)
 
     if html is None:
-        partial = _extract_partial_html(raw)
-        for attempt in range(1, 3):
-            if partial is None:
-                break
-            progress(f"Continuing truncated provider HTML ({attempt}/2; {len(partial)} characters preserved)")
-            response = ask(_html_continuation_prompt(partial))
-            continuation = getattr(response, "text", str(response))
-            partial = _join_html_continuation(partial, continuation)
-            html = _extract_html(partial)
-            if html is not None:
-                break
-        if html is None:
-            if partial is not None:
-                progress(f"Provider HTML remained incomplete after continuation ({len(partial)} characters)")
-            else:
-                progress(f"Provider returned no HTML document (response length {len(raw)})")
-            return None
+        if partial is not None:
+            progress(f"Provider HTML remained incomplete after repair ({len(partial)} characters)")
+        else:
+            progress(f"Provider returned no HTML document (response length {len(raw)})")
+        return None
 
     problem = _validate_html(html, original_request)
     if problem:
-        progress(f"Provider HTML rejected: {problem}")
+        progress(f"Provider HTML rejected after targeted repair: {problem}")
         return None
+
     temporary = target.with_suffix(".html.tmp")
     temporary.write_text(html, encoding="utf-8")
     temporary.replace(target)
@@ -158,7 +244,10 @@ def _one_shot_browser_artifact(*, ask: Callable[[str], Any], original_request: s
     return (
         "Updated and opened the provider-generated browser project.\n\n"
         f"Workspace: {workspace}\nFile: index.html\n\nExecution evidence:\n"
-        f"- index.html exists ({target.stat().st_size} bytes)\n- HTML structure verified\n- {result}"
+        f"- index.html exists ({target.stat().st_size} bytes)\n"
+        "- HTML body/script structure verified\n"
+        "- JavaScript bracket structure verified\n"
+        f"- {result}"
     )
 
 
