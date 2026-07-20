@@ -9,11 +9,13 @@ from typing import Any
 def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     """Launch the observable TUI through the canonical execution kernel."""
     from sophyane.adaptive_execution import install, run_adaptive_loop
+    from sophyane.incremental_browser_edit import install_incremental_browser_edit
     from sophyane import execution_runtime
     from sophyane.browser_runtime_v2 import open_verified_browser
     from sophyane.execution_kernel import ExecutionKernel
 
     install()
+    install_incremental_browser_edit()
 
     # Force every browser action through the uniquely named verified launcher.
     # This bypasses stale bytecode from earlier fixed-port implementations.
@@ -30,7 +32,7 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     from sophyane import tui_v2
 
     # Sprint 1: keep the proven adaptive implementation but expose it only through
-    # one canonical orchestration boundary.  tui_v2 imports the callable by value,
+    # one canonical orchestration boundary. tui_v2 imports the callable by value,
     # so bind the kernel method explicitly.
     kernel = ExecutionKernel(run_adaptive_loop)
     tui_v2.run_structured_loop = kernel.run_structured_loop
@@ -58,4 +60,4 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
         return SimpleNamespace(text=json.dumps({"recovery_text": text}, ensure_ascii=False))
 
     tui_v2.ObservableTUI.call_provider = call_provider_with_execution_recovery
-    return tui_v2.run_observable_tui(config=config, verbose=verbose)
+    return tui_v2.run_tui(config=config, verbose=verbose)
