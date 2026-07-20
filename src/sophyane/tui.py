@@ -7,15 +7,16 @@ from typing import Any
 
 
 def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
-    """Launch the observable TUI with provider-driven adaptive execution."""
+    """Launch the observable TUI through the canonical execution kernel."""
     from sophyane.adaptive_execution import install, run_adaptive_loop
     from sophyane import execution_runtime
     from sophyane.browser_runtime_v2 import open_verified_browser
+    from sophyane.execution_kernel import ExecutionKernel
 
     install()
 
-    # Force every browser action through the new uniquely named verified launcher.
-    # This bypasses any stale bytecode from earlier port-8000 implementations.
+    # Force every browser action through the uniquely named verified launcher.
+    # This bypasses stale bytecode from earlier fixed-port implementations.
     original_execute_action = execution_runtime.execute_action
 
     def execute_action_with_verified_browser(action: dict[str, Any], workspace: Any, progress: Any):
@@ -28,8 +29,11 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
 
     from sophyane import tui_v2
 
-    # Bind explicitly because tui_v2 imports this function by value.
-    tui_v2.run_structured_loop = run_adaptive_loop
+    # Sprint 1: keep the proven adaptive implementation but expose it only through
+    # one canonical orchestration boundary.  tui_v2 imports the callable by value,
+    # so bind the kernel method explicitly.
+    kernel = ExecutionKernel(run_adaptive_loop)
+    tui_v2.run_structured_loop = kernel.run_structured_loop
 
     # Tiny local models sometimes answer the first execution prompt with prose rather
     # than JSON. Preserve that reply as recovery context, but make it structurally
