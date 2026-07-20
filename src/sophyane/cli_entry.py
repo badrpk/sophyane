@@ -49,6 +49,7 @@ def _start_local_server_if_needed() -> None:
 
 def main() -> int:
     from sophyane.runtime_browser_patch import install_browser_patch
+    from sophyane.runtime_generation_recovery_patch import install_generation_recovery_patch
     from sophyane.runtime_interactive_patch import install_runtime_patch
     from sophyane.runtime_interrupt_patch import install_interrupt_patch
     from sophyane.runtime_orchestration_patch import install_orchestration_patch
@@ -60,6 +61,7 @@ def main() -> int:
     install_runtime_safety()
     install_browser_patch()
     install_orchestration_patch()
+    install_generation_recovery_patch()
     install_stagnation_patch()
     install_interrupt_patch()
     install_provider_error_patch()
