@@ -11,6 +11,7 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     from sophyane.adaptive_execution import install, run_adaptive_loop
     from sophyane.incremental_browser_edit import install_incremental_browser_edit
     from sophyane.game_validation import install_game_validation
+    from sophyane.html_repair_policy import install_html_repair_policy
     from sophyane import execution_runtime
     from sophyane.browser_runtime_v2 import open_verified_browser
     from sophyane.execution_kernel import ExecutionKernel
@@ -19,9 +20,8 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     install()
     install_incremental_browser_edit()
     install_game_validation()
+    install_html_repair_policy()
 
-    # Force every browser action through the uniquely named verified launcher.
-    # This bypasses stale bytecode from earlier fixed-port implementations.
     original_execute_action = execution_runtime.execute_action
 
     def execute_action_with_verified_browser(action: dict[str, Any], workspace: Any, progress: Any):
@@ -34,8 +34,6 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
 
     from sophyane import tui_v2
 
-    # Keep one canonical execution boundary and add the reusable completion menu
-    # only after the adaptive runtime returns with a real project artifact.
     def run_with_post_build_menu(**kwargs: Any) -> str:
         result = run_adaptive_loop(**kwargs)
         workspace = kwargs.get("workspace")
@@ -46,9 +44,6 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     kernel = ExecutionKernel(run_with_post_build_menu)
     tui_v2.run_structured_loop = kernel.run_structured_loop
 
-    # Tiny local models sometimes answer the first execution prompt with prose rather
-    # than JSON. Preserve that reply as recovery context, but make it structurally
-    # visible so tui_v2 enters the adaptive loop instead of stopping before recovery.
     original_call_provider = tui_v2.ObservableTUI.call_provider
 
     def call_provider_with_execution_recovery(self: Any, message: str, *, timeout: int = 60) -> Any:
