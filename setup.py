@@ -3,10 +3,10 @@ from setuptools import find_packages, setup
 
 setup(
     name="sophyane",
-    version="18.0.0",
+    version="18.8.0",
     description=(
-        "Repository-aware autonomous coding agent with semantic indexing, "
-        "precise patches, batched execution and deterministic verification"
+        "Adaptive local agentic software harness with validator-grounded "
+        "execution learning"
     ),
     packages=find_packages(where="src"),
     package_dir={"": "src"},
@@ -15,6 +15,8 @@ setup(
             "sophyane=sophyane.cli_entry:main",
             "sophyane-web=sophyane.web:main",
             "sophyane-doctor=sophyane.diagnostics:main",
+            "sophyane-sli=sophyane.sli_cli:main",
+            "sophyane-sli-train=sophyane.sli_training_loop:main",
         ]
     },
     python_requires=">=3.10",
