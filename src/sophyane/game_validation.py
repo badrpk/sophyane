@@ -20,6 +20,14 @@ def _snake_advances(source: str) -> bool:
     return any(re.search(pattern, source, re.I) for pattern in patterns)
 
 
+def _const_is_reassigned(source: str, name: str) -> bool:
+    """Detect real writes to a const while ignoring comparisons and ordinary reads."""
+    escaped = re.escape(name)
+    assignment = rf"(?<![.\w$]){escaped}\s*(?:(?:\+|-|\*|/|%|&|\||\^|<<|>>|>>>)?=(?!=|>)|\+\+|--)"
+    prefix_update = rf"(?:\+\+|--)\s*{escaped}\b"
+    return bool(re.search(assignment, source) or re.search(prefix_update, source))
+
+
 def _snake_problem(html: str, request: str) -> str:
     text = request.lower()
     if "snake" not in text or "game" not in text:
@@ -38,10 +46,10 @@ def _snake_problem(html: str, request: str) -> str:
     if not _snake_advances(source):
         return "snake game does not advance the snake body"
 
-    declared_const = set(re.findall(r"\bconst\s+([A-Za-z_$][\w$]*)\s*=", source))
-    for name in declared_const:
-        tail = source[source.find(name) + len(name):]
-        if re.search(rf"(?<![.\w$]){re.escape(name)}\s*=", tail):
+    for declaration in re.finditer(r"\bconst\s+([A-Za-z_$][\w$]*)\s*=", source):
+        name = declaration.group(1)
+        tail = source[declaration.end():]
+        if _const_is_reassigned(tail, name):
             return f"JavaScript reassigns const variable: {name}"
 
     move = re.search(r"function\s+(?:move|update|tick|step)\s*\([^)]*\)\s*\{(.*?)\n\s*\}", source, re.I | re.S)
