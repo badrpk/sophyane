@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sophyane"
-version = "18.7.21"
-description = "Repository-aware autonomous coding agent with semantic indexing, precise patches, batched execution and deterministic verification"
+version = "18.8.0"
+description = "Adaptive local agentic software harness with validator-grounded execution learning"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Badar Uzaman"}]
-keywords = ["ai", "coding-agent", "repository", "semantic-index", "patch", "self-repair", "multi-agent", "llm", "autonomous", "workflow", "gemini", "openai", "ollama", "cli", "local-ai"]
+keywords = ["ai", "coding-agent", "repository", "semantic-index", "patch", "self-repair", "multi-agent", "llm", "autonomous", "workflow", "gemini", "openai", "ollama", "cli", "local-ai", "execution-learning", "sqlite"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",
@@ -43,6 +43,8 @@ sophyane = "sophyane.cli_entry:main"
 sophyane-web = "sophyane.web:main"
 sophyane-doctor = "sophyane.diagnostics:main"
 sophyane-browser = "sophyane.browser.launcher:main"
+sophyane-sli = "sophyane.sli_cli:main"
+sophyane-sli-train = "sophyane.sli_training_loop:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
