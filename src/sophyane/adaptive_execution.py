@@ -41,21 +41,61 @@ def _extract_html(text: str) -> str | None:
     return None
 
 
+def _extract_partial_html(text: str) -> str | None:
+    """Recover an unfinished HTML document emitted by a token-limited provider."""
+    value = (text or "").strip()
+    lower = value.lower()
+    start = lower.find("<!doctype html")
+    if start < 0:
+        start = lower.find("<html")
+    if start < 0:
+        return None
+    value = value[start:]
+    value = re.sub(r"\s*```\s*$", "", value, flags=re.S)
+    return value.strip() if len(value.strip()) >= 120 else None
+
+
 def _raw_html_prompt(original_request: str, existing: str = "") -> str:
-    # Tiny contract for 1B–2B models and 1024-token contexts.
+    # Tiny contract for 1B–2B models and constrained contexts.
     if existing:
         return (
             "Rewrite this existing browser project as ONE complete self-contained index.html. "
             "Apply the requested change, preserve working features, include CSS and JavaScript inline, and output raw HTML only. "
-            "No JSON, markdown, explanation, shell commands, cd, or make.\n"
+            "No JSON, markdown, explanation, shell commands, cd, or make. Keep code compact.\n"
             f"CHANGE: {original_request[-240:]}\nEXISTING HTML:\n{existing[:1800]}"
         )
     return (
-        "Create the requested browser project as ONE complete self-contained index.html. "
-        "Include CSS and JavaScript inline. Make it functional and mobile-friendly. "
-        "Output raw HTML only from <!doctype html> through </html>. No JSON, markdown, explanation, shell, cd, or make.\n"
-        f"REQUEST: {original_request[-400:]}"
+        "Create ONE compact self-contained index.html for the request. Put CSS and JavaScript inline. "
+        "Use no external files, images, libraries, or fonts. Output raw HTML only, beginning <!doctype html> and ending </html>. "
+        "No JSON, markdown, explanation, shell commands, cd, or make. Prefer short variable names and compact code.\n"
+        f"REQUEST: {original_request[-360:]}"
     )
+
+
+def _html_continuation_prompt(partial: str) -> str:
+    tail = partial[-1800:]
+    return (
+        "Continue the unfinished index.html below from exactly where it stopped. "
+        "Output ONLY the missing continuation; do not repeat <!doctype html>, <html>, <head>, or earlier code. "
+        "Finish all open CSS/JavaScript/HTML and end with </html>. No markdown or explanation.\n"
+        f"UNFINISHED TAIL:\n{tail}"
+    )
+
+
+def _join_html_continuation(partial: str, continuation: str) -> str:
+    addition = (continuation or "").strip()
+    addition = re.sub(r"^```(?:html)?\s*", "", addition, flags=re.I)
+    addition = re.sub(r"\s*```\s*$", "", addition)
+    lower = addition.lower()
+    for marker in ("<!doctype html", "<html"):
+        repeated = lower.find(marker)
+        if repeated >= 0:
+            addition = addition[repeated:]
+            body = addition.lower().find("<body")
+            if body >= 0:
+                addition = addition[body:]
+            break
+    return partial.rstrip() + "\n" + addition.lstrip()
 
 
 def _validate_html(html: str, request: str) -> str:
@@ -82,13 +122,30 @@ def _one_shot_browser_artifact(*, ask: Callable[[str], Any], original_request: s
     response = ask(_raw_html_prompt(original_request, existing))
     raw = getattr(response, "text", str(response))
     html = _extract_html(raw)
+
     if html is None:
-        return None
+        partial = _extract_partial_html(raw)
+        for attempt in range(1, 3):
+            if partial is None:
+                break
+            progress(f"Continuing truncated provider HTML ({attempt}/2; {len(partial)} characters preserved)")
+            response = ask(_html_continuation_prompt(partial))
+            continuation = getattr(response, "text", str(response))
+            partial = _join_html_continuation(partial, continuation)
+            html = _extract_html(partial)
+            if html is not None:
+                break
+        if html is None:
+            if partial is not None:
+                progress(f"Provider HTML remained incomplete after continuation ({len(partial)} characters)")
+            else:
+                progress(f"Provider returned no HTML document (response length {len(raw)})")
+            return None
+
     problem = _validate_html(html, original_request)
     if problem:
         progress(f"Provider HTML rejected: {problem}")
         return None
-    # Atomic replacement prevents stacked duplicate HTML documents.
     temporary = target.with_suffix(".html.tmp")
     temporary.write_text(html, encoding="utf-8")
     temporary.replace(target)
@@ -180,7 +237,6 @@ def _execute(runtime: Any, action: dict[str, Any], workspace: Path,
             return False, "File action rejected: missing path."
         if not content:
             return False, "File action rejected: empty content."
-        # A complete HTML document must replace, never append to, another document.
         if kind == "append_file" and Path(path).suffix.lower() == ".html" and re.search(r"<!doctype\s+html|<html", content, re.I):
             action = dict(action)
             action["type"] = "write_file"
@@ -209,8 +265,6 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     workspace.mkdir(parents=True, exist_ok=True)
     progress = progress or (lambda _message: None)
 
-    # Browser requests and edits use one compact full-artifact call. This avoids long JSON
-    # negotiation and prevents malformed incremental appends on small local models.
     if _browser_request(original_request):
         try:
             completed = _one_shot_browser_artifact(
