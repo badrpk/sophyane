@@ -10,12 +10,14 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     """Launch the observable TUI through the canonical execution kernel."""
     from sophyane.adaptive_execution import install, run_adaptive_loop
     from sophyane.incremental_browser_edit import install_incremental_browser_edit
+    from sophyane.game_validation import install_game_validation
     from sophyane import execution_runtime
     from sophyane.browser_runtime_v2 import open_verified_browser
     from sophyane.execution_kernel import ExecutionKernel
 
     install()
     install_incremental_browser_edit()
+    install_game_validation()
 
     # Force every browser action through the uniquely named verified launcher.
     # This bypasses stale bytecode from earlier fixed-port implementations.
