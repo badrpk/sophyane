@@ -60,4 +60,7 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
         return SimpleNamespace(text=json.dumps({"recovery_text": text}, ensure_ascii=False))
 
     tui_v2.ObservableTUI.call_provider = call_provider_with_execution_recovery
-    return tui_v2.run_tui(config=config, verbose=verbose)
+    runner = getattr(tui_v2, "run_tui", None) or getattr(tui_v2, "run_observable_tui", None)
+    if runner is None:
+        raise RuntimeError("No compatible TUI entry point found in sophyane.tui_v2")
+    return runner(config=config, verbose=verbose)
