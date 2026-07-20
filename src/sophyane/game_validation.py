@@ -9,6 +9,17 @@ def _scripts(html: str) -> str:
     return "\n".join(re.findall(r"<script\b[^>]*>(.*?)</script>", html, re.I | re.S))
 
 
+def _snake_advances(source: str) -> bool:
+    """Recognize common ways a generated game advances a snake body."""
+    patterns = (
+        r"\b[A-Za-z_$][\w$]*\s*\.\s*(?:unshift|push)\s*\(",
+        r"\b[A-Za-z_$][\w$]*\s*=\s*\[\s*[A-Za-z_$][\w$]*\s*,\s*\.\.\.",
+        r"\b[A-Za-z_$][\w$]*\s*\.\s*splice\s*\(\s*0\s*,\s*0\s*,",
+        r"\b(?:advance|move|update|step)[A-Za-z_$\w]*\s*\(",
+    )
+    return any(re.search(pattern, source, re.I) for pattern in patterns)
+
+
 def _snake_problem(html: str, request: str) -> str:
     text = request.lower()
     if "snake" not in text or "game" not in text:
@@ -24,13 +35,13 @@ def _snake_problem(html: str, request: str) -> str:
         return "snake game has no keyboard or touch controls"
     if not re.search(r"\b(?:setinterval|settimeout|requestanimationframe)\s*\(", lower):
         return "snake game has no update loop"
-    if not re.search(r"\bsnake\s*\.\s*(?:unshift|push)\s*\(", source, re.I):
+    if not _snake_advances(source):
         return "snake game does not advance the snake body"
 
-    # Common tiny-model runtime failures that balanced-bracket validation misses.
     declared_const = set(re.findall(r"\bconst\s+([A-Za-z_$][\w$]*)\s*=", source))
     for name in declared_const:
-        if re.search(rf"(?<![.\w$]){re.escape(name)}\s*=", source[source.find(name) + len(name):]):
+        tail = source[source.find(name) + len(name):]
+        if re.search(rf"(?<![.\w$]){re.escape(name)}\s*=", tail):
             return f"JavaScript reassigns const variable: {name}"
 
     move = re.search(r"function\s+(?:move|update|tick|step)\s*\([^)]*\)\s*\{(.*?)\n\s*\}", source, re.I | re.S)
