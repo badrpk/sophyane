@@ -14,6 +14,7 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     from sophyane import execution_runtime
     from sophyane.browser_runtime_v2 import open_verified_browser
     from sophyane.execution_kernel import ExecutionKernel
+    from sophyane.post_build_menu import PostBuildMenu
 
     install()
     install_incremental_browser_edit()
@@ -33,10 +34,16 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
 
     from sophyane import tui_v2
 
-    # Sprint 1: keep the proven adaptive implementation but expose it only through
-    # one canonical orchestration boundary. tui_v2 imports the callable by value,
-    # so bind the kernel method explicitly.
-    kernel = ExecutionKernel(run_adaptive_loop)
+    # Keep one canonical execution boundary and add the reusable completion menu
+    # only after the adaptive runtime returns with a real project artifact.
+    def run_with_post_build_menu(**kwargs: Any) -> str:
+        result = run_adaptive_loop(**kwargs)
+        workspace = kwargs.get("workspace")
+        if workspace is not None:
+            PostBuildMenu(workspace).run()
+        return result
+
+    kernel = ExecutionKernel(run_with_post_build_menu)
     tui_v2.run_structured_loop = kernel.run_structured_loop
 
     # Tiny local models sometimes answer the first execution prompt with prose rather
