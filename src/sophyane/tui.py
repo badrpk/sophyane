@@ -50,6 +50,7 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     from sophyane.game_validation import install_game_validation
     from sophyane.html_repair_policy import install_html_repair_policy
     from sophyane.browser_partial_recovery import install_browser_partial_recovery
+    from sophyane.browser_failure_gate import install_browser_failure_gate
     from sophyane.workspace_attachment import install_workspace_attachment
     from sophyane import execution_runtime
     from sophyane.browser_runtime_v2 import open_verified_browser
@@ -61,6 +62,7 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     install_game_validation()
     install_html_repair_policy()
     install_browser_partial_recovery()
+    install_browser_failure_gate()
     install_workspace_attachment()
 
     original_execute_action = execution_runtime.execute_action
