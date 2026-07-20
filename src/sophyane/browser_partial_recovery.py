@@ -15,6 +15,7 @@ RAW_PREFIX = ".sophyane-provider-response"
 MAX_CONTINUATIONS = 6
 MAX_TOTAL_CHARS = 24000
 MIN_PROGRESS = 24
+MIN_REWRITE_RATIO = 0.60
 
 
 def _response_text(response: Any) -> str:
@@ -61,9 +62,18 @@ def _extraction_diagnostic(adaptive: Any, raw: str) -> str:
     return "HTML was extracted but failed later validation"
 
 
+def _acceptable_rewrite(previous: str, candidate: str | None) -> bool:
+    """Reject tiny replacement fragments that destroy a useful complete document."""
+    if not candidate:
+        return False
+    minimum = max(300, int(len(previous) * MIN_REWRITE_RATIO))
+    return len(candidate) >= minimum
+
+
 def install_browser_partial_recovery() -> None:
     """Replace the one-shot browser path with progress-aware partial recovery."""
     from sophyane import adaptive_execution as adaptive
+    from sophyane.html_repair_policy import is_structural_problem
 
     current = adaptive._one_shot_browser_artifact
     if getattr(current, "_sophyane_partial_recovery", False):
@@ -93,10 +103,11 @@ def install_browser_partial_recovery() -> None:
 
         html = adaptive._extract_html(raw)
         partial = adaptive._extract_partial_html(raw)
+        best = html or partial
         if html is None:
             progress("HTML extraction diagnostic: " + _extraction_diagnostic(adaptive, raw))
-        if partial:
-            partial_file.write_text(partial, encoding="utf-8")
+        if best:
+            partial_file.write_text(best, encoding="utf-8")
 
         attempts = 0
         stagnant = 0
@@ -105,21 +116,28 @@ def install_browser_partial_recovery() -> None:
             problem = adaptive._validate_html(html, original_request) if html is not None else "document has no closing </html>"
             if html is not None and not problem:
                 break
-            if partial is None and html is not None:
-                partial = adaptive._prepare_for_continuation(html)
+
+            semantic = html is not None and not is_structural_problem(problem)
+            if semantic:
+                repair_base = html
+            elif partial is None and html is not None:
+                repair_base = adaptive._prepare_for_continuation(html)
             elif partial is not None:
-                partial = adaptive._prepare_for_continuation(partial)
-            if partial is None or len(partial) >= MAX_TOTAL_CHARS:
+                repair_base = adaptive._prepare_for_continuation(partial)
+            else:
+                repair_base = None
+
+            if repair_base is None or len(repair_base) >= MAX_TOTAL_CHARS:
                 break
 
             attempts += 1
-            before = len(partial)
-            partial_file.write_text(partial, encoding="utf-8")
+            before = len(repair_base)
+            partial_file.write_text(best or repair_base, encoding="utf-8")
             progress(
                 f"Repairing incomplete provider HTML ({attempts}/{MAX_CONTINUATIONS}; "
                 f"{before} characters preserved): {problem}"
             )
-            response = ask(adaptive._html_continuation_prompt(partial, problem))
+            response = ask(adaptive._html_continuation_prompt(repair_base, problem))
             continuation = _response_text(response)
             response_sequence += 1
             raw_path = _save_raw(workspace, run_id, response_sequence, continuation)
@@ -127,16 +145,42 @@ def install_browser_partial_recovery() -> None:
             reason = _finish_reason(response)
             if reason != "unknown":
                 progress(f"Continuation finish reason: {reason}")
-            candidate = adaptive._join_html_continuation(partial, continuation)
-            growth = len(candidate) - before
-            if growth < MIN_PROGRESS:
+
+            candidate = adaptive._join_html_continuation(repair_base, continuation)
+            candidate_html = adaptive._extract_html(candidate)
+
+            if semantic and not _acceptable_rewrite(html, candidate_html):
                 stagnant += 1
-                progress(f"Continuation made insufficient progress ({growth} characters)")
+                produced = len(candidate_html or candidate)
+                progress(
+                    f"Rejected regressive semantic rewrite ({produced} characters); "
+                    f"kept previous {len(html)}-character document"
+                )
+                partial = html
+            elif not semantic and len(candidate) < before and candidate_html is None:
+                stagnant += 1
+                progress(
+                    f"Rejected regressive continuation ({len(candidate) - before} characters); "
+                    f"kept previous {before}-character partial"
+                )
+                partial = repair_base
             else:
-                stagnant = 0
-            partial = candidate
-            partial_file.write_text(partial, encoding="utf-8")
-            html = adaptive._extract_html(partial)
+                growth = len(candidate) - before
+                if growth < MIN_PROGRESS and candidate_html is None:
+                    stagnant += 1
+                    progress(f"Continuation made insufficient progress ({growth} characters)")
+                else:
+                    stagnant = 0
+                partial = candidate
+                html = candidate_html
+                if html is not None:
+                    best = html
+                elif not best or len(partial) > len(best):
+                    best = partial
+
+            partial_file.write_text(best or partial or repair_base, encoding="utf-8")
+            if html is None and partial is not None:
+                html = adaptive._extract_html(partial)
             if html is None:
                 progress("Continuation extraction diagnostic: " + _extraction_diagnostic(adaptive, continuation))
             if stagnant >= 2:
@@ -145,15 +189,17 @@ def install_browser_partial_recovery() -> None:
 
         evidence_glob = f"{workspace}/{RAW_PREFIX}-{run_id}-*.txt"
         if html is None:
-            if partial:
-                partial_file.write_text(partial, encoding="utf-8")
-                progress(f"Preserved incomplete HTML at {partial_file} ({len(partial)} characters)")
+            preserved = best or partial
+            if preserved:
+                partial_file.write_text(preserved, encoding="utf-8")
+                progress(f"Preserved incomplete HTML at {partial_file} ({len(preserved)} characters)")
             progress(f"Raw provider evidence preserved in {evidence_glob}")
             return None
 
         problem = adaptive._validate_html(html, original_request)
         if problem:
-            partial_file.write_text(html, encoding="utf-8")
+            preserved = best if best and len(best) >= len(html) else html
+            partial_file.write_text(preserved, encoding="utf-8")
             progress(f"Provider HTML rejected after bounded recovery: {problem}")
             progress(f"Preserved rejected HTML at {partial_file}")
             progress(f"Raw provider evidence preserved in {evidence_glob}")
