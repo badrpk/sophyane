@@ -1,7 +1,7 @@
 """Durable recovery for provider HTML that is repeatedly truncated.
 
-The best partial document is preserved in the workspace and continuation retries are
-bounded by progress, character growth, and attempt count instead of a hard two tries.
+The best partial document and each raw provider response are preserved so failed
+browser generation can be diagnosed instead of silently discarded.
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 
 PARTIAL_NAME = ".sophyane-partial-index.html"
+RAW_PREFIX = ".sophyane-provider-response"
 MAX_CONTINUATIONS = 6
 MAX_TOTAL_CHARS = 24000
 MIN_PROGRESS = 24
@@ -30,6 +31,28 @@ def _finish_reason(response: Any) -> str:
         if value:
             return str(value)
     return "unknown"
+
+
+def _save_raw(workspace: Path, sequence: int, text: str) -> Path:
+    path = workspace / f"{RAW_PREFIX}-{sequence}.txt"
+    path.write_text(text, encoding="utf-8", errors="replace")
+    return path
+
+
+def _extraction_diagnostic(adaptive: Any, raw: str) -> str:
+    if not raw.strip():
+        return "provider response was empty"
+    lower = raw.lower()
+    if "<!doctype html" not in lower and "<html" not in lower:
+        if '"content"' in raw or '"files"' in raw or '"action"' in raw:
+            return "no extractable HTML found inside structured artifact response"
+        return "response contained no HTML document"
+    if "</html>" not in lower:
+        return "HTML start was found but closing </html> was missing"
+    extracted = adaptive._extract_html(raw)
+    if extracted is None:
+        return "complete-looking HTML could not be isolated from surrounding response text"
+    return "HTML was extracted but failed later validation"
 
 
 def install_browser_partial_recovery() -> None:
@@ -55,17 +78,22 @@ def install_browser_partial_recovery() -> None:
                  "Requesting one-shot provider-generated HTML artifact")
         response = ask(adaptive._raw_html_prompt(original_request, existing))
         raw = _response_text(response)
+        raw_path = _save_raw(workspace, 1, raw)
         reason = _finish_reason(response)
+        progress(f"Saved raw provider response: {raw_path}")
         if reason != "unknown":
             progress(f"Provider finish reason: {reason}")
 
         html = adaptive._extract_html(raw)
         partial = adaptive._extract_partial_html(raw)
+        if html is None:
+            progress("HTML extraction diagnostic: " + _extraction_diagnostic(adaptive, raw))
         if partial:
             partial_file.write_text(partial, encoding="utf-8")
 
         attempts = 0
         stagnant = 0
+        response_sequence = 1
         while attempts < MAX_CONTINUATIONS:
             problem = adaptive._validate_html(html, original_request) if html is not None else "document has no closing </html>"
             if html is not None and not problem:
@@ -86,6 +114,9 @@ def install_browser_partial_recovery() -> None:
             )
             response = ask(adaptive._html_continuation_prompt(partial, problem))
             continuation = _response_text(response)
+            response_sequence += 1
+            raw_path = _save_raw(workspace, response_sequence, continuation)
+            progress(f"Saved raw continuation response: {raw_path}")
             reason = _finish_reason(response)
             if reason != "unknown":
                 progress(f"Continuation finish reason: {reason}")
@@ -99,6 +130,8 @@ def install_browser_partial_recovery() -> None:
             partial = candidate
             partial_file.write_text(partial, encoding="utf-8")
             html = adaptive._extract_html(partial)
+            if html is None:
+                progress("Continuation extraction diagnostic: " + _extraction_diagnostic(adaptive, continuation))
             if stagnant >= 2:
                 progress("Stopping continuation because the provider stopped making progress")
                 break
@@ -107,6 +140,7 @@ def install_browser_partial_recovery() -> None:
             if partial:
                 partial_file.write_text(partial, encoding="utf-8")
                 progress(f"Preserved incomplete HTML at {partial_file} ({len(partial)} characters)")
+            progress(f"Raw provider evidence preserved in {workspace}/{RAW_PREFIX}-*.txt")
             return None
 
         problem = adaptive._validate_html(html, original_request)
@@ -114,6 +148,7 @@ def install_browser_partial_recovery() -> None:
             partial_file.write_text(html, encoding="utf-8")
             progress(f"Provider HTML rejected after bounded recovery: {problem}")
             progress(f"Preserved rejected HTML at {partial_file}")
+            progress(f"Raw provider evidence preserved in {workspace}/{RAW_PREFIX}-*.txt")
             return None
 
         temporary = target.with_suffix(".html.tmp")
