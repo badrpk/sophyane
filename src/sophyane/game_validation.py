@@ -1,0 +1,64 @@
+"""Mechanical semantic checks for small provider-generated browser games."""
+from __future__ import annotations
+
+import re
+from typing import Callable
+
+
+def _scripts(html: str) -> str:
+    return "\n".join(re.findall(r"<script\b[^>]*>(.*?)</script>", html, re.I | re.S))
+
+
+def _snake_problem(html: str, request: str) -> str:
+    text = request.lower()
+    if "snake" not in text or "game" not in text:
+        return ""
+
+    source = _scripts(html)
+    lower = source.lower()
+    if not source.strip():
+        return "snake game contains no JavaScript"
+    if "canvas" not in html.lower():
+        return "snake game contains no canvas"
+    if not re.search(r"\b(?:keydown|keyup|touchstart|pointerdown)\b", lower):
+        return "snake game has no keyboard or touch controls"
+    if not re.search(r"\b(?:setinterval|settimeout|requestanimationframe)\s*\(", lower):
+        return "snake game has no update loop"
+    if not re.search(r"\bsnake\s*\.\s*(?:unshift|push)\s*\(", source, re.I):
+        return "snake game does not advance the snake body"
+
+    # Common tiny-model runtime failures that balanced-bracket validation misses.
+    declared_const = set(re.findall(r"\bconst\s+([A-Za-z_$][\w$]*)\s*=", source))
+    for name in declared_const:
+        if re.search(rf"(?<![.\w$]){re.escape(name)}\s*=", source[source.find(name) + len(name):]):
+            return f"JavaScript reassigns const variable: {name}"
+
+    move = re.search(r"function\s+(?:move|update|tick|step)\s*\([^)]*\)\s*\{(.*?)\n\s*\}", source, re.I | re.S)
+    if move and re.search(r"\bsegment\s*\.", move.group(1), re.I):
+        params = re.search(r"function\s+(?:move|update|tick|step)\s*\(([^)]*)\)", move.group(0), re.I)
+        if not params or "segment" not in params.group(1):
+            return "JavaScript uses undefined variable: segment"
+
+    if re.search(r"\b(?:direction|dir)\s*=\s*\{\s*x\s*:\s*0\s*,\s*y\s*:\s*0\s*\}", source, re.I):
+        if not re.search(r"(?:direction|dir)\s*\.\s*[xy]\s*=", source, re.I):
+            return "snake direction never changes from zero"
+
+    return ""
+
+
+def install_game_validation() -> None:
+    """Wrap adaptive HTML validation once with semantic game checks."""
+    from sophyane import adaptive_execution
+
+    current: Callable[[str, str], str] = adaptive_execution._validate_html
+    if getattr(current, "_sophyane_game_validation", False):
+        return
+
+    def validate(html: str, request: str) -> str:
+        structural = current(html, request)
+        if structural:
+            return structural
+        return _snake_problem(html, request)
+
+    setattr(validate, "_sophyane_game_validation", True)
+    adaptive_execution._validate_html = validate
