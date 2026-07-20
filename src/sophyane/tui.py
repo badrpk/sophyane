@@ -2,8 +2,45 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+
+
+def _artifact_snapshot(workspace: Path) -> dict[str, tuple[int, int]]:
+    """Capture user-facing artifacts while ignoring recovery and server metadata."""
+    ignored = {".sophyane-partial-index.html"}
+    snapshot: dict[str, tuple[int, int]] = {}
+    if not workspace.is_dir():
+        return snapshot
+    for path in workspace.rglob("*"):
+        if not path.is_file() or path.name in ignored or path.name.startswith("server-"):
+            continue
+        try:
+            stat = path.stat()
+            snapshot[str(path.relative_to(workspace))] = (stat.st_size, stat.st_mtime_ns)
+        except OSError:
+            continue
+    return snapshot
+
+
+def _execution_succeeded(result: str, before: dict[str, tuple[int, int]], workspace: Path) -> bool:
+    """Require a positive runtime result and a real new or changed artifact."""
+    text = (result or "").lower()
+    failure_markers = (
+        "execution stopped safely",
+        "execution loop failed",
+        "stopped after bounded",
+        "could not produce a usable artifact",
+        "provider html rejected",
+        "failed safely",
+    )
+    if any(marker in text for marker in failure_markers):
+        return False
+    after = _artifact_snapshot(workspace)
+    if not after:
+        return False
+    return after != before
 
 
 def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
@@ -39,10 +76,20 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     from sophyane import tui_v2
 
     def run_with_post_build_menu(**kwargs: Any) -> str:
+        workspace = Path(kwargs.get("workspace")).resolve()
+        before = _artifact_snapshot(workspace)
         result = run_adaptive_loop(**kwargs)
-        workspace = kwargs.get("workspace")
-        if workspace is not None and any(workspace.iterdir()):
+        if _execution_succeeded(result, before, workspace):
             PostBuildMenu(workspace).run()
+        elif workspace.is_dir():
+            print(
+                "\n❌ Project build/update did not complete. "
+                "The previous working files were preserved; the success menu was not opened.",
+                flush=True,
+            )
+            partial = workspace / ".sophyane-partial-index.html"
+            if partial.is_file():
+                print(f"Rejected partial preserved at: {partial}", flush=True)
         return result
 
     kernel = ExecutionKernel(run_with_post_build_menu)
