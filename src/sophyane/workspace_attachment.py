@@ -79,7 +79,6 @@ def _decode_truncated_json_string(fragment: str) -> str | None:
     try:
         return json.loads('"' + body + '"')
     except json.JSONDecodeError:
-        # Preserve useful HTML even if the provider stopped inside one escape.
         return bytes(body, "utf-8").decode("unicode_escape", errors="replace")
 
 
@@ -143,10 +142,13 @@ def install_workspace_attachment() -> None:
     original_extract: Callable[[str], str | None] = adaptive._extract_html
     if not getattr(original_extract, "_sophyane_embedded_html", False):
         def extract(raw: str) -> str | None:
+            embedded = extract_embedded_html(raw)
+            if embedded:
+                return embedded
             direct = original_extract(raw)
             if direct and direct.lstrip().lower().startswith(("<!doctype html", "<html")):
                 return direct
-            return extract_embedded_html(raw) or direct
+            return direct
         setattr(extract, "_sophyane_embedded_html", True)
         adaptive._extract_html = extract
 
@@ -154,10 +156,9 @@ def install_workspace_attachment() -> None:
     if not getattr(original_partial, "_sophyane_embedded_partial_html", False):
         def extract_partial(raw: str) -> str | None:
             embedded = extract_embedded_partial_html(raw)
-            direct = original_partial(raw)
-            if embedded and (not direct or len(embedded) >= len(direct)):
+            if embedded:
                 return embedded
-            return direct
+            return original_partial(raw)
         setattr(extract_partial, "_sophyane_embedded_partial_html", True)
         adaptive._extract_partial_html = extract_partial
 
