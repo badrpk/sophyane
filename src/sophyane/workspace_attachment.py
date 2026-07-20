@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 
+HTML_KEYS = ("content", "html", "text", "source", "tool_code", "code")
+
+
 def _looks_like_project(path: Path) -> bool:
     if not path.is_dir():
         return False
@@ -25,17 +28,59 @@ def _html_candidates(value: Any) -> list[str]:
         if ("<!doctype html" in lower or "<html" in lower) and "</html>" in lower:
             found.append(value)
     elif isinstance(value, dict):
-        preferred = ("content", "html", "text", "source")
-        for key in preferred:
+        for key in HTML_KEYS:
             if key in value:
                 found.extend(_html_candidates(value[key]))
         for key, item in value.items():
-            if key not in preferred:
+            if key not in HTML_KEYS:
                 found.extend(_html_candidates(item))
     elif isinstance(value, list):
         for item in value:
             found.extend(_html_candidates(item))
     return found
+
+
+def _named_json_strings(raw: str) -> list[str]:
+    """Decode complete JSON string values from common artifact fields."""
+    values: list[str] = []
+    decoder = json.JSONDecoder()
+    names = "|".join(re.escape(name) for name in HTML_KEYS)
+    for match in re.finditer(rf'"(?:{names})"\s*:\s*', raw or "", re.I):
+        try:
+            value, _ = decoder.raw_decode((raw or "")[match.end():])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, str):
+            values.append(value)
+    return values
+
+
+def _decode_truncated_json_string(fragment: str) -> str | None:
+    """Best-effort decode of an unterminated JSON string value."""
+    if not fragment.startswith('"'):
+        return None
+    body = fragment[1:]
+    escaped = False
+    end = None
+    for index, char in enumerate(body):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            end = index
+            break
+    if end is not None:
+        body = body[:end]
+    while body.endswith("\\"):
+        body = body[:-1]
+    try:
+        return json.loads('"' + body + '"')
+    except json.JSONDecodeError:
+        # Preserve useful HTML even if the provider stopped inside one escape.
+        return bytes(body, "utf-8").decode("unicode_escape", errors="replace")
 
 
 def extract_embedded_html(raw: str) -> str | None:
@@ -44,7 +89,6 @@ def extract_embedded_html(raw: str) -> str | None:
     decoder = json.JSONDecoder()
     text = raw or ""
 
-    # Parse a normal JSON response first, then tolerate prose/multiple JSON objects.
     try:
         candidates.extend(_html_candidates(json.loads(text.strip())))
     except (json.JSONDecodeError, TypeError):
@@ -55,13 +99,7 @@ def extract_embedded_html(raw: str) -> str | None:
                 continue
             candidates.extend(_html_candidates(value))
 
-    # Also decode individual JSON string values named content.
-    for match in re.finditer(r'"(?:content|html|source)"\s*:\s*', text, re.I):
-        try:
-            value, _ = decoder.raw_decode(text[match.end():])
-        except json.JSONDecodeError:
-            continue
-        candidates.extend(_html_candidates(value))
+    candidates.extend(_named_json_strings(text))
 
     clean: list[str] = []
     for candidate in candidates:
@@ -75,8 +113,30 @@ def extract_embedded_html(raw: str) -> str | None:
     return max(clean, key=len) if clean else None
 
 
+def extract_embedded_partial_html(raw: str) -> str | None:
+    """Recover HTML from a complete or truncated JSON string artifact field."""
+    candidates = _named_json_strings(raw or "")
+    names = "|".join(re.escape(name) for name in HTML_KEYS)
+    for match in re.finditer(rf'"(?:{names})"\s*:\s*', raw or "", re.I):
+        decoded = _decode_truncated_json_string((raw or "")[match.end():])
+        if decoded:
+            candidates.append(decoded)
+
+    partials: list[str] = []
+    for candidate in candidates:
+        lower = candidate.lower()
+        start = lower.find("<!doctype html")
+        if start < 0:
+            start = lower.find("<html")
+        if start >= 0:
+            partial = candidate[start:].strip()
+            if len(partial) >= 120:
+                partials.append(partial)
+    return max(partials, key=len) if partials else None
+
+
 def install_workspace_attachment() -> None:
-    """Patch the TUI and browser extractor once."""
+    """Patch the TUI and browser extractors once."""
     from sophyane import adaptive_execution as adaptive
     from sophyane import tui_v2
 
@@ -89,6 +149,17 @@ def install_workspace_attachment() -> None:
             return extract_embedded_html(raw) or direct
         setattr(extract, "_sophyane_embedded_html", True)
         adaptive._extract_html = extract
+
+    original_partial: Callable[[str], str | None] = adaptive._extract_partial_html
+    if not getattr(original_partial, "_sophyane_embedded_partial_html", False):
+        def extract_partial(raw: str) -> str | None:
+            embedded = extract_embedded_partial_html(raw)
+            direct = original_partial(raw)
+            if embedded and (not direct or len(embedded) >= len(direct)):
+                return embedded
+            return direct
+        setattr(extract_partial, "_sophyane_embedded_partial_html", True)
+        adaptive._extract_partial_html = extract_partial
 
     original_init = tui_v2.ObservableTUI.__init__
     if not getattr(original_init, "_sophyane_workspace_attachment", False):

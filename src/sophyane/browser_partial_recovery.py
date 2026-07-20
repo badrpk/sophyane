@@ -5,6 +5,7 @@ browser generation can be diagnosed instead of silently discarded.
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -33,8 +34,13 @@ def _finish_reason(response: Any) -> str:
     return "unknown"
 
 
-def _save_raw(workspace: Path, sequence: int, text: str) -> Path:
-    path = workspace / f"{RAW_PREFIX}-{sequence}.txt"
+def _new_run_id() -> str:
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    return f"{stamp}-{time.time_ns() % 1_000_000_000:09d}"
+
+
+def _save_raw(workspace: Path, run_id: str, sequence: int, text: str) -> Path:
+    path = workspace / f"{RAW_PREFIX}-{run_id}-{sequence}.txt"
     path.write_text(text, encoding="utf-8", errors="replace")
     return path
 
@@ -44,7 +50,7 @@ def _extraction_diagnostic(adaptive: Any, raw: str) -> str:
         return "provider response was empty"
     lower = raw.lower()
     if "<!doctype html" not in lower and "<html" not in lower:
-        if '"content"' in raw or '"files"' in raw or '"action"' in raw:
+        if any(f'"{key}"' in raw for key in ("content", "files", "action", "tool_code", "code")):
             return "no extractable HTML found inside structured artifact response"
         return "response contained no HTML document"
     if "</html>" not in lower:
@@ -67,6 +73,7 @@ def install_browser_partial_recovery() -> None:
                   workspace: Path, progress: Callable[[str], None]) -> str | None:
         target = workspace / "index.html"
         partial_file = workspace / PARTIAL_NAME
+        run_id = _new_run_id()
         existing = ""
         if target.is_file():
             try:
@@ -78,7 +85,7 @@ def install_browser_partial_recovery() -> None:
                  "Requesting one-shot provider-generated HTML artifact")
         response = ask(adaptive._raw_html_prompt(original_request, existing))
         raw = _response_text(response)
-        raw_path = _save_raw(workspace, 1, raw)
+        raw_path = _save_raw(workspace, run_id, 1, raw)
         reason = _finish_reason(response)
         progress(f"Saved raw provider response: {raw_path}")
         if reason != "unknown":
@@ -115,7 +122,7 @@ def install_browser_partial_recovery() -> None:
             response = ask(adaptive._html_continuation_prompt(partial, problem))
             continuation = _response_text(response)
             response_sequence += 1
-            raw_path = _save_raw(workspace, response_sequence, continuation)
+            raw_path = _save_raw(workspace, run_id, response_sequence, continuation)
             progress(f"Saved raw continuation response: {raw_path}")
             reason = _finish_reason(response)
             if reason != "unknown":
@@ -136,11 +143,12 @@ def install_browser_partial_recovery() -> None:
                 progress("Stopping continuation because the provider stopped making progress")
                 break
 
+        evidence_glob = f"{workspace}/{RAW_PREFIX}-{run_id}-*.txt"
         if html is None:
             if partial:
                 partial_file.write_text(partial, encoding="utf-8")
                 progress(f"Preserved incomplete HTML at {partial_file} ({len(partial)} characters)")
-            progress(f"Raw provider evidence preserved in {workspace}/{RAW_PREFIX}-*.txt")
+            progress(f"Raw provider evidence preserved in {evidence_glob}")
             return None
 
         problem = adaptive._validate_html(html, original_request)
@@ -148,7 +156,7 @@ def install_browser_partial_recovery() -> None:
             partial_file.write_text(html, encoding="utf-8")
             progress(f"Provider HTML rejected after bounded recovery: {problem}")
             progress(f"Preserved rejected HTML at {partial_file}")
-            progress(f"Raw provider evidence preserved in {workspace}/{RAW_PREFIX}-*.txt")
+            progress(f"Raw provider evidence preserved in {evidence_glob}")
             return None
 
         temporary = target.with_suffix(".html.tmp")
