@@ -1,4 +1,4 @@
-"""Truthful provider context and heartbeat reporting for interactive execution."""
+"""Truthful provider dispatch context and heartbeat reporting."""
 from __future__ import annotations
 
 import queue
@@ -6,20 +6,75 @@ import threading
 import time
 from typing import Any
 
+_PROVIDER_ATTRS = ("provider", "llm", "backend", "dispatcher", "model_provider")
+_STATE_ATTRS = (
+    "active_provider",
+    "current_provider",
+    "_quality_active_call_provider",
+    "_quality_active_rescue",
+    "last_provider",
+)
+
+
+def _looks_like_provider(value: Any) -> bool:
+    return value is not None and callable(getattr(value, "generate", None))
+
+
+def _walk_provider(value: Any, seen: set[int] | None = None, depth: int = 0) -> Any:
+    """Find the real provider behind agents, bound methods, partials, and closures."""
+    if value is None or depth > 5:
+        return None
+    seen = seen or set()
+    marker = id(value)
+    if marker in seen:
+        return None
+    seen.add(marker)
+
+    if _looks_like_provider(value) and (
+        hasattr(value, "_providers") or hasattr(value, "primary") or hasattr(value, "metadata")
+    ):
+        return value
+
+    owner = getattr(value, "__self__", None)
+    found = _walk_provider(owner, seen, depth + 1)
+    if found is not None:
+        return found
+
+    for attr in _PROVIDER_ATTRS:
+        try:
+            child = getattr(value, attr, None)
+        except Exception:  # noqa: BLE001
+            child = None
+        found = _walk_provider(child, seen, depth + 1)
+        if found is not None:
+            return found
+
+    closure = getattr(value, "__closure__", None) or ()
+    for cell in closure:
+        try:
+            child = cell.cell_contents
+        except ValueError:
+            continue
+        found = _walk_provider(child, seen, depth + 1)
+        if found is not None:
+            return found
+    return None
+
 
 def _provider_from_tui(tui: Any) -> Any:
-    ask = getattr(tui, "ask", None)
-    owner = getattr(ask, "__self__", None)
-    provider = getattr(owner, "provider", None)
+    cached = getattr(tui, "_sophyane_provider_dispatcher", None)
+    if cached is not None:
+        return cached
+    provider = _walk_provider(getattr(tui, "ask", None)) or _walk_provider(tui)
     if provider is not None:
-        return provider
-    return getattr(tui, "provider", None)
+        tui._sophyane_provider_dispatcher = provider
+    return provider
 
 
 def _active_name(tui: Any) -> str:
     provider = _provider_from_tui(tui)
     if provider is not None:
-        for attr in ("active_provider", "current_provider", "_quality_active_call_provider", "_quality_active_rescue", "last_provider"):
+        for attr in _STATE_ATTRS:
             value = str(getattr(provider, attr, "") or "").strip()
             if value:
                 return value
@@ -34,6 +89,14 @@ def install_provider_context_patch() -> None:
 
     if getattr(tui_v2, "_provider_context_patch_installed", False):
         return
+
+    original_init = tui_v2.ObservableTUI.__init__
+
+    def init(self: Any, *args: Any, **kwargs: Any) -> None:
+        original_init(self, *args, **kwargs)
+        provider = _walk_provider(getattr(self, "ask", None))
+        if provider is not None:
+            self._sophyane_provider_dispatcher = provider
 
     def call_provider(self: Any, message: str, *, timeout: int = 60) -> Any:
         provider = _provider_from_tui(self)
@@ -61,14 +124,17 @@ def install_provider_context_patch() -> None:
                 if status == "error":
                     raise value
                 used = _active_name(self)
-                if used:
-                    self.progress(f"Provider response received from {used} ({self.last_elapsed:.1f}s)")
+                self.progress(f"Provider response received from {used} ({self.last_elapsed:.1f}s)")
                 return value
             except queue.Empty:
                 elapsed = int(time.monotonic() - started)
                 active = _active_name(self)
                 if active != announced:
-                    mode = "cloud rescue" if active and active not in {"local_gguf", "ollama"} and primary in {"local_gguf", "ollama"} else "active"
+                    mode = (
+                        "cloud rescue"
+                        if active not in {"local_gguf", "ollama"} and primary in {"local_gguf", "ollama"}
+                        else "active"
+                    )
                     self.progress(f"Provider: {active} ({mode})")
                     announced = active
                 if elapsed >= next_update:
@@ -77,5 +143,6 @@ def install_provider_context_patch() -> None:
                 if elapsed >= timeout:
                     raise TimeoutError(f"{active} did not respond within {timeout}s.")
 
+    tui_v2.ObservableTUI.__init__ = init
     tui_v2.ObservableTUI.call_provider = call_provider
     tui_v2._provider_context_patch_installed = True
