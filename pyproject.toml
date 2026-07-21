@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sophyane"
-version = "18.9.0"
+version = "18.10.0"
 description = "Adaptive local agentic software harness with validator-grounded execution learning"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Badar Uzaman"}]
-keywords = ["ai", "coding-agent", "repository", "semantic-index", "patch", "self-repair", "multi-agent", "llm", "autonomous", "workflow", "gemini", "openai", "ollama", "cli", "local-ai", "execution-learning", "sqlite", "validated-execution"]
+keywords = ["ai", "coding-agent", "repository", "semantic-index", "patch", "self-repair", "multi-agent", "llm", "autonomous", "workflow", "gemini", "openai", "ollama", "cli", "local-ai", "execution-learning", "sqlite", "validated-execution", "quality-escalation"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",
@@ -57,5 +57,3 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 sophyane = ["browser/home/*", "expert/data/*"]
-
-# Ship exam questions next to install tree via data files if present
