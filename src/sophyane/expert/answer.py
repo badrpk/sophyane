@@ -21,7 +21,6 @@ def score_answer(answer: str, keys: list[str], *, min_len: int = 80) -> dict[str
     hit = [k for k in keys if k.lower() in text]
     key_score = len(hit) / max(1, len(keys))
     len_score = min(1.0, len(answer or "") / float(min_len))
-    # penalize empty / refusal
     refuse = bool(re.search(r"\b(i cannot|as an ai|no idea)\b", text))
     total = 0.75 * key_score + 0.25 * len_score
     if refuse:
@@ -44,13 +43,7 @@ def answer_tough_question(
     generate: GenerateFn | None = None,
     mode: str = "hybrid",
 ) -> dict[str, Any]:
-    """Answer a hard harness/coding question.
-
-    modes:
-      - expert: curated knowledge only (deterministic quality floor)
-      - llm: model only
-      - hybrid: expert pack + LLM polish (best of both; default)
-    """
+    """Answer a hard harness/coding question."""
     expert = expert_answer_for(question, qid=qid, cat=cat)
     llm_text = ""
     mode = (mode or "hybrid").lower()
@@ -75,21 +68,28 @@ def answer_tough_question(
         final = llm_text
         used = "llm"
     else:
-        # hybrid merge: prefer expert structure; append unique LLM detail if useful
-        if len(llm_text) > 40 and score_answer(llm_text, keys or []).get("score", 0) >= 0.35:
-            final = expert + "\n\nAdditional detail:\n" + llm_text.strip()
+        stripped = llm_text.strip()
+        # Exact and concise replies are often the strongest answer for local models.
+        # Do not discard successful outputs such as LOCAL_OK, yes/no, identifiers,
+        # short facts, or requested one-line responses merely because they are short.
+        if stripped and len(stripped) <= 64:
+            final = stripped
+            used = "llm_short"
+        elif score_answer(stripped, keys or []).get("score", 0) >= 0.35:
+            final = expert + "\n\nAdditional detail:\n" + stripped
             used = "hybrid"
         else:
-            # weak LLM — keep expert as authoritative
-            final = expert + (
-                "\n\n(Local model detail omitted as low-signal; expert pack authoritative.)"
-                if llm_text
-                else ""
-            )
+            final = expert
             used = "expert_fallback"
 
     keys = keys or []
-    scored = score_answer(final, keys) if keys else {"score": 1.0, "passed": True, "keys_hit": [], "keys_miss": [], "length": len(final)}
+    scored = score_answer(final, keys) if keys else {
+        "score": 1.0,
+        "passed": True,
+        "keys_hit": [],
+        "keys_miss": [],
+        "length": len(final),
+    }
     return {
         "ok": True,
         "mode": mode,
