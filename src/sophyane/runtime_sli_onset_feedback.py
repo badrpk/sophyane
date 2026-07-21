@@ -38,8 +38,8 @@ def _task_hints(message: str) -> list[str]:
     mobile = any(word in text for word in ("phone", "mobile", "responsive", "touch"))
     if browser:
         hints.extend([
-            "Prefer one complete index.html with inline CSS and JavaScript, plus a local assets folder when rich photography materially improves the demo.",
-            "For visual subjects, use several relevant high-resolution royalty-free photographs from reputable sources, download them into the workspace, and reference the local copies rather than fragile hotlinks.",
+            "Prefer one complete index.html with inline CSS and JavaScript, plus locally stored image assets when rich photography materially improves the demo.",
+            "For visual subjects, choose several relevant high-resolution royalty-free photographs from trusted Unsplash, Pexels, or Pixabay image hosts; Sophyane will download and localize those trusted HTTPS image URLs before preview.",
             "Aim for a premium showcase that looks more polished than a basic production MVP: strong hero composition, editorial typography, layered cards, gradients, depth, and intentional whitespace.",
             "Include tasteful motion such as entrance reveals, hover depth, subtle parallax or floating accents, smooth transitions, and micro-interactions; also respect prefers-reduced-motion.",
             "Avoid placeholders, generic labels, missing assets, undeclared fonts, and repetitive cards with only headings and one sentence.",
@@ -145,10 +145,10 @@ def install_sli_onset_feedback() -> None:
         return (
             base
             + "\nPREMIUM DEMO QUALITY GATE: Build a visually exceptional, portfolio-grade experience rather than a plain template. "
-              "Use relevant high-resolution royalty-free photography when appropriate; download chosen photos into assets/images and use local relative paths. "
+              "When photography is relevant, place up to six direct HTTPS image URLs from images.unsplash.com, images.pexels.com, or cdn.pixabay.com in img src attributes; Sophyane will securely download and rewrite them to local assets before preview. "
               "Add a cinematic hero, richer sections, clear navigation, authentic copy, polished calls-to-action, layered depth, and fancy but tasteful animations. "
               "Include scroll reveals, hover micro-interactions, smooth transitions, and prefers-reduced-motion support. "
-              "Do not use lorem ipsum, generic Plant 1 labels, broken URLs, or external hotlinks in the final HTML."
+              "Do not use lorem ipsum, generic Plant 1 labels, fabricated local image filenames, or unrelated stock photos."
         )
 
     refinement._refinement_prompt = refinement_prompt
