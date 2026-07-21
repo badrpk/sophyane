@@ -34,6 +34,8 @@ def artifact_defects(prompt: str, text: str) -> list[str]:
     defects: list[str] = []
     browser_request = any(word in request for word in ("html", "website", "web app", "game", "browser"))
     game_request = "game" in request or any(word in request for word in ("chess", "snake", "tic tac", "tetris"))
+    complete_html = ("<html" in low or "<!doctype html" in low) and "</html>" in low
+    interactive = any(token in low for token in ("onclick", "addeventlistener", "ontouch", "pointerdown", "keydown"))
     if browser_request or "<html" in low or "<!doctype html" in low:
         if "<html" not in low and "<!doctype html" not in low:
             defects.append("missing_html_document")
@@ -41,9 +43,15 @@ def artifact_defects(prompt: str, text: str) -> list[str]:
             defects.append("missing_html_close")
         if game_request and "<script" not in low:
             defects.append("missing_javascript")
-        if game_request and not any(token in low for token in ("onclick", "addeventlistener", "ontouch", "pointerdown", "keydown")):
+        if game_request and not interactive:
             defects.append("missing_interaction")
-    if len(output.strip()) < 160 and any(word in request for word in ("create", "build", "make", "implement")):
+    # Compact but structurally complete artifacts are valid. Length is only a
+    # defect when the response also lacks a complete runnable artifact.
+    if (
+        len(output.strip()) < 160
+        and any(word in request for word in ("create", "build", "make", "implement"))
+        and not (complete_html and (not game_request or ("<script" in low and interactive)))
+    ):
         defects.append("response_too_short")
     return defects
 
@@ -94,7 +102,6 @@ class SLIProviderController:
         with _LOCK:
             self.attempt += 1
             self.defect_streak = self.defect_streak + 1 if defects else 0
-            # Features are normalized and intentionally transparent.
             x_defect = min(1.0, len(defects) / 3.0)
             x_streak = min(1.0, self.defect_streak / 3.0)
             x_repeat = 1.0 if repeated else 0.0
@@ -103,9 +110,6 @@ class SLIProviderController:
             local = str(provider or "").lower() in {"local_gguf", "ollama"}
             x_local = 1.0 if local else 0.0
 
-            # A compact scalar LSTM cell. Fixed initial weights provide safe
-            # behaviour before training; outcome feedback can tune thresholds
-            # in future SLI training rounds without changing this public API.
             forget = _sigmoid(1.6 - 0.7 * x_defect - 0.5 * x_repeat)
             input_gate = _sigmoid(-0.4 + 1.8 * x_defect + 1.2 * x_streak + 0.8 * x_repair)
             candidate = math.tanh(-0.8 + 1.7 * x_defect + 1.5 * x_streak + 1.4 * x_repeat + 0.5 * x_latency + 0.4 * x_local)
