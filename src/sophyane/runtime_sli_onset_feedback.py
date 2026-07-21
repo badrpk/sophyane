@@ -38,12 +38,15 @@ def _task_hints(message: str) -> list[str]:
     mobile = any(word in text for word in ("phone", "mobile", "responsive", "touch"))
     if browser:
         hints.extend([
-            "Prefer one complete self-contained index.html with inline CSS and JavaScript.",
-            "Avoid missing local images, stylesheets, scripts, fonts, and other undeclared assets.",
-            "Require structural validation and an HTTP-verified browser preview before completion.",
+            "Prefer one complete index.html with inline CSS and JavaScript, plus a local assets folder when rich photography materially improves the demo.",
+            "For visual subjects, use several relevant high-resolution royalty-free photographs from reputable sources, download them into the workspace, and reference the local copies rather than fragile hotlinks.",
+            "Aim for a premium showcase that looks more polished than a basic production MVP: strong hero composition, editorial typography, layered cards, gradients, depth, and intentional whitespace.",
+            "Include tasteful motion such as entrance reveals, hover depth, subtle parallax or floating accents, smooth transitions, and micro-interactions; also respect prefers-reduced-motion.",
+            "Avoid placeholders, generic labels, missing assets, undeclared fonts, and repetitive cards with only headings and one sentence.",
+            "Require structural validation, local-asset verification, responsive checks, and an HTTP-verified browser preview before completion.",
         ])
     if mobile:
-        hints.append("Use responsive sizing, readable touch targets, and layouts that fit narrow screens without overflow.")
+        hints.append("Use responsive sizing, readable touch targets, fluid typography, and layouts that fit narrow screens without overflow.")
     if game:
         hints.extend([
             "Require working interaction logic, visible state or score feedback, and a restart path.",
@@ -89,14 +92,14 @@ def sli_preplanning_feedback(message: str) -> str:
         lines.append(f"Recent provider latency averaged {average:.1f}s; prefer a direct, bounded plan with minimal redundant generations.")
     if not lines:
         lines.append("Use a small, testable plan; create real artifacts before commands; verify every user-visible requirement.")
-    return "\n".join(f"- {line}" for line in lines[:8])
+    return "\n".join(f"- {line}" for line in lines[:10])
 
 
 def _record_onset(message: str, feedback: str) -> None:
     try:
         path = _state_root() / "sli-onset-events.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
-        event = {"ts": time.time(), "request": message[:600], "feedback": feedback[:1800]}
+        event = {"ts": time.time(), "request": message[:600], "feedback": feedback[:2400]}
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
     except Exception:
@@ -105,6 +108,7 @@ def _record_onset(message: str, feedback: str) -> None:
 
 def install_sli_onset_feedback() -> None:
     """Make SLI advice part of refinement and the approved planning prompt."""
+    from sophyane import adaptive_execution
     from sophyane import runtime_intent_refinement_patch as refinement
     from sophyane import tui_v2
 
@@ -113,6 +117,7 @@ def install_sli_onset_feedback() -> None:
 
     original_prompt = refinement._refinement_prompt
     original_context = tui_v2.ObservableTUI._context_prompt
+    original_html_prompt = adaptive_execution._raw_html_prompt
 
     def refinement_prompt(message: str, *, has_project: bool) -> str:
         feedback = sli_preplanning_feedback(message)
@@ -132,9 +137,21 @@ def install_sli_onset_feedback() -> None:
             base
             + "\n\nSLI EXECUTION GUIDANCE FOR THIS PLAN:\n"
             + feedback
-            + "\nLay out the smallest plan predicted to satisfy the approved request, then produce verifiable artifacts."
+            + "\nLay out the smallest plan predicted to satisfy the approved request, while targeting a premium visual demo rather than a bare minimum page."
+        )
+
+    def premium_html_prompt(original_request: str, existing: str = "") -> str:
+        base = original_html_prompt(original_request, existing)
+        return (
+            base
+            + "\nPREMIUM DEMO QUALITY GATE: Build a visually exceptional, portfolio-grade experience rather than a plain template. "
+              "Use relevant high-resolution royalty-free photography when appropriate; download chosen photos into assets/images and use local relative paths. "
+              "Add a cinematic hero, richer sections, clear navigation, authentic copy, polished calls-to-action, layered depth, and fancy but tasteful animations. "
+              "Include scroll reveals, hover micro-interactions, smooth transitions, and prefers-reduced-motion support. "
+              "Do not use lorem ipsum, generic Plant 1 labels, broken URLs, or external hotlinks in the final HTML."
         )
 
     refinement._refinement_prompt = refinement_prompt
     tui_v2.ObservableTUI._context_prompt = context_prompt
+    adaptive_execution._raw_html_prompt = premium_html_prompt
     refinement._sli_onset_feedback_installed = True
