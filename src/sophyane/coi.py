@@ -66,11 +66,7 @@ class COIEvent:
 
 
 class COIOrchestrator:
-    """Bounded supervisor for native Sophyane sub-agents.
-
-    Agent runners receive a TaskContract and shared context, and return a JSON-
-    serializable result. The orchestrator records every transition locally.
-    """
+    """Bounded supervisor with permissions, dependencies, events, and recovery."""
 
     def __init__(self, root: Path = COI_ROOT) -> None:
         self.paths = ensure_coi_filesystem(root)
@@ -89,11 +85,32 @@ class COIOrchestrator:
     def submit(self, task: TaskContract) -> Path:
         path = Path(self.paths["tasks"]) / f"{task.task_id}.json"
         path.write_text(json.dumps(asdict(task), indent=2) + "\n", encoding="utf-8")
-        self.emit(COIEvent(task.task_id, "task.submitted", task.owner, {"goal": task.goal}))
+        queue_path = Path(self.paths["queues"]) / f"{100-task.priority:03d}-{task.created_at:.6f}-{task.task_id}.json"
+        queue_path.write_text(json.dumps(asdict(task), indent=2) + "\n", encoding="utf-8")
+        self.emit(COIEvent(task.task_id, "task.submitted", task.owner, {"goal": task.goal, "priority": task.priority}))
         return path
+
+    def _dependency_state(self, task: TaskContract) -> tuple[bool, list[str]]:
+        missing: list[str] = []
+        for dependency in task.dependencies:
+            run_path = Path(self.paths["runs"]) / f"{dependency}.json"
+            if not run_path.exists():
+                missing.append(dependency)
+                continue
+            try:
+                if not json.loads(run_path.read_text(encoding="utf-8")).get("ok"):
+                    missing.append(dependency)
+            except (OSError, json.JSONDecodeError):
+                missing.append(dependency)
+        return not missing, missing
 
     def run(self, task: TaskContract, *, agent: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
         self.submit(task)
+        ready, blocked_by = self._dependency_state(task)
+        if not ready:
+            result = {"ok": False, "state": "blocked", "task_id": task.task_id, "blocked_by": blocked_by}
+            self.emit(COIEvent(task.task_id, "task.blocked", "scheduler", result))
+            return result
         if agent not in self.agents:
             result = {"ok": False, "error": f"unknown COI agent: {agent}", "available": sorted(self.agents)}
             self.emit(COIEvent(task.task_id, "task.failed", "orchestrator", result))
@@ -105,11 +122,15 @@ class COIOrchestrator:
             self.emit(COIEvent(task.task_id, "task.denied", agent, result))
             return result
         started = time.monotonic()
-        self.emit(COIEvent(task.task_id, "agent.started", agent, {"role": manifest.role}))
+        self.emit(COIEvent(task.task_id, "agent.started", agent, {"role": manifest.role, "provider": manifest.provider}))
         try:
             output = runner(task, context or {})
-            result = {"ok": True, "task_id": task.task_id, "agent": agent, "elapsed_seconds": round(time.monotonic() - started, 6), "output": output}
-            self.emit(COIEvent(task.task_id, "agent.completed", agent, result))
+            elapsed = time.monotonic() - started
+            timed_out = elapsed > task.timeout_seconds
+            result = {"ok": not timed_out, "task_id": task.task_id, "agent": agent, "elapsed_seconds": round(elapsed, 6), "output": output}
+            if timed_out:
+                result["error"] = "task exceeded timeout budget"
+            self.emit(COIEvent(task.task_id, "agent.completed" if result["ok"] else "agent.timeout", agent, result))
         except Exception as error:  # noqa: BLE001
             result = {"ok": False, "task_id": task.task_id, "agent": agent, "error": f"{type(error).__name__}: {error}"}
             self.emit(COIEvent(task.task_id, "agent.failed", agent, result))
@@ -117,7 +138,21 @@ class COIOrchestrator:
         run_path.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         return result
 
+    def queue(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for path in sorted(Path(self.paths["queues"]).glob("*.json")):
+            try:
+                task = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            run = Path(self.paths["runs"]) / f"{task.get('task_id', '')}.json"
+            task["state"] = "completed" if run.exists() else "queued"
+            rows.append(task)
+        return rows
+
 
 def status() -> dict[str, Any]:
     paths = ensure_coi_filesystem()
-    return {"ok": True, "protocol": "sophyane-coi/1", "paths": paths}
+    queued = len(list(Path(paths["queues"]).glob("*.json")))
+    runs = len(list(Path(paths["runs"]).glob("*.json")))
+    return {"ok": True, "protocol": "sophyane-coi/2", "queued": queued, "runs": runs, "paths": paths}
