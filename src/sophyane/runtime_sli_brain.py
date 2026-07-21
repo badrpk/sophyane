@@ -1,8 +1,8 @@
-"""SLI Brain Kernel v1.
+"""SLI Brain Kernel.
 
 SLI owns routing, profile selection, prompt budgeting and fallback behavior.
-Language models are replaceable workers. The kernel is deliberately compact so
-small local models remain useful without any cloud API.
+Unknown language is resolved through a constrained semantic ledger; language
+models may explain uncertain terms but may not rewrite frozen user intent.
 """
 from __future__ import annotations
 
@@ -34,13 +34,13 @@ def _clean(text: str, limit: int = 700) -> str:
 
 def _profile(message: str) -> str:
     text = message.lower()
-    if "game" in text or any(x in text for x in ("chess", "snake", "tetris", "tic tac")):
+    if "game" in text or any(x in text for x in ("chess", "snake", "tetris", "tic tac", "pong", "ping pong")):
         return "GAME_HTML5"
     if any(x in text for x in ("dashboard", "admin panel", "analytics")):
         return "WEB_DASHBOARD"
-    if any(x in text for x in ("shop", "store", "ecommerce", "marketplace", "cart")):
+    if any(x in text for x in ("shop", "store", "ecommerce", "marketplace", "cart", "grocery", "kiryana")):
         return "WEB_ECOMMERCE"
-    if any(x in text for x in ("website", "web app", "landing page", "html", "portfolio")):
+    if any(x in text for x in ("website", "web app", "landing page", "html", "portfolio", "site")):
         if any(x in text for x in ("luxury", "premium", "editorial", "cinematic", "fancy", "beautiful")):
             return "WEB_PREMIUM"
         return "WEB_STANDARD"
@@ -82,8 +82,8 @@ def _criteria(profile: str, message: str) -> tuple[str, ...]:
     if profile == "WEB_DASHBOARD":
         items.append("Use legible information hierarchy and responsive data presentation.")
     if profile == "GAME_HTML5":
-        items.append("Provide working interaction, visible state feedback, and restart behavior.")
-    if any(x in text for x in ("phone", "mobile", "responsive", "touch")):
+        items.append("Provide working interaction, visible state feedback, safe controls, and restart behavior.")
+    if any(x in text for x in ("phone", "mobile", "responsive", "touch", "android")):
         items.append("Fit 320px-wide screens without overflow and use accessible touch targets.")
     return tuple(items[:5])
 
@@ -92,8 +92,6 @@ def decide(message: str, *, has_project: bool) -> BrainDecision:
     raw = _clean(message)
     profile = _profile(raw)
     route = _route(raw, has_project)
-    # SLI creates a safe first interpretation without needing an LLM. The local
-    # worker may improve wording, but it may not change this route or profile.
     refined = raw
     if route == "execution" and profile == "WEB_PREMIUM":
         refined = (
@@ -104,35 +102,6 @@ def decide(message: str, *, has_project: bool) -> BrainDecision:
     elif route == "execution" and profile.startswith("WEB_"):
         refined = raw.rstrip(".") + ". Produce a responsive, complete, verified browser project with no broken assets."
     return BrainDecision(route, profile, refined, _criteria(profile, raw))
-
-
-def _compact_refinement_prompt(decision: BrainDecision, *, has_project: bool) -> str:
-    criteria = " | ".join(decision.criteria) or "Preserve user intent."
-    return (
-        "You are a small local wording worker inside the SLI Brain. Do not plan or execute. "
-        "Correct spelling and rewrite the request clearly. Keep the SLI route/profile unchanged. "
-        "Return compact JSON only: {\"objective\":\"...\",\"selection_reason\":\"route="
-        + decision.route
-        + " profile="
-        + decision.profile
-        + "\",\"success_criteria\":[\"...\"],\"action\":{\"type\":\"respond\",\"message\":\"...\"}}. "
-        + f"Project active={str(has_project).lower()}. Criteria={criteria}. Request={decision.refined_request[:650]}"
-    )[: decision.local_prompt_budget]
-
-
-def _parse_worker(raw: str, decision: BrainDecision, tui_v2: Any) -> BrainDecision:
-    try:
-        plan = tui_v2.extract_plan(raw)
-    except Exception:
-        plan = None
-    if not isinstance(plan, dict):
-        return decision
-    objective = _clean(plan.get("objective") or decision.refined_request)
-    if len(objective) < 8:
-        objective = decision.refined_request
-    criteria = plan.get("success_criteria")
-    parsed = tuple(_clean(x, 220) for x in criteria if _clean(x, 220))[:5] if isinstance(criteria, list) else decision.criteria
-    return BrainDecision(decision.route, decision.profile, objective, parsed or decision.criteria, decision.local_prompt_budget)
 
 
 def _record(event: str, decision: BrainDecision, extra: dict[str, Any] | None = None) -> None:
@@ -147,18 +116,33 @@ def _record(event: str, decision: BrainDecision, extra: dict[str, Any] | None = 
 
 
 def _confirm(self: Any, original: str, *, has_project: bool, tui_v2: Any) -> tuple[str, str] | None:
+    from sophyane.runtime_sli_semantic import resolve
+
     candidate = original
     while True:
-        decision = decide(candidate, has_project=has_project)
+        # Semantic consultation is narrow: known anchors remain frozen and only
+        # unknown terms are offered to the active model. If the model fails or
+        # drifts, SLI falls back to its own normalized ledger.
+        ledger = resolve(candidate, self.call_provider, timeout=18)
+        decision = decide(ledger.normalized, has_project=has_project)
         self.progress(f"SLI Brain: {decision.route} / {decision.profile}")
-        # Refinement is optional. A local timeout never destroys the SLI route.
-        try:
-            response = self.call_provider(_compact_refinement_prompt(decision, has_project=has_project), timeout=22)
-            decision = _parse_worker(getattr(response, "text", str(response)), decision, tui_v2)
-            _record("local_refinement", decision)
-        except Exception as error:  # noqa: BLE001
-            self.progress(f"SLI Brain kept deterministic intent after local worker failure: {type(error).__name__}")
-            _record("deterministic_refinement", decision, {"error": type(error).__name__})
+        if ledger.uncertain_terms:
+            state = "drift rejected" if ledger.drift_rejected else "bounded consultation complete"
+            self.progress(f"SLI Semantic: {state}; uncertain={', '.join(ledger.uncertain_terms[:6])}")
+        _record(
+            "semantic_decision",
+            decision,
+            {
+                "original": ledger.original,
+                "normalized": ledger.normalized,
+                "anchors": ledger.anchors,
+                "uncertain_terms": ledger.uncertain_terms,
+                "resolutions": ledger.resolutions,
+                "semantic_confidence": ledger.confidence,
+                "semantic_consulted": ledger.consulted,
+                "semantic_drift_rejected": ledger.drift_rejected,
+            },
+        )
 
         if decision.route == "chat":
             return "chat", decision.refined_request
@@ -166,6 +150,10 @@ def _confirm(self: Any, original: str, *, has_project: bool, tui_v2: Any) -> tup
         print(f"\nSLI profile: {decision.profile}\n", flush=True)
         print("I understood your request as:\n", flush=True)
         print(decision.refined_request, flush=True)
+        if ledger.resolutions:
+            print("\nSemantic resolutions:", flush=True)
+            for source, meaning in ledger.resolutions:
+                print(f"- {source} → {meaning}", flush=True)
         if decision.criteria:
             print("\nAcceptance points:", flush=True)
             for item in decision.criteria:
@@ -177,7 +165,7 @@ def _confirm(self: Any, original: str, *, has_project: bool, tui_v2: Any) -> tup
             print()
             return None
         if choice in {"", "1"}:
-            _record("approved", decision)
+            _record("approved", decision, {"semantic_resolutions": ledger.resolutions})
             return decision.route, decision.refined_request
         if choice == "0":
             _record("cancelled", decision)
@@ -206,15 +194,14 @@ def install_sli_brain() -> None:
 
     def context_prompt(self: Any, message: str, *, continuing: bool) -> str:
         decision = decide(message, has_project=continuing)
-        base = original_context(self, message, continuing=continuing)
-        # Cap inherited conversation/context aggressively for small local models.
-        base = _clean(base, 850)
+        base = _clean(original_context(self, message, continuing=continuing), 850)
         checks = " | ".join(decision.criteria)
         return (
             f"SLI_PROFILE={decision.profile}; ROUTE={decision.route}; "
             f"GOAL={base}; CHECKS={checks}; "
+            "The approved SLI intent ledger is immutable. Do not broaden scope or alter names, locations, artifact type, or user constraints. "
             "SLI owns decomposition, assets, validation and repair. Return only the next compact executable artifact/action."
-        )[:1400]
+        )[:1600]
 
     refinement._confirm_refinement = _confirm
     tui_v2.ObservableTUI._context_prompt = context_prompt
