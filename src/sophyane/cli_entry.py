@@ -56,6 +56,7 @@ def main() -> int:
     from sophyane.runtime_interrupt_patch import install_interrupt_patch
     from sophyane.runtime_intent_refinement_patch import install_intent_refinement
     from sophyane.runtime_orchestration_patch import install_orchestration_patch
+    from sophyane.runtime_premium_asset_pipeline import install_premium_asset_pipeline
     from sophyane.runtime_provider_context_patch import install_provider_context_patch
     from sophyane.runtime_provider_error_patch import install_provider_error_patch
     from sophyane.runtime_quality_escalation import install_quality_escalation
@@ -76,13 +77,12 @@ def main() -> int:
     install_interrupt_patch()
     install_provider_error_patch()
     install_input_patch()
-    # Install routing late so older wrappers cannot re-enable unrelated workspace reuse.
     install_sli_intent_routing()
-    # Raw user text is first refined by the active LLM and explicitly approved.
     install_intent_refinement()
-    # Install last so SLI execution experience informs both the first refinement
-    # and the approved planning prompt from the onset of every project request.
     install_sli_onset_feedback()
+    # Install after prompt refinements: the runtime curates real local photographs
+    # before generation and rejects generic/broken premium demos.
+    install_premium_asset_pipeline()
 
     try:
         from sophyane.platform_kernel import ensure_platform_filesystem
