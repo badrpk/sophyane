@@ -53,9 +53,13 @@ def main() -> int:
     from sophyane.runtime_interrupt_patch import install_interrupt_patch
     from sophyane.runtime_orchestration_patch import install_orchestration_patch
     from sophyane.runtime_provider_error_patch import install_provider_error_patch
+    from sophyane.runtime_quality_escalation import install_quality_escalation
     from sophyane.runtime_safety import install_runtime_safety
     from sophyane.runtime_stagnation_patch import install_stagnation_patch
 
+    # Install before v13_cli constructs a provider so local-first chains include
+    # configured one-shot cloud rescue providers.
+    install_quality_escalation()
     install_runtime_patch()
     install_runtime_safety()
     install_browser_patch()
