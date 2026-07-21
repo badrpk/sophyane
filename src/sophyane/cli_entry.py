@@ -54,6 +54,7 @@ def main() -> int:
     from sophyane.runtime_input_patch import install_input_patch
     from sophyane.runtime_interactive_patch import install_runtime_patch
     from sophyane.runtime_interrupt_patch import install_interrupt_patch
+    from sophyane.runtime_intent_refinement_patch import install_intent_refinement
     from sophyane.runtime_orchestration_patch import install_orchestration_patch
     from sophyane.runtime_provider_context_patch import install_provider_context_patch
     from sophyane.runtime_provider_error_patch import install_provider_error_patch
@@ -74,9 +75,11 @@ def main() -> int:
     install_interrupt_patch()
     install_provider_error_patch()
     install_input_patch()
-    # Install last so older routing wrappers cannot re-enable unrelated
-    # workspace reuse or execute ordinary writing requests.
+    # Install routing late so older wrappers cannot re-enable unrelated workspace reuse.
     install_sli_intent_routing()
+    # Install last: raw user text is refined by the active LLM and explicitly approved
+    # before the final routing decision and any workspace mutation.
+    install_intent_refinement()
 
     try:
         from sophyane.platform_kernel import ensure_platform_filesystem
