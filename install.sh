@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Universal Sophyane installer/updater.
-# Installs latest main, preserves user work, and keeps only one system copy.
+# Universal Sophyane installer/updater with transactional rollback and CLI verification.
 set -Eeuo pipefail
 
 REPO="https://github.com/badrpk/sophyane.git"
@@ -19,43 +18,32 @@ cleanup() {
   [ -n "${TMP:-}" ] && rm -rf "$TMP"
   if [ "$rc" -ne 0 ] && [ "$SWAPPED" -eq 1 ]; then
     rm -rf "$SYSTEM" "$VENV"
-    [ -n "$OLD_SYSTEM" ] && [ -e "$OLD_SYSTEM" ] && mv "$OLD_SYSTEM" "$SYSTEM"
-    [ -n "$OLD_VENV" ] && [ -e "$OLD_VENV" ] && mv "$OLD_VENV" "$VENV"
+    [ -e "$OLD_SYSTEM" ] && mv "$OLD_SYSTEM" "$SYSTEM"
+    [ -e "$OLD_VENV" ] && mv "$OLD_VENV" "$VENV"
     printf 'Previous Sophyane installation restored.\n' >&2
   fi
   exit "$rc"
 }
 trap cleanup EXIT
-
 fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
-info() { printf '%s\n' "$*"; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "'$1' is required."; }
-
 need git
 need python3
 mkdir -p "$BASE" "$BIN"
 
-info "=== Sophyane universal installer ==="
-info "Installing latest Sophyane from main..."
-
+printf '=== Sophyane universal installer ===\n'
 TMP="$(mktemp -d)"
 SOURCE="$TMP/source"
-NEW_SYSTEM="$TMP/system"
-
 git clone --quiet --depth 1 --single-branch --branch main "$REPO" "$SOURCE"
 COMMIT="$(git -C "$SOURCE" rev-parse HEAD)"
 VERSION="$(python3 - "$SOURCE/pyproject.toml" <<'PY'
 import re, sys
 from pathlib import Path
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.M)
-print(match.group(1) if match else "unknown")
+text = Path(sys.argv[1]).read_text(encoding='utf-8')
+m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.M)
+print(m.group(1) if m else 'unknown')
 PY
 )"
-
-[ -f "$SOURCE/pyproject.toml" ] || fail "Repository is not an installable Sophyane tree."
-cp -a "$SOURCE/." "$NEW_SYSTEM/"
-rm -rf "$NEW_SYSTEM/.git"
 
 OLD_SYSTEM="$BASE/.old-system-$$"
 OLD_VENV="$BASE/.old-venv-$$"
@@ -63,86 +51,35 @@ rm -rf "$OLD_SYSTEM" "$OLD_VENV"
 [ -e "$SYSTEM" ] && mv "$SYSTEM" "$OLD_SYSTEM"
 [ -e "$VENV" ] && mv "$VENV" "$OLD_VENV"
 SWAPPED=1
-mv "$NEW_SYSTEM" "$SYSTEM"
+mkdir -p "$SYSTEM"
+cp -a "$SOURCE/." "$SYSTEM/"
+rm -rf "$SYSTEM/.git"
 
-info "Building runtime at final installation path..."
 python3 -m venv "$VENV"
 export PYTHONNOUSERSITE=1
 unset PYTHONPATH PYTHONHOME
 "$VENV/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --upgrade pip setuptools wheel >/dev/null
 "$VENV/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --force-reinstall "$SYSTEM" >/dev/null
 
-LLAMA_RUNTIME="$BASE/models/llama.cpp/runtime"
-if [ -d "$LLAMA_RUNTIME" ]; then
-  if [ -x "$LLAMA_RUNTIME/llama-server" ] && head -c 4 "$LLAMA_RUNTIME/llama-server" 2>/dev/null | grep -q $'\177ELF'; then
-    ln -sfn "$LLAMA_RUNTIME/llama-server" "$BIN/llama-server"
-    [ -x "$LLAMA_RUNTIME/llama-cli" ] && ln -sfn "$LLAMA_RUNTIME/llama-cli" "$BIN/llama-cli"
-    info "Preserving native local inference runtime."
-  elif [ -x "$LLAMA_RUNTIME/llama" ] && head -c 4 "$LLAMA_RUNTIME/llama" 2>/dev/null | grep -q $'\177ELF'; then
-    cat > "$LLAMA_RUNTIME/llama-cli" <<'WRAP'
+make_wrapper() {
+  name="$1"; module="$2"
+  cat > "$BIN/$name" <<WRAP
 #!/usr/bin/env bash
 set -Eeuo pipefail
-RUNTIME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export LD_LIBRARY_PATH="$RUNTIME${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-exec "$RUNTIME/llama" cli "$@"
-WRAP
-    cat > "$LLAMA_RUNTIME/llama-server" <<'WRAP'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-RUNTIME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export LD_LIBRARY_PATH="$RUNTIME${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-exec "$RUNTIME/llama" server "$@"
-WRAP
-    chmod 0755 "$LLAMA_RUNTIME/llama-cli" "$LLAMA_RUNTIME/llama-server"
-    ln -sfn "$LLAMA_RUNTIME/llama-cli" "$BIN/llama-cli"
-    ln -sfn "$LLAMA_RUNTIME/llama-server" "$BIN/llama-server"
-  fi
-fi
-
-if grep -RIlF "$TMP" "$VENV/bin" "$VENV/pyvenv.cfg" 2>/dev/null | grep -q .; then
-  grep -RIlF "$TMP" "$VENV/bin" "$VENV/pyvenv.cfg" 2>/dev/null |
-    while IFS= read -r file; do
-      sed -i "s|$TMP/venv|$VENV|g; s|$TMP|$BASE|g" "$file"
-    done
-fi
-
-cat > "$BIN/sophyane" <<'WRAP'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-BASE="${SOPHYANE_HOME:-$HOME/.local/share/sophyane}"
-INSTALL_URL="https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh"
-REPO="https://github.com/badrpk/sophyane.git"
+BASE="\${SOPHYANE_HOME:-\$HOME/.local/share/sophyane}"
 export PYTHONNOUSERSITE=1
 unset PYTHONPATH PYTHONHOME
-check_update() {
-  [ "${SOPHYANE_SKIP_UPDATE_CHECK:-0}" = "1" ] && return 0
-  command -v git >/dev/null 2>&1 || return 0
-  local installed remote answer
-  installed="$(cat "$BASE/installed-commit" 2>/dev/null || true)"
-  remote="$(git ls-remote "$REPO" refs/heads/main 2>/dev/null | awk 'NR==1 {print $1}')"
-  if [ -z "$installed" ] || [ -z "$remote" ] || [ "$installed" = "$remote" ]; then return 0; fi
-  printf '\nSophyane update available.\n'
-  printf 'Installed: %.12s\nLatest:    %.12s\n' "$installed" "$remote"
-  if [ -t 0 ] && [ -t 1 ]; then
-    printf 'Update now? Your repositories and work files will remain intact. [Y/n] '
-    read -r answer
-    case "${answer:-Y}" in n|N|no|NO) return 0 ;; esac
-    if command -v curl >/dev/null 2>&1; then
-      curl -fsSL "$INSTALL_URL" | bash
-    elif command -v wget >/dev/null 2>&1; then
-      wget -qO- "$INSTALL_URL" | bash
-    else
-      printf 'Install curl or wget to update.\n' >&2
-      return 0
-    fi
-  else
-    printf 'Run: curl -fsSL %s | bash\n' "$INSTALL_URL"
-  fi
-}
-check_update
-exec "$BASE/venv/bin/python" -I -m sophyane.cli_entry "$@"
+exec "\$BASE/venv/bin/python" -I -m $module "\$@"
 WRAP
-chmod 0755 "$BIN/sophyane"
+  chmod 0755 "$BIN/$name"
+}
+
+# Explicit wrappers avoid platform-specific pip console-script omissions and keep
+# every documented command on the same isolated runtime.
+make_wrapper sophyane sophyane.cli_entry
+make_wrapper sophyane-platform sophyane.platform_cli
+make_wrapper sophyane-coi sophyane.coi_cli
+make_wrapper sophyane-release sophyane.release_cli
 
 cat > "$BIN/sophyane-browser" <<'WRAP'
 #!/usr/bin/env bash
@@ -150,47 +87,6 @@ set -Eeuo pipefail
 exec "${SOPHYANE_BIN:-$HOME/.local/bin}/sophyane" --browser "$@"
 WRAP
 chmod 0755 "$BIN/sophyane-browser"
-
-rm -rf "$TMP"
-TMP=""
-
-if grep -RIl '/tmp/' "$VENV/bin" "$VENV/pyvenv.cfg" 2>/dev/null | grep -q .; then
-  fail "Runtime still contains a temporary-path reference."
-fi
-
-"$VENV/bin/python" -I - <<'PY'
-import inspect
-from pathlib import Path
-import sophyane.execution_runtime as er
-import sophyane.tui_v2 as tui
-root = Path(er.__file__).resolve()
-assert "site-packages" in str(root), root
-ers = inspect.getsource(er)
-tuis = inspect.getsource(tui)
-assert "ThreadingHTTPServer" in ers, "missing workspace HTTP server"
-assert "SHA-256 matched" in ers, "missing served-file hash verification"
-assert "_explicit_new_benchmark" in tuis, "missing benchmark routing"
-assert 'r"\\bcreate\\b"' in tuis, "missing create execution routing"
-print(root)
-PY
-
-"$VENV/bin/python" -I -m sophyane.cli_entry --version >/dev/null || fail "New Sophyane runtime failed post-cleanup validation."
-SOPHYANE_SKIP_UPDATE_CHECK=1 "$BIN/sophyane" --version >/dev/null || fail "Installed Sophyane launcher failed validation."
-
-printf '%s\n' "$COMMIT" > "$BASE/installed-commit"
-printf '%s\n' "$VERSION" > "$BASE/installed-version"
-cat > "$BASE/install-info" <<EOF
-VERSION=$VERSION
-COMMIT=$COMMIT
-SOURCE=main
-UPDATED_AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-INSTALL_URL=$RAW/install.sh
-EOF
-
-SWAPPED=0
-rm -rf "$OLD_SYSTEM" "$OLD_VENV"
-rm -rf "$BASE/releases" "$BASE/current" "$BASE/LATEST" "$BASE/installed-release"
-find "$BASE" -maxdepth 1 -type d \( -name '.old-system-*' -o -name '.old-venv-*' \) -exec rm -rf {} + 2>/dev/null || true
 
 case ":$PATH:" in
   *":$BIN:"*) ;;
@@ -203,12 +99,32 @@ case ":$PATH:" in
 esac
 hash -r 2>/dev/null || true
 
-info ""
-info "✅ Sophyane $VERSION is installed and current"
-info "   Commit: ${COMMIT:0:12}"
-info "   System: $SYSTEM"
-info "   User work: unchanged"
-info "   Old Sophyane versions: removed"
-info "   Start: sophyane"
-info "   Universal install/update link:"
-info "   curl -fsSL $RAW/install.sh | bash"
+for command in sophyane sophyane-platform sophyane-coi sophyane-release; do
+  [ -x "$BIN/$command" ] || fail "$command launcher was not created"
+done
+SOPHYANE_SKIP_UPDATE_CHECK=1 "$BIN/sophyane" --version >/dev/null || fail "sophyane failed validation"
+"$BIN/sophyane-platform" status >/dev/null || fail "sophyane-platform failed validation"
+"$BIN/sophyane-coi" status >/dev/null || fail "sophyane-coi failed validation"
+"$BIN/sophyane-release" status >/dev/null || fail "sophyane-release failed validation"
+"$BIN/sophyane-release" gate "$SYSTEM" --imports-only >/dev/null || fail "release import gate failed"
+
+printf '%s\n' "$COMMIT" > "$BASE/installed-commit"
+printf '%s\n' "$VERSION" > "$BASE/installed-version"
+cat > "$BASE/install-info" <<EOF
+VERSION=$VERSION
+COMMIT=$COMMIT
+SOURCE=main
+UPDATED_AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+INSTALL_URL=$RAW/install.sh
+EOF
+
+SWAPPED=0
+rm -rf "$OLD_SYSTEM" "$OLD_VENV" "$TMP"
+TMP=""
+printf '\n✅ Sophyane %s is installed and current\n' "$VERSION"
+printf '   Commit: %.12s\n' "$COMMIT"
+printf '   System: %s\n' "$SYSTEM"
+printf '   Verified CLIs: sophyane, sophyane-platform, sophyane-coi, sophyane-release\n'
+printf '   User work: unchanged\n'
+printf '   Start: sophyane\n'
+printf '   Universal install/update link:\n   curl -fsSL %s/install.sh | bash\n' "$RAW"
