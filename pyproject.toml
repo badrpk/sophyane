@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sophyane"
-version = "20.3.0"
-description = "Local-first AI software engineering operating system with recursive SLI provider orchestration, COI, MCP, repository intelligence, coded sandboxes, audits, and end-to-end product benchmarks"
+version = "20.3.1"
+description = "Local-first AI software engineering operating system with recursive SLI provider and intent orchestration, COI, MCP, repository intelligence, coded sandboxes, audits, and end-to-end product benchmarks"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Badar Uzaman"}]
-keywords = ["ai", "coding-agent", "repository", "semantic-index", "self-repair", "multi-agent", "llm", "autonomous", "local-ai", "validated-execution", "local-first", "sandbox", "provider-dispatch", "subagents", "evaluation", "tracing", "compaction", "coi", "mcp", "orchestration", "release-gate", "audit", "benchmark", "sli", "lstm"]
+keywords = ["ai", "coding-agent", "repository", "semantic-index", "self-repair", "multi-agent", "llm", "autonomous", "local-ai", "validated-execution", "local-first", "sandbox", "provider-dispatch", "subagents", "evaluation", "tracing", "compaction", "coi", "mcp", "orchestration", "release-gate", "audit", "benchmark", "sli", "lstm", "intent-routing"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",
