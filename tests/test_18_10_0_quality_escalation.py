@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
-def test_repeated_validator_repair_escalates_once(monkeypatch):
+def test_repeated_validator_repair_escalates_once():
     from sophyane.providers import fallback
     from sophyane.runtime_quality_escalation import install_quality_escalation
 
@@ -12,12 +12,21 @@ def test_repeated_validator_repair_escalates_once(monkeypatch):
         name: str
         model: str
         replies: list[str]
+        timeout: int = 60
+        temperature: float = 0.2
+        max_tokens: int = 2048
+        calls: list[str] = field(default_factory=list)
 
         def generate(self, prompt: str, system_prompt: str) -> str:
-            del prompt, system_prompt
+            del system_prompt
+            self.calls.append(prompt)
             return self.replies.pop(0)
 
-    local = FakeProvider("local_gguf", "qwen-local", ["bad-one", "bad-two", "local-resumed"])
+    local = FakeProvider(
+        "local_gguf",
+        "qwen-local",
+        ["bad-one", "local-resumed"],
+    )
     cloud = FakeProvider("gemini", "gemini-test", ["expert-repair"])
 
     install_quality_escalation()
@@ -34,13 +43,15 @@ def test_repeated_validator_repair_escalates_once(monkeypatch):
     assert provider.generate(repair, "") == "bad-one"
     assert provider.generate(repair, "") == "expert-repair"
     assert provider.last_provider == "gemini"
+    assert len(cloud.calls) == 1
 
     # Rescue is one-shot; normal work returns to the configured local model.
-    assert provider.generate("Verify the corrected project locally.", "") == "bad-two"
+    assert provider.generate("Verify the corrected project locally.", "") == "local-resumed"
     assert provider.last_provider == "local_gguf"
+    assert len(local.calls) == 2
 
 
-def test_local_order_includes_configured_rescue(monkeypatch):
+def test_local_order_includes_configured_rescue():
     from sophyane.providers import fallback
     from sophyane.runtime_quality_escalation import install_quality_escalation
 
