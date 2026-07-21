@@ -79,6 +79,7 @@ make_wrapper sophyane-platform sophyane.platform_cli
 make_wrapper sophyane-coi sophyane.coi_cli
 make_wrapper sophyane-release sophyane.release_cli
 make_wrapper sophyane-audit sophyane.audit_cli
+make_wrapper sophyane-benchmark sophyane.benchmark_cli
 
 cat > "$BIN/sophyane-browser" <<'WRAP'
 #!/usr/bin/env bash
@@ -98,7 +99,7 @@ case ":$PATH:" in
 esac
 hash -r 2>/dev/null || true
 
-for command in sophyane sophyane-platform sophyane-coi sophyane-release sophyane-audit; do
+for command in sophyane sophyane-platform sophyane-coi sophyane-release sophyane-audit sophyane-benchmark; do
   [ -x "$BIN/$command" ] || fail "$command launcher was not created"
 done
 SOPHYANE_SKIP_UPDATE_CHECK=1 "$BIN/sophyane" --version >/dev/null || fail "sophyane failed validation"
@@ -107,6 +108,7 @@ SOPHYANE_SKIP_UPDATE_CHECK=1 "$BIN/sophyane" --version >/dev/null || fail "sophy
 "$BIN/sophyane-release" status >/dev/null || fail "sophyane-release failed validation"
 "$BIN/sophyane-release" gate "$SYSTEM" --imports-only >/dev/null || fail "release import gate failed"
 "$BIN/sophyane-audit" --output "$BASE/install-audit.json" >/dev/null || fail "comprehensive offline audit failed"
+"$BIN/sophyane-benchmark" --output "$BASE/install-benchmark.json" >/dev/null || fail "100-point offline product benchmark failed"
 
 printf '%s\n' "$COMMIT" > "$BASE/installed-commit"
 printf '%s\n' "$VERSION" > "$BASE/installed-version"
@@ -124,8 +126,9 @@ TMP=""
 printf '\n✅ Sophyane %s is installed and current\n' "$VERSION"
 printf '   Commit: %.12s\n' "$COMMIT"
 printf '   System: %s\n' "$SYSTEM"
-printf '   Verified CLIs: sophyane, sophyane-platform, sophyane-coi, sophyane-release, sophyane-audit\n'
+printf '   Verified CLIs: sophyane, sophyane-platform, sophyane-coi, sophyane-release, sophyane-audit, sophyane-benchmark\n'
 printf '   Offline audit report: %s/install-audit.json\n' "$BASE"
+printf '   Product benchmark report: %s/install-benchmark.json\n' "$BASE"
 printf '   User work: unchanged\n'
 printf '   Start: sophyane\n'
 printf '   Universal install/update link:\n   curl -fsSL %s/install.sh | bash\n' "$RAW"
