@@ -2,7 +2,7 @@
 
 SLI freezes deterministic intent anchors and asks an LLM only about uncertain
 terms. Model output is treated as a candidate and rejected when it changes the
-known action, artifact, profile, location or scope.
+known action, artifact, technology, location or scope.
 """
 from __future__ import annotations
 
@@ -18,18 +18,26 @@ _ACTIONS = {
     "build", "make", "create", "design", "develop", "implement", "write", "fix",
     "repair", "patch", "run", "test", "deploy", "open", "continue", "convert",
     "install", "integrate", "optimize", "optimise", "add", "remove", "change",
-    "update", "improve", "modify",
+    "update", "improve", "modify", "read", "reply", "send", "monitor", "automate",
 }
 _ARTIFACTS = {
     "website", "site", "web", "app", "application", "game", "dashboard", "api",
     "server", "script", "page", "portfolio", "store", "shop", "marketplace",
+    "software", "program", "tool", "service", "bot", "agent",
 }
-_KNOWN = _ACTIONS | _ARTIFACTS | {
-    "for", "a", "an", "the", "local", "in", "on", "with", "without", "and",
-    "mobile", "phone", "android", "ios", "html", "css", "javascript", "premium",
-    "luxury", "luxurious", "editorial", "cinematic", "responsive", "snake", "pong",
-    "pingpong", "tetris", "chess", "tic", "tac", "toe", "admin", "panel",
-    "analytics", "cart", "grocery", "kiryana", "store", "pakistan",
+_TECHNOLOGIES = {
+    "c++", "c#", ".net", "node.js", "javascript", "typescript", "python", "rust",
+    "java", "kotlin", "swift", "php", "go", "golang", "html", "css", "sql",
+    "sqlite", "postgresql", "mysql", "llama.cpp", "qwen2.5", "gpt-5", "gemini",
+}
+_KNOWN = _ACTIONS | _ARTIFACTS | _TECHNOLOGIES | {
+    "for", "a", "an", "the", "my", "your", "our", "to", "from", "of", "is",
+    "that", "this", "it", "local", "in", "on", "with", "without", "and", "or",
+    "mobile", "phone", "android", "ios", "email", "emails", "inbox", "message",
+    "messages", "automatic", "automatically", "premium", "luxury", "luxurious",
+    "editorial", "cinematic", "responsive", "snake", "pong", "pingpong", "tetris",
+    "chess", "tic", "tac", "toe", "admin", "panel", "analytics", "cart", "grocery",
+    "kiryana", "store", "pakistan", "reads", "reading", "replies", "selling", "sell",
 }
 _SEMANTIC_MEMORY = {
     "mak3": ("make", 0.999),
@@ -40,7 +48,20 @@ _SEMANTIC_MEMORY = {
     "gamr": ("game", 0.97),
     "pingpong": ("pong", 0.99),
     "kiryana": ("grocery store", 0.999),
+    "phine": ("phone", 0.99),
+    "fone": ("phone", 0.97),
+    "autimaticall": ("automatically", 0.99),
+    "automaticly": ("automatically", 0.98),
+    "rreply": ("reply", 0.99),
+    "repy": ("reply", 0.97),
+    "sell8ng": ("selling", 0.99),
+    "softwere": ("software", 0.98),
 }
+_TOKEN_PATTERN = re.compile(
+    r"C\+\+|C#|\.NET|Node\.js|llama\.cpp|Qwen\d+(?:\.\d+)*|GPT-\d+(?:\.\d+)*|"
+    r"[\w.-]+",
+    flags=re.UNICODE | re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -61,7 +82,8 @@ def _state_root() -> Path:
 
 
 def _tokens(text: str) -> list[str]:
-    return re.findall(r"[\w.-]+", text, flags=re.UNICODE)
+    """Tokenize while preserving programming-language and model syntax verbatim."""
+    return _TOKEN_PATTERN.findall(text)
 
 
 def _looks_proper(token: str, index: int) -> bool:
@@ -84,8 +106,15 @@ def analyze(message: str) -> SemanticLedger:
             resolutions.append((token, resolved))
             normalized_tokens.extend(resolved.split())
             confidences.append(confidence)
-            if resolved in _ACTIONS or any(x in _ARTIFACTS for x in resolved.split()):
-                anchors.extend(resolved.split())
+            for part in resolved.split():
+                if part in _ACTIONS or part in _ARTIFACTS or part in _TECHNOLOGIES:
+                    anchors.append(part)
+        elif lower in _TECHNOLOGIES:
+            # Technologies are immutable intent anchors. Preserve their spelling,
+            # punctuation and version syntax exactly as supplied by the user.
+            normalized_tokens.append(token)
+            anchors.append(lower)
+            proper.append(token)
         elif lower in _KNOWN or lower in _ACTIONS or lower in _ARTIFACTS:
             normalized_tokens.append(token)
             if lower in _ACTIONS or lower in _ARTIFACTS:
@@ -120,8 +149,9 @@ def consultation_prompt(ledger: SemanticLedger) -> str:
     }
     return (
         "You are a constrained semantic resolver. Interpret ONLY uncertain_terms. "
-        "Do not plan, add features, broaden scope, change known anchors, alter names/locations, "
-        "or replace the requested artifact. Return JSON only: "
+        "Correct obvious spelling when supported by context. Do not plan, add features, broaden scope, "
+        "change known anchors, alter names/locations/technologies, or replace the requested artifact. "
+        "Return JSON only: "
         '{"resolved_terms":{"term":"meaning"},"confidence":0.0,"material_change":false}. '
         + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     )[:1400]
@@ -160,10 +190,16 @@ def apply_consultation(ledger: SemanticLedger, raw: str) -> SemanticLedger:
         if source_key not in allowed or not meaning_text:
             continue
         original_term = allowed[source_key]
-        normalized = re.sub(rf"\b{re.escape(original_term)}\b", meaning_text, normalized, flags=re.I)
+        normalized = re.sub(
+            rf"(?<!\w){re.escape(original_term)}(?!\w)",
+            meaning_text,
+            normalized,
+            flags=re.I,
+        )
         accepted.append((original_term, meaning_text))
 
-    # Drift firewall: all known anchors and proper nouns must survive unchanged.
+    # Drift firewall: every known action, artifact, technology, name and location
+    # must survive semantic consultation.
     lower = normalized.lower()
     drift = any(anchor not in lower for anchor in ledger.anchors)
     drift = drift or any(name.lower() not in lower for name in ledger.proper_nouns)
