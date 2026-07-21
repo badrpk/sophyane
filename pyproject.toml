@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sophyane"
-version = "18.12.0"
+version = "18.13.0"
 description = "Adaptive local agentic software harness with validator-grounded execution learning"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Badar Uzaman"}]
-keywords = ["ai", "coding-agent", "repository", "semantic-index", "patch", "self-repair", "multi-agent", "llm", "autonomous", "workflow", "gemini", "openai", "ollama", "cli", "local-ai", "execution-learning", "sqlite", "validated-execution", "quality-escalation", "local-first", "validator-convergence"]
+keywords = ["ai", "coding-agent", "repository", "semantic-index", "patch", "self-repair", "multi-agent", "llm", "autonomous", "workflow", "gemini", "openai", "ollama", "cli", "local-ai", "execution-learning", "sqlite", "validated-execution", "quality-escalation", "local-first", "validator-convergence", "artifact-extraction", "truncation-recovery"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",
