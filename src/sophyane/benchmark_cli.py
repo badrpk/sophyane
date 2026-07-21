@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import subprocess
 import tempfile
@@ -79,7 +78,7 @@ class ProductBenchmarks:
             compiler = shutil.which("g++") or shutil.which("clang++")
             if compiler:
                 (root / "main.cpp").write_text("#include <iostream>\nint main(){std::cout<<\"CPP_OK\";}\n", encoding="utf-8")
-                self.check("cpp", "compile product", lambda: bool(self.run_cmd([compiler, "main.cpp", "-o", "app"], root) is not None))
+                self.check("cpp", "compile product", lambda: self.run_cmd([compiler, "main.cpp", "-o", "app"], root) == "")
                 self.check("cpp", "execute product", lambda: self.run_cmd([str(root / "app")], root) == "CPP_OK")
             else:
                 self.check("cpp", "compile product", lambda: True, skip="C++ compiler unavailable")
@@ -89,16 +88,17 @@ class ProductBenchmarks:
         from sophyane.platform_kernel import EvaluationEngine, RepositoryKernel
         with tempfile.TemporaryDirectory(prefix="sophyane-product-repo-") as tmp:
             root = Path(tmp)
-            source = root / "service.py"
+            source = root / "main.py"
             source.write_text("def status():\n    return 'old'\n", encoding="utf-8")
             kernel = RepositoryKernel(root)
             index = kernel.index()
             snap = kernel.checkpoint()
             source.write_text("def status():\n    return 'new'\n", encoding="utf-8")
-            self.check("repository", "understand symbols", lambda: "status" in index.get("symbols", {}).get("service.py", []))
+            self.check("repository", "understand symbols", lambda: "status" in index.get("symbols", {}).get("main.py", []))
             self.check("repository", "apply requested edit", lambda: "new" in source.read_text(encoding="utf-8"))
             self.check("repository", "rollback failed edit", lambda: kernel.rollback(snap.snapshot_id) == 1 and "old" in source.read_text(encoding="utf-8"))
-            (root / "test_service.py").write_text("from service import status\nassert status()=='old'\n", encoding="utf-8")
+            (root / "test_main.py").write_text("from main import status\nassert status()=='old'\n", encoding="utf-8")
+            self.check("repository", "execute verification", lambda: self.run_cmd([shutil.which("python3") or "python3", "test_main.py"], root) == "")
             evaluation = EvaluationEngine().evaluate(root)
             self.check("repository", "evaluate changed product", lambda: evaluation.score == 100.0)
 
@@ -108,10 +108,8 @@ class ProductBenchmarks:
             coi = COIOrchestrator(Path(tmp))
             coi.register(AgentManifest("planner", "planner", permissions=["read"]), lambda task, ctx: {"plan": ["build", "test"], "goal": task.goal})
             coi.register(AgentManifest("coder", "coder", permissions=["read", "write"]), lambda task, ctx: {"artifact": "index.html", "plan": ctx.get("plan")})
-            plan_task = TaskContract(goal="Build product", permissions=["read"])
-            plan = coi.run(plan_task, agent="planner")["output"]
-            code_task = TaskContract(goal="Implement product", permissions=["read", "write"])
-            built = coi.run(code_task, agent="coder", context=plan)
+            plan = coi.run(TaskContract(goal="Build product", permissions=["read"]), agent="planner")["output"]
+            built = coi.run(TaskContract(goal="Implement product", permissions=["read", "write"]), agent="coder", context=plan)
             self.check("coi", "planner-to-coder collaboration", lambda: built.get("ok") and built["output"]["artifact"] == "index.html")
             denied = coi.run(TaskContract(goal="unsafe", permissions=["admin"]), agent="coder")
             self.check("coi", "permission boundary", lambda: denied.get("ok") is False)
@@ -148,17 +146,11 @@ class ProductBenchmarks:
         self.check("live", "provider creates complete product", generate)
 
     def run(self) -> dict[str, Any]:
-        self.frontend()
-        self.languages()
-        self.repository()
-        self.orchestration()
-        self.mcp_and_persistence()
-        self.live_product()
+        self.frontend(); self.languages(); self.repository(); self.orchestration(); self.mcp_and_persistence(); self.live_product()
         passed = sum(1 for r in self.results if r.ok and not r.skipped)
         failed = sum(1 for r in self.results if not r.ok)
         skipped = sum(1 for r in self.results if r.skipped)
-        total = passed + failed
-        score = round(100 * passed / max(1, total), 1)
+        score = round(100 * passed / max(1, passed + failed), 1)
         return {"ok": failed == 0 and score == 100.0, "version": __version__, "mode": "live" if self.live else "offline", "summary": {"passed": passed, "failed": failed, "skipped": skipped, "score": score}, "results": [asdict(r) for r in self.results]}
 
 
@@ -171,9 +163,7 @@ def main() -> int:
     rendered = json.dumps(report, indent=2, ensure_ascii=False)
     print(rendered)
     if args.output:
-        path = Path(args.output).expanduser().resolve()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(rendered + "\n", encoding="utf-8")
+        path = Path(args.output).expanduser().resolve(); path.parent.mkdir(parents=True, exist_ok=True); path.write_text(rendered + "\n", encoding="utf-8")
     return 0 if report["ok"] else 1
 
 
