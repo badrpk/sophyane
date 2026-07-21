@@ -61,6 +61,7 @@ def main() -> int:
     from sophyane.runtime_quality_escalation import install_quality_escalation
     from sophyane.runtime_safety import install_runtime_safety
     from sophyane.runtime_sli_intent_patch import install_sli_intent_routing
+    from sophyane.runtime_sli_onset_feedback import install_sli_onset_feedback
     from sophyane.runtime_stagnation_patch import install_stagnation_patch
 
     install_quality_escalation()
@@ -77,9 +78,11 @@ def main() -> int:
     install_input_patch()
     # Install routing late so older wrappers cannot re-enable unrelated workspace reuse.
     install_sli_intent_routing()
-    # Install last: raw user text is refined by the active LLM and explicitly approved
-    # before the final routing decision and any workspace mutation.
+    # Raw user text is first refined by the active LLM and explicitly approved.
     install_intent_refinement()
+    # Install last so SLI execution experience informs both the first refinement
+    # and the approved planning prompt from the onset of every project request.
+    install_sli_onset_feedback()
 
     try:
         from sophyane.platform_kernel import ensure_platform_filesystem
