@@ -49,6 +49,7 @@ def _start_local_server_if_needed() -> None:
 def main() -> int:
     from sophyane.runtime_artifact_patch import install_artifact_patch
     from sophyane.runtime_browser_patch import install_browser_patch
+    from sophyane.runtime_deep_agent_patch import install_deep_agent_runtime
     from sophyane.runtime_input_patch import install_input_patch
     from sophyane.runtime_interactive_patch import install_runtime_patch
     from sophyane.runtime_interrupt_patch import install_interrupt_patch
@@ -64,16 +65,12 @@ def main() -> int:
     install_browser_patch()
     install_orchestration_patch()
     install_stagnation_patch()
-    # Install last so every active execution-loop implementation receives the
-    # same provider-neutral raw/JSON/markdown artifact normalization.
     install_artifact_patch()
+    install_deep_agent_runtime()
     install_interrupt_patch()
     install_provider_error_patch()
     install_input_patch()
 
-    # Interactive startup explicitly reports configured APIs and asks whether the
-    # user wants local-first execution or direct cloud execution. Metadata and
-    # setup commands remain non-interactive and predictable.
     if len(sys.argv) <= 1:
         try:
             from sophyane.startup_policy import choose_startup_provider
