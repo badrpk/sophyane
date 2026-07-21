@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sophyane"
-version = "20.1.0"
+version = "20.1.1"
 description = "Local-first AI software engineering operating system with COI orchestration, MCP interoperability, repository intelligence, coded sandboxes, evaluation, release gates, and comprehensive audits"
 readme = "README.md"
 requires-python = ">=3.10"
