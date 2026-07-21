@@ -1,8 +1,4 @@
-"""Comprehensive, dependency-free Sophyane audit runner.
-
-The audit separates offline deterministic checks from optional live provider and
-network checks. It never mutates user repositories; temporary workspaces are used.
-"""
+"""Comprehensive, dependency-free Sophyane audit runner."""
 from __future__ import annotations
 
 import argparse
@@ -11,7 +7,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 from dataclasses import asdict, dataclass
@@ -51,18 +46,12 @@ class Audit:
         self.results.append(Check(area, name, ok, detail, round((time.perf_counter() - started) * 1000)))
 
     def run(self) -> dict[str, Any]:
-        self._imports()
-        self._filesystem()
-        self._repository()
-        self._sandbox()
-        self._evaluation_prompting()
-        self._coi()
-        self._mcp()
-        self._cli()
-        self._provider_state()
-        self._browser_artifact()
-        self._release_docs()
-        self._live()
+        for method in (
+            self._imports, self._filesystem, self._repository, self._sandbox,
+            self._evaluation_prompting, self._coi, self._mcp, self._cli,
+            self._provider_state, self._browser_artifact, self._release_docs, self._live,
+        ):
+            method()
         passed = sum(1 for item in self.results if item.ok and not item.skipped)
         failed = sum(1 for item in self.results if not item.ok)
         skipped = sum(1 for item in self.results if item.skipped)
@@ -71,12 +60,7 @@ class Audit:
             "ok": failed == 0,
             "version": __version__,
             "mode": "live" if self.live else "offline",
-            "summary": {
-                "passed": passed,
-                "failed": failed,
-                "skipped": skipped,
-                "score": round(100 * passed / max(1, total), 1),
-            },
+            "summary": {"passed": passed, "failed": failed, "skipped": skipped, "score": round(100 * passed / max(1, total), 1)},
             "checks": [asdict(item) for item in self.results],
         }
 
@@ -92,8 +76,8 @@ class Audit:
     def _filesystem(self) -> None:
         from sophyane.platform_kernel import ensure_platform_filesystem
         from sophyane.coi import ensure_coi_filesystem
-        self.check("filesystem", "platform tree", lambda: ensure_platform_filesystem())
-        self.check("filesystem", "coi tree", lambda: ensure_coi_filesystem())
+        self.check("filesystem", "platform tree", ensure_platform_filesystem)
+        self.check("filesystem", "coi tree", ensure_coi_filesystem)
 
     def _repository(self) -> None:
         from sophyane.platform_kernel import RepositoryKernel
@@ -101,7 +85,7 @@ class Audit:
             root = Path(tmp)
             (root / "main.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
             kernel = RepositoryKernel(root)
-            self.check("repository", "index and symbols", lambda: kernel.index())
+            self.check("repository", "index and symbols", kernel.index)
             holder: dict[str, Any] = {}
             self.check("repository", "checkpoint", lambda: holder.setdefault("snapshot", kernel.checkpoint()).snapshot_id)
             (root / "main.py").write_text("broken = True\n", encoding="utf-8")
@@ -112,7 +96,7 @@ class Audit:
         from sophyane.platform_kernel import CodedSandbox
         with tempfile.TemporaryDirectory(prefix="sophyane-audit-box-") as tmp:
             box = CodedSandbox(Path(tmp))
-            self.check("sandbox", "prepare manifest", lambda: box.prepare())
+            self.check("sandbox", "prepare manifest", box.prepare)
             self.check("sandbox", "safe relative path", lambda: str(box.resolve("output/result.txt")))
             def escape() -> bool:
                 try:
@@ -121,7 +105,7 @@ class Audit:
                     return True
                 return False
             self.check("sandbox", "reject path escape", escape)
-            self.check("sandbox", "capability detection", lambda: box.capabilities())
+            self.check("sandbox", "capability detection", box.capabilities)
 
     def _evaluation_prompting(self) -> None:
         from sophyane.platform_kernel import EvaluationEngine, PromptAdvisor
@@ -138,14 +122,12 @@ class Audit:
             coi = COIOrchestrator(Path(tmp))
             manifest = AgentManifest(name="audit-agent", role="validator", permissions=["read"], skills=["audit"])
             coi.register(manifest, lambda task, context: {"goal": task.goal, "context": context})
-            task = TaskContract(goal="audit", permissions=["read"])
-            self.check("coi", "submit and run", lambda: coi.run(task, agent="audit-agent", context={"ok": True}))
-            denied = TaskContract(goal="deny", permissions=["write"])
-            self.check("coi", "permission denial", lambda: coi.run(denied, agent="audit-agent").get("ok") is False)
+            self.check("coi", "submit and run", lambda: coi.run(TaskContract(goal="audit", permissions=["read"]), agent="audit-agent", context={"ok": True}))
+            self.check("coi", "permission denial", lambda: coi.run(TaskContract(goal="deny", permissions=["write"]), agent="audit-agent").get("ok") is False)
 
     def _mcp(self) -> None:
         from sophyane.mcp import call_tool, list_tools
-        self.check("mcp", "catalog", lambda: list_tools())
+        self.check("mcp", "catalog", list_tools)
         self.check("mcp", "platform tool", lambda: call_tool("platform"))
         self.check("mcp", "unknown tool rejection", lambda: call_tool("__missing__").get("ok") is False)
 
@@ -153,11 +135,7 @@ class Audit:
         commands = ["sophyane", "sophyane-platform", "sophyane-coi", "sophyane-release", "sophyane-audit"]
         for command in commands:
             self.check("cli", f"launcher {command}", lambda command=command: shutil.which(command) or False)
-        invocations = [
-            ["sophyane", "--version"], ["sophyane-platform", "status"],
-            ["sophyane-coi", "status"], ["sophyane-release", "status"],
-        ]
-        for argv in invocations:
+        for argv in (["sophyane", "--version"], ["sophyane-platform", "status"], ["sophyane-coi", "status"], ["sophyane-release", "status"]):
             def run(argv=argv) -> str:
                 result = subprocess.run(argv, capture_output=True, text=True, timeout=30, env={**os.environ, "SOPHYANE_SKIP_UPDATE_CHECK": "1"})
                 if result.returncode != 0:
@@ -179,8 +157,9 @@ class Audit:
         self.check("browser", "interactive control", lambda: "<button" in html and "<script" in html)
 
     def _release_docs(self) -> None:
-        package = Path(__file__).resolve().parents[2]
-        candidates = [package / "README.md", package / "docs" / "SOPHYANE_20.md", package / "pyproject.toml"]
+        installed = Path(os.environ.get("SOPHYANE_HOME", str(Path.home() / ".local/share/sophyane"))) / "system"
+        source = installed if installed.exists() else Path.cwd()
+        candidates = [source / "README.md", source / "docs" / "SOPHYANE_20.md", source / "pyproject.toml"]
         for path in candidates:
             self.check("release", f"document {path.name}", lambda path=path: path.exists() and path.stat().st_size > 50)
 
@@ -191,8 +170,7 @@ class Audit:
         def provider_call() -> str:
             from sophyane.config import load_config
             from sophyane.providers import create_provider
-            config = load_config()
-            provider = create_provider(config)
+            provider = create_provider(load_config())
             text = provider.generate("Reply with exactly SOPHYANE_AUDIT_OK", "You are a health-check endpoint.")
             if "SOPHYANE_AUDIT_OK" not in str(text):
                 raise RuntimeError(f"unexpected provider response: {str(text)[:200]}")
