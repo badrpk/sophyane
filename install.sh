@@ -74,12 +74,11 @@ WRAP
   chmod 0755 "$BIN/$name"
 }
 
-# Explicit wrappers avoid platform-specific pip console-script omissions and keep
-# every documented command on the same isolated runtime.
 make_wrapper sophyane sophyane.cli_entry
 make_wrapper sophyane-platform sophyane.platform_cli
 make_wrapper sophyane-coi sophyane.coi_cli
 make_wrapper sophyane-release sophyane.release_cli
+make_wrapper sophyane-audit sophyane.audit_cli
 
 cat > "$BIN/sophyane-browser" <<'WRAP'
 #!/usr/bin/env bash
@@ -99,7 +98,7 @@ case ":$PATH:" in
 esac
 hash -r 2>/dev/null || true
 
-for command in sophyane sophyane-platform sophyane-coi sophyane-release; do
+for command in sophyane sophyane-platform sophyane-coi sophyane-release sophyane-audit; do
   [ -x "$BIN/$command" ] || fail "$command launcher was not created"
 done
 SOPHYANE_SKIP_UPDATE_CHECK=1 "$BIN/sophyane" --version >/dev/null || fail "sophyane failed validation"
@@ -107,6 +106,7 @@ SOPHYANE_SKIP_UPDATE_CHECK=1 "$BIN/sophyane" --version >/dev/null || fail "sophy
 "$BIN/sophyane-coi" status >/dev/null || fail "sophyane-coi failed validation"
 "$BIN/sophyane-release" status >/dev/null || fail "sophyane-release failed validation"
 "$BIN/sophyane-release" gate "$SYSTEM" --imports-only >/dev/null || fail "release import gate failed"
+"$BIN/sophyane-audit" --output "$BASE/install-audit.json" >/dev/null || fail "comprehensive offline audit failed"
 
 printf '%s\n' "$COMMIT" > "$BASE/installed-commit"
 printf '%s\n' "$VERSION" > "$BASE/installed-version"
@@ -124,7 +124,8 @@ TMP=""
 printf '\n✅ Sophyane %s is installed and current\n' "$VERSION"
 printf '   Commit: %.12s\n' "$COMMIT"
 printf '   System: %s\n' "$SYSTEM"
-printf '   Verified CLIs: sophyane, sophyane-platform, sophyane-coi, sophyane-release\n'
+printf '   Verified CLIs: sophyane, sophyane-platform, sophyane-coi, sophyane-release, sophyane-audit\n'
+printf '   Offline audit report: %s/install-audit.json\n' "$BASE"
 printf '   User work: unchanged\n'
 printf '   Start: sophyane\n'
 printf '   Universal install/update link:\n   curl -fsSL %s/install.sh | bash\n' "$RAW"
