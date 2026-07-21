@@ -54,6 +54,7 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     from sophyane.mobile_sensor_routing import install_mobile_sensor_routing
     from sophyane.mobile_permission_center import install_mobile_permission_center
     from sophyane.mobile_capability_prompt import install_mobile_capability_prompt
+    from sophyane.runtime_self_contained_html_patch import install_self_contained_html_patch
     from sophyane.workspace_attachment import install_workspace_attachment
     from sophyane import execution_runtime
     from sophyane.browser_runtime_v2 import open_verified_browser
@@ -61,6 +62,7 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     from sophyane.post_build_menu import PostBuildMenu
 
     install()
+    install_self_contained_html_patch()
     install_incremental_browser_edit()
     install_game_validation()
     install_html_repair_policy()
