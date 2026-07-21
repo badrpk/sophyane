@@ -19,10 +19,9 @@ def _runtime_identity() -> str:
 
 def _user_start_tips() -> str:
     return (
-        "Sophyane checks provider credentials before starting. Use `sophyane --setup` to switch company/model, replace or forget API keys, or configure local models.\n"
-        "Sophyane chooses implementation defaults automatically unless you specify a language.\n"
-        "Only explicit build/fix/run requests may execute tools; normal chat requests direct answers.\n"
-        "Terminal demos attach to the real terminal and browser demos open any generated HTML filename.\n"
+        "Use `/setup` to change models or credentials, `/status` to inspect the active chain, "
+        "`/new` for a fresh project, and `/quit` to exit.\n"
+        "Only explicit build/fix/run requests execute tools; normal chat requests answer directly.\n"
         "Generated commands stay inside the task workspace. Updates preserve repositories and user work.\n"
     )
 
@@ -43,12 +42,13 @@ def _start_local_server_if_needed() -> None:
         ok, message = ensure_server_background()
         prefix = "◆ Local inference:" if ok else "◆ Local inference unavailable:"
         print(f"{prefix} {message}", file=sys.stderr, flush=True)
-    except Exception as error:  # startup must remain usable
+    except Exception as error:
         print(f"◆ Local inference startup warning: {error}", file=sys.stderr, flush=True)
 
 
 def main() -> int:
     from sophyane.runtime_browser_patch import install_browser_patch
+    from sophyane.runtime_input_patch import install_input_patch
     from sophyane.runtime_interactive_patch import install_runtime_patch
     from sophyane.runtime_interrupt_patch import install_interrupt_patch
     from sophyane.runtime_orchestration_patch import install_orchestration_patch
@@ -57,8 +57,6 @@ def main() -> int:
     from sophyane.runtime_safety import install_runtime_safety
     from sophyane.runtime_stagnation_patch import install_stagnation_patch
 
-    # Install before v13_cli constructs a provider so local-first chains include
-    # configured one-shot cloud rescue providers.
     install_quality_escalation()
     install_runtime_patch()
     install_runtime_safety()
@@ -67,6 +65,21 @@ def main() -> int:
     install_stagnation_patch()
     install_interrupt_patch()
     install_provider_error_patch()
+    install_input_patch()
+
+    # Interactive startup explicitly reports configured APIs and asks whether the
+    # user wants local-first execution or direct cloud execution. Metadata and
+    # setup commands remain non-interactive and predictable.
+    if len(sys.argv) <= 1:
+        try:
+            from sophyane.startup_policy import choose_startup_provider
+
+            choose_startup_provider()
+        except (EOFError, KeyboardInterrupt):
+            print("\nStartup selection cancelled; keeping current configuration.", file=sys.stderr)
+        except Exception as error:
+            print(f"◆ Startup provider selection warning: {error}", file=sys.stderr)
+
     print(_runtime_identity(), file=sys.stderr, flush=True)
     _start_local_server_if_needed()
     if len(sys.argv) <= 1:
