@@ -65,6 +65,7 @@ def main() -> int:
     from sophyane.runtime_sli_builder import install_sli_builder
     from sophyane.runtime_sli_capability_planner import install_sli_capability_planner
     from sophyane.runtime_sli_intent_patch import install_sli_intent_routing
+    from sophyane.runtime_sli_mission_os import install_sli_mission_os
     from sophyane.runtime_sli_onset_feedback import install_sli_onset_feedback
     from sophyane.runtime_stagnation_patch import install_stagnation_patch
 
@@ -90,6 +91,9 @@ def main() -> int:
     # pipeline so verified downloaded photos are supplied to the builder.
     install_sli_builder()
     install_premium_asset_pipeline()
+    # Mission OS installs after all artifact builders so complex multi-service
+    # requests are intercepted before any one-shot provider artifact is requested.
+    install_sli_mission_os()
     # Final authority: SLI owns routing, profile selection, prompt budgets and
     # deterministic fallbacks. Local/cloud LLMs remain replaceable workers.
     install_sli_brain()
