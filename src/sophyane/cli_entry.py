@@ -61,6 +61,7 @@ def main() -> int:
     from sophyane.runtime_provider_error_patch import install_provider_error_patch
     from sophyane.runtime_quality_escalation import install_quality_escalation
     from sophyane.runtime_safety import install_runtime_safety
+    from sophyane.runtime_sli_brain import install_sli_brain
     from sophyane.runtime_sli_intent_patch import install_sli_intent_routing
     from sophyane.runtime_sli_onset_feedback import install_sli_onset_feedback
     from sophyane.runtime_stagnation_patch import install_stagnation_patch
@@ -80,9 +81,10 @@ def main() -> int:
     install_sli_intent_routing()
     install_intent_refinement()
     install_sli_onset_feedback()
-    # Install after prompt refinements: the runtime curates real local photographs
-    # before generation and rejects generic/broken premium demos.
     install_premium_asset_pipeline()
+    # Final authority: SLI owns routing, profile selection, prompt budgets and
+    # deterministic fallbacks. Local/cloud LLMs remain replaceable workers.
+    install_sli_brain()
 
     try:
         from sophyane.platform_kernel import ensure_platform_filesystem
