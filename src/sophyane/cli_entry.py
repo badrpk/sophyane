@@ -21,7 +21,8 @@ def _user_start_tips() -> str:
     return (
         "Use `/setup` to change models or credentials, `/status` to inspect the active chain, "
         "`/new` for a fresh project, and `/quit` to exit.\n"
-        "Only explicit build/fix/run requests execute tools; normal chat requests answer directly.\n"
+        "Prompt note: state the goal, constraints, acceptance criteria, and tests.\n"
+        "Platform tools: `sophyane-platform status|index|checkpoint|eval|compact|advise`.\n"
         "Generated commands stay inside the task workspace. Updates preserve repositories and user work.\n"
     )
 
@@ -72,6 +73,13 @@ def main() -> int:
     install_interrupt_patch()
     install_provider_error_patch()
     install_input_patch()
+
+    try:
+        from sophyane.platform_kernel import ensure_platform_filesystem
+
+        ensure_platform_filesystem()
+    except Exception as error:  # noqa: BLE001
+        print(f"◆ Platform filesystem warning: {error}", file=sys.stderr, flush=True)
 
     if len(sys.argv) <= 1:
         try:
