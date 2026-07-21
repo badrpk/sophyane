@@ -54,6 +54,7 @@ def main() -> int:
     from sophyane.runtime_interactive_patch import install_runtime_patch
     from sophyane.runtime_interrupt_patch import install_interrupt_patch
     from sophyane.runtime_orchestration_patch import install_orchestration_patch
+    from sophyane.runtime_provider_context_patch import install_provider_context_patch
     from sophyane.runtime_provider_error_patch import install_provider_error_patch
     from sophyane.runtime_quality_escalation import install_quality_escalation
     from sophyane.runtime_safety import install_runtime_safety
@@ -67,6 +68,7 @@ def main() -> int:
     install_stagnation_patch()
     install_artifact_patch()
     install_deep_agent_runtime()
+    install_provider_context_patch()
     install_interrupt_patch()
     install_provider_error_patch()
     install_input_patch()
