@@ -1,8 +1,25 @@
 """Execution recovery helpers shared by current and older Sophyane TUIs."""
 from __future__ import annotations
 
+import hashlib
+import time
+import uuid
 from pathlib import Path
 from typing import Any
+
+
+def _snapshot(root: Path) -> dict[str, str]:
+    output: dict[str, str] = {}
+    if not root.exists():
+        return output
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        try:
+            output[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except (OSError, ValueError):
+            continue
+    return output
 
 
 def install_orchestration_patch() -> None:
@@ -20,8 +37,12 @@ def install_orchestration_patch() -> None:
         original_execution_requested = tui_v2._execution_requested
 
         def execution_requested(message: str) -> bool:
-            # Native classification is deterministic, requires no model tokens,
-            # and fixes terse build requests such as "snake game".
+            # Explicit imperative requests take precedence over a mistaken native
+            # chat classification. This keeps requests such as "Create index.html"
+            # inside the validated execution runtime.
+            text = " ".join(message.lower().split())
+            if original_execution_requested(message):
+                return True
             try:
                 from sophyane.native_kernel import classify
                 native_mode = classify(message)
@@ -31,16 +52,68 @@ def install_orchestration_patch() -> None:
                 return True
             if native_mode == "chat":
                 return False
-            text = " ".join(message.lower().split())
             extra = (
                 "diagnose", "debug", "giving error", "has error", "error in", "repair",
                 "optimize", "profile", "audit", "integrate", "simulate", "benchmark",
                 "self-improvement", "self improvement", "start a persistent", "monitor",
                 "implement", "demonstrate", "apply reductions", "re-test", "retest",
             )
-            return original_execution_requested(message) or any(marker in text for marker in extra)
+            return any(marker in text for marker in extra)
 
         tui_v2._execution_requested = execution_requested
+
+        original_loop = tui_v2.run_structured_loop
+
+        def learning_loop(
+            *,
+            initial_text: str,
+            original_request: str,
+            ask: Any,
+            workspace: Path,
+            max_steps: int,
+            progress: Any,
+        ) -> str:
+            from sophyane.sli_learner import learn_execution
+            from sophyane.sli_schema import ensure_current_schema
+
+            before = _snapshot(workspace)
+            started = time.monotonic()
+            trace_id = uuid.uuid4().hex[:12]
+            result = original_loop(
+                initial_text=initial_text,
+                original_request=original_request,
+                ask=ask,
+                workspace=workspace,
+                max_steps=max_steps,
+                progress=progress,
+            )
+            lowered = str(result).lower()
+            failed = (
+                lowered.startswith("execution loop failed")
+                or lowered.startswith("stopped after bounded")
+                or "failed safely" in lowered
+            )
+            try:
+                ensure_current_schema()
+                learned = learn_execution(
+                    trace_id=trace_id,
+                    request=original_request,
+                    workspace_before=before,
+                    workspace_after=_snapshot(workspace),
+                    status="failed" if failed else "succeeded",
+                    reward=-1.0 if failed else 1.0,
+                    result=str(result),
+                    elapsed_seconds=time.monotonic() - started,
+                )
+                progress(
+                    "SLI recorded interactive execution "
+                    f"{trace_id} reward={float(learned.get('quality_reward', 0.0)):+.2f}"
+                )
+            except Exception as error:  # noqa: BLE001
+                progress(f"SLI recording skipped safely: {type(error).__name__}: {error}")
+            return result
+
+        tui_v2.run_structured_loop = learning_loop
 
     original_execute = runtime.execute_action
 
