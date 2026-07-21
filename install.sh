@@ -108,7 +108,13 @@ SOPHYANE_SKIP_UPDATE_CHECK=1 "$BIN/sophyane" --version >/dev/null || fail "sophy
 "$BIN/sophyane-release" status >/dev/null || fail "sophyane-release failed validation"
 "$BIN/sophyane-release" gate "$SYSTEM" --imports-only >/dev/null || fail "release import gate failed"
 "$BIN/sophyane-audit" --output "$BASE/install-audit.json" >/dev/null || fail "comprehensive offline audit failed"
-"$BIN/sophyane-benchmark" --output "$BASE/install-benchmark.json" >/dev/null || fail "100-point offline product benchmark failed"
+BENCH_LOG="$BASE/install-benchmark.log"
+if ! "$BIN/sophyane-benchmark" --output "$BASE/install-benchmark.json" >"$BENCH_LOG" 2>&1; then
+  printf '\n--- Product benchmark failure report ---\n' >&2
+  cat "$BENCH_LOG" >&2 || true
+  printf '%s\n' '--- End benchmark report ---' >&2
+  fail "100-point offline product benchmark failed"
+fi
 
 printf '%s\n' "$COMMIT" > "$BASE/installed-commit"
 printf '%s\n' "$VERSION" > "$BASE/installed-version"

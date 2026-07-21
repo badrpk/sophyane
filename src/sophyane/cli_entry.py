@@ -59,6 +59,7 @@ def main() -> int:
     from sophyane.runtime_provider_error_patch import install_provider_error_patch
     from sophyane.runtime_quality_escalation import install_quality_escalation
     from sophyane.runtime_safety import install_runtime_safety
+    from sophyane.runtime_sli_intent_patch import install_sli_intent_routing
     from sophyane.runtime_stagnation_patch import install_stagnation_patch
 
     install_quality_escalation()
@@ -73,6 +74,9 @@ def main() -> int:
     install_interrupt_patch()
     install_provider_error_patch()
     install_input_patch()
+    # Install last so older routing wrappers cannot re-enable unrelated
+    # workspace reuse or execute ordinary writing requests.
+    install_sli_intent_routing()
 
     try:
         from sophyane.platform_kernel import ensure_platform_filesystem
