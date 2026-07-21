@@ -44,17 +44,18 @@ def _is_repair_prompt(prompt: str) -> bool:
         "continue the same task",
         "regressive semantic rewrite",
         "stopped making progress",
+        "continue immediately after",
+        "truncated html",
     )
     if any(marker in text for marker in strong_markers):
         return True
     return bool(
-        re.search(r"\b(repair|fix|correct)\b", text)
-        and re.search(r"\b(previous|failed|missing|invalid|incomplete|validator)\b", text)
+        re.search(r"\b(repair|fix|correct|continue)\b", text)
+        and re.search(r"\b(previous|failed|missing|invalid|incomplete|validator|truncated)\b", text)
     )
 
 
 def _cloud_repair_prompt(prompt: str) -> str:
-    """Strengthen a validator repair request without discarding its evidence."""
     return (
         "You are the expert rescue provider for an active validator-driven software repair.\n"
         "The local model failed repeatedly. Take ownership of this repair sequence until the "
@@ -71,7 +72,6 @@ def _cloud_repair_prompt(prompt: str) -> str:
 
 
 def install_quality_escalation() -> None:
-    """Install once before providers are constructed."""
     from sophyane.providers import fallback
 
     if getattr(fallback, "_quality_escalation_installed", False):
@@ -88,7 +88,6 @@ def install_quality_escalation() -> None:
         cfg = llm_config if llm_config is not None else fallback.load_llm_config()
         primary_id = str(primary or "").strip().lower()
         order = original_resolve(primary_id, llm_config=cfg)
-
         enabled = bool(cfg.get("allow_quality_escalation", True))
         if primary_id not in LOCAL_PROVIDER_IDS or not enabled:
             return order
@@ -107,28 +106,30 @@ def install_quality_escalation() -> None:
 
     def generate(self: Any, prompt: str, system_prompt: str) -> str:
         primary = str(getattr(self, "primary", "") or "").strip().lower()
+        self.current_provider = primary
+        self.active_provider = primary
+        self._quality_active_call_provider = primary
         if primary not in LOCAL_PROVIDER_IDS:
-            return original_generate(self, prompt, system_prompt)
+            try:
+                return original_generate(self, prompt, system_prompt)
+            finally:
+                self._quality_active_call_provider = str(getattr(self, "last_provider", "") or primary)
 
         repair = _is_repair_prompt(prompt)
         active_rescue = str(getattr(self, "_quality_active_rescue", "") or "").strip().lower()
 
-        # A non-repair call marks the end of the validator sequence. Only now is
-        # control returned to the configured local provider.
         if not repair:
             if active_rescue:
-                LOGGER.info(
-                    "Validator repair sequence ended; returning from %s to %s",
-                    active_rescue,
-                    primary,
-                )
+                LOGGER.info("Validator repair sequence ended; returning from %s to %s", active_rescue, primary)
             self._quality_active_rescue = ""
             self._quality_repair_streak = 0
+            self.current_provider = primary
+            self.active_provider = primary
+            self._quality_active_call_provider = primary
             return original_generate(self, prompt, system_prompt)
 
         streak = int(getattr(self, "_quality_repair_streak", 0) or 0) + 1
         self._quality_repair_streak = streak
-
         threshold = 2
         try:
             cfg = fallback.load_llm_config()
@@ -139,25 +140,21 @@ def install_quality_escalation() -> None:
             enabled = True
             preferred = ""
 
-        cloud = [
-            (name, provider)
-            for name, provider in getattr(self, "_providers", [])
-            if name not in LOCAL_PROVIDER_IDS
-        ]
+        cloud = [(name, provider) for name, provider in getattr(self, "_providers", []) if name not in LOCAL_PROVIDER_IDS]
         if preferred:
             cloud.sort(key=lambda item: item[0] != preferred)
 
-        # Once rescue starts, keep the same provider for every subsequent repair
-        # prompt. This prevents a valid cloud repair from being followed by more
-        # low-quality local rewrites before validation can converge.
         should_rescue = enabled and cloud and (bool(active_rescue) or streak >= threshold)
         if should_rescue:
             errors: list[str] = []
-            ordered = cloud
-            if active_rescue:
-                ordered = sorted(cloud, key=lambda item: item[0] != active_rescue)
+            ordered = sorted(cloud, key=lambda item: item[0] != active_rescue) if active_rescue else cloud
             for name, provider in ordered:
                 started = time.perf_counter()
+                self._quality_active_rescue = name
+                self._quality_active_call_provider = name
+                self.current_provider = name
+                self.active_provider = name
+                LOGGER.warning("Switching validator repair provider to %s", name)
                 try:
                     text = provider.generate(_cloud_repair_prompt(prompt), system_prompt)
                 except Exception as error:  # noqa: BLE001
@@ -169,7 +166,6 @@ def install_quality_escalation() -> None:
                 self.last_provider = name
                 self.last_errors = errors
                 self.model = provider.model
-                self._quality_active_rescue = name
                 LOGGER.warning(
                     "Validator repair owned by %s in %.0fms; cloud rescue remains active until validation ends",
                     name,
@@ -181,6 +177,10 @@ def install_quality_escalation() -> None:
                 "Configured quality rescue providers failed; continuing bounded local recovery: %s",
                 "; ".join(errors),
             )
+            self._quality_active_rescue = ""
+            self._quality_active_call_provider = primary
+            self.current_provider = primary
+            self.active_provider = primary
 
         return original_generate(self, prompt, system_prompt)
 
