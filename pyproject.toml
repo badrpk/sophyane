@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sophyane"
-version = "20.1.2"
-description = "Local-first AI software engineering operating system with COI orchestration, MCP interoperability, repository intelligence, coded sandboxes, evaluation, release gates, and comprehensive audits"
+version = "20.2.0"
+description = "Local-first AI software engineering operating system with COI orchestration, MCP interoperability, repository intelligence, coded sandboxes, audits, and end-to-end product benchmarks"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Badar Uzaman"}]
-keywords = ["ai", "coding-agent", "repository", "semantic-index", "self-repair", "multi-agent", "llm", "autonomous", "local-ai", "validated-execution", "local-first", "sandbox", "provider-dispatch", "subagents", "evaluation", "tracing", "compaction", "coi", "mcp", "orchestration", "release-gate", "audit"]
+keywords = ["ai", "coding-agent", "repository", "semantic-index", "self-repair", "multi-agent", "llm", "autonomous", "local-ai", "validated-execution", "local-first", "sandbox", "provider-dispatch", "subagents", "evaluation", "tracing", "compaction", "coi", "mcp", "orchestration", "release-gate", "audit", "benchmark"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",
@@ -51,6 +51,7 @@ sophyane-platform = "sophyane.platform_cli:main"
 sophyane-coi = "sophyane.coi_cli:main"
 sophyane-release = "sophyane.release_cli:main"
 sophyane-audit = "sophyane.audit_cli:main"
+sophyane-benchmark = "sophyane.benchmark_cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
