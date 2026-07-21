@@ -114,6 +114,20 @@ class ProductBenchmarks:
             denied = coi.run(TaskContract(goal="unsafe", permissions=["admin"]), agent="coder")
             self.check("coi", "permission boundary", lambda: denied.get("ok") is False)
 
+    def sli_switching(self) -> None:
+        from sophyane.sli_provider_controller import SLIProviderController, artifact_defects
+        with tempfile.TemporaryDirectory(prefix="sophyane-product-sli-") as tmp:
+            controller = SLIProviderController(Path(tmp) / "state.json")
+            prompt = "make chess game as one complete HTML file"
+            partial = "<!doctype html><html><body><div id='board'></div>"
+            decision = controller.observe(prompt=prompt, response=partial, latency_seconds=41, provider="local_gguf")
+            self.check("sli", "detect incomplete interactive artifact", lambda: set(("missing_html_close", "missing_javascript", "missing_interaction")).issubset(set(artifact_defects(prompt, partial))))
+            self.check("sli", "escalate severe local product failure", lambda: decision.action == "escalate_cloud" and decision.risk >= 0.5)
+            complete = "<!doctype html><html><body><button id='move'>Move</button><script>document.querySelector('#move').onclick=()=>1</script></body></html>"
+            accepted = controller.observe(prompt=prompt, response=complete, latency_seconds=2, provider="gemini")
+            self.check("sli", "accept completed rescue artifact", lambda: accepted.action == "accept" and not accepted.defects)
+            self.check("sli", "persist recurrent sequence memory", lambda: (Path(tmp) / "state.json").exists() and (Path(tmp) / "sli-provider-events.jsonl").exists())
+
     def mcp_and_persistence(self) -> None:
         from sophyane.mcp import call_tool, list_tools
         catalog = list_tools()
@@ -146,7 +160,7 @@ class ProductBenchmarks:
         self.check("live", "provider creates complete product", generate)
 
     def run(self) -> dict[str, Any]:
-        self.frontend(); self.languages(); self.repository(); self.orchestration(); self.mcp_and_persistence(); self.live_product()
+        self.frontend(); self.languages(); self.repository(); self.orchestration(); self.sli_switching(); self.mcp_and_persistence(); self.live_product()
         passed = sum(1 for r in self.results if r.ok and not r.skipped)
         failed = sum(1 for r in self.results if not r.ok)
         skipped = sum(1 for r in self.results if r.skipped)
