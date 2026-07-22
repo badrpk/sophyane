@@ -74,20 +74,30 @@ def _classify_iface(name: str) -> str:
         return "ethernet"
     if lower.startswith(("wl", "wlan", "wifi", "ath", "ra")):
         return "wifi"
-    # sysfs: /sys/class/net/<name>/wireless or type
+    # sysfs: /sys/class/net/<name>/wireless or type.
+    #
+    # Android/Termux may expose entries that exist but cannot be stat'ed.
+    # Network classification is best-effort, so restricted sysfs paths must
+    # not abort appliance detection or the full feature audit.
     sys_net = Path(f"/sys/class/net/{lower}")
-    if (sys_net / "wireless").exists() or (sys_net / "phy80211").exists():
-        return "wifi"
+    try:
+        if (sys_net / "wireless").exists() or (sys_net / "phy80211").exists():
+            return "wifi"
+    except OSError:
+        pass
+
     type_file = sys_net / "type"
-    if type_file.exists():
-        try:
-            # ARPHRD_ETHER=1; still ethernet vs wifi needs wireless dir
+    try:
+        if type_file.exists():
+            # ARPHRD_ETHER=1; still ethernet vs wifi needs wireless naming
+            # or a separately visible wireless directory.
             if type_file.read_text(encoding="utf-8").strip() == "1" and lower.startswith(
                 ("eth", "en")
             ):
                 return "ethernet"
-        except OSError:
-            pass
+    except OSError:
+        pass
+
     return "other"
 
 
@@ -97,15 +107,71 @@ def detect_network_interfaces() -> dict[str, Any]:
     code, out = _run(["ip", "-brief", "addr"])
     if code != 0:
         code, out = _run(["ifconfig", "-a"])
+    continuation_tokens = {
+        "inet",
+        "inet6",
+        "ether",
+        "txqueuelen",
+        "rx",
+        "tx",
+        "collisions",
+        "device",
+    }
+
     for line in (out or "").splitlines():
         parts = line.split()
         if not parts:
             continue
+
         name = parts[0].rstrip(":")
+
+        # Ignore warning/banner lines that are not interfaces
+        if name.lower() in {
+            "warning",
+            "note",
+            "error",
+            "failed",
+            "cannot",
+        }:
+            continue
+        if name.lower() in continuation_tokens:
+            continue
+
+        # `ifconfig -a` continuation lines are normally indented. They contain
+        # addresses and counters, not interface names.
+        if line[:1].isspace() and not name.endswith(":"):
+            continue
+
         kind = _classify_iface(name)
         state = "UP" if "UP" in line.upper() else "UNKNOWN"
         addrs = [p for p in parts[1:] if p.count(".") == 3 or ":" in p]
-        ifaces.append({"name": name, "kind": kind, "state": state, "addrs": addrs, "raw": line[:200]})
+        ifaces.append(
+            {
+                "name": name,
+                "kind": kind,
+                "state": state,
+                "addrs": addrs,
+                "raw": line[:200],
+            }
+        )
+
+    # Minimal Android environments may restrict both `ip` and `ifconfig`.
+    # Python's socket interface list is non-mutating and usually remains
+    # available, so use it as a final discovery fallback.
+    if not ifaces:
+        try:
+            for _, name in socket.if_nameindex():
+                ifaces.append(
+                    {
+                        "name": name,
+                        "kind": _classify_iface(name),
+                        "state": "UNKNOWN",
+                        "addrs": [],
+                        "raw": "socket.if_nameindex",
+                    }
+                )
+        except (OSError, AttributeError):
+            pass
 
     # Supplement with nmcli device list (catches wifi even if down / no addr)
     if shutil.which("nmcli"):
