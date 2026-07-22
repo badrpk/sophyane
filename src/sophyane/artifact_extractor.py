@@ -106,14 +106,9 @@ def extract_artifact(text: str) -> Artifact | None:
         html = fenced.group(1).strip()
         return Artifact(html, "markdown.html", _complete_html(html))
 
-    start = _HTML_START.search(raw)
-    if start:
-        html = raw[start.start():].strip()
-        end = html.lower().rfind("</html>")
-        if end >= 0:
-            html = html[:end + len("</html>")]
-        return Artifact(html, "raw.html", _complete_html(html))
-
+    # Parse structured provider output before scanning raw text. Otherwise,
+    # HTML inside JSON is incorrectly reported as coming from ``raw.html``
+    # instead of its precise action/content path.
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
@@ -123,8 +118,23 @@ def extract_artifact(text: str) -> Artifact | None:
         if found:
             return found
 
-    # Recover HTML embedded in a truncated JSON action.content string.
-    for key in ("content", "html_content", "html", "artifact"):
+    start = _HTML_START.search(raw)
+    if start:
+        html = raw[start.start():].strip()
+        end = html.lower().rfind("</html>")
+        if end >= 0:
+            html = html[:end + len("</html>")]
+        return Artifact(html, "raw.html", _complete_html(html))
+
+    # Recover HTML embedded in a truncated JSON artifact string.
+    for key in (
+        "content",
+        "html_content",
+        "html",
+        "artifact",
+        "tool_code",
+        "code",
+    ):
         match = re.search(rf'(?is)"{key}"\s*:\s*"', raw)
         if not match:
             continue
@@ -157,7 +167,7 @@ def merge_continuation(existing: str, continuation: str) -> str:
         replacement = extra[start.start():].strip()
         return replacement if len(replacement) >= len(existing) else existing
     overlap = min(500, len(existing), len(extra))
-    for size in range(overlap, 15, -1):
+    for size in range(overlap, 0, -1):
         if existing[-size:] == extra[:size]:
             extra = extra[size:]
             break

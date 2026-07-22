@@ -129,7 +129,10 @@ def extract_embedded_partial_html(raw: str) -> str | None:
             start = lower.find("<html")
         if start >= 0:
             partial = candidate[start:].strip()
-            if len(partial) >= 120:
+            # A provider may be cut off immediately after opening HTML or a
+            # script string. Preserve any meaningful HTML prefix rather than
+            # imposing an arbitrary document-length requirement.
+            if len(partial) >= 20:
                 partials.append(partial)
     return max(partials, key=len) if partials else None
 
