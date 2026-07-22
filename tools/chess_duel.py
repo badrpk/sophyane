@@ -162,68 +162,96 @@ class AgentError(RuntimeError):
     pass
 
 
-class LocalLlamaAgent:
-    name = "Local Llama 3B"
+class ExpertRulesAgent:
+    name = "Expert Rules Engine"
 
-    def _openai_compatible(self, prompt: str) -> str:
-        payload = {
-            "model": LOCAL_MODEL,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a chess move selector. Reply only with one "
-                        "legal UCI move supplied by the user."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.25,
-            "max_tokens": 20,
-            "stream": False,
-        }
-        result = http_json(LOCAL_OPENAI_URL, payload)
-        choices = result.get("choices") or []
-        if not choices:
-            raise AgentError(f"No choices returned by local endpoint: {result}")
-        return str(choices[0].get("message", {}).get("content", ""))
+    @staticmethod
+    def _score_move(board: chess.Board, move: chess.Move) -> float:
+        score = 0.0
 
-    def _ollama(self, prompt: str) -> str:
-        payload = {
-            "model": LOCAL_MODEL,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "Reply only with one legal UCI chess move.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "stream": False,
-            "options": {
-                "temperature": 0.25,
-                "num_predict": 20,
-            },
+        piece_values = {
+            chess.PAWN: 1.0,
+            chess.KNIGHT: 3.2,
+            chess.BISHOP: 3.3,
+            chess.ROOK: 5.0,
+            chess.QUEEN: 9.0,
+            chess.KING: 0.0,
         }
-        result = http_json(OLLAMA_URL, payload)
-        return str(result.get("message", {}).get("content", ""))
+
+        if board.is_capture(move):
+            victim = board.piece_at(move.to_square)
+            attacker = board.piece_at(move.from_square)
+            if victim:
+                score += 10.0 * piece_values[victim.piece_type]
+            if attacker:
+                score -= piece_values[attacker.piece_type]
+
+        if move.promotion:
+            score += piece_values.get(move.promotion, 0.0) + 6.0
+
+        if board.gives_check(move):
+            score += 3.0
+
+        center = {
+            chess.D4, chess.E4, chess.D5, chess.E5,
+            chess.C3, chess.D3, chess.E3, chess.F3,
+            chess.C4, chess.F4, chess.C5, chess.F5,
+            chess.C6, chess.D6, chess.E6, chess.F6,
+        }
+        if move.to_square in center:
+            score += 1.2
+
+        moving_piece = board.piece_at(move.from_square)
+        if moving_piece:
+            if moving_piece.piece_type in (chess.KNIGHT, chess.BISHOP):
+                home_rank = 0 if moving_piece.color == chess.WHITE else 7
+                if chess.square_rank(move.from_square) == home_rank:
+                    score += 1.0
+
+            if moving_piece.piece_type == chess.KING and board.is_castling(move):
+                score += 5.0
+
+            if moving_piece.piece_type == chess.QUEEN and len(board.move_stack) < 12:
+                score -= 1.2
+
+        probe = board.copy(stack=False)
+        probe.push(move)
+
+        if probe.is_checkmate():
+            score += 100000.0
+        elif probe.is_stalemate():
+            score -= 10.0
+
+        opponent_replies = list(probe.legal_moves)
+        if opponent_replies:
+            worst_reply = 0.0
+            for reply in opponent_replies:
+                if probe.is_capture(reply):
+                    victim = probe.piece_at(reply.to_square)
+                    if victim:
+                        worst_reply = max(
+                            worst_reply,
+                            piece_values[victim.piece_type],
+                        )
+            score -= 0.45 * worst_reply
+
+        score += random.random() * 0.05
+        return score
 
     def generate(self, prompt: str) -> tuple[str, str]:
-        errors: list[str] = []
+        raise AgentError("ExpertRulesAgent does not use text generation")
 
-        try:
-            return self._openai_compatible(prompt), "llama-server:8766"
-        except Exception as error:  # noqa: BLE001
-            errors.append(f"llama-server: {error}")
+    def choose(self, board: chess.Board) -> tuple[chess.Move, str, str, bool]:
+        legal_moves = list(board.legal_moves)
+        if not legal_moves:
+            raise AgentError("No legal moves available")
 
-        try:
-            return self._ollama(prompt), f"ollama:{LOCAL_MODEL}"
-        except Exception as error:  # noqa: BLE001
-            errors.append(f"ollama: {error}")
-
-        raise AgentError(
-            "Local Llama backend unavailable. "
-            + " | ".join(errors)
+        best = max(legal_moves, key=lambda m: self._score_move(board, m))
+        explanation = (
+            "Selected by deterministic chess heuristics: captures, checks, "
+            "development, centre control, castling, promotion, and mate."
         )
+        return best, explanation, "expert-rules-v1", False
 
 
 class GeminiAgent:
@@ -334,7 +362,7 @@ class ArenaState:
 
 STATE = ArenaState()
 LOCK = threading.RLock()
-WHITE_AGENT = LocalLlamaAgent()
+WHITE_AGENT = ExpertRulesAgent()
 BLACK_AGENT = GeminiAgent()
 
 
@@ -349,7 +377,7 @@ def finish_game_locked() -> None:
     result = STATE.board.result(claim_draw=True)
 
     if result == "1-0":
-        STATE.winner = "Local Llama 3B wins"
+        STATE.winner = "Expert Rules Engine wins"
     elif result == "0-1":
         STATE.winner = "Gemini 3.5 Flash wins"
     else:
@@ -358,12 +386,15 @@ def finish_game_locked() -> None:
 
 def choose_move(
     board: chess.Board,
-    agent: LocalLlamaAgent | GeminiAgent,
+    agent: ExpertRulesAgent | GeminiAgent,
 ) -> tuple[chess.Move, str, str, bool]:
     legal_moves = list(board.legal_moves)
     legal_uci = {move.uci() for move in legal_moves}
     prompt = chess_prompt(board, agent.name)
     last_error = ""
+
+    if isinstance(agent, ExpertRulesAgent):
+        return agent.choose(board)
 
     for _attempt in range(2):
         try:
@@ -621,15 +652,15 @@ button.danger{background:var(--danger);color:#25070b}
 <body>
 <header>
   <h1>♟ Sophyane AI Chess Arena</h1>
-  <div class="subtitle">Local Llama 3B vs Gemini 3.5 Flash</div>
+  <div class="subtitle">Expert Rules Engine vs Gemini 3.5 Flash</div>
 </header>
 
 <main class="layout">
   <section>
     <div class="players">
       <div class="player" id="whitePlayer">
-        <strong>♔ Local Llama 3B</strong>
-        <small>White · local device</small>
+        <strong>♔ Expert Rules Engine</strong>
+        <small>White · deterministic local engine</small>
       </div>
       <div class="player" id="blackPlayer">
         <strong>♚ Gemini 3.5 Flash</strong>
@@ -657,7 +688,7 @@ button.danger{background:var(--danger);color:#25070b}
     <div class="stats">
       <div class="stat"><small>Move</small><strong id="moveNumber">—</strong></div>
       <div class="stat"><small>Last move</small><strong id="lastMove">—</strong></div>
-      <div class="stat"><small>Llama fallbacks</small><strong id="wf">0</strong></div>
+      <div class="stat"><small>Expert fallbacks</small><strong id="wf">0</strong></div>
       <div class="stat"><small>Gemini fallbacks</small><strong id="bf">0</strong></div>
     </div>
 
@@ -875,7 +906,7 @@ def main() -> int:
     url = f"http://{HOST}:{PORT}"
     print("Sophyane AI Chess Arena")
     print("========================")
-    print(f"White: Local Llama 3B ({LOCAL_MODEL})")
+    print(f"White: Expert Rules Engine ({LOCAL_MODEL})")
     print(f"Black: Gemini ({GEMINI_MODEL})")
     print(f"Browser: {url}")
     print()
