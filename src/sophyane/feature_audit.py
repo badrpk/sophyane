@@ -212,30 +212,72 @@ def run_full_audit() -> dict[str, Any]:
 
     # Multi-language SDK files
     try:
-        root = Path(__file__).resolve().parents[2]
-        # package may be site-packages; also check cwd release
+        # The source checkout and installed wheel have different layouts.
+        # Search all supported locations rather than assuming sdk/ is copied
+        # beside site-packages.
+        source_file = Path(__file__).resolve()
         candidates = [
+            Path.cwd() / "sdk",
+            Path.home() / "sophyane" / "sdk",
             Path.home() / ".local/share/sophyane/current/sdk",
-            Path(__file__).resolve().parents[3] / "sdk",
+            Path.home() / ".local/share/sophyane/system/sdk",
+            source_file.parents[2] / "sdk",
+            source_file.parents[3] / "sdk",
         ]
-        sdk = next((p for p in candidates if p.exists()), None)
-        if sdk is None:
-            # try parents
-            for p in Path(__file__).resolve().parents:
-                if (p / "sdk" / "cpp").exists():
-                    sdk = p / "sdk"
-                    break
+
+        for parent in source_file.parents:
+            candidates.append(parent / "sdk")
+
+        sdk = next(
+            (
+                candidate
+                for candidate in candidates
+                if (candidate / "cpp").is_dir() and (candidate / "js").is_dir()
+            ),
+            None,
+        )
+
+        python_surface = source_file.exists()
+        sdk_languages_ok = bool(
+            sdk
+            and (sdk / "cpp").is_dir()
+            and (sdk / "js").is_dir()
+            and python_surface
+        )
+
         add(
             "sdk",
             "cpp_js_python",
-            bool(sdk and (sdk / "cpp").exists() and (sdk / "js").exists()),
-            str(sdk),
+            sdk_languages_ok,
+            str(sdk or "SDK source tree not installed"),
         )
+
+        continual_source = (
+            sdk / "cpp" / "continual" / "src" / "train_core.cpp"
+            if sdk
+            else None
+        )
+        continual_ok = bool(continual_source and continual_source.is_file())
+        continual_detail = str(continual_source or "")
+
+        # Release installations may intentionally omit SDK source files while
+        # shipping a successfully built continual-training executable. Validate
+        # that usable runtime artifact instead of reporting a false failure.
+        if not continual_ok:
+            try:
+                from sophyane.continual.engine import ensure_train_core
+
+                core_path = Path(ensure_train_core())
+                continual_ok = core_path.is_file()
+                continual_detail = str(core_path)
+            except Exception as error:  # noqa: BLE001
+                continual_detail = f"{type(error).__name__}: {error}"
+
         add(
             "sdk",
             "cpp_continual_core",
-            bool(sdk and (sdk / "cpp" / "continual" / "src" / "train_core.cpp").exists()),
-            str((sdk / "cpp" / "continual") if sdk else ""),
+            continual_ok,
+            continual_detail,
         )
     except Exception as error:  # noqa: BLE001
         add("sdk", "paths", False, str(error))
