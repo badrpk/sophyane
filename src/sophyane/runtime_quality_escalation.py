@@ -41,7 +41,8 @@ def _cloud_repair_prompt(prompt: str, local_response: str = "", defects: list[st
         "Take ownership until the artifact passes validation.\n\n"
         "MANDATORY OUTPUT RULES:\n"
         "- Return the complete corrected artifact, not a summary or acknowledgement.\n"
-        "- For browser work, return one complete HTML document ending with </html>.\n"
+        "- For browser work, return complete self-contained HTML beginning with "
+        "<!doctype html> and ending with </html>.\n"
         "- Interactive games must include working JavaScript and keyboard/touch interaction.\n"
         "- Preserve working behaviour where possible, but replace an irreparable partial artifact.\n"
         "- Do not use Markdown fences.\n\n"
@@ -141,6 +142,29 @@ def install_quality_escalation() -> None:
         except Exception:  # noqa: BLE001
             enabled, preferred = True, ""
 
+        # Give the configured local provider exactly one bounded repair
+        # attempt. On the next repair request, transfer ownership to cloud
+        # before calling local again, so a useful local reply is not consumed
+        # and discarded during escalation.
+        prior_repair_streak = int(
+            getattr(self, "_quality_repair_streak", 0) or 0
+        )
+        if (
+            repair
+            and enabled
+            and not active_rescue
+            and prior_repair_streak >= 1
+        ):
+            rescued = run_cloud_rescue(
+                self,
+                primary=primary,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                preferred=preferred,
+            )
+            if rescued is not None:
+                return rescued
+
         # Once SLI has transferred ownership during a repair sequence, keep the
         # rescue provider active until a new non-repair request begins.
         if repair and enabled and active_rescue:
@@ -158,7 +182,10 @@ def install_quality_escalation() -> None:
         if not repair and active_rescue:
             LOGGER.info("SLI repair sequence ended; returning from %s to %s", active_rescue, primary)
             self._quality_active_rescue = ""
+            self._quality_repair_streak = 0
             controller.reset_sequence()
+        elif not repair:
+            self._quality_repair_streak = 0
 
         started = time.perf_counter()
         set_active(self, primary, primary, "request")
@@ -170,7 +197,15 @@ def install_quality_escalation() -> None:
             latency_seconds=latency,
             provider=primary,
         )
-        self._quality_repair_streak = decision.attempt
+        repair_streak = int(
+            getattr(self, "_quality_repair_streak", 0) or 0
+        )
+        if repair and decision.defects:
+            repair_streak += 1
+        elif not repair:
+            repair_streak = 0
+        self._quality_repair_streak = repair_streak
+
         LOGGER.info(
             "SLI provider decision=%s risk=%.3f confidence=%.3f defects=%s",
             decision.action,
@@ -179,7 +214,16 @@ def install_quality_escalation() -> None:
             ",".join(decision.defects) or "none",
         )
 
-        if enabled and decision.action == "escalate_cloud":
+        # Always allow one bounded local repair before transferring
+        # ownership to a cloud rescue provider. Subsequent repair calls remain
+        # sticky with the selected rescue provider until a non-repair request.
+        should_escalate = (
+            enabled
+            and decision.action == "escalate_cloud"
+            and (not repair or repair_streak >= 2)
+        )
+
+        if should_escalate:
             rescued = run_cloud_rescue(
                 self,
                 primary=primary,

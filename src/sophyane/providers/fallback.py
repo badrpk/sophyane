@@ -52,10 +52,10 @@ class FallbackProvider(Provider):
         first_name, first = providers[0]
         super().__init__(
             api_key="",
-            model=first.model,
-            timeout=first.timeout,
-            temperature=first.temperature,
-            max_tokens=first.max_tokens,
+            model=str(getattr(first, "model", "") or ""),
+            timeout=int(getattr(first, "timeout", 60)),
+            temperature=float(getattr(first, "temperature", 0.2)),
+            max_tokens=int(getattr(first, "max_tokens", 2048)),
         )
         self._providers = providers
         self.primary = primary or first_name
