@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .capability_manager import (
+    CapabilityManager,
+    default_capability_manager,
+)
 from .goal_execution import (
     ExecutionContext,
     ExecutionReport,
@@ -56,6 +60,70 @@ def _normalize_goals(value: object) -> tuple[GoalNode, ...] | None:
         return items
 
     return None
+
+
+def infer_capability_requirements(
+    request: str,
+    planner_output: object | None = None,
+) -> frozenset[str]:
+    """Infer deterministic runtime capability requirements."""
+    text = f"{request} {planner_output or ''}".lower()
+    requirements: set[str] = set()
+
+    rules = {
+        "html": ("html", "web page", "webpage", "website"),
+        "css": ("css", "responsive", "styling", "mobile ui"),
+        "javascript": ("javascript", " js ", "browser game", "interactive"),
+        "browser": ("browser", "website", "web app", "webpage"),
+        "python": ("python", "pytest", "pandas", "django", "flask"),
+        "shell": ("bash", "shell", "terminal", "command line"),
+        "build": ("build", "compile", "package"),
+        "testing": ("test", "pytest", "unit test", "regression"),
+        "cpp": ("c++", "cpp", "cmake"),
+        "cmake": ("cmake",),
+        "data-processing": ("csv", "dataframe", "dataset", "data processing"),
+        "automation": ("automation", "automate", "script"),
+    }
+
+    padded = f" {text} "
+    for capability, markers in rules.items():
+        if any(marker in padded for marker in markers):
+            requirements.add(capability)
+
+    return frozenset(requirements)
+
+
+def select_runtime_capability(
+    request: str,
+    *,
+    planner_output: object | None = None,
+    manager: CapabilityManager | None = None,
+    provider: str = "",
+):
+    """Select the best available capability, or return None."""
+    capability_manager = manager or default_capability_manager()
+    requirements = infer_capability_requirements(
+        request,
+        planner_output,
+    )
+
+    if not requirements:
+        return None
+
+    match = capability_manager.select(
+        requirements,
+        provider=provider,
+        require_all=True,
+    )
+
+    if match is None:
+        match = capability_manager.select(
+            requirements,
+            provider=provider,
+            require_all=False,
+        )
+
+    return match
 
 
 def planner_goals(planner_output: object) -> tuple[GoalNode, ...] | None:

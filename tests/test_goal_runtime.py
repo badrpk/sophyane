@@ -216,3 +216,56 @@ def test_menu_is_withheld_for_incomplete_result(
 
     assert outcome == "incomplete"
     assert any("withheld" in message.lower() for message in messages)
+
+
+def test_infer_capability_requirements_for_browser_request() -> None:
+    from sophyane.goal_runtime import infer_capability_requirements
+
+    requirements = infer_capability_requirements(
+        "Build a responsive HTML browser game with JavaScript tests"
+    )
+
+    assert {"browser", "html", "css", "javascript", "testing"} <= requirements
+
+
+def test_select_runtime_capability_prefers_browser() -> None:
+    from sophyane.goal_runtime import select_runtime_capability
+
+    match = select_runtime_capability(
+        "Build a responsive HTML and JavaScript web app"
+    )
+
+    assert match is not None
+    assert match.capability.name == "browser"
+    assert "html" in match.matched
+    assert "javascript" in match.matched
+
+
+def test_select_runtime_capability_falls_back_to_partial_match() -> None:
+    from sophyane.capability_manager import Capability, CapabilityManager
+    from sophyane.goal_runtime import select_runtime_capability
+
+    manager = CapabilityManager()
+    manager.register(
+        Capability(
+            name="html-only",
+            description="HTML generator",
+            supports=frozenset({"html"}),
+            priority=50,
+        )
+    )
+
+    match = select_runtime_capability(
+        "Build an HTML page with JavaScript",
+        manager=manager,
+    )
+
+    assert match is not None
+    assert match.capability.name == "html-only"
+    assert match.missing
+
+
+def test_select_runtime_capability_returns_none_without_requirements() -> None:
+    from sophyane.goal_runtime import select_runtime_capability
+
+    assert select_runtime_capability("Explain this idea") is None
