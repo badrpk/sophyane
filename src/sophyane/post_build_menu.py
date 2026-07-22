@@ -54,13 +54,103 @@ def render_menu() -> str:
 
 
 def detect_entry_file(workspace: Path) -> Path | None:
-    preferred = ("index.html", "main.py", "app.py", "server.py", "main.js", "index.js")
+    """Return only a recognized, runnable project entry point.
+
+    Never treat an arbitrary workspace file, log, validator, provider response,
+    or temporary artifact as proof that the requested project was built.
+    """
+    workspace = Path(workspace)
+    preferred = (
+        "index.html",
+        "main.html",
+        "app.html",
+        "start.html",
+        "main.py",
+        "app.py",
+        "server.py",
+        "main.js",
+        "index.js",
+    )
     for name in preferred:
         path = workspace / name
-        if path.is_file():
+        if path.is_file() and path.stat().st_size > 0:
             return path
-    files = sorted(path for path in workspace.rglob("*") if path.is_file())
-    return files[0] if files else None
+    return None
+
+
+@dataclass(frozen=True)
+class CompletionEvidence:
+    complete: bool
+    entry: Path | None
+    project_type: str
+    errors: tuple[str, ...]
+
+
+def verify_completion(workspace: Path) -> CompletionEvidence:
+    """Validate tangible project evidence before presenting success."""
+    workspace = Path(workspace).resolve()
+    errors: list[str] = []
+
+    if not workspace.is_dir():
+        return CompletionEvidence(
+            complete=False,
+            entry=None,
+            project_type="unknown",
+            errors=("Workspace directory does not exist.",),
+        )
+
+    entry = detect_entry_file(workspace)
+    if entry is None:
+        return CompletionEvidence(
+            complete=False,
+            entry=None,
+            project_type="unknown",
+            errors=(
+                "No recognized project entry file was found.",
+                "Expected index.html, main.html, app.html, start.html, "
+                "main.py, app.py, server.py, main.js, or index.js.",
+            ),
+        )
+
+    suffix = entry.suffix.lower()
+    project_type = {
+        ".html": "browser",
+        ".py": "python",
+        ".js": "javascript",
+    }.get(suffix, "unknown")
+
+    try:
+        content = entry.read_text(encoding="utf-8", errors="ignore")
+    except OSError as error:
+        errors.append(f"Entry file could not be read: {error}")
+        content = ""
+
+    if not content.strip():
+        errors.append("Entry file is empty.")
+
+    if suffix == ".html":
+        lowered = content.lower()
+        if "<html" not in lowered:
+            errors.append("HTML entry does not contain an <html> element.")
+        if "<body" not in lowered:
+            errors.append("HTML entry does not contain a <body> element.")
+        if "</html>" not in lowered:
+            errors.append("HTML entry is incomplete: missing </html>.")
+    elif suffix == ".py":
+        try:
+            compile(content, str(entry), "exec")
+        except SyntaxError as error:
+            errors.append(
+                f"Python entry has a syntax error at line "
+                f"{error.lineno}: {error.msg}"
+            )
+
+    return CompletionEvidence(
+        complete=not errors,
+        entry=entry,
+        project_type=project_type,
+        errors=tuple(errors),
+    )
 
 
 def _free_port() -> int:
@@ -135,12 +225,26 @@ class PostBuildMenu:
         self.output = output_fn
         self.server = ProjectServer(self.workspace)
 
+    def completion_evidence(self) -> CompletionEvidence:
+        return verify_completion(self.workspace)
+
     def available(self) -> bool:
-        return self.workspace.is_dir() and detect_entry_file(self.workspace) is not None
+        return self.completion_evidence().complete
 
     def run(self) -> str:
-        if not self.available() or not sys.stdin.isatty():
+        if not sys.stdin.isatty():
             return "skip"
+
+        evidence = self.completion_evidence()
+        if not evidence.complete:
+            self.output("\n❌ Project completion validation failed.")
+            for error in evidence.errors:
+                self.output(f"- {error}")
+            self.output(
+                "Success menu withheld. Continue the generation or repair cycle."
+            )
+            return "incomplete"
+
         while True:
             self.output("\n" + render_menu())
             try:
