@@ -52,3 +52,12 @@ __pycache__/
 !.env.example
 *.key
 *.pem
+
+# Recursive self-improvement runtime data
+improvement_chain.jsonl
+continual/
+*.before-*
+*.backup
+*.bak
+.env
+.env.*
