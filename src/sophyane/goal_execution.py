@@ -145,6 +145,7 @@ class GoalExecutor:
         max_cycles: int = 50,
         checkpoint_path: Path | None = None,
         minimum_action_confidence: float = 0.15,
+        event_sink: Callable[[ExecutionEvent], None] | None = None,
     ) -> None:
         if max_cycles < 1:
             raise ValueError("max_cycles must be at least 1")
@@ -163,6 +164,7 @@ class GoalExecutor:
             else context.workspace / ".sophyane-goal-state.json"
         )
         self.events: list[ExecutionEvent] = []
+        self.event_sink = event_sink
         self.cycle = 0
 
         self._validate_graph()
@@ -210,18 +212,24 @@ class GoalExecutor:
         errors: tuple[str, ...] = (),
         evidence: tuple[str, ...] = (),
     ) -> None:
-        self.events.append(
-            ExecutionEvent(
-                timestamp=time.time(),
-                cycle=self.cycle,
-                goal=goal.key,
-                event=event,
-                status=goal.status.value,
-                summary=summary,
-                errors=errors,
-                evidence=evidence,
-            )
+        record = ExecutionEvent(
+            timestamp=time.time(),
+            cycle=self.cycle,
+            goal=goal.key,
+            event=event,
+            status=goal.status.value,
+            summary=summary,
+            errors=errors,
+            evidence=evidence,
         )
+        self.events.append(record)
+
+        if self.event_sink is not None:
+            try:
+                self.event_sink(record)
+            except Exception:
+                # Observability must never break project execution.
+                pass
 
     def _dependencies_passed(self, goal: GoalNode) -> bool:
         return all(
