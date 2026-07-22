@@ -268,7 +268,7 @@ class GeminiAgent:
         model = GEMINI_MODEL.strip().lower().replace(" ", "-")
         url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{model}:generateContent?key={key}"
+            f"{model}:generateContent"
         )
         payload = {
             "systemInstruction": {
@@ -288,22 +288,38 @@ class GeminiAgent:
                 }
             ],
             "generationConfig": {
-                "temperature": 0.25,
-                "maxOutputTokens": 20,
+                "temperature": 0.2,
+                "maxOutputTokens": 256,
+                "thinkingConfig": {
+                    "thinkingBudget": 0
+                }
             },
         }
 
-        result = http_json(url, payload)
+        result = http_json(
+            url,
+            payload,
+            headers={"x-goog-api-key": key},
+        )
         candidates = result.get("candidates") or []
         if not candidates:
             raise AgentError(f"No Gemini candidate returned: {result}")
 
-        parts = (
-            candidates[0]
-            .get("content", {})
-            .get("parts", [])
-        )
-        text = "".join(str(part.get("text", "")) for part in parts)
+        candidate = candidates[0]
+        parts = candidate.get("content", {}).get("parts", [])
+        text = "".join(
+            str(part.get("text", ""))
+            for part in parts
+            if not part.get("thought", False)
+        ).strip()
+
+        if not text:
+            raise AgentError(
+                "Gemini returned no visible text; "
+                f"finishReason={candidate.get('finishReason')!r}, "
+                f"candidate={candidate!r}"
+            )
+
         return text, model
 
 
@@ -906,13 +922,10 @@ def main() -> int:
     url = f"http://{HOST}:{PORT}"
     print("Sophyane AI Chess Arena")
     print("========================")
-    print(f"White: Expert Rules Engine ({LOCAL_MODEL})")
+    print("White: Expert Rules Engine (offline)")
     print(f"Black: Gemini ({GEMINI_MODEL})")
     print(f"Browser: {url}")
-    print()
-    print("Local backend order:")
-    print(f"  1. {LOCAL_OPENAI_URL}")
-    print(f"  2. {OLLAMA_URL}")
+
     print()
     print("Press Ctrl+C to stop.")
 
