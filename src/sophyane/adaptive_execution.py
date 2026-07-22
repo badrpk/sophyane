@@ -52,7 +52,9 @@ def _extract_partial_html(text: str) -> str | None:
         return None
     value = value[start:]
     value = re.sub(r"\s*```\s*$", "", value, flags=re.S)
-    return value.strip() if len(value.strip()) >= 120 else None
+    # Providers may be truncated immediately after opening a script, string,
+    # or element. Preserve any meaningful HTML prefix for bounded recovery.
+    return value.strip() if len(value.strip()) >= 20 else None
 
 
 def _raw_html_prompt(original_request: str, existing: str = "") -> str:
@@ -97,7 +99,18 @@ def _join_html_continuation(partial: str, continuation: str) -> str:
             if body >= 0:
                 addition = addition[body:]
             break
-    return partial.rstrip() + "\n" + addition.lstrip()
+    # Continuation prompts request bytes immediately after the exact cutoff.
+    # Do not inject a newline, which can corrupt JavaScript strings or tokens.
+    left = partial.rstrip()
+    right = addition.lstrip()
+
+    overlap = min(500, len(left), len(right))
+    for size in range(overlap, 0, -1):
+        if left[-size:] == right[:size]:
+            right = right[size:]
+            break
+
+    return left + right
 
 
 def _prepare_for_continuation(html: str) -> str:

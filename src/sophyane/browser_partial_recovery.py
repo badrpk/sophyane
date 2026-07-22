@@ -5,6 +5,7 @@ browser generation can be diagnosed instead of silently discarded.
 """
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -109,11 +110,44 @@ def install_browser_partial_recovery() -> None:
         if best:
             partial_file.write_text(best, encoding="utf-8")
 
+        def recovery_problem(candidate: str | None) -> str:
+            if candidate is None:
+                return "document has no closing </html>"
+
+            problem = adaptive._validate_html(candidate, original_request)
+            if problem != "HTML is too small to be a meaningful application":
+                return problem
+
+            # A compact document assembled through exact continuations is
+            # acceptable when its document and JavaScript structure is valid.
+            lower = candidate.lower()
+            structurally_complete = (
+                ("<!doctype html" in lower or "<html" in lower)
+                and "</html>" in lower
+                and "<body" in lower
+                and lower.count("<body") == lower.count("</body>")
+                and lower.count("<script") == lower.count("</script>")
+            )
+            if not structurally_complete:
+                return problem
+
+            for match in re.finditer(
+                r"<script\b[^>]*>(.*?)</script>",
+                candidate,
+                re.I | re.S,
+            ):
+                javascript_problem = adaptive._javascript_balance_problem(
+                    match.group(1)
+                )
+                if javascript_problem:
+                    return javascript_problem
+            return ""
+
         attempts = 0
         stagnant = 0
         response_sequence = 1
         while attempts < MAX_CONTINUATIONS:
-            problem = adaptive._validate_html(html, original_request) if html is not None else "document has no closing </html>"
+            problem = recovery_problem(html)
             if html is not None and not problem:
                 break
 
@@ -166,10 +200,20 @@ def install_browser_partial_recovery() -> None:
                 partial = repair_base
             else:
                 growth = len(candidate) - before
-                if growth < MIN_PROGRESS and candidate_html is None:
+                if growth <= 0 and candidate_html is None:
                     stagnant += 1
-                    progress(f"Continuation made insufficient progress ({growth} characters)")
+                    progress(
+                        f"Continuation made no progress ({growth} characters)"
+                    )
                 else:
+                    # Providers may stream a valid continuation in very small
+                    # fragments. Any positive growth must keep bounded recovery
+                    # alive until the structural closing tags arrive.
+                    if growth < MIN_PROGRESS and candidate_html is None:
+                        progress(
+                            f"Continuation made incremental progress "
+                            f"({growth} characters)"
+                        )
                     stagnant = 0
                 partial = candidate
                 html = candidate_html
@@ -196,7 +240,7 @@ def install_browser_partial_recovery() -> None:
             progress(f"Raw provider evidence preserved in {evidence_glob}")
             return None
 
-        problem = adaptive._validate_html(html, original_request)
+        problem = recovery_problem(html)
         if problem:
             preserved = best if best and len(best) >= len(html) else html
             partial_file.write_text(preserved, encoding="utf-8")
