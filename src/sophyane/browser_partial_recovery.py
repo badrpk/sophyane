@@ -41,9 +41,33 @@ def _new_run_id() -> str:
     return f"{stamp}-{time.time_ns() % 1_000_000_000:09d}"
 
 
-def _save_raw(workspace: Path, run_id: str, sequence: int, text: str) -> Path:
-    path = workspace / f"{RAW_PREFIX}-{run_id}-{sequence}.txt"
-    path.write_text(text, encoding="utf-8", errors="replace")
+def _save_raw(
+    workspace: Path,
+    run_id: str | int,
+    sequence: int | str,
+    text: str | None = None,
+) -> Path:
+    """Save provider output while preserving the historical three-argument API.
+
+    Supported forms:
+      _save_raw(workspace, run_id, sequence, text)
+      _save_raw(workspace, sequence, text)
+    """
+    if text is None:
+        # Historical API:
+        #   _save_raw(workspace, sequence, text)
+        legacy_sequence = int(run_id)
+        legacy_text = str(sequence)
+        path = workspace / f"{RAW_PREFIX}-{legacy_sequence}.txt"
+        path.write_text(
+            legacy_text,
+            encoding="utf-8",
+            errors="replace",
+        )
+        return path
+
+    path = workspace / f"{RAW_PREFIX}-{run_id}-{int(sequence)}.txt"
+    path.write_text(str(text), encoding="utf-8", errors="replace")
     return path
 
 

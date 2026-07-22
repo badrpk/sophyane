@@ -209,11 +209,21 @@ class SandboxRunner:
         # Soft limits only; ignore failures on platforms that reject them.
         # Avoid RLIMIT_NPROC — Crostini/user namespaces often cannot fork under
         # aggressive process caps, which breaks even simple shell builtins.
-        try:
-            limit = self.memory_mb * 1024 * 1024
-            resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-        except (ValueError, OSError):
-            pass
+        # Android/Termux processes can abort during startup when RLIMIT_AS is
+        # imposed, even for trivial shell commands. Keep the memory ceiling on
+        # conventional POSIX hosts, but rely on timeout/output limits on Termux.
+        is_android = bool(
+            os.environ.get("ANDROID_ROOT")
+            or os.environ.get("ANDROID_DATA")
+            or os.environ.get("TERMUX_VERSION")
+            or "com.termux" in os.environ.get("PREFIX", "")
+        )
+        if not is_android:
+            try:
+                limit = self.memory_mb * 1024 * 1024
+                resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+            except (ValueError, OSError, AttributeError):
+                pass
         try:
             # CPU seconds are a soft ceiling for runaway compute, not wall-clock
             # timeout (subprocess timeout handles wall clock).
