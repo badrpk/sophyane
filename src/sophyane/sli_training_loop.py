@@ -215,9 +215,7 @@ def run_project(provider: LocalGgufProvider, project: Project, workspace: Path, 
                 print(f"  {iteration}/{max_loops} failed: {'; '.join(errors[:3])}", flush=True)
             else:
                 target.write_text(html, encoding="utf-8")
-                result = "Browser artifact generated.
-Structural verification completed.
-Final completion is decided only after post_build_menu validates browser artifacts."
+                result = ("Browser artifact generated. ""Structural verification completed. ""Project awaiting post-build validation.")
                 learned = learn_execution(trace_id=trace_id, request=project.request, workspace_before=before, workspace_after=snapshot(workspace), status="succeeded", reward=1.0, result=result, elapsed_seconds=time.monotonic() - started)
                 print(f"  {iteration}/{max_loops} passed reward={learned['quality_reward']:+.2f}", flush=True)
                 return True, iteration
