@@ -31,7 +31,7 @@ def test_input_routing_accepts_numbers_commands_and_default() -> None:
 
 def test_entry_detection_prefers_browser_entry(tmp_path: Path) -> None:
     (tmp_path / "main.py").write_text("print('ok')", encoding="utf-8")
-    (tmp_path / "index.html").write_text("<h1>ok</h1>", encoding="utf-8")
+    (tmp_path / "index.html").write_text("<!doctype html><html><body><h1>ok</h1></body></html>", encoding="utf-8")
     assert detect_entry_file(tmp_path) == tmp_path / "index.html"
 
 
@@ -49,17 +49,17 @@ def test_server_reuse_and_http_verification(tmp_path: Path) -> None:
 
 def test_menu_preserves_workspace_when_starting_new_project(tmp_path: Path, monkeypatch) -> None:
     entry = tmp_path / "index.html"
-    entry.write_text("<h1>kept</h1>", encoding="utf-8")
+    entry.write_text("<!doctype html><html><body><h1>kept</h1></body></html>", encoding="utf-8")
     outputs: list[str] = []
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     menu = PostBuildMenu(tmp_path, input_fn=lambda _: "9", output_fn=outputs.append)
     assert menu.run() == "new"
-    assert entry.read_text(encoding="utf-8") == "<h1>kept</h1>"
+    assert entry.read_text(encoding="utf-8") == "<!doctype html><html><body><h1>kept</h1></body></html>"
     assert any("preserved" in line.lower() for line in outputs)
 
 
 def test_invalid_input_is_handled_then_exit(tmp_path: Path, monkeypatch) -> None:
-    (tmp_path / "index.html").write_text("<h1>ok</h1>", encoding="utf-8")
+    (tmp_path / "index.html").write_text("<!doctype html><html><body><h1>ok</h1></body></html>", encoding="utf-8")
     choices = iter(["invalid", "0"])
     outputs: list[str] = []
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
@@ -69,7 +69,7 @@ def test_invalid_input_is_handled_then_exit(tmp_path: Path, monkeypatch) -> None
 
 
 def test_export_verifies_zip(tmp_path: Path) -> None:
-    (tmp_path / "index.html").write_text("<h1>ok</h1>", encoding="utf-8")
+    (tmp_path / "index.html").write_text("<!doctype html><html><body><h1>ok</h1></body></html>", encoding="utf-8")
     outputs: list[str] = []
     menu = PostBuildMenu(tmp_path, output_fn=outputs.append)
     menu.export_project()

@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="sophyane",
-    version="18.8.0",
+    version="20.3.1",
     description=(
         "Adaptive local agentic software harness with validator-grounded "
         "execution learning"

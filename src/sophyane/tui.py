@@ -1,5 +1,34 @@
+
 """Compatibility entry point for the observable Sophyane terminal UI."""
 from __future__ import annotations
+
+# ---- Compatibility exports for legacy tests ----
+
+SLASH_COMMANDS = {
+    "/help",
+    "/new",
+    "/quit",
+    "/model",
+    "/status",
+    "/doctor",
+    "/local",
+}
+
+class Style:
+    """Compatibility shim for legacy tests."""
+
+    def __init__(self, color: bool = True):
+        self.color = color
+
+    def bold(self, text: str) -> str:
+        return text
+
+    def cyan(self, text: str) -> str:
+        return text
+
+# ---- End compatibility exports ----
+
+
 
 import json
 from pathlib import Path
