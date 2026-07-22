@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PY="$HOME/.local/share/sophyane/venv/bin/python"
+[ -x "$PY" ] || PY=python3
+
+exec "$PY" "$ROOT/tools/chess_duel.py" "$@"
