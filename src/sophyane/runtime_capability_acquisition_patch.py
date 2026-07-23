@@ -64,6 +64,113 @@ def _active_canvas_session(
     return session
 
 
+def _is_editable_session_request(message: str) -> bool:
+    """Return whether the user is asking to start an editable visual mission."""
+
+    text = " ".join(
+        str(message or "").lower().split()
+    )
+
+    artifact_terms = (
+        "portrait",
+        "poster",
+        "logo",
+        "wallpaper",
+        "illustration",
+        "design",
+        "canvas",
+        "visual",
+    )
+
+    editing_terms = (
+        "editable",
+        "keep editing",
+        "continue editing",
+        "same document",
+        "same design",
+        "like canva",
+        "canva",
+        "undo",
+        "redo",
+        "live preview",
+        "layers",
+        "select element",
+        "change only",
+    )
+
+    return (
+        any(term in text for term in artifact_terms)
+        and any(term in text for term in editing_terms)
+    )
+
+
+def _activate_editable_session(
+    tui: Any,
+    message: str,
+) -> str:
+    """Start a new session using an already installed capability."""
+
+    workspace = _capability_workspace(
+        tui,
+        message,
+    )
+
+    session = _active_canvas_session(
+        tui,
+        workspace,
+    )
+
+    # Reset only when the workspace does not yet contain an active
+    # user mission. Existing active sessions are never replaced here.
+    tui._active_canvas_session = session
+    tui._active_canvas_workspace = str(session.workspace)
+
+    registry_path = (
+        session.workspace
+        / ".sophyane-active-capability.json"
+    )
+
+    registry_payload = {
+        "capability": "editable_visual_session",
+        "document_id": session.scene.get("document_id"),
+        "workspace": str(session.workspace),
+        "scene_file": str(session.scene_path),
+        "preview_file": str(session.preview_path),
+        "revision": session.scene.get("revision", 0),
+        "original_request": message,
+        "status": "active",
+        "activation": "installed_capability",
+    }
+
+    import json
+
+    temporary = registry_path.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(
+            registry_payload,
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(registry_path)
+
+    tui.progress(
+        "SLI Capability: installed editable capability activated "
+        "as a persistent mission."
+    )
+
+    return (
+        "Editable visual session activated.\n\n"
+        f"Document: {session.scene.get('document_id')}\n"
+        f"Revision: {session.scene.get('revision', 0)}\n"
+        f"Workspace: {session.workspace}\n"
+        f"Scene: {session.scene_path}\n"
+        f"Preview: {session.preview_path}"
+    )
+
+
 def _format_result(result: Any) -> str:
     lines = [
         result.message,
@@ -230,8 +337,17 @@ def install_capability_acquisition_patch() -> None:
                         f"Preview: {session.preview_path}"
                     )
 
-        # Only requests not handled by an already active mission
-        # are eligible to trigger new capability acquisition.
+        # An installed capability still needs a mission instance.
+        # Starting a session is not recursive acquisition because the
+        # required implementation is already available.
+        if _is_editable_session_request(message):
+            return _activate_editable_session(
+                self,
+                message,
+            )
+
+        # Only requests not handled by an active mission or an
+        # installed-capability activation are eligible for acquisition.
         gap = detect_capability_gap(message)
 
         if gap is not None:
