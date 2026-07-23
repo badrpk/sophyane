@@ -12,7 +12,7 @@ def _refinement_prompt(message: str, *, has_project: bool) -> str:
     return (
         "Refine the user's request before any action. Correct spelling, recover likely missing intent, "
         "and make the request precise without adding unrelated features. Decide whether it is an execution "
-        "request that should build/edit/run a project, or ordinary chat/writing that should be answered directly. "
+        "request that should build/edit/run a software project, or ordinary chat/writing/media creation that should be answered directly. ""A standalone request to create a portrait, image, illustration, drawing, logo, poster, wallpaper, photograph, avatar, thumbnail, painting, meme, or other visual is route=chat. It is route=execution only when the user explicitly requests code, an app, website, HTML, SVG, canvas, script, generator, editor, API, repository, or project files. "
         "Do NOT execute, write files, or give the final answer yet.\n"
         "Return the normal Sophyane JSON plan schema with these exact conventions:\n"
         "- objective: the complete corrected and refined user request only\n"
@@ -50,10 +50,24 @@ def _parse_refinement(raw: str, original: str, *, has_project: bool, tui_v2: Any
     else:
         continuing = tui_v2._project_continuation(refined, has_project)
         route = "continue_project" if continuing else ("execution" if tui_v2._execution_requested(refined) else "chat")
+    # Deterministic routing has final authority over the model's
+    # route label. Generative models often interpret verbs such as "make",
+    # "create", and "design" as software execution even when the requested
+    # result is only an image or other visual.
+    if tui_v2._pure_media_request(original) or tui_v2._pure_media_request(refined):
+        route = "chat"
+
     return route, refined, assumptions
 
 
 def _confirm_refinement(self: Any, original: str, *, has_project: bool, tui_v2: Any) -> tuple[str, str] | None:
+    # Standalone media requests are direct-response tasks. Do not ask a
+    # language model whether they are software builds and do not show the
+    # execution approval menu.
+    if tui_v2._pure_media_request(original):
+        self.progress("Media request detected; using direct response route")
+        return "chat", original.strip()
+
     candidate = original
     while True:
         self.progress("Refining intent with the language model")
@@ -182,6 +196,16 @@ def install_intent_refinement() -> None:
                 self.emit("system", "Request cancelled; no files were changed.")
                 continue
             route, refined_message = refined_result
+
+            # Final route guard: a standalone media request must never reach
+            # the software workspace even if another refinement layer emits
+            # route=execution.
+            if (
+                tui_v2._pure_media_request(message)
+                or tui_v2._pure_media_request(refined_message)
+            ):
+                route = "chat"
+
             continuing = route == "continue_project"
             executable = route in {"execution", "continue_project"}
             if tui_v2._explicit_new_benchmark(refined_message):
