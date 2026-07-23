@@ -57,8 +57,23 @@ def classify(request: str) -> CapabilityPlan:
     if language == "C++" and target == "Android phone":
         return CapabilityPlan("native_mobile_software", language, target, tuple(dict.fromkeys(caps)), "CPP_ANDROID_SCAFFOLD", 0.98)
     if language:
-        return CapabilityPlan("software_project", language, target, tuple(dict.fromkeys(caps)), "PROVIDER_BOUNDED", 0.9)
-    return CapabilityPlan("general_task", language, target, tuple(dict.fromkeys(caps)), "PROVIDER_BOUNDED", 0.55)
+        return CapabilityPlan(
+            "software_project",
+            language,
+            target,
+            tuple(dict.fromkeys(caps)),
+            "REPOSITORY_CODING_RUNTIME",
+            0.9,
+        )
+
+    return CapabilityPlan(
+        "general_task",
+        language,
+        target,
+        tuple(dict.fromkeys(caps)),
+        "PROVIDER_BOUNDED",
+        0.55,
+    )
 
 
 def _cpp_android_files(plan: CapabilityPlan) -> dict[str, str]:
@@ -154,6 +169,177 @@ int main() {
     }
 
 
+
+def _provider_text(value: Any) -> str:
+    """Normalize provider replies for strict coding runtimes."""
+
+    return str(getattr(value, "text", value) or "")
+
+
+def _repository_backend(
+    ask: Any,
+) -> Any:
+    """Adapt ObservableTUI ask(prompt) to backend(prompt, system)."""
+
+    def backend(prompt: str, system_prompt: str) -> str:
+        combined = (
+            f"{system_prompt.rstrip()}\n\n"
+            f"{prompt.lstrip()}"
+        )
+        return _provider_text(ask(combined))
+
+    return backend
+
+
+def _repository_memory_path(workspace: Path) -> Path:
+    """Return state-backed memory without polluting the repository."""
+
+    import hashlib
+    import os
+
+    configured = os.environ.get("SOPHYANE_STATE_DIR")
+
+    if configured:
+        root = Path(configured).expanduser()
+    else:
+        root = (
+            Path.home()
+            / ".local"
+            / "state"
+            / "sophyane"
+            / "repository-runtime"
+        )
+
+    identity = hashlib.sha256(
+        str(workspace.resolve()).encode(
+            "utf-8",
+            errors="replace",
+        )
+    ).hexdigest()[:16]
+
+    destination = root / identity
+    destination.mkdir(parents=True, exist_ok=True)
+    return destination / "memory.db"
+
+
+def _format_repository_result(
+    result: Any,
+    workspace: Path,
+) -> str:
+    """Render an honest evidence-based repository-runtime result."""
+
+    goal_met = bool(getattr(result, "goal_met", False))
+    stopped_reason = str(
+        getattr(result, "stopped_reason", "")
+        or ("goal_verified" if goal_met else "not_verified")
+    )
+
+    final_answer = str(
+        getattr(result, "final_answer", "")
+        or getattr(result, "answer", "")
+        or ""
+    ).strip()
+
+    steps = list(getattr(result, "steps", []) or [])
+    execution = getattr(result, "execution", {}) or {}
+
+    files = execution.get("files", [])
+    if not isinstance(files, list):
+        files = []
+
+    commands = execution.get("commands", [])
+    if not isinstance(commands, list):
+        commands = []
+
+    passed_commands = sum(
+        1
+        for command in commands
+        if isinstance(command, dict)
+        and command.get("exit_code") == 0
+    )
+
+    failed_commands = sum(
+        1
+        for command in commands
+        if isinstance(command, dict)
+        and command.get("exit_code") not in (None, 0)
+    )
+
+    status = "completed and verified" if goal_met else "stopped safely"
+
+    lines = [
+        f"Repository coding runtime {status}.",
+        "",
+        f"Workspace: {workspace}",
+        f"Goal verified: {goal_met}",
+        f"Stop reason: {stopped_reason}",
+        f"Steps executed: {len(steps)}",
+        f"Repository files indexed/observed: {len(files)}",
+        f"Commands passed: {passed_commands}",
+        f"Commands failed: {failed_commands}",
+    ]
+
+    if final_answer:
+        lines.extend(
+            [
+                "",
+                "Runtime report:",
+                final_answer,
+            ]
+        )
+
+    return "\n".join(lines)
+
+
+def _run_repository_coding(
+    *,
+    original_request: str,
+    ask: Any,
+    workspace: Path,
+    max_steps: int,
+    progress: Any,
+) -> str:
+    """Execute source-maintenance work through the strict coding runtime."""
+
+    from sophyane.live_coding_doer import (
+        LiveProgressReporter,
+    )
+    from sophyane.memory import MemoryStore
+    from sophyane.strict_interactive_doer import (
+        StrictInteractiveCodingDoerRuntime,
+    )
+
+    progress(
+        "Dispatching Python/software request to repository coding runtime"
+    )
+
+    reporter = LiveProgressReporter(
+        heartbeat_seconds=5,
+    )
+
+    runtime = StrictInteractiveCodingDoerRuntime(
+        backend=_repository_backend(ask),
+        memory=MemoryStore(
+            _repository_memory_path(workspace)
+        ),
+        workspace=workspace,
+        max_steps=max(1, int(max_steps)),
+        progress=reporter,
+    )
+
+    result = runtime.run(original_request)
+
+    progress(
+        "Repository coding runtime finished: "
+        f"goal_met={bool(getattr(result, 'goal_met', False))}; "
+        f"stop={getattr(result, 'stopped_reason', 'unknown')}"
+    )
+
+    return _format_repository_result(
+        result,
+        workspace,
+    )
+
 def install_sli_capability_planner() -> None:
     from sophyane import adaptive_execution
 
@@ -171,10 +357,23 @@ def install_sli_capability_planner() -> None:
             f"SLI Capability Planner: {plan.project_type} / {plan.language or 'unspecified'} / "
             f"{plan.target} / {plan.builder}"
         )
+        if plan.builder == "REPOSITORY_CODING_RUNTIME":
+            return _run_repository_coding(
+                original_request=original_request,
+                ask=ask,
+                workspace=workspace_path,
+                max_steps=max_steps,
+                progress=progress,
+            )
+
         if plan.builder != "CPP_ANDROID_SCAFFOLD":
             return original(
-                initial_text=initial_text, original_request=original_request, ask=ask,
-                workspace=workspace_path, max_steps=max_steps, progress=progress,
+                initial_text=initial_text,
+                original_request=original_request,
+                ask=ask,
+                workspace=workspace_path,
+                max_steps=max_steps,
+                progress=progress,
             )
 
         files = _cpp_android_files(plan)
