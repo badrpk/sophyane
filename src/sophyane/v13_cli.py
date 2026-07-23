@@ -971,6 +971,19 @@ def main() -> int:
     # the lightweight chat agent instead of the strict coding doer.
     provider_id = str(config.get("provider") or "").lower()
     lower_prompt = original_prompt.lower()
+    # Detect explicit execution requests before routing tiny local models
+    # to lightweight chat. Keep conversational questions in chat, but send
+    # build/edit/run/test commands to the repository coding runtime.
+    execution_intent = re.search(
+        r"^\\s*(?:\\d+[.)]\\s+)?"
+        r"(?:build|make|create|design|develop|implement|write|fix|repair|"
+        r"patch|compile|run|test|deploy|open|continue|resume|convert|"
+        r"install|integrate|optimi[sz]e|audit|profile|monitor|simulate|"
+        r"demonstrate|execute|add|remove|change|update|improve|style|"
+        r"reopen|replace|modify)\\b",
+        lower_prompt,
+    )
+
     coding_markers = (
         "implement",
         "refactor",
@@ -978,7 +991,13 @@ def main() -> int:
         "write a function",
         "write a class",
         "create a file",
+        "create files",
         "edit the file",
+        "write the file",
+        "build and run",
+        "run the tests",
+        "execute the tests",
+        "python project",
         "pytest",
         "unit test",
         "test suite",
@@ -988,7 +1007,10 @@ def main() -> int:
         "pull request",
         "git commit",
     )
-    looks_like_coding = any(token in lower_prompt for token in coding_markers)
+
+    looks_like_coding = bool(execution_intent) or any(
+        token in lower_prompt for token in coding_markers
+    )
     force_chat = provider_id in {"local_gguf", "ollama"} and not looks_like_coding
     if not force_chat and len(original_prompt) < 240:
         stripped = lower_prompt.strip()

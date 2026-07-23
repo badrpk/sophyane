@@ -77,6 +77,8 @@ def main() -> int:
     install_stagnation_patch()
     install_artifact_patch()
     install_deep_agent_runtime()
+    from sophyane.runtime_cursor_tab_patch import install_cursor_tab_patch
+    install_cursor_tab_patch()
     install_provider_context_patch()
     install_interrupt_patch()
     install_provider_error_patch()

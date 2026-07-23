@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from sophyane.runtime_semantic_instruction import reset_semantic_request
+
 from sophyane.execution_runtime import extract_plan, run_structured_loop, selected_action
 from sophyane.version import __version__
 
@@ -209,7 +211,8 @@ class ObservableTUI:
         print("Projects keep one workspace across follow-up edits. /new starts a fresh project. /inspect shows raw plan and files. /quit exits.\n")
         while True:
             try:
-                message = _clean_message(input("❯ "))
+                message = _clean_message(self.read_prompt("❯ "))
+                reset_semantic_request(self)
             except (EOFError, KeyboardInterrupt):
                 print()
                 return 0

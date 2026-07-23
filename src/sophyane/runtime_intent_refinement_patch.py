@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sophyane.runtime_semantic_instruction import apply_live_instruction
+
 
 def _refinement_prompt(message: str, *, has_project: bool) -> str:
     project_state = "an active project exists" if has_project else "no active project exists"
@@ -78,7 +80,8 @@ def _confirm_refinement(self: Any, original: str, *, has_project: bool, tui_v2: 
             "\n1. Approve and continue\n"
             "2. Edit the request and refine again\n"
             "3. Continue immediately with this refined request\n"
-            "0. Cancel",
+            "0. Cancel\n"
+                "You may also type a new instruction in natural language.",
             flush=True,
         )
         try:
@@ -99,7 +102,25 @@ def _confirm_refinement(self: Any, original: str, *, has_project: bool, tui_v2: 
             if edited:
                 candidate = edited
             continue
-        print("Please choose 0, 1, 2, or 3.", flush=True)
+        # Natural-language input is a new semantic instruction,
+        # not an invalid menu choice.
+        if choice:
+            candidate = apply_live_instruction(
+                self,
+                refined,
+                choice,
+            )
+            print(
+                "\nNew instruction understood. "
+                "Refining the authoritative request again.",
+                flush=True,
+            )
+            continue
+
+        print(
+            "Please choose a menu number or type a new instruction.",
+            flush=True,
+        )
 
 
 def install_intent_refinement() -> None:
@@ -118,7 +139,7 @@ def install_intent_refinement() -> None:
         )
         while True:
             try:
-                message = tui_v2._clean_message(input("❯ "))
+                message = tui_v2._clean_message(self.read_prompt("❯ "))
             except (EOFError, KeyboardInterrupt):
                 print()
                 return 0

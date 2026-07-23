@@ -6,6 +6,8 @@ import threading
 import time
 from typing import Any
 
+from sophyane.runtime_semantic_instruction import apply_live_instruction
+
 from sophyane.provider_state import publish, snapshot
 
 _PROVIDER_ATTRS = ("provider", "llm", "backend", "dispatcher", "model_provider")
@@ -88,47 +90,376 @@ def install_provider_context_patch() -> None:
             self._sophyane_provider_dispatcher = provider
 
     def call_provider(self: Any, message: str, *, timeout: int = 60) -> Any:
+        """Provider call with non-recursive five-second-idle live steering."""
+        import os
+        import select
+        import sys
+        import termios
+        import tty
+
+        from sophyane.runtime_cancel import (
+            bind_generation,
+            cancel_generation,
+            new_generation,
+            release_generation,
+        )
+
         provider = _provider_from_tui(self)
-        primary = str(getattr(provider, "primary", "") or self.config.get("provider") or "").lower()
-        publish(primary=primary, active=primary, mode="request")
+        primary = str(
+            getattr(provider, "primary", "")
+            or self.config.get("provider")
+            or ""
+        ).lower()
+
         if primary in {"local_gguf", "ollama"}:
             timeout = max(timeout, 180)
-        results: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
-        started = time.monotonic()
-        self.last_prompt = message
 
-        def worker() -> None:
-            try:
-                results.put(("ok", self.ask(message)))
-            except Exception as error:  # noqa: BLE001
-                results.put(("error", error))
+        original_message = message
+        live_instructions: list[str] = []
 
-        threading.Thread(target=worker, daemon=True).start()
-        next_update = 5
-        announced = ""
-        while True:
+        stdin_fd: int | None = None
+        saved_terminal: list[Any] | None = None
+
+        if sys.stdin.isatty():
             try:
-                status, value = results.get(timeout=1)
-                self.last_elapsed = time.monotonic() - started
-                if status == "error":
-                    raise value
-                used = _active_name(self)
-                self.progress(f"Provider response received from {used} ({self.last_elapsed:.1f}s)")
-                publish(primary=primary, active=used, mode="idle")
-                return value
-            except queue.Empty:
-                elapsed = int(time.monotonic() - started)
-                active = _active_name(self)
-                if active != announced:
-                    mode = "cloud rescue" if active not in {"local_gguf", "ollama"} and primary in {"local_gguf", "ollama"} else "active"
-                    self.progress(f"Provider: {active} ({mode})")
-                    announced = active
-                if elapsed >= next_update:
-                    self.progress(f"Waiting for {active} response ({elapsed}s). Ctrl+C cancels.")
-                    next_update += 5
-                if elapsed >= timeout:
-                    publish(primary=primary, active=active, mode="timeout")
-                    raise TimeoutError(f"{active} did not respond within {timeout}s.")
+                stdin_fd = sys.stdin.fileno()
+                saved_terminal = termios.tcgetattr(stdin_fd)
+                tty.setcbreak(stdin_fd)
+            except Exception:
+                stdin_fd = None
+                saved_terminal = None
+
+        try:
+            while True:
+                if live_instructions:
+                    additions = "\n".join(
+                        f"- {item}" for item in live_instructions
+                    )
+                    active_message = (
+                        original_message
+                        + "\n\nLIVE USER INSTRUCTIONS:\n"
+                        + additions
+                        + "\n\nRestart reasoning from the beginning using "
+                        + "the original request and every instruction above. "
+                        + "Disregard all cancelled unfinished responses."
+                    )
+                else:
+                    active_message = original_message
+
+                self.last_prompt = active_message
+                generation = new_generation()
+
+                publish(
+                    primary=primary,
+                    active=primary,
+                    mode="request",
+                )
+
+                results: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
+                worker_done = threading.Event()
+                started = time.monotonic()
+
+                def worker() -> None:
+                    bind_generation(generation)
+                    try:
+                        value = self.ask(active_message)
+                        item = ("ok", value)
+                    except BaseException as error:  # noqa: BLE001
+                        item = ("error", error)
+                    finally:
+                        worker_done.set()
+                        release_generation(generation)
+
+                    try:
+                        results.put_nowait(item)
+                    except queue.Full:
+                        pass
+
+                thread = threading.Thread(
+                    target=worker,
+                    daemon=True,
+                    name="sophyane-provider",
+                )
+                thread.start()
+
+                next_update = 5
+                announced = ""
+                steering = False
+                typed: list[str] = []
+                last_key_time: float | None = None
+                restart_requested = False
+
+                while True:
+                    now = time.monotonic()
+
+                    if stdin_fd is not None:
+                        try:
+                            readable, _, _ = select.select(
+                                [stdin_fd], [], [], 0
+                            )
+                        except Exception:
+                            readable = []
+
+                        if readable:
+                            try:
+                                raw = os.read(stdin_fd, 1)
+                            except OSError:
+                                raw = b""
+
+                            if raw:
+                                char = raw.decode(
+                                    "utf-8",
+                                    errors="ignore",
+                                )
+
+                                if char == "\x03":
+                                    cancel_generation(generation)
+                                    raise KeyboardInterrupt
+
+                                if not steering:
+                                    steering = True
+                                    cancel_generation(generation)
+                                    publish(
+                                        primary=primary,
+                                        active=_active_name(self),
+                                        mode="live-steering",
+                                    )
+                                    self.progress(
+                                        "Keyboard input detected; "
+                                        "provider output paused"
+                                    )
+                                    print(
+                                        "\n✎ Live instruction: ",
+                                        end="",
+                                        file=sys.stderr,
+                                        flush=True,
+                                    )
+
+                                if char in {"\x7f", "\b"}:
+                                    if typed:
+                                        typed.pop()
+                                        print(
+                                            "\b \b",
+                                            end="",
+                                            file=sys.stderr,
+                                            flush=True,
+                                        )
+                                elif char in {"\r", "\n"}:
+                                    print(
+                                        "",
+                                        file=sys.stderr,
+                                        flush=True,
+                                    )
+                                elif char.isprintable():
+                                    typed.append(char)
+                                    print(
+                                        char,
+                                        end="",
+                                        file=sys.stderr,
+                                        flush=True,
+                                    )
+
+                                last_key_time = now
+
+                    if (
+                        steering
+                        and last_key_time is not None
+                        and now - last_key_time >= 5.0
+                    ):
+                        instruction = "".join(typed).strip()
+                        if instruction:
+                            active_message = apply_live_instruction(
+                                self,
+                                active_message,
+                                instruction,
+                            )
+                        print("", file=sys.stderr, flush=True)
+
+                        normalized = " ".join(
+                            instruction.lower().split()
+                        )
+
+                        first_word = (
+                            normalized.split(maxsplit=1)[0]
+                            if normalized
+                            else ""
+                        )
+
+                        if first_word in {
+                            "stop",
+                            "/stop",
+                            "cancel",
+                            "/cancel",
+                            "quit",
+                            "/quit",
+                            "exit",
+                            "/exit",
+                        }:
+                            cancel_generation(generation)
+                            worker_done.wait(timeout=2.0)
+                            publish(
+                                primary=primary,
+                                active=_active_name(self),
+                                mode="cancelled",
+                            )
+                            raise RuntimeError(
+                                "Operation cancelled by live user instruction."
+                            )
+
+                        if first_word in {"pause", "/pause"}:
+                            cancel_generation(generation)
+                            worker_done.wait(timeout=2.0)
+                            publish(
+                                primary=primary,
+                                active=_active_name(self),
+                                mode="paused",
+                            )
+                            raise RuntimeError(
+                                "Operation paused by live user instruction."
+                            )
+
+                        restart_phrases = (
+                            "restart",
+                            "start over",
+                            "start from beginning",
+                            "start from the beginning",
+                            "restart the loop",
+                            "go back to first",
+                            "go back to start",
+                        )
+
+                        if any(
+                            phrase in normalized
+                            for phrase in restart_phrases
+                        ):
+                            live_instructions.clear()
+                            cleaned = normalized
+
+                            for phrase in restart_phrases:
+                                cleaned = cleaned.replace(phrase, "")
+
+                            cleaned = cleaned.strip(" ,.;:-")
+
+                            if cleaned:
+                                live_instructions.append(cleaned)
+
+                            self.progress(
+                                "Restarting from the original request"
+                            )
+                        elif instruction:
+                            live_instructions.append(instruction)
+                            self.progress(
+                                "Five seconds without typing; "
+                                "restarting with live instruction"
+                            )
+                        else:
+                            self.progress(
+                                "Empty live instruction ignored"
+                            )
+
+                        cancel_generation(generation)
+                        worker_done.wait(timeout=2.0)
+
+                        # Discard any late result from the old generation.
+                        try:
+                            while True:
+                                results.get_nowait()
+                        except queue.Empty:
+                            pass
+
+                        restart_requested = True
+                        break
+
+                    if not steering:
+                        try:
+                            status, value = results.get(timeout=0.10)
+                        except queue.Empty:
+                            status = ""
+                            value = None
+
+                        if status:
+                            self.last_elapsed = (
+                                time.monotonic() - started
+                            )
+
+                            if status == "error":
+                                raise value
+
+                            used = _active_name(self)
+                            self.progress(
+                                f"Provider response received from {used} "
+                                f"({self.last_elapsed:.1f}s)"
+                            )
+                            publish(
+                                primary=primary,
+                                active=used,
+                                mode="idle",
+                            )
+                            return value
+
+                    elapsed = int(time.monotonic() - started)
+                    active = _active_name(self)
+
+                    if not steering:
+                        if active != announced:
+                            mode = (
+                                "cloud rescue"
+                                if (
+                                    active not in {
+                                        "local_gguf",
+                                        "ollama",
+                                    }
+                                    and primary in {
+                                        "local_gguf",
+                                        "ollama",
+                                    }
+                                )
+                                else "active"
+                            )
+                            self.progress(
+                                f"Provider: {active} ({mode})"
+                            )
+                            announced = active
+
+                        if elapsed >= next_update:
+                            self.progress(
+                                f"Waiting for {active} response "
+                                f"({elapsed}s). Type to steer; "
+                                "Ctrl+C cancels."
+                            )
+                            next_update += 5
+
+                        if elapsed >= timeout:
+                            cancel_generation(generation)
+                            worker_done.wait(timeout=2.0)
+                            publish(
+                                primary=primary,
+                                active=active,
+                                mode="timeout",
+                            )
+                            raise TimeoutError(
+                                f"{active} did not respond "
+                                f"within {timeout}s."
+                            )
+
+                    time.sleep(0.02)
+
+                if restart_requested:
+                    continue
+
+        except KeyboardInterrupt:
+            cancel_generation(generation)
+            raise
+        finally:
+            if stdin_fd is not None and saved_terminal is not None:
+                try:
+                    termios.tcsetattr(
+                        stdin_fd,
+                        termios.TCSADRAIN,
+                        saved_terminal,
+                    )
+                except Exception:
+                    pass
 
     tui_v2.ObservableTUI.__init__ = init
     tui_v2.ObservableTUI.call_provider = call_provider

@@ -219,10 +219,58 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
                 self.progress.emit("⚠", f"Planner protocol rejected: {type(error).__name__}: {error}")
                 self.progress.emit("↳", f"Invalid response preview: {preview}")
                 if attempt < self.protocol_attempts:
-                    self.progress.emit("↻", "Requesting strict JSON regeneration automatically")
-                    current_prompt = strict_repair_request(
-                        request, raw if "raw" in locals() else "", error, attempt + 1
+                    raw_text = raw if "raw" in locals() else ""
+                    resolver_markers = (
+                        '"resolved_terms"',
+                        '"confidence"',
+                        '"material_change"',
+                        "constrained semantic resolver",
+                        '"uncertain_terms"',
                     )
+                    resolver_shaped = (
+                        '"resolved_terms"' in raw_text
+                        and any(marker in raw_text for marker in resolver_markers[1:])
+                    )
+
+                    if resolver_shaped:
+                        self.progress.emit(
+                            "↻",
+                            "Semantic-resolver output detected; resetting planner context",
+                        )
+                        current_prompt = json.dumps(
+                            {
+                                "planner_reset": True,
+                                "instruction": (
+                                    "You are now the execution planner, not a semantic resolver. "
+                                    "Ignore every previous semantic-resolver schema. "
+                                    "Return exactly one compact JSON object with objective, "
+                                    "success_criteria and action. Do not return resolved_terms, "
+                                    "confidence, material_change or uncertain_terms."
+                                ),
+                                "required_schema": {
+                                    "objective": "non-empty string",
+                                    "success_criteria": ["measurable requirement"],
+                                    "action": {
+                                        "type": "write_file",
+                                        "path": "relative/file.py",
+                                        "content": "complete file content",
+                                    },
+                                },
+                                "execution_request": request,
+                            },
+                            ensure_ascii=False,
+                        )
+                    else:
+                        self.progress.emit(
+                            "↻",
+                            "Requesting strict JSON regeneration automatically",
+                        )
+                        current_prompt = strict_repair_request(
+                            request,
+                            raw_text,
+                            error,
+                            attempt + 1,
+                        )
 
         self.progress.emit("↻", "Strict planning failed; requesting a generic implementation bundle")
         artifact_prompt = self._artifact_fallback_request(

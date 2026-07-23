@@ -69,7 +69,124 @@ def _normalize_action(raw: Any) -> dict[str, Any]:
     return action
 
 
+def _coerce_action_only_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    """Normalize recoverable small-model action responses into a strict plan.
+
+    Some compact local models return either:
+
+        {"action": "write_file", "path": "...", "content": "..."}
+
+    or:
+
+        {"action": {"type": "write_file", ...}}
+
+    without repeating the planner objective and success criteria. Preserve the
+    proposed action, add only conservative metadata, and let the normal strict
+    validator and deterministic execution checks decide whether it is usable.
+    """
+    if not isinstance(plan, dict):
+        return plan
+
+    normalized = dict(plan)
+
+    # Flat action form:
+    # {"action": "write_file", "path": "...", "content": "..."}
+    flat_kind = normalized.get("action")
+    if isinstance(flat_kind, str) and flat_kind.strip():
+        action = {
+            key: value
+            for key, value in normalized.items()
+            if key not in {
+                "objective",
+                "success_criteria",
+                "deterministic_checks",
+                "candidates",
+                "selected_index",
+                "selection_reason",
+                "rationale",
+            }
+        }
+        action["type"] = action.pop("action").strip().lower()
+
+        normalized = {
+            key: value
+            for key, value in normalized.items()
+            if key in {
+                "objective",
+                "success_criteria",
+                "deterministic_checks",
+                "candidates",
+                "selected_index",
+                "selection_reason",
+                "rationale",
+            }
+        }
+        normalized["action"] = action
+
+    # Alternate flat form:
+    # {"type": "write_file", "path": "...", "content": "..."}
+    elif (
+        not isinstance(normalized.get("action"), dict)
+        and isinstance(normalized.get("type"), str)
+        and normalized["type"].strip()
+    ):
+        action = {
+            key: value
+            for key, value in normalized.items()
+            if key not in {
+                "objective",
+                "success_criteria",
+                "deterministic_checks",
+                "candidates",
+                "selected_index",
+                "selection_reason",
+                "rationale",
+            }
+        }
+
+        normalized = {
+            key: value
+            for key, value in normalized.items()
+            if key in {
+                "objective",
+                "success_criteria",
+                "deterministic_checks",
+                "candidates",
+                "selected_index",
+                "selection_reason",
+                "rationale",
+            }
+        }
+        normalized["action"] = action
+
+    action = normalized.get("action")
+    if isinstance(action, dict) and (
+        isinstance(action.get("type"), str)
+        or isinstance(action.get("action"), str)
+    ):
+        if not isinstance(normalized.get("objective"), str) or not normalized["objective"].strip():
+            normalized["objective"] = "Execute the requested workspace action."
+
+        criteria = normalized.get("success_criteria")
+        if not isinstance(criteria, list) or not any(
+            isinstance(item, str) and item.strip() for item in criteria
+        ):
+            normalized["success_criteria"] = [
+                "The proposed workspace action executes successfully.",
+                "Deterministic validation confirms progress toward the user objective.",
+            ]
+
+        normalized.setdefault(
+            "selection_reason",
+            "Recovered a concrete action from a compact local-model response.",
+        )
+
+    return normalized
+
+
 def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    plan = _coerce_action_only_plan(plan)
+
     missing = [name for name in REQUIRED_PLAN_FIELDS if name not in plan]
     if missing:
         raise ProtocolError("planner JSON missing required fields: " + ", ".join(missing))

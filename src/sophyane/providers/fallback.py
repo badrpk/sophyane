@@ -10,6 +10,7 @@ from typing import Any
 
 from sophyane.config import CONFIG_DIR, get_secret
 from sophyane.providers.base import Provider, ProviderError, ProviderMetadata
+from sophyane.runtime_cancel import cancelled
 
 
 LOGGER = logging.getLogger("sophyane")
@@ -89,11 +90,23 @@ class FallbackProvider(Provider):
 
     def generate(self, prompt: str, system_prompt: str) -> str:
         errors: list[str] = []
+
+        if cancelled():
+            raise ProviderError("provider generation cancelled")
+
         for name, provider in self._providers:
+            if cancelled():
+                raise ProviderError("provider generation cancelled")
+
             started = time.perf_counter()
             try:
                 text = provider.generate(prompt, system_prompt)
             except Exception as error:  # noqa: BLE001
+                if cancelled():
+                    raise ProviderError(
+                        "provider generation cancelled"
+                    ) from error
+
                 latency_ms = (time.perf_counter() - started) * 1000
                 message = f"{name}: {type(error).__name__}: {error}"
                 errors.append(message)
@@ -126,6 +139,9 @@ class FallbackProvider(Provider):
                 + "\n- ".join(errors)
                 + "\nStart llama-server on port 8766 or verify the GGUF CLI/runtime path."
             )
+
+        if cancelled():
+            raise ProviderError("provider generation cancelled")
 
         joined = "\n".join(errors)
         try:
@@ -165,7 +181,18 @@ class FallbackProvider(Provider):
                                 "cli_path": str(state.get("cli") or ""),
                             }
                         )
+                    if cancelled():
+                        raise ProviderError(
+                            "provider generation cancelled"
+                        )
+
                     local = loader.create(provider_id, **kwargs)
+
+                    if cancelled():
+                        raise ProviderError(
+                            "provider generation cancelled"
+                        )
+
                     text = local.generate(prompt, system_prompt)
                     self.last_provider = provider_id
                     self.model = result.model

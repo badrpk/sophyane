@@ -14,6 +14,12 @@ def install_interrupt_patch() -> None:
     if getattr(tui_v2.ObservableTUI, "_interrupt_patch_installed", False):
         return
 
+    # Provider-context patch includes responsive cancellation plus live
+    # keyboard steering. Do not replace it with the older Ctrl+C-only loop.
+    if getattr(tui_v2, "_provider_context_patch_installed", False):
+        tui_v2.ObservableTUI._interrupt_patch_installed = True
+        return
+
     def call_provider(self: Any, message: str, *, timeout: int = 60) -> Any:
         results: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
         started = time.monotonic()
