@@ -117,47 +117,9 @@ def install_capability_acquisition_patch() -> None:
         *,
         timeout: int = 60,
     ) -> Any:
-        gap = detect_capability_gap(message)
-
-        if gap is not None:
-            self.progress(
-                "Current runtime cannot yet satisfy all acceptance "
-                "criteria; checking whether Sophyane can acquire the "
-                "missing capability."
-            )
-
-            workspace = _capability_workspace(
-                self,
-                message,
-            )
-
-            result = improve_until_satisfied(
-                gap,
-                workspace=workspace,
-                progress=self.progress,
-                max_stages=6,
-            )
-
-            if result.success:
-                self.progress(
-                    "Capability upgrade validated; resuming the "
-                    "original request against the upgraded runtime."
-                )
-
-                # Retain the same session object throughout this
-                # mission so undo and redo history remain available.
-                self._active_canvas_session = _active_canvas_session(
-                    self,
-                    result.payload.get("workspace") or workspace,
-                )
-
-                return _format_result(result)
-
-            self.progress(
-                "Bounded capability acquisition did not satisfy the "
-                "request; falling back to the normal provider route."
-            )
-
+        # Mission-local controls and edits have highest priority.
+        # They must never be reinterpreted as requests to acquire
+        # capabilities that the active session already owns.
         active_workspace = getattr(
             self,
             "_active_canvas_workspace",
@@ -169,7 +131,48 @@ def install_capability_acquisition_patch() -> None:
                 self,
                 active_workspace,
             )
-            text = " ".join(message.lower().split())
+
+            text = " ".join(
+                message.lower().split()
+            )
+
+            if text in {
+                "/undo",
+                "undo",
+                "undo last change",
+            }:
+                session.undo()
+                self.progress(
+                    "Applied undo to the active editable session."
+                )
+                return (
+                    "Undo applied.\n\n"
+                    f"Workspace: {session.workspace}\n"
+                    f"Document: "
+                    f"{session.scene.get('document_id')}\n"
+                    f"Preview: {session.preview_path}\n"
+                    f"Revision: "
+                    f"{session.scene.get('revision', 0)}"
+                )
+
+            if text in {
+                "/redo",
+                "redo",
+                "redo last change",
+            }:
+                session.redo()
+                self.progress(
+                    "Applied redo to the active editable session."
+                )
+                return (
+                    "Redo applied.\n\n"
+                    f"Workspace: {session.workspace}\n"
+                    f"Document: "
+                    f"{session.scene.get('document_id')}\n"
+                    f"Preview: {session.preview_path}\n"
+                    f"Revision: "
+                    f"{session.scene.get('revision', 0)}"
+                )
 
             edit_terms = (
                 "jinnah",
@@ -191,35 +194,21 @@ def install_capability_acquisition_patch() -> None:
                 "seated",
                 "seat",
                 "seats",
+                "resize",
+                "change",
+                "modify",
+                "remove",
+                "add",
             )
 
-            if text in {"/undo", "undo"}:
-                session.undo()
-                self.progress(
-                    "Applied undo to the active editable session."
-                )
-                return (
-                    "Undo applied.\n\n"
-                    f"Workspace: {session.workspace}\n"
-                    f"Preview: {session.preview_path}\n"
-                    f"Revision: {session.scene.get('revision', 0)}"
-                )
-
-            if text in {"/redo", "redo"}:
-                session.redo()
-                self.progress(
-                    "Applied redo to the active editable session."
-                )
-                return (
-                    "Redo applied.\n\n"
-                    f"Workspace: {session.workspace}\n"
-                    f"Preview: {session.preview_path}\n"
-                    f"Revision: {session.scene.get('revision', 0)}"
-                )
-
-            if any(term in text for term in edit_terms):
+            if any(
+                term in text
+                for term in edit_terms
+            ):
                 try:
-                    scene, operations = session.edit(message)
+                    scene, operations = session.edit(
+                        message
+                    )
                 except ValueError:
                     pass
                 else:
@@ -229,13 +218,63 @@ def install_capability_acquisition_patch() -> None:
                     )
 
                     return (
-                        "Updated the active editable visual session.\n\n"
-                        f"Document: {scene.get('document_id')}\n"
-                        f"Revision: {scene.get('revision')}\n"
-                        f"Operations: {len(operations)}\n"
+                        "Updated the active editable visual "
+                        "session.\n\n"
+                        f"Document: "
+                        f"{scene.get('document_id')}\n"
+                        f"Revision: "
+                        f"{scene.get('revision')}\n"
+                        f"Operations: "
+                        f"{len(operations)}\n"
                         f"Scene: {session.scene_path}\n"
                         f"Preview: {session.preview_path}"
                     )
+
+        # Only requests not handled by an already active mission
+        # are eligible to trigger new capability acquisition.
+        gap = detect_capability_gap(message)
+
+        if gap is not None:
+            self.progress(
+                "Current runtime cannot yet satisfy all "
+                "acceptance criteria; checking whether "
+                "Sophyane can acquire the missing capability."
+            )
+
+            workspace = _capability_workspace(
+                self,
+                message,
+            )
+
+            result = improve_until_satisfied(
+                gap,
+                workspace=workspace,
+                progress=self.progress,
+                max_stages=6,
+            )
+
+            if result.success:
+                self.progress(
+                    "Capability upgrade validated; resuming "
+                    "the original request against the upgraded "
+                    "runtime."
+                )
+
+                self._active_canvas_session = (
+                    _active_canvas_session(
+                        self,
+                        result.payload.get("workspace")
+                        or workspace,
+                    )
+                )
+
+                return _format_result(result)
+
+            self.progress(
+                "Bounded capability acquisition did not "
+                "satisfy the request; falling back to the "
+                "normal provider route."
+            )
 
         return original_call_provider(
             self,

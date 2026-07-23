@@ -145,11 +145,11 @@ def available_capabilities() -> set[str]:
         pass
 
     try:
-        from sophyane.runtime_editable_canvas_patch import (
-            install_editable_canvas_runtime,
+        from sophyane.runtime_capability_acquisition_patch import (
+            install_capability_acquisition_patch,
         )
 
-        if install_editable_canvas_runtime is not None:
+        if install_capability_acquisition_patch is not None:
             available.add("follow_up_edit_routing")
     except Exception:
         pass
