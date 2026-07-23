@@ -153,9 +153,25 @@ def _is_editable_session_request(message: str) -> bool:
         "change only",
     )
 
+    creation_terms = (
+        "create",
+        "make",
+        "generate",
+        "draw",
+        "design",
+        "build",
+        "produce",
+    )
+
+    # Explicit editable requests activate the visual mission.
+    # Direct portrait-creation requests also activate it because
+    # returning a textual paraphrase does not satisfy the request.
     return (
         any(term in text for term in artifact_terms)
-        and any(term in text for term in editing_terms)
+        and (
+            any(term in text for term in editing_terms)
+            or any(term in text for term in creation_terms)
+        )
     )
 
 
@@ -179,6 +195,18 @@ def _activate_editable_session(
     # user mission. Existing active sessions are never replaced here.
     tui._active_canvas_session = session
     tui._active_canvas_workspace = str(session.workspace)
+
+    # Apply the initial user instruction to the newly activated
+    # scene. For example, "make Jinnah portrait" sets the person
+    # immediately instead of merely creating a generic session.
+    initial_operations = 0
+
+    try:
+        _, operations = session.edit(message)
+    except ValueError:
+        operations = []
+    else:
+        initial_operations = len(operations)
 
     registry_path = (
         session.workspace
@@ -220,6 +248,7 @@ def _activate_editable_session(
         "Editable visual session activated.\n\n"
         f"Document: {session.scene.get('document_id')}\n"
         f"Revision: {session.scene.get('revision', 0)}\n"
+        f"Initial operations: {initial_operations}\n"
         f"Workspace: {session.workspace}\n"
         f"Scene: {session.scene_path}\n"
         f"Preview: {session.preview_path}"

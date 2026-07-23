@@ -81,7 +81,6 @@ def main() -> int:
     from sophyane.runtime_cursor_tab_patch import install_cursor_tab_patch
     install_cursor_tab_patch()
     install_provider_context_patch()
-    install_capability_acquisition_patch()
     install_interrupt_patch()
     install_provider_error_patch()
     install_input_patch()
@@ -101,6 +100,8 @@ def main() -> int:
     # Final authority: SLI owns routing, profile selection, prompt budgets and
     # deterministic fallbacks. Local/cloud LLMs remain replaceable workers.
     install_sli_brain()
+    # Keep mission routing outermost after all provider wrappers.
+    install_capability_acquisition_patch()
 
     try:
         from sophyane.platform_kernel import ensure_platform_filesystem

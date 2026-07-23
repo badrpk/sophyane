@@ -197,6 +197,58 @@ def install_intent_refinement() -> None:
                 continue
             route, refined_message = refined_result
 
+            # Installed visual capabilities must be activated here,
+            # while the original/refined user request is still available.
+            # Waiting until call_provider() is too late because chat routing
+            # converts the request into an internal "Answer directly" prompt.
+            from sophyane.runtime_capability_acquisition_patch import (
+                _activate_editable_session,
+                _is_editable_session_request,
+            )
+
+            if (
+                _is_editable_session_request(message)
+                or _is_editable_session_request(refined_message)
+            ):
+                self.last_mode = "execution"
+
+                try:
+                    text = _activate_editable_session(
+                        self,
+                        refined_message,
+                    )
+                except Exception as error:  # noqa: BLE001
+                    self.emit(
+                        "system",
+                        "Editable visual activation failed safely: "
+                        f"{type(error).__name__}: {error}",
+                    )
+                    continue
+
+                self.active_request = refined_message
+                self.active_workspace = str(
+                    getattr(
+                        self,
+                        "_active_canvas_workspace",
+                        "",
+                    )
+                )
+                self.project_requirements = [
+                    refined_message
+                ]
+                self.last_raw = text
+
+                self.history.extend(
+                    [
+                        ("user", message[:300]),
+                        ("assistant", text[:500]),
+                    ]
+                )
+                self.history = self.history[-4:]
+
+                self.emit("Sophyane", text)
+                continue
+
             # Final route guard: a standalone media request must never reach
             # the software workspace even if another refinement layer emits
             # route=execution.
