@@ -101,6 +101,39 @@ def _repository_coding_profile_request(
     )
 
 
+def _explicit_browser_program_request(message: str) -> bool:
+    """Recognize unambiguous requests to build an interactive browser artifact."""
+
+    text = " ".join(str(message or "").lower().split())
+
+    browser_markers = (
+        "browser",
+        "website",
+        "web app",
+        "web page",
+        "webpage",
+        "html",
+    )
+    creation_markers = (
+        "make",
+        "build",
+        "create",
+        "develop",
+        "implement",
+        "write",
+        "design",
+        "program",
+        "app",
+        "calculator",
+        "game",
+    )
+
+    return (
+        any(marker in text for marker in browser_markers)
+        and any(marker in text for marker in creation_markers)
+    )
+
+
 def _profile(message: str) -> str:
     text = message.lower()
 
@@ -109,6 +142,12 @@ def _profile(message: str) -> str:
     # acceptance criteria rather than describe the requested deliverable.
     if _repository_coding_profile_request(text):
         return "REPOSITORY_CODING"
+
+    # An explicit request to create a program in the browser is already
+    # semantically complete. The word "browser" describes the artifact
+    # surface and must not fall through to GENERAL_TASK.
+    if _explicit_browser_program_request(text):
+        return "WEB_STANDARD"
 
     if "game" in text or any(
         item in text
@@ -336,6 +375,34 @@ def _human_choice_materially_useful(ledger: Any) -> bool:
 
 
 def _confirm(self: Any, original: str, *, has_project: bool, tui_v2: Any) -> tuple[str, str] | None:
+    # Explicit browser-build requests contain enough deterministic intent
+    # to route without asking a provider to reinterpret ordinary words such
+    # as "numbers" or "browser".
+    if _explicit_browser_program_request(original):
+        decision = decide(original, has_project=has_project)
+        self.progress(
+            f"SLI Brain: {decision.route} / {decision.profile}"
+        )
+        self.progress(
+            "SLI Semantic: explicit browser-program intent resolved "
+            "deterministically"
+        )
+        self.progress(
+            "SLI Autonomy: confidence sufficient; continuing without "
+            "blocking for approval."
+        )
+        _record(
+            "deterministic_browser_decision",
+            decision,
+            {
+                "original": original,
+                "semantic_consulted": False,
+                "semantic_confidence": 1.0,
+                "uncertain_terms": (),
+            },
+        )
+        return decision.route, decision.refined_request
+
     from sophyane.runtime_sli_semantic import resolve
 
     candidate = original

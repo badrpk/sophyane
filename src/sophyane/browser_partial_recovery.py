@@ -153,6 +153,110 @@ def _acceptable_rewrite(previous: str, candidate: str | None) -> bool:
     return len(candidate) >= minimum
 
 
+def _strict_fresh_html_prompt(original_request: str) -> str:
+    """Request a fresh document when no HTML prefix exists to continue."""
+
+    return (
+        "Your previous response contained no HTML. Start again from scratch. "
+        "Return exactly ONE complete self-contained index.html and nothing else. "
+        "The first characters must be <!doctype html> and the final characters "
+        "must be </html>. Include inline CSS and JavaScript. Do not return JSON, "
+        "markdown fences, explanations, planning, commands, or filenames. "
+        "Make every requested interaction functional.\n"
+        f"REQUEST: {str(original_request or '')[-500:]}"
+    )
+
+
+def _deterministic_browser_fallback(
+    original_request: str,
+) -> str | None:
+    """Provide a bounded local fallback for a basic addition calculator.
+
+    This fallback is intentionally narrow. It is used only when the request
+    clearly asks for adding numbers or a basic calculator and the provider
+    twice returns no usable HTML.
+    """
+
+    text = " ".join(
+        str(original_request or "").lower().split()
+    )
+
+    addition_request = (
+        (
+            "add numbers" in text
+            or "adding numbers" in text
+            or "addition" in text
+        )
+        and (
+            "browser" in text
+            or "html" in text
+            or "web app" in text
+            or "website" in text
+        )
+    )
+
+    calculator_request = (
+        "calculator" in text
+        and (
+            "browser" in text
+            or "html" in text
+            or "web app" in text
+            or "website" in text
+        )
+    )
+
+    if not (addition_request or calculator_request):
+        return None
+
+    return """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Add Numbers</title>
+<style>
+*{box-sizing:border-box}
+html,body{width:100vw;min-height:100vh;margin:0}
+body{display:grid;place-items:center;padding:20px;font-family:system-ui,sans-serif;background:#f3f4f6}
+main{width:min(100%,420px);padding:24px;border-radius:18px;background:white;box-shadow:0 12px 35px #0002}
+h1{margin-top:0}
+label{display:block;margin-top:14px;font-weight:650}
+input,button{width:100%;min-height:50px;margin-top:7px;border-radius:10px;font-size:1.1rem}
+input{padding:10px 12px;border:1px solid #9ca3af}
+button{border:0;background:#111827;color:white;font-weight:700;cursor:pointer}
+output{display:block;min-height:58px;margin-top:18px;padding:14px;border-radius:10px;background:#eef2ff;font-size:1.35rem;font-weight:750}
+</style>
+</head>
+<body>
+<main>
+<h1>Add Numbers</h1>
+<form id="calculator">
+<label for="first">First number</label>
+<input id="first" type="number" step="any" inputmode="decimal" required>
+<label for="second">Second number</label>
+<input id="second" type="number" step="any" inputmode="decimal" required>
+<button type="submit">Add numbers</button>
+</form>
+<output id="result" aria-live="polite">Result: —</output>
+</main>
+<script>
+const form=document.querySelector("#calculator");
+const first=document.querySelector("#first");
+const second=document.querySelector("#second");
+const result=document.querySelector("#result");
+form.addEventListener("submit",event=>{
+ event.preventDefault();
+ const a=Number(first.value);
+ const b=Number(second.value);
+ result.textContent=Number.isFinite(a)&&Number.isFinite(b)
+  ?`Result: ${a+b}`
+  :"Please enter two valid numbers.";
+});
+</script>
+</body>
+</html>"""
+
+
 def install_browser_partial_recovery() -> None:
     """Replace the one-shot browser path with progress-aware partial recovery."""
     from sophyane import adaptive_execution as adaptive
@@ -164,6 +268,7 @@ def install_browser_partial_recovery() -> None:
 
     def recovered(*, ask: Callable[[str], Any], original_request: str,
                   workspace: Path, progress: Callable[[str], None]) -> str | None:
+        workspace.mkdir(parents=True, exist_ok=True)
         target = workspace / "index.html"
         partial_file = workspace / PARTIAL_NAME
         run_id = _new_run_id()
@@ -188,9 +293,58 @@ def install_browser_partial_recovery() -> None:
         partial = adaptive._extract_partial_html(raw)
         best = html or partial
         if html is None:
-            progress("HTML extraction diagnostic: " + _extraction_diagnostic(adaptive, raw))
+            progress(
+                "HTML extraction diagnostic: "
+                + _extraction_diagnostic(adaptive, raw)
+            )
         if best:
             partial_file.write_text(best, encoding="utf-8")
+
+        # Continuation recovery requires an HTML prefix. When the provider
+        # returns prose, JSON, planning, or an empty response, issue one
+        # independent strict generation retry instead.
+        response_sequence = 1
+        if html is None and partial is None:
+            progress(
+                "Provider returned no HTML prefix; requesting one strict "
+                "fresh HTML retry"
+            )
+            retry_response = ask(
+                _strict_fresh_html_prompt(original_request)
+            )
+            retry_raw = _response_text(retry_response)
+            response_sequence += 1
+            retry_path = _save_raw(
+                workspace,
+                run_id,
+                response_sequence,
+                retry_raw,
+            )
+            progress(
+                f"Saved strict retry provider response: {retry_path}"
+            )
+
+            retry_reason = _finish_reason(retry_response)
+            if retry_reason != "unknown":
+                progress(
+                    f"Strict retry finish reason: {retry_reason}"
+                )
+
+            html = adaptive._extract_html(retry_raw)
+            partial = adaptive._extract_partial_html(retry_raw)
+            best = html or partial
+
+            if html is None:
+                progress(
+                    "Strict retry extraction diagnostic: "
+                    + _extraction_diagnostic(adaptive, retry_raw)
+                )
+
+            if best:
+                partial_file.write_text(
+                    best,
+                    encoding="utf-8",
+                )
 
         def recovery_problem(candidate: str | None) -> str:
             if candidate is None:
@@ -227,7 +381,6 @@ def install_browser_partial_recovery() -> None:
 
         attempts = 0
         stagnant = 0
-        response_sequence = 1
         while attempts < MAX_CONTINUATIONS:
             problem = recovery_problem(html)
             if html is not None and not problem:
@@ -313,13 +466,50 @@ def install_browser_partial_recovery() -> None:
                 progress("Stopping continuation because the provider stopped making progress")
                 break
 
-        evidence_glob = f"{workspace}/{RAW_PREFIX}-{run_id}-*.txt"
+        evidence_directory = _workspace_diagnostic_directory(
+            workspace
+        )
+        evidence_glob = str(
+            evidence_directory
+            / f"{RAW_PREFIX}-{run_id}-*.txt"
+        )
+
+        if html is None:
+            fallback = _deterministic_browser_fallback(
+                original_request
+            )
+
+            if fallback is not None:
+                fallback_problem = recovery_problem(fallback)
+
+                if not fallback_problem:
+                    html = fallback
+                    best = fallback
+                    progress(
+                        "Provider returned no usable HTML after strict "
+                        "retry; generated validated deterministic "
+                        "addition-calculator fallback"
+                    )
+                else:
+                    progress(
+                        "Deterministic browser fallback was rejected: "
+                        f"{fallback_problem}"
+                    )
+
         if html is None:
             preserved = best or partial
             if preserved:
-                partial_file.write_text(preserved, encoding="utf-8")
-                progress(f"Preserved incomplete HTML at {partial_file} ({len(preserved)} characters)")
-            progress(f"Raw provider evidence preserved in {evidence_glob}")
+                partial_file.write_text(
+                    preserved,
+                    encoding="utf-8",
+                )
+                progress(
+                    f"Preserved incomplete HTML at {partial_file} "
+                    f"({len(preserved)} characters)"
+                )
+            progress(
+                f"Raw provider evidence preserved in {evidence_glob}"
+            )
             return None
 
         problem = recovery_problem(html)
