@@ -6,7 +6,10 @@ import threading
 import time
 from typing import Any
 
-from sophyane.runtime_semantic_instruction import apply_live_instruction
+from sophyane.runtime_semantic_instruction import (
+    apply_live_instruction,
+    reset_semantic_request,
+)
 
 from sophyane.provider_state import publish, snapshot
 
@@ -354,7 +357,13 @@ def install_provider_context_patch() -> None:
                         )
 
                         if matched_restart is not None:
+                            # Clear both the visible live-instruction list and
+                            # the semantic state accumulated by
+                            # apply_live_instruction(). Otherwise requirements
+                            # from before an explicit restart can leak into the
+                            # replacement provider prompt.
                             live_instructions.clear()
+                            reset_semantic_request(self)
                             cleaned = normalized
 
                             if cleaned.startswith("/"):
