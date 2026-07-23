@@ -221,6 +221,73 @@ def _render_nonexecuting_response(text: str) -> str:
     return str(plan.get("objective") or "I could not produce a direct answer.").strip()
 
 
+
+def _is_fast_web_standard_request(message: str) -> bool:
+    """Return True for simple website requests that need no LLM refinement."""
+
+    value = str(message or "").strip()
+    lowered = value.lower()
+
+    # Artifact-generation calls must always continue to the provider.
+    if "[[sophyane_generation:" in lowered:
+        return False
+
+    if not value or len(value) > 600:
+        return False
+
+    creation_terms = (
+        "make ",
+        "create ",
+        "build ",
+        "design ",
+        "develop ",
+        "generate ",
+    )
+
+    web_terms = (
+        "website",
+        "web site",
+        "landing page",
+        "homepage",
+        "webpage",
+        "web page",
+    )
+
+    # Requests containing these terms usually benefit from real planning.
+    complexity_terms = (
+        "backend",
+        "database",
+        "authentication",
+        "login system",
+        "payment",
+        "ecommerce",
+        "e-commerce",
+        "api integration",
+        "multi-page",
+        "multiple pages",
+        "react",
+        "next.js",
+        "django",
+        "flask",
+        "fastapi",
+        "deployment",
+        "docker",
+        "kubernetes",
+        "migration",
+        "existing repository",
+        "existing project",
+        "fix bug",
+        "debug",
+        "security audit",
+    )
+
+    has_creation = any(term in lowered for term in creation_terms)
+    has_web_target = any(term in lowered for term in web_terms)
+    has_complexity = any(term in lowered for term in complexity_terms)
+
+    return has_creation and has_web_target and not has_complexity
+
+
 class ObservableTUI:
     def __init__(self, *, config: dict[str, Any], ask: Any, handle_internal: Any) -> None:
         self.config = config
@@ -246,7 +313,49 @@ class ObservableTUI:
     def progress(self, text: str) -> None:
         print(f"[{time.strftime('%H:%M:%S')}] {text}", file=sys.stderr, flush=True)
 
-    def call_provider(self, message: str, *, timeout: int = 60) -> Any:
+    def call_provider(
+        self,
+        message: str,
+        *,
+        timeout: int | None = None,
+    ) -> Any:
+        """Wait for the provider's own bounded HTTP timeout.
+
+        The previous implementation abandoned its worker at 60 seconds while
+        Gemini could continue for 180 seconds. This version keeps progress
+        reporting but does not orphan a live provider call.
+        """
+        if _is_fast_web_standard_request(message):
+            # WEB_STANDARD intent has already been resolved deterministically.
+            # Returning the original request avoids a redundant cloud planning
+            # call while preserving the normal adaptive artifact-generation
+            # pipeline.
+            from sophyane.agent import AgentResponse
+
+            started = time.monotonic()
+            self.last_prompt = message
+            self.last_elapsed = time.monotonic() - started
+
+            self.progress(
+                "Fast planning: deterministic WEB_STANDARD request "
+                "approved locally"
+            )
+
+            return AgentResponse(
+                text=str(message).strip(),
+                provider="deterministic",
+                finish_reason="LOCAL_FAST_PATH",
+                generation_mode="structured",
+                usage={
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "thinking_tokens": 0,
+                    "total_tokens": 0,
+                    "model_calls": 0,
+                },
+            )
+
+
         results: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
         started = time.monotonic()
         self.last_prompt = message
@@ -257,22 +366,29 @@ class ObservableTUI:
             except Exception as error:  # noqa: BLE001
                 results.put(("error", error))
 
-        threading.Thread(target=worker, daemon=True).start()
+        thread = threading.Thread(target=worker, daemon=False)
+        thread.start()
+
         next_update = 5
         while True:
             try:
                 status, value = results.get(timeout=1)
-                self.last_elapsed = time.monotonic() - started
-                if status == "error":
-                    raise value
-                return value
             except queue.Empty:
                 elapsed = int(time.monotonic() - started)
                 if elapsed >= next_update:
-                    self.progress(f"Waiting for {self.config.get('provider')} response ({elapsed}s)")
+                    self.progress(
+                        f"Waiting for {self.config.get('provider')} "
+                        f"response ({elapsed}s)"
+                    )
                     next_update += 5
-                if elapsed >= timeout:
-                    raise TimeoutError(f"{self.config.get('provider')} did not respond within {timeout}s.")
+                continue
+
+            self.last_elapsed = time.monotonic() - started
+            thread.join()
+
+            if status == "error":
+                raise value
+            return value
 
     def _new_workspace(self) -> Path:
         workspace = Path.home() / ".sophyane" / "workspaces" / f"task-{int(time.time())}"

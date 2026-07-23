@@ -54,6 +54,10 @@ LOCAL_CHAT_SYSTEM_PROMPT = (
 class AgentResponse:
     text: str
     should_exit: bool = False
+    provider: str = ""
+    finish_reason: str = "unknown"
+    generation_mode: str = "unknown"
+    usage: dict[str, int] | None = None
 
 
 class SophyaneAgent:
@@ -263,7 +267,33 @@ class SophyaneAgent:
                 "Fix: top up OpenAI/Gemini/xAI credits, or install+start Ollama "
                 "(`ollama serve` + `ollama pull llama3.2`), then run /doctor."
             )
-        return AgentResponse(text)
+        usage = getattr(self.provider, "last_token_usage", None)
+        if usage is None:
+            getter = getattr(self.provider, "get_token_usage", None)
+            usage = getter() if callable(getter) else {}
+
+        return AgentResponse(
+            text,
+            provider=str(
+                getattr(self.provider, "last_provider", "")
+                or getattr(self.provider, "model", "")
+            ),
+            finish_reason=str(
+                getattr(
+                    self.provider,
+                    "last_finish_reason",
+                    "unknown",
+                )
+            ),
+            generation_mode=str(
+                getattr(
+                    self.provider,
+                    "last_generation_mode",
+                    "unknown",
+                )
+            ),
+            usage=dict(usage or {}),
+        )
 
     def _summarize_tool(
         self,

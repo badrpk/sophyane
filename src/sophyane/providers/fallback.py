@@ -10,6 +10,7 @@ from typing import Any
 
 from sophyane.config import CONFIG_DIR, get_secret
 from sophyane.providers.base import Provider, ProviderError, ProviderMetadata
+from sophyane.generation_contract import parse_generation_request
 from sophyane.runtime_cancel import cancelled
 
 
@@ -88,7 +89,81 @@ class FallbackProvider(Provider):
                 totals[key] += int(usage.get(key, 0) or 0)
         return {"available": available, **totals}
 
-    def generate(self, prompt: str, system_prompt: str) -> str:
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str,
+    ) -> str:
+        request = parse_generation_request(prompt)
+
+        if request.mode != "raw_artifact":
+            result = self._generate_original(prompt, system_prompt)
+            self._copy_selected_metadata()
+            return result
+
+        errors: list[str] = []
+        minimum = max(1, request.minimum_output_tokens)
+
+        for name, provider in self._providers:
+            available = int(getattr(provider, "max_tokens", 0) or 0)
+
+            if available < minimum:
+                errors.append(
+                    f"{name}: skipped; output capacity "
+                    f"{available} is below required {minimum}"
+                )
+                continue
+
+            try:
+                result = provider.generate(prompt, system_prompt)
+            except Exception as error:
+                errors.append(f"{name}: {error}")
+                continue
+
+            self.last_provider = name
+            self.last_errors = errors
+            self._copy_provider_metadata(provider)
+            return result
+
+        self.last_errors = errors
+        raise ProviderError(
+            "No provider can satisfy raw-artifact capacity. "
+            + " | ".join(errors)
+        )
+
+    def _copy_provider_metadata(self, provider: object) -> None:
+        self.last_finish_reason = getattr(
+            provider,
+            "last_finish_reason",
+            "unknown",
+        )
+        self.last_generation_mode = getattr(
+            provider,
+            "last_generation_mode",
+            "unknown",
+        )
+        self.last_response_metadata = getattr(
+            provider,
+            "last_response_metadata",
+            {},
+        )
+
+        getter = getattr(provider, "get_token_usage", None)
+        self.last_token_usage = getter() if callable(getter) else {}
+
+    def _copy_selected_metadata(self) -> None:
+        selected = str(getattr(self, "last_provider", "") or "")
+        for name, provider in self._providers:
+            if name == selected:
+                self._copy_provider_metadata(provider)
+                return
+
+        self.last_finish_reason = "unknown"
+        self.last_generation_mode = "unknown"
+        self.last_response_metadata = {}
+        self.last_token_usage = {}
+
+    def _generate_original(self, prompt: str, system_prompt: str) -> str:
         errors: list[str] = []
 
         if cancelled():

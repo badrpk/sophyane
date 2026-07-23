@@ -5,6 +5,8 @@ model output into safe workspace artifacts, execution and mechanical verificatio
 """
 from __future__ import annotations
 
+from sophyane.generation_contract import mark_raw_artifact
+
 import json
 import re
 import shlex
@@ -59,30 +61,39 @@ def _extract_partial_html(text: str) -> str | None:
 
 def _raw_html_prompt(original_request: str, existing: str = "") -> str:
     if existing:
-        return (
+        return mark_raw_artifact(
+            (
             "Rewrite this existing browser project as ONE complete self-contained index.html. "
             "Apply the requested change, preserve working features, include CSS and JavaScript inline, and output raw HTML only. "
             "No JSON, markdown, explanation, shell commands, cd, or make. Keep code compact.\n"
             f"CHANGE: {original_request[-240:]}\nEXISTING HTML:\n{existing[:1800]}"
+            ),
+            minimum_output_tokens=8192,
         )
-    return (
+    return mark_raw_artifact(
+        (
         "Create ONE compact self-contained index.html for the request. Put CSS and JavaScript inline. "
         "Use no external files, images, libraries, or fonts. Output raw HTML only, beginning <!doctype html> and ending </html>. "
         "Close every script and body tag. No JSON, markdown, explanation, shell commands, cd, or make. "
         "Prefer short variable names and compact code.\n"
         f"REQUEST: {original_request[-360:]}"
+        ),
+        minimum_output_tokens=8192,
     )
 
 
 def _html_continuation_prompt(partial: str, problem: str = "") -> str:
     tail = partial[-1600:]
     issue = f" The current structural problem is: {problem}." if problem else ""
-    return (
+    return mark_raw_artifact(
+        (
         "Continue the unfinished index.html from exactly after its final character."
         f"{issue} Output ONLY missing JavaScript/HTML; never repeat earlier code or opening tags. "
         "Complete the current function and game loop, close every open brace, then close </script>, </body>, and </html>. "
         "End immediately after </html>. No markdown or explanation.\n"
         f"FINAL TAIL:\n{tail}"
+        ),
+        minimum_output_tokens=4096,
     )
 
 

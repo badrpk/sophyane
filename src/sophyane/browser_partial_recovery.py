@@ -5,6 +5,8 @@ browser generation can be diagnosed instead of silently discarded.
 """
 from __future__ import annotations
 
+from sophyane.generation_contract import mark_raw_artifact
+
 import hashlib
 import os
 
@@ -16,7 +18,7 @@ from typing import Any, Callable
 
 PARTIAL_NAME = ".sophyane-partial-index.html"
 RAW_PREFIX = ".sophyane-provider-response"
-MAX_CONTINUATIONS = 6
+MAX_CONTINUATIONS = 2
 MAX_TOTAL_CHARS = 24000
 MIN_PROGRESS = 24
 MIN_REWRITE_RATIO = 0.60
@@ -37,6 +39,30 @@ def _finish_reason(response: Any) -> str:
         if value:
             return str(value)
     return "unknown"
+
+
+
+def _cleanup_raw_responses(
+    directory: Path,
+    *,
+    keep: int = 40,
+    maximum_age_days: int = 7,
+) -> None:
+    """Bound diagnostic-response retention by count and age."""
+
+    cutoff = time.time() - max(1, maximum_age_days) * 86400
+    files = sorted(
+        directory.glob(f"{RAW_PREFIX}-*.txt"),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+
+    for index, path in enumerate(files):
+        try:
+            if index >= keep or path.stat().st_mtime < cutoff:
+                path.unlink()
+        except OSError:
+            continue
 
 
 def _new_run_id() -> str:
@@ -116,6 +142,7 @@ def _save_raw(
             encoding="utf-8",
             errors="replace",
         )
+        _cleanup_raw_responses(path.parent)
         return path
 
     path = destination / (
@@ -156,7 +183,8 @@ def _acceptable_rewrite(previous: str, candidate: str | None) -> bool:
 def _strict_fresh_html_prompt(original_request: str) -> str:
     """Request a fresh document when no HTML prefix exists to continue."""
 
-    return (
+    return mark_raw_artifact(
+        (
         "Your previous response contained no HTML. Start again from scratch. "
         "Return exactly ONE complete self-contained index.html and nothing else. "
         "The first characters must be <!doctype html> and the final characters "
@@ -164,6 +192,8 @@ def _strict_fresh_html_prompt(original_request: str) -> str:
         "markdown fences, explanations, planning, commands, or filenames. "
         "Make every requested interaction functional.\n"
         f"REQUEST: {str(original_request or '')[-500:]}"
+        ),
+        minimum_output_tokens=8192,
     )
 
 
