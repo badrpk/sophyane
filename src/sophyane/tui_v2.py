@@ -285,7 +285,72 @@ def _is_fast_web_standard_request(message: str) -> bool:
     has_web_target = any(term in lowered for term in web_terms)
     has_complexity = any(term in lowered for term in complexity_terms)
 
-    return has_creation and has_web_target and not has_complexity
+    game_terms = (
+        "game",
+        "snake",
+        "pong",
+        "pingpong",
+        "ping pong",
+        "tic tac toe",
+        "tictactoe",
+        "breakout",
+        "memory game",
+        "flappy",
+        "platformer",
+        "runner game",
+        "racing game",
+        "space shooter",
+        "asteroids",
+        "2048",
+        "sudoku",
+        "chess",
+        "checkers",
+    )
+
+    game_complexity_terms = (
+        "multiplayer server",
+        "online multiplayer",
+        "network multiplayer",
+        "database",
+        "backend",
+        "authentication",
+        "login",
+        "payment",
+        "leaderboard api",
+        "websocket",
+        "socket.io",
+        "unity",
+        "unreal",
+        "godot",
+        "native android",
+        "native ios",
+        "steam",
+    )
+
+    has_game_target = any(
+        term in lowered
+        for term in game_terms
+    )
+
+    has_game_complexity = any(
+        term in lowered
+        for term in game_complexity_terms
+    )
+
+    simple_website = (
+        has_creation
+        and has_web_target
+        and not has_complexity
+    )
+
+    simple_html_game = (
+        has_creation
+        and has_game_target
+        and not has_complexity
+        and not has_game_complexity
+    )
+
+    return simple_website or simple_html_game
 
 
 class ObservableTUI:

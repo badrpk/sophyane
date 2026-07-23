@@ -59,7 +59,101 @@ def _extract_partial_html(text: str) -> str | None:
     return value.strip() if len(value.strip()) >= 20 else None
 
 
+
+def _is_fresh_html_game_request(original_request: str) -> bool:
+    """Return True when a request describes a new standalone HTML game."""
+
+    lowered = str(original_request or "").lower()
+
+    game_terms = (
+        " game",
+        "snake",
+        "pong",
+        "pingpong",
+        "ping pong",
+        "tic tac toe",
+        "tictactoe",
+        "breakout",
+        "flappy",
+        "platformer",
+        "space shooter",
+        "asteroids",
+        "2048",
+        "sudoku",
+    )
+
+    edit_terms = (
+        "edit ",
+        "modify ",
+        "update ",
+        "improve ",
+        "change ",
+        "fix ",
+        "continue ",
+        "add to ",
+        "existing game",
+        "current game",
+    )
+
+    return (
+        any(term in lowered for term in game_terms)
+        and not any(term in lowered for term in edit_terms)
+    )
+
+
+def _is_behavioral_html_problem(problem: str) -> bool:
+    """Distinguish logic defects from document truncation."""
+
+    lowered = str(problem or "").lower()
+
+    behavioral_terms = (
+        "unstable 180-degree reversal",
+        "180-degree reversal",
+        "allows immediate reversal",
+        "unsafe reversal",
+        "controls allow",
+        "restart behavior",
+        "does not restart",
+        "not interactive",
+        "button does not",
+        "control does not",
+        "keyboard control",
+        "touch control",
+        "collision",
+        "score does not",
+        "game state",
+        "logic defect",
+        "behavioral",
+        "runtime defect",
+    )
+
+    structural_terms = (
+        "missing closing",
+        "no closing",
+        "unterminated",
+        "truncated",
+        "incomplete document",
+        "missing </html>",
+        "missing </body>",
+        "unfinished script",
+        "unfinished css",
+        "unexpected end",
+    )
+
+    if any(term in lowered for term in behavioral_terms):
+        return True
+
+    if any(term in lowered for term in structural_terms):
+        return False
+
+    return False
+
+
 def _raw_html_prompt(original_request: str, existing: str = "") -> str:
+    # A new game must replace an unrelated page in a reused workspace.
+    if existing and _is_fresh_html_game_request(original_request):
+        existing = ""
+
     if existing:
         return mark_raw_artifact(
             (
@@ -83,6 +177,21 @@ def _raw_html_prompt(original_request: str, existing: str = "") -> str:
 
 
 def _html_continuation_prompt(partial: str, problem: str = "") -> str:
+    if _is_behavioral_html_problem(problem):
+        return mark_raw_artifact(
+            (
+                "Return one complete corrected self-contained index.html. "
+                "Output raw HTML only, beginning with <!doctype html> and "
+                "ending with </html>. Do not explain the changes. "
+                "Do not return a fragment or continuation. "
+                "Preserve the useful design and features from the rejected "
+                "document, but correct the behavioral validation defect.\n\n"
+                f"VALIDATION DEFECT:\n{problem}\n\n"
+                f"REJECTED DOCUMENT:\n{partial}"
+            ),
+            minimum_output_tokens=8192,
+        )
+
     tail = partial[-1600:]
     issue = f" The current structural problem is: {problem}." if problem else ""
     return mark_raw_artifact(
@@ -98,6 +207,26 @@ def _html_continuation_prompt(partial: str, problem: str = "") -> str:
 
 
 def _join_html_continuation(partial: str, continuation: str) -> str:
+    # FULL-DOCUMENT REPAIR:
+    # Semantic corrections return a complete replacement document.
+    candidate = str(continuation or "").strip()
+    lowered_candidate = candidate.lower()
+    doctype_position = lowered_candidate.find("<!doctype html")
+    html_position = lowered_candidate.find("<html")
+
+    start_position = (
+        doctype_position
+        if doctype_position >= 0
+        else html_position
+    )
+
+    if start_position >= 0 and "</html>" in lowered_candidate:
+        end_position = (
+            lowered_candidate.rfind("</html>")
+            + len("</html>")
+        )
+        return candidate[start_position:end_position].strip()
+
     addition = (continuation or "").strip()
     addition = re.sub(r"^```(?:html)?\s*", "", addition, flags=re.I)
     addition = re.sub(r"\s*```\s*$", "", addition)
