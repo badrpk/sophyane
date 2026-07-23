@@ -185,8 +185,12 @@ def install_capability_acquisition_patch() -> None:
                 "larger",
                 "bigger",
                 "smaller",
+                "sit",
+                "sits",
                 "sitting",
                 "seated",
+                "seat",
+                "seats",
             )
 
             if text in {"/undo", "undo"}:

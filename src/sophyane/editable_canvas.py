@@ -149,7 +149,17 @@ def infer_operations(
             }
         )
 
-    if "sit" in text or "sitting" in text or "seated" in text:
+    if any(
+        word in text
+        for word in (
+            "sit",
+            "sits",
+            "sitting",
+            "seated",
+            "seat",
+            "seats",
+        )
+    ):
         operations.append(
             {
                 "op": "set",
