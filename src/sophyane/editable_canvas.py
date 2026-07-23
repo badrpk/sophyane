@@ -22,8 +22,16 @@ PREVIEW_FILE = "index.html"
 HISTORY_DIR = ".sophyane-canvas-history"
 
 
-def _slug(value: str) -> str:
-    text = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+def _slug(value: str, limit: int = 72) -> str:
+    """Return a filesystem-safe, deterministically bounded label."""
+
+    text = re.sub(
+        r"[^a-z0-9]+",
+        "-",
+        str(value or "").lower(),
+    ).strip("-")
+
+    text = text[:max(8, int(limit))].rstrip("-")
     return text or "element"
 
 

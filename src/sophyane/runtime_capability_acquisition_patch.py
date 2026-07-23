@@ -64,6 +64,61 @@ def _active_canvas_session(
     return session
 
 
+def _is_internal_provider_prompt(message: str) -> bool:
+    """Identify SLI/provider control prompts that are not user edits.
+
+    The acquisition wrapper surrounds ObservableTUI.call_provider(), which
+    is also used internally by semantic resolution and planning. Those
+    internal calls must reach the provider unchanged and must never mutate
+    the active canvas.
+    """
+
+    raw = str(message or "")
+    text = " ".join(raw.lower().split())
+
+    strong_prefixes = (
+        "answer directly",
+        "system:",
+        "developer:",
+        "sli_profile=",
+        "sli profile:",
+        "return only",
+        "respond only",
+        "you are ",
+        "analyze the following",
+        "resolve the following",
+        "semantic consultation",
+    )
+
+    strong_markers = (
+        "no json or tool action",
+        "approved sli intent ledger",
+        "sli execution guidance",
+        "recent sli execution history",
+        "provider latency",
+        "return only the next compact executable",
+        "do not broaden scope",
+        "uncertain terms",
+        "semantic confidence",
+        "frozen user intent",
+        "tool action",
+    )
+
+    if any(text.startswith(prefix) for prefix in strong_prefixes):
+        return True
+
+    marker_hits = sum(
+        marker in text
+        for marker in strong_markers
+    )
+
+    # Internal prompts are usually long and contain multiple control markers.
+    if len(raw) > 700 and marker_hits >= 2:
+        return True
+
+    return False
+
+
 def _is_editable_session_request(message: str) -> bool:
     """Return whether the user is asking to start an editable visual mission."""
 
@@ -224,6 +279,15 @@ def install_capability_acquisition_patch() -> None:
         *,
         timeout: int = 60,
     ) -> Any:
+        # SLI semantic resolution, planning and provider-control prompts
+        # are internal traffic. They must bypass canvas/session routing.
+        if _is_internal_provider_prompt(message):
+            return original_call_provider(
+                self,
+                message,
+                timeout=timeout,
+            )
+
         # Mission-local controls and edits have highest priority.
         # They must never be reinterpreted as requests to acquire
         # capabilities that the active session already owns.
