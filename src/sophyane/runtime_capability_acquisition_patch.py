@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
 
 
@@ -119,12 +120,117 @@ def _is_internal_provider_prompt(message: str) -> bool:
     return False
 
 
-def _is_editable_session_request(message: str) -> bool:
-    """Return whether the user is asking to start an editable visual mission."""
+def _is_repository_coding_request(message: str) -> bool:
+    """Return whether repository/software intent overrides visual keywords.
+
+    Capability routing is hierarchical. Explicit requests to inspect, modify,
+    test or maintain source code must reach the repository coding runtime even
+    when the request discusses visual, canvas, image or website behavior.
+    """
 
     text = " ".join(
         str(message or "").lower().split()
     )
+
+    if not text:
+        return False
+
+    strong_repository_markers = (
+        "src/sophyane",
+        "src/",
+        "tests/",
+        "test_",
+        "pyproject.toml",
+        "setup.py",
+        "pytest",
+        "python source",
+        "python code",
+        "source code",
+        "repository",
+        "codebase",
+        "software engineering",
+        "software project",
+        "project files",
+        "git commit",
+        "git diff",
+        "git status",
+        "unit test",
+        "regression test",
+        "test suite",
+    )
+
+    coding_actions = (
+        "inspect",
+        "modify",
+        "change",
+        "fix",
+        "repair",
+        "patch",
+        "refactor",
+        "implement",
+        "improve",
+        "update",
+        "test",
+        "run",
+        "compile",
+        "debug",
+        "maintain",
+        "add",
+        "remove",
+        "write",
+        "edit",
+        "audit",
+    )
+
+    marker_count = sum(
+        marker in text
+        for marker in strong_repository_markers
+    )
+    action_present = any(
+        action in text
+        for action in coding_actions
+    )
+
+    # One highly specific path/test marker plus a coding action is enough.
+    if marker_count >= 1 and action_present:
+        return True
+
+    # Multiple repository markers are themselves unambiguous.
+    return marker_count >= 2
+
+
+def _contains_intent_term(text: str, term: str) -> bool:
+    """Match an intent term without accidental substring activation."""
+
+    escaped = re.escape(term)
+
+    # Multi-word phrases are still bounded at both ends.
+    return bool(
+        re.search(
+            rf"(?<![a-z0-9_]){escaped}(?![a-z0-9_])",
+            text,
+        )
+    )
+
+
+def _is_editable_session_request(message: str) -> bool:
+    """Return whether the user requests an editable visual artifact.
+
+    Explanations, questions and repository-coding tasks must not activate the
+    persistent canvas merely because they mention words such as visual,
+    design, canvas, editable or Canva.
+    """
+
+    text = " ".join(
+        str(message or "").lower().split()
+    )
+
+    if not text:
+        return False
+
+    # Explicit repository/software work outranks visual capability terms.
+    if _is_repository_coding_request(text):
+        return False
 
     artifact_terms = (
         "portrait",
@@ -153,25 +259,50 @@ def _is_editable_session_request(message: str) -> bool:
         "change only",
     )
 
-    creation_terms = (
-        "create",
-        "make",
-        "generate",
-        "draw",
-        "design",
-        "build",
-        "produce",
+    artifact_present = any(
+        _contains_intent_term(text, term)
+        for term in artifact_terms
     )
 
-    # Explicit editable requests activate the visual mission.
-    # Direct portrait-creation requests also activate it because
-    # returning a textual paraphrase does not satisfy the request.
-    return (
-        any(term in text for term in artifact_terms)
-        and (
-            any(term in text for term in editing_terms)
-            or any(term in text for term in creation_terms)
+    editing_present = any(
+        _contains_intent_term(text, term)
+        for term in editing_terms
+    )
+
+    # Creation verbs must be used as actual actions. "Design" is special:
+    # it activates only when used as an imperative/leading verb, not when it
+    # appears as a noun in "visual design principles".
+    creation_present = bool(
+        re.search(
+            r"(?<![a-z0-9_])"
+            r"(?:create|make|generate|draw|build|produce)"
+            r"(?![a-z0-9_])",
+            text,
         )
+        or re.match(
+            r"^(?:please\s+)?design\b",
+            text,
+        )
+    )
+
+    # Common explanatory or interrogative forms are conversation, unless
+    # they also contain an unambiguous editing request.
+    conversational = bool(
+        re.match(
+            r"^(?:what|why|how|when|where|who|which|explain|describe|"
+            r"define|tell me about|can you explain)\b",
+            text,
+        )
+    )
+
+    # Explanations and questions never start a persistent visual mission.
+    # Words such as editable, layers, Canva, undo or canvas may be the topic
+    # being discussed rather than an instruction to mutate an artifact.
+    if conversational:
+        return False
+
+    return artifact_present and (
+        editing_present or creation_present
     )
 
 
