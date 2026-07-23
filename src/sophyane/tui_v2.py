@@ -35,8 +35,121 @@ def _simple_chat_reply(message: str) -> str | None:
     return None
 
 
+
+def _pure_media_request(message: str) -> bool:
+    """
+    Identify standalone visual-media creation requests.
+
+    These requests should be answered through a media-capable conversational
+    route rather than being treated as requests to build source-code
+    artifacts.
+
+    Explicit requests for applications, websites, code, HTML, SVG, canvas,
+    scripts, generators, editors, APIs, or repositories remain software
+    execution requests.
+    """
+
+    text = " ".join(str(message or "").lower().split())
+
+    if not text:
+        return False
+
+    media_phrases = (
+        "portrait",
+        "illustration",
+        "drawing",
+        "sketch",
+        "painting",
+        "photograph",
+        "photo",
+        "picture",
+        "image",
+        "wallpaper",
+        "poster",
+        "logo",
+        "avatar",
+        "character art",
+        "concept art",
+        "digital art",
+        "cover art",
+        "album cover",
+        "book cover",
+        "flyer",
+        "banner",
+        "thumbnail",
+        "sticker",
+        "emoji",
+        "meme",
+        "infographic",
+        "render",
+        "watercolor",
+        "oil painting",
+        "cartoon",
+        "anime",
+    )
+
+    implementation_phrases = (
+        "website",
+        "web page",
+        "webpage",
+        "web app",
+        "application",
+        "mobile app",
+        "desktop app",
+        "android app",
+        "ios app",
+        "html",
+        "css",
+        "javascript",
+        "typescript",
+        "python",
+        "source code",
+        "write code",
+        "code that",
+        "script",
+        "program",
+        "canvas",
+        "svg",
+        "three.js",
+        "react",
+        "vue",
+        "flutter",
+        "gui",
+        "api",
+        "endpoint",
+        "repository",
+        "project files",
+        "browser game",
+        "image generator",
+        "portrait generator",
+        "logo generator",
+        "image editor",
+        "photo editor",
+        "drawing app",
+        "editing tool",
+        "command line tool",
+        "cli tool",
+    )
+
+    has_media_subject = any(
+        phrase in text
+        for phrase in media_phrases
+    )
+
+    requests_implementation = any(
+        phrase in text
+        for phrase in implementation_phrases
+    )
+
+    return has_media_subject and not requests_implementation
+
+
 def _execution_requested(message: str) -> bool:
     text = " ".join(message.lower().split())
+
+    # Standalone media creation is not a software build request.
+    if _pure_media_request(message):
+        return False
     advice = (
         "what should", "which project", "project should", "ideas", "recommend",
         "suggest", "explain", "tell me about", "what is", "how does", "can i",
