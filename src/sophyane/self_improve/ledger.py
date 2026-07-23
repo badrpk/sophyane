@@ -173,14 +173,33 @@ def list_proposals(limit: int = 50) -> list[dict[str, Any]]:
     return blocks[-limit:]
 
 
-def export_daily_epoch(day: str | None = None) -> dict[str, Any]:
-    """Bundle today's proposals into an epoch file (local + repo improvements/)."""
+def export_daily_epoch(
+    day: str | None = None,
+    *,
+    publish_to_repository: bool = False,
+    repository_directory: Path | None = None,
+) -> dict[str, Any]:
+    """Export one daily epoch to persistent Sophyane state.
+
+    Repository publication is an explicit operation. Ordinary runtime calls,
+    tests and recursive improvement rounds must not mutate a Git checkout
+    merely to persist bookkeeping or diagnostic history.
+    """
+
     day = day or time.strftime("%Y-%m-%d")
     blocks = _load_blocks()
     day_blocks = []
+
     for block in blocks:
-        ts = float(block.get("timestamp") or 0)
-        if time.strftime("%Y-%m-%d", time.localtime(ts)) == day:
+        timestamp = float(block.get("timestamp") or 0)
+
+        if (
+            time.strftime(
+                "%Y-%m-%d",
+                time.localtime(timestamp),
+            )
+            == day
+        ):
             day_blocks.append(block)
 
     epoch = {
@@ -191,38 +210,77 @@ def export_daily_epoch(day: str | None = None) -> dict[str, Any]:
         "chain_verify": verify_chain(),
         "count": len(day_blocks),
         "blocks": day_blocks,
-        "merkle_root": _merkle_root([str(b.get("hash")) for b in day_blocks]),
+        "merkle_root": _merkle_root(
+            [
+                str(block.get("hash"))
+                for block in day_blocks
+            ]
+        ),
     }
 
-    EPOCH_DIR.mkdir(parents=True, exist_ok=True)
-    local_path = EPOCH_DIR / f"epoch-{day}.json"
-    local_path.write_text(json.dumps(epoch, indent=2) + "\n", encoding="utf-8")
+    EPOCH_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    # Also write into repo tree when running from a git checkout
-    repo_dir = REPO_IMPROVEMENTS
-    try:
-        repo_dir.mkdir(parents=True, exist_ok=True)
-        repo_path = repo_dir / f"epoch-{day}.json"
-        repo_path.write_text(json.dumps(epoch, indent=2) + "\n", encoding="utf-8")
-        # append to catalog
-        catalog = repo_dir / "CATALOG.md"
-        line = f"- {day}: {len(day_blocks)} proposals · merkle `{epoch['merkle_root'][:16]}…` · device `{epoch['device']}`\n"
-        if catalog.exists():
-            existing = catalog.read_text(encoding="utf-8")
-            if day not in existing:
-                catalog.write_text(existing.rstrip() + "\n" + line, encoding="utf-8")
-        else:
-            catalog.write_text(
-                "# Sophyane daily improvement catalog\n\n"
-                "Hash-linked proposals from the field mesh. "
-                "Human/CI review before code merges.\n\n" + line,
-                encoding="utf-8",
-            )
-        epoch["repo_path"] = str(repo_path)
-    except OSError:
-        epoch["repo_path"] = ""
+    local_path = EPOCH_DIR / f"epoch-{day}.json"
+    local_path.write_text(
+        json.dumps(epoch, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     epoch["local_path"] = str(local_path)
+    epoch["repo_path"] = ""
+    epoch["repository_published"] = False
+
+    if not publish_to_repository:
+        return epoch
+
+    repo_dir = (
+        Path(repository_directory).expanduser().resolve()
+        if repository_directory is not None
+        else REPO_IMPROVEMENTS.resolve()
+    )
+
+    repo_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    repo_path = repo_dir / f"epoch-{day}.json"
+    repo_path.write_text(
+        json.dumps(epoch, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    catalog = repo_dir / "CATALOG.md"
+    line = (
+        f"- {day}: {len(day_blocks)} proposals "
+        f"· merkle `{epoch['merkle_root'][:16]}…` "
+        f"· device `{epoch['device']}`\n"
+    )
+
+    if catalog.exists():
+        existing = catalog.read_text(
+            encoding="utf-8",
+        )
+
+        if day not in existing:
+            catalog.write_text(
+                existing.rstrip() + "\n" + line,
+                encoding="utf-8",
+            )
+    else:
+        catalog.write_text(
+            "# Sophyane daily improvement catalog\n\n"
+            "Hash-linked proposals from the field mesh. "
+            "Human/CI review before code merges.\n\n"
+            + line,
+            encoding="utf-8",
+        )
+
+    epoch["repo_path"] = str(repo_path)
+    epoch["repository_published"] = True
     return epoch
 
 
