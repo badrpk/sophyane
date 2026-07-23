@@ -659,14 +659,45 @@ class CanvasSession:
         return self.scene
 
     def edit(self, request: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        operations = infer_operations(request, self.scene)
+        """Apply an instruction-led, recursively verified visual edit."""
 
-        if not operations:
+        from sophyane.recursive_visual_engine import (
+            improve_scene_until_satisfied,
+        )
+
+        result = improve_scene_until_satisfied(
+            request,
+            self.scene,
+            apply_operations,
+            threshold=1.0,
+            max_iterations=6,
+        )
+
+        if not result.operations:
             raise ValueError(
-                "No bounded visual edit could be inferred from the request."
+                "The visual instruction produced no safe scene change."
             )
 
-        return self.apply(operations, request), operations
+        self.undo_stack.append(deepcopy(self.scene))
+        self.redo_stack.clear()
+        self.scene = result.scene
+        self.scene["revision"] = (
+            int(self.scene.get("revision", 0)) + 1
+        )
+        self.scene["last_instruction"] = request
+        self.scene["requirement_match"] = {
+            "score": result.evaluation.score,
+            "satisfied": result.evaluation.satisfied,
+            "unmet": result.evaluation.unmet,
+            "details": result.evaluation.details,
+            "iterations": result.iterations,
+            "stop_reason": result.stop_reason,
+            "audit": result.audit,
+        }
+
+        self.save_snapshot(request)
+        self.persist()
+        return self.scene, result.operations
 
     def undo(self) -> dict[str, Any]:
         if not self.undo_stack:

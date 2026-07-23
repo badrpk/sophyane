@@ -374,61 +374,38 @@ def install_capability_acquisition_patch() -> None:
                     f"{session.scene.get('revision', 0)}"
                 )
 
-            edit_terms = (
-                "jinnah",
-                "attire",
-                "clothes",
-                "clothing",
-                "sherwani",
-                "chair",
-                "background",
-                "move",
-                "left",
-                "right",
-                "larger",
-                "bigger",
-                "smaller",
-                "sit",
-                "sits",
-                "sitting",
-                "seated",
-                "seat",
-                "seats",
-                "resize",
-                "change",
-                "modify",
-                "remove",
-                "add",
-            )
+            # Every non-internal instruction is offered to the active
+            # visual mission. The recursive visual engine decides whether
+            # it contains supported, explicit visual requirements. This
+            # avoids person-specific and keyword-specific routing.
+            try:
+                scene, operations = session.edit(message)
+            except ValueError:
+                pass
+            else:
+                match = scene.get("requirement_match", {})
+                self.progress(
+                    "Applied an instruction-led visual edit and "
+                    "recursively verified requirement coverage."
+                )
 
-            if any(
-                term in text
-                for term in edit_terms
-            ):
-                try:
-                    scene, operations = session.edit(
-                        message
-                    )
-                except ValueError:
-                    pass
-                else:
-                    self.progress(
-                        "Applied incremental edit to the same "
-                        "persistent visual document."
-                    )
+                return (
+                    "Updated the active editable visual session.\n\n"
+                    f"Document: {scene.get('document_id')}\n"
+                    f"Revision: {scene.get('revision')}\n"
+                    f"Operations: {len(operations)}\n"
+                    f"Requirement match: "
+                    f"{float(match.get('score', 0.0)) * 100:.1f}%\n"
+                    f"Improvement iterations: "
+                    f"{match.get('iterations', 0)}\n"
+                    f"Stop reason: "
+                    f"{match.get('stop_reason', 'unknown')}\n"
+                    f"Unmet requirements: "
+                    f"{len(match.get('unmet', []))}\n"
+                    f"Scene: {session.scene_path}\n"
+                    f"Preview: {session.preview_path}"
+                )
 
-                    return (
-                        "Updated the active editable visual "
-                        "session.\n\n"
-                        f"Document: "
-                        f"{scene.get('document_id')}\n"
-                        f"Revision: "
-                        f"{scene.get('revision')}\n"
-                        f"Operations: "
-                        f"{len(operations)}\n"
-                        f"Scene: {session.scene_path}\n"
-                        f"Preview: {session.preview_path}"
-                    )
 
         # An installed capability still needs a mission instance.
         # Starting a session is not recursive acquisition because the
