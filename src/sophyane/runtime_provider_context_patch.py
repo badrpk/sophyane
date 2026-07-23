@@ -135,13 +135,19 @@ def install_provider_context_patch() -> None:
                     additions = "\n".join(
                         f"- {item}" for item in live_instructions
                     )
-                    active_message = (
-                        original_message
-                        + "\n\nLIVE USER INSTRUCTIONS:\n"
+                    active_message = apply_live_instruction(
+                        self,
+                        original_message,
+                        live_instructions[-1],
+                    )
+
+                    active_message += (
+                        "\n\nALL LIVE USER INSTRUCTIONS IN ORDER:\n"
                         + additions
-                        + "\n\nRestart reasoning from the beginning using "
-                        + "the original request and every instruction above. "
-                        + "Disregard all cancelled unfinished responses."
+                        + "\n\nUse the current authoritative request and "
+                        + "retain every non-conflicting instruction. "
+                        + "The latest conflicting instruction has priority. "
+                        + "Disregard cancelled unfinished provider output."
                     )
                 else:
                     active_message = original_message
@@ -187,6 +193,7 @@ def install_provider_context_patch() -> None:
                 steering = False
                 typed: list[str] = []
                 last_key_time: float | None = None
+                instruction_submitted = False
                 restart_requested = False
 
                 while True:
@@ -250,6 +257,7 @@ def install_provider_context_patch() -> None:
                                         file=sys.stderr,
                                         flush=True,
                                     )
+                                    instruction_submitted = True
                                 elif char.isprintable():
                                     typed.append(char)
                                     print(
@@ -264,7 +272,10 @@ def install_provider_context_patch() -> None:
                     if (
                         steering
                         and last_key_time is not None
-                        and now - last_key_time >= 5.0
+                        and (
+                            instruction_submitted
+                            or now - last_key_time >= 12.0
+                        )
                     ):
                         instruction = "".join(typed).strip()
                         if instruction:
@@ -328,15 +339,29 @@ def install_provider_context_patch() -> None:
                             "go back to start",
                         )
 
-                        if any(
-                            phrase in normalized
-                            for phrase in restart_phrases
-                        ):
+                        matched_restart = next(
+                            (
+                                phrase
+                                for phrase in restart_phrases
+                                if (
+                                    normalized == phrase
+                                    or normalized.startswith(phrase + " ")
+                                    or normalized.startswith("/" + phrase + " ")
+                                    or normalized == "/" + phrase
+                                )
+                            ),
+                            None,
+                        )
+
+                        if matched_restart is not None:
                             live_instructions.clear()
                             cleaned = normalized
 
-                            for phrase in restart_phrases:
-                                cleaned = cleaned.replace(phrase, "")
+                            if cleaned.startswith("/"):
+                                cleaned = cleaned[1:]
+
+                            if cleaned.startswith(matched_restart):
+                                cleaned = cleaned[len(matched_restart):]
 
                             cleaned = cleaned.strip(" ,.;:-")
 
@@ -349,8 +374,8 @@ def install_provider_context_patch() -> None:
                         elif instruction:
                             live_instructions.append(instruction)
                             self.progress(
-                                "Five seconds without typing; "
-                                "restarting with live instruction"
+                                "Live instruction complete; "
+                                "restarting provider with all requirements"
                             )
                         else:
                             self.progress(
