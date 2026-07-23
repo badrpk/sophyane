@@ -61,3 +61,8 @@ continual/
 *.bak
 .env
 .env.*
+*.backup*
+*~
+credentials*
+secrets*
+node_modules/
