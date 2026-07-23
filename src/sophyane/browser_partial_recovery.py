@@ -5,6 +5,9 @@ browser generation can be diagnosed instead of silently discarded.
 """
 from __future__ import annotations
 
+import hashlib
+import os
+
 import re
 import time
 from pathlib import Path
@@ -41,24 +44,73 @@ def _new_run_id() -> str:
     return f"{stamp}-{time.time_ns() % 1_000_000_000:09d}"
 
 
+def _diagnostic_root() -> Path:
+    """Return the persistent state directory for provider evidence."""
+
+    configured = (
+        os.environ.get("SOPHYANE_PROVIDER_DIAGNOSTIC_DIR")
+        or os.environ.get("SOPHYANE_STATE_DIR")
+    )
+
+    if configured:
+        root = Path(configured).expanduser()
+    else:
+        root = (
+            Path.home()
+            / ".local"
+            / "state"
+            / "sophyane"
+            / "provider-responses"
+        )
+
+    root.mkdir(parents=True, exist_ok=True)
+    return root.resolve()
+
+
+def _workspace_diagnostic_directory(workspace: Path) -> Path:
+    """Return an isolated evidence directory for one workspace."""
+
+    resolved = workspace.expanduser().resolve()
+    identity = hashlib.sha256(
+        str(resolved).encode("utf-8", errors="replace")
+    ).hexdigest()[:16]
+
+    safe_name = "".join(
+        character
+        if character.isalnum() or character in {"-", "_"}
+        else "-"
+        for character in resolved.name
+    ).strip("-_") or "workspace"
+
+    directory = _diagnostic_root() / f"{safe_name}-{identity}"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
 def _save_raw(
     workspace: Path,
     run_id: str | int,
     sequence: int | str,
     text: str | None = None,
 ) -> Path:
-    """Save provider output while preserving the historical three-argument API.
+    """Save provider output in Sophyane state, never in user workspaces.
 
-    Supported forms:
-      _save_raw(workspace, run_id, sequence, text)
-      _save_raw(workspace, sequence, text)
+    The historical three-argument and current four-argument call forms remain
+    supported, but both now write to a workspace-isolated state directory.
     """
+
+    destination = _workspace_diagnostic_directory(
+        Path(workspace)
+    )
+
     if text is None:
         # Historical API:
         #   _save_raw(workspace, sequence, text)
         legacy_sequence = int(run_id)
         legacy_text = str(sequence)
-        path = workspace / f"{RAW_PREFIX}-{legacy_sequence}.txt"
+        path = destination / (
+            f"{RAW_PREFIX}-{legacy_sequence}.txt"
+        )
         path.write_text(
             legacy_text,
             encoding="utf-8",
@@ -66,8 +118,14 @@ def _save_raw(
         )
         return path
 
-    path = workspace / f"{RAW_PREFIX}-{run_id}-{int(sequence)}.txt"
-    path.write_text(str(text), encoding="utf-8", errors="replace")
+    path = destination / (
+        f"{RAW_PREFIX}-{run_id}-{int(sequence)}.txt"
+    )
+    path.write_text(
+        str(text),
+        encoding="utf-8",
+        errors="replace",
+    )
     return path
 
 

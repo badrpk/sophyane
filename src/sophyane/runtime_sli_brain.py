@@ -34,20 +34,155 @@ def _clean(text: str, limit: int = 700) -> str:
     return " ".join(str(text or "").strip().split())[:limit]
 
 
+def _repository_coding_profile_request(
+    message: str,
+) -> bool:
+    """Return whether a request primarily targets software source."""
+
+    text = " ".join(
+        str(message or "").lower().split()
+    )
+
+    repository_markers = (
+        "src/",
+        "src/sophyane",
+        "tests/",
+        "pytest",
+        "python source",
+        "python code",
+        "source code",
+        "repository",
+        "codebase",
+        "software engineering",
+        "software project",
+        "project files",
+        "git diff",
+        "git commit",
+        "regression test",
+        "test suite",
+    )
+
+    coding_actions = (
+        "inspect",
+        "modify",
+        "fix",
+        "repair",
+        "patch",
+        "refactor",
+        "implement",
+        "improve",
+        "update",
+        "test",
+        "run",
+        "compile",
+        "debug",
+        "maintain",
+        "add",
+        "remove",
+        "write",
+        "edit",
+        "audit",
+    )
+
+    marker_count = sum(
+        marker in text
+        for marker in repository_markers
+    )
+
+    return (
+        marker_count >= 2
+        or (
+            marker_count >= 1
+            and any(
+                action in text
+                for action in coding_actions
+            )
+        )
+    )
+
+
 def _profile(message: str) -> str:
     text = message.lower()
-    if "game" in text or any(x in text for x in ("chess", "snake", "tetris", "tic tac", "pong", "ping pong")):
+
+    # Repository/source intent outranks visual, website and HTML words.
+    # Those words may occur in negations, bug descriptions, file names or
+    # acceptance criteria rather than describe the requested deliverable.
+    if _repository_coding_profile_request(text):
+        return "REPOSITORY_CODING"
+
+    if "game" in text or any(
+        item in text
+        for item in (
+            "chess",
+            "snake",
+            "tetris",
+            "tic tac",
+            "pong",
+            "ping pong",
+        )
+    ):
         return "GAME_HTML5"
-    if any(x in text for x in ("dashboard", "admin panel", "analytics")):
+
+    if any(
+        item in text
+        for item in (
+            "dashboard",
+            "admin panel",
+            "analytics",
+        )
+    ):
         return "WEB_DASHBOARD"
-    if any(x in text for x in ("shop", "store", "ecommerce", "marketplace", "cart", "grocery", "kiryana")):
+
+    if any(
+        item in text
+        for item in (
+            "shop",
+            "store",
+            "ecommerce",
+            "marketplace",
+            "cart",
+            "grocery",
+            "kiryana",
+        )
+    ):
         return "WEB_ECOMMERCE"
-    if any(x in text for x in ("website", "web app", "landing page", "html", "portfolio", "site")):
-        if any(x in text for x in ("luxury", "premium", "editorial", "cinematic", "fancy", "beautiful")):
+
+    if any(
+        item in text
+        for item in (
+            "website",
+            "web app",
+            "landing page",
+            "html",
+            "portfolio",
+            "site",
+        )
+    ):
+        if any(
+            item in text
+            for item in (
+                "luxury",
+                "premium",
+                "editorial",
+                "cinematic",
+                "fancy",
+                "beautiful",
+            )
+        ):
             return "WEB_PREMIUM"
+
         return "WEB_STANDARD"
-    if any(x in text for x in ("android", "ios", "mobile app")):
+
+    if any(
+        item in text
+        for item in (
+            "android",
+            "ios",
+            "mobile app",
+        )
+    ):
         return "MOBILE_APP"
+
     return "GENERAL_TASK"
 
 
