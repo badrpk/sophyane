@@ -21,6 +21,49 @@ def _capability_workspace(tui: Any, request: str) -> Path:
     return workspace
 
 
+def _active_canvas_session(
+    tui: Any,
+    workspace: Path | str | None = None,
+) -> Any:
+    """Return the live CanvasSession owned by this TUI mission."""
+
+    from sophyane.editable_canvas import CanvasSession
+
+    current = getattr(
+        tui,
+        "_active_canvas_session",
+        None,
+    )
+
+    if workspace is None:
+        workspace = getattr(
+            tui,
+            "_active_canvas_workspace",
+            None,
+        )
+
+    if current is not None:
+        if workspace is None:
+            return current
+
+        expected = Path(workspace).expanduser().resolve()
+
+        if current.workspace == expected:
+            return current
+
+    if not workspace:
+        raise RuntimeError(
+            "No active editable workspace is registered."
+        )
+
+    resolved = Path(workspace).expanduser().resolve()
+    session = CanvasSession.open(resolved)
+
+    tui._active_canvas_workspace = str(resolved)
+    tui._active_canvas_session = session
+    return session
+
+
 def _format_result(result: Any) -> str:
     lines = [
         result.message,
@@ -101,9 +144,13 @@ def install_capability_acquisition_patch() -> None:
                     "original request against the upgraded runtime."
                 )
 
-                # The acquisition result is returned directly for the
-                # first iteration. Follow-up messages are handled by
-                # the active-session branch below.
+                # Retain the same session object throughout this
+                # mission so undo and redo history remain available.
+                self._active_canvas_session = _active_canvas_session(
+                    self,
+                    result.payload.get("workspace") or workspace,
+                )
+
                 return _format_result(result)
 
             self.progress(
@@ -118,8 +165,10 @@ def install_capability_acquisition_patch() -> None:
         )
 
         if active_workspace:
-            from sophyane.editable_canvas import CanvasSession
-
+            session = _active_canvas_session(
+                self,
+                active_workspace,
+            )
             text = " ".join(message.lower().split())
 
             edit_terms = (
@@ -141,9 +190,6 @@ def install_capability_acquisition_patch() -> None:
             )
 
             if text in {"/undo", "undo"}:
-                session = CanvasSession.open(
-                    Path(active_workspace)
-                )
                 session.undo()
                 self.progress(
                     "Applied undo to the active editable session."
@@ -156,9 +202,6 @@ def install_capability_acquisition_patch() -> None:
                 )
 
             if text in {"/redo", "redo"}:
-                session = CanvasSession.open(
-                    Path(active_workspace)
-                )
                 session.redo()
                 self.progress(
                     "Applied redo to the active editable session."
@@ -171,10 +214,6 @@ def install_capability_acquisition_patch() -> None:
                 )
 
             if any(term in text for term in edit_terms):
-                session = CanvasSession.open(
-                    Path(active_workspace)
-                )
-
                 try:
                     scene, operations = session.edit(message)
                 except ValueError:

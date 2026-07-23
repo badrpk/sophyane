@@ -58,6 +58,7 @@ def main() -> int:
     from sophyane.runtime_orchestration_patch import install_orchestration_patch
     from sophyane.runtime_premium_asset_pipeline import install_premium_asset_pipeline
     from sophyane.runtime_provider_context_patch import install_provider_context_patch
+    from sophyane.runtime_capability_acquisition_patch import install_capability_acquisition_patch
     from sophyane.runtime_provider_error_patch import install_provider_error_patch
     from sophyane.runtime_quality_escalation import install_quality_escalation
     from sophyane.runtime_safety import install_runtime_safety
@@ -80,6 +81,7 @@ def main() -> int:
     from sophyane.runtime_cursor_tab_patch import install_cursor_tab_patch
     install_cursor_tab_patch()
     install_provider_context_patch()
+    install_capability_acquisition_patch()
     install_interrupt_patch()
     install_provider_error_patch()
     install_input_patch()
