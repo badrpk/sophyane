@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import select
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -115,6 +117,89 @@ def _record(event: str, decision: BrainDecision, extra: dict[str, Any] | None = 
         pass
 
 
+def _timed_console_input(
+    prompt: str,
+    *,
+    timeout: float = 10.0,
+    default: str = "",
+) -> tuple[str, bool]:
+    """Read one line without allowing HITL to halt SLI indefinitely.
+
+    Returns ``(text, timed_out)``. On terminals without selectable stdin,
+    SLI uses the default immediately rather than risking a permanent pause.
+    """
+
+    print(prompt, end="", flush=True)
+
+    try:
+        if not sys.stdin.isatty():
+            print(default, flush=True)
+            return default, True
+
+        readable, _, _ = select.select(
+            [sys.stdin],
+            [],
+            [],
+            max(0.0, timeout),
+        )
+
+        if not readable:
+            print(default, flush=True)
+            return default, True
+
+        line = sys.stdin.readline()
+
+        if line == "":
+            print(default, flush=True)
+            return default, True
+
+        return line.rstrip("\r\n"), False
+
+    except (OSError, ValueError):
+        # Some mobile shells and redirected terminals cannot select stdin.
+        # Autonomy is safer than falling back to indefinite input().
+        print(default, flush=True)
+        return default, True
+
+
+def _semantic_steering(
+    candidate: str,
+    instruction: str,
+) -> str:
+    instruction = " ".join(
+        str(instruction or "").strip().split()
+    )
+
+    if not instruction:
+        return candidate
+
+    return (
+        candidate.rstrip()
+        + "\n\nLIVE USER STEERING — incorporate without discarding "
+          "non-conflicting approved requirements:\n"
+        + instruction
+    )
+
+
+def _confidence_value(ledger: Any) -> float:
+    try:
+        return float(getattr(ledger, "confidence", 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _human_choice_materially_useful(ledger: Any) -> bool:
+    """Ask only when SLI has a genuine semantic decision to resolve."""
+
+    uncertain = tuple(
+        getattr(ledger, "uncertain_terms", ()) or ()
+    )
+    confidence = _confidence_value(ledger)
+
+    return bool(uncertain) and confidence < 0.78
+
+
+
 def _confirm(self: Any, original: str, *, has_project: bool, tui_v2: Any) -> tuple[str, str] | None:
     from sophyane.runtime_sli_semantic import resolve
 
@@ -158,28 +243,120 @@ def _confirm(self: Any, original: str, *, has_project: bool, tui_v2: Any) -> tup
             print("\nAcceptance points:", flush=True)
             for item in decision.criteria:
                 print(f"- {item}", flush=True)
-        print("\n1. Approve and continue\n2. Edit and refine again\n0. Cancel", flush=True)
-        try:
-            choice = input("Choose [0-2, default 1]: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return None
-        if choice in {"", "1"}:
-            _record("approved", decision, {"semantic_resolutions": ledger.resolutions})
+        # High-confidence SLI decisions do not stop for ceremonial
+        # approval. HITL is reserved for material uncertainty.
+        if not _human_choice_materially_useful(ledger):
+            self.progress(
+                "SLI Autonomy: confidence sufficient; continuing "
+                "without blocking for approval."
+            )
+            _record(
+                "autonomous_approved",
+                decision,
+                {
+                    "semantic_resolutions": ledger.resolutions,
+                    "confidence": _confidence_value(ledger),
+                },
+            )
             return decision.route, decision.refined_request
+
+        print(
+            "\nSLI is materially uncertain. You may steer it, "
+            "but progress will not halt.",
+            flush=True,
+        )
+        print(
+            "\n1. Continue with SLI's preferred interpretation"
+            "\n2. Replace or refine the request"
+            "\n3. Use the original request without semantic resolution"
+            "\n0. Cancel",
+            flush=True,
+        )
+        print(
+            "\nType a number or type natural-language steering. "
+            "No response in 10 seconds selects option 1.",
+            flush=True,
+        )
+
+        choice, timed_out = _timed_console_input(
+            "Choose [0-3, auto 1 in 10s]: ",
+            timeout=10.0,
+            default="1",
+        )
+        choice = choice.strip()
+
+        if timed_out:
+            self.progress(
+                "SLI Autonomy: no HITL instruction received in "
+                "10 seconds; selected its preferred option."
+            )
+
+        if choice in {"", "1"}:
+            _record(
+                "autonomous_timeout_approved"
+                if timed_out
+                else "human_approved",
+                decision,
+                {
+                    "semantic_resolutions": ledger.resolutions,
+                    "confidence": _confidence_value(ledger),
+                },
+            )
+            return decision.route, decision.refined_request
+
         if choice == "0":
-            _record("cancelled", decision)
+            _record("human_cancelled", decision)
             return None
+
+        if choice == "3":
+            original_decision = decide(
+                original,
+                has_project=has_project,
+            )
+            _record(
+                "original_intent_selected",
+                original_decision,
+            )
+            return (
+                original_decision.route,
+                original_decision.refined_request,
+            )
+
         if choice == "2":
-            try:
-                edited = input("Edit request: ").strip()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                return None
-            if edited:
-                candidate = edited
+            edited, edit_timed_out = _timed_console_input(
+                "Refine request [auto continue unchanged in 10s]: ",
+                timeout=10.0,
+                default="",
+            )
+
+            if edit_timed_out or not edited.strip():
+                self.progress(
+                    "SLI Autonomy: refinement window expired; "
+                    "continuing with the preferred interpretation."
+                )
+                return decision.route, decision.refined_request
+
+            candidate = _semantic_steering(
+                candidate,
+                edited,
+            )
+            self.progress(
+                "SLI HITL: refinement incorporated; semantic "
+                "evaluation continues."
+            )
             continue
-        print("Please choose 0, 1, or 2.", flush=True)
+
+        # Any non-menu text is live semantic steering. This lets
+        # users type naturally instead of translating intent into
+        # menu numbers.
+        candidate = _semantic_steering(
+            candidate,
+            choice,
+        )
+        self.progress(
+            "SLI HITL: live instruction incorporated; autonomy "
+            "continues without restarting the mission."
+        )
 
 
 def install_sli_brain() -> None:
