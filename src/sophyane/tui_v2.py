@@ -431,3 +431,14 @@ def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
     logger = configure_logging(verbose)
     agent = SophyaneAgent(create_provider(config), MemoryStore(), logger)
     return ObservableTUI(config=config, ask=agent.ask, handle_internal=handle_internal_command).run()
+
+
+# sophyane-capability-acquisition-bootstrap
+try:
+    from sophyane.runtime_capability_acquisition_patch import (
+        install_capability_acquisition_patch,
+    )
+    install_capability_acquisition_patch()
+except Exception:
+    # Runtime remains usable if an optional acquisition plugin fails.
+    pass
