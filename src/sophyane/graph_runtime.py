@@ -18,7 +18,7 @@ from typing import Any, Callable, Iterable, Mapping
 from sophyane.config import DATA_DIR, ensure_directories
 
 State = dict[str, Any]
-Node = Callable[[State], State | "Command"]
+Node = Callable[[State], Any]
 Condition = Callable[[State], str]
 Progress = Callable[[str], None]
 
