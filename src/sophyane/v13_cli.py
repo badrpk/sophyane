@@ -1,5 +1,6 @@
 """Sophyane v16 CLI: repository-aware coding execution by default."""
 from __future__ import annotations
+import re
 
 import argparse
 import json
