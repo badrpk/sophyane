@@ -91,6 +91,24 @@ class GeminiProvider(Provider):
         self._token_usage["total_tokens"] += int(usage.get("totalTokenCount", 0) or 0)
         self._token_usage["model_calls"] += 1
 
+    @staticmethod
+    def _is_artifact_request(prompt: str, system_prompt: str) -> bool:
+        """Detect execution calls that must allow file/action JSON."""
+        text = f"{system_prompt}\n{prompt}".lower()
+        markers = (
+            "compact provider repair",
+            "generate real source files",
+            "return one compact json object",
+            "write_file",
+            "append_file",
+            "run_command",
+            "top-level action",
+            "files array",
+            "\"files\"",
+            "artifact request",
+        )
+        return any(marker in text for marker in markers)
+
     def generate(self, prompt: str, system_prompt: str) -> str:
         model = urllib.parse.quote(self.model, safe="")
         key = urllib.parse.quote(self.api_key, safe="")

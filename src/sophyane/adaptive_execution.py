@@ -362,11 +362,22 @@ def _execute(runtime: Any, action: dict[str, Any], workspace: Path,
 
 
 def _compact_repair_prompt(request: str, files: list[str], result: str) -> str:
+    existing = ", ".join(files[-40:]) if files else "(none)"
     return (
-        "Return one compact JSON object only. Generate real source files before commands. "
-        "Use {\"files\":[{\"path\":\"relative\",\"content\":\"complete code\"}]} or one action. "
-        "Never use cd or repeat user words as a command. Never append a complete file; write_file replaces it.\n"
-        f"Request: {request[-320:]}\nFiles: {files[-12:]}\nLast result: {result[-450:]}"
+        "ADAPTIVE EXECUTION ARTIFACT REQUEST. "
+        "Return exactly one valid JSON object with no markdown. "
+        "Use either "
+        "{\\\"action\\\":{\\\"type\\\":\\\"write_file\\\","
+        "\\\"path\\\":\\\"relative/path\\\","
+        "\\\"content\\\":\\\"complete content\\\"}} "
+        "or {\\\"files\\\":[{\\\"path\\\":\\\"relative/path\\\","
+        "\\\"content\\\":\\\"complete content\\\"}]}. "
+        "Create one complete missing project file per response. "
+        "When files are ready, return one run_command action. "
+        "Use relative paths only and never use cd.\n"
+        f"ORIGINAL TASK:\n{request[-7000:]}\n"
+        f"CURRENT FILES:\n{existing}\n"
+        f"LAST RESPONSE OR RESULT:\n{result[-1800:]}"
     )
 
 
@@ -395,11 +406,31 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
         plan = runtime.extract_plan(current)
         action = _selected_action(runtime, plan) if plan else None
         if not action:
+            rejected = (current or "").strip()
+            prefix = rejected[:900].replace("\n", "\\n")
+            progress(
+                "Provider response was not an executable action "
+                f"(length={len(rejected)}, prefix={prefix!r})"
+            )
+            evidence.append(
+                f"Rejected response: length={len(rejected)} prefix={prefix!r}"
+            )
+
             if repairs >= 2:
-                return "Execution stopped safely: provider could not produce a usable artifact.\n\n" + "\n".join(evidence)
+                return (
+                    "Execution stopped safely: provider could not produce "
+                    "a usable artifact.\n\n" + "\n".join(evidence)
+                )
+
             repairs += 1
             progress(f"Requesting compact provider repair ({repairs}/2)")
-            response = ask(_compact_repair_prompt(original_request, _files(workspace), current))
+            response = ask(
+                _compact_repair_prompt(
+                    original_request,
+                    _files(workspace),
+                    rejected,
+                )
+            )
             current = getattr(response, "text", str(response))
             continue
         kind = str(action.get("type") or "").lower()
