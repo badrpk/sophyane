@@ -308,6 +308,13 @@ def _normalise_action(action: Any) -> dict[str, Any] | None:
         "file": "write_file",
         "write": "write_file",
         "create_file": "write_file",
+        "complete": "message",
+        "completed": "message",
+        "done": "message",
+        "finish": "message",
+        "finished": "message",
+        "final": "message",
+        "success": "message",
     }
 
     if kind in aliases:
@@ -528,6 +535,22 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             current = getattr(response, "text", str(response))
             continue
         kind = str(action.get("type") or "").lower()
+
+        # Completion aliases are normalized by _normalise_action, but keep
+        # this defensive conversion for plans supplied by older adapters.
+        if kind in {
+            "complete",
+            "completed",
+            "done",
+            "finish",
+            "finished",
+            "final",
+            "success",
+        }:
+            action = dict(action)
+            action["type"] = "message"
+            kind = "message"
+
         if kind in {"respond", "message"} and not _files(workspace):
             current = "Premature completion: no artifact exists."
             continue

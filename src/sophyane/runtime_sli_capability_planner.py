@@ -11,6 +11,7 @@ import json
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 
@@ -164,9 +165,29 @@ def install_sli_capability_planner() -> None:
     def run(*, initial_text: str, original_request: str, ask: Any, workspace: Path | None = None,
             max_steps: int = 12, progress: Any = None) -> str:
         plan = classify(original_request)
-        workspace_path = (workspace or Path.cwd()).resolve()
-        workspace_path.mkdir(parents=True, exist_ok=True)
         progress = progress or (lambda _message: None)
+
+        # At this layer the complete original request is available. Honor an
+        # explicit absolute project directory instead of the earlier internal
+        # ~/.sophyane/workspaces allocation.
+        match = re.search(
+            r"(?:work exclusively inside|work inside|workspace(?: is|:)?|"
+            r"current working directory(?: is|:)?)\\s*[`\"']?"
+            r"(/[A-Za-z0-9_./~+@%=-]+)",
+            original_request,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+            raw_path = match.group(1).rstrip("`\"'.,;:)")
+            workspace_path = Path(raw_path).expanduser().resolve()
+            progress(
+                f"Using explicitly requested workspace: {workspace_path}"
+            )
+        else:
+            workspace_path = (workspace or Path.cwd()).resolve()
+
+        workspace_path.mkdir(parents=True, exist_ok=True)
         progress(
             f"SLI Capability Planner: {plan.project_type} / {plan.language or 'unspecified'} / "
             f"{plan.target} / {plan.builder}"
