@@ -147,7 +147,7 @@ class ProductBenchmarks:
             return
         def generate() -> bool:
             from sophyane.config import load_config
-            from sophyane.providers import create_provider
+            from sophyane.main import create_provider
             provider = create_provider(load_config())
             prompt = "Create one complete self-contained responsive HTML counter app. Return only HTML. It must include viewport, a visible score, a button, JavaScript interaction, 100vw and 100vh."
             text = str(provider.generate(prompt, "You are a product engineer. Return the complete artifact only."))
