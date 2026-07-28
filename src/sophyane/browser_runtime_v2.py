@@ -41,7 +41,7 @@ def _localize_demo_photos(workspace: Path, progress: Progress) -> None:
         digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
         target = assets / f"photo-{digest}.jpg"
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": "Sophyane/20 premium-demo image fetcher"})
+            request = urllib.request.Request(url, headers={"User-Agent": "Sophyane/21 premium-demo image fetcher"})
             with urllib.request.urlopen(request, timeout=15) as response:
                 content_type = str(response.headers.get("Content-Type") or "").lower()
                 if not content_type.startswith("image/"):
@@ -80,6 +80,32 @@ def _server_for(workspace: Path) -> str:
     return base
 
 
+def _desktop_new_tab(url: str) -> tuple[bool, str]:
+    """Open a URL in a distinct browser tab when a desktop browser is available."""
+    browser_commands = (
+        ("google-chrome", ["google-chrome", "--new-tab", url]),
+        ("google-chrome-stable", ["google-chrome-stable", "--new-tab", url]),
+        ("chromium", ["chromium", "--new-tab", url]),
+        ("chromium-browser", ["chromium-browser", "--new-tab", url]),
+        ("firefox", ["firefox", "--new-tab", url]),
+    )
+    for executable, command in browser_commands:
+        if shutil.which(executable):
+            try:
+                process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except OSError:
+                continue
+            return True, f"Browser command: {' '.join(command)}\nPID: {process.pid}"
+
+    opened = webbrowser.open_new_tab(url)
+    return bool(opened), f"Browser new-tab request accepted={opened}."
+
+
 def open_verified_browser(workspace: Path, progress: Progress) -> tuple[bool, str]:
     candidate = workspace.resolve() / "index.html"
     if not candidate.is_file():
@@ -104,7 +130,8 @@ def open_verified_browser(workspace: Path, progress: Progress) -> tuple[bool, st
         return False, "Browser launch blocked: served page does not match current index.html."
 
     progress(f"Verified current workspace page over HTTP: {len(body)} bytes; SHA-256 {expected_hash[:12]}")
-    progress(f"Opening verified browser preview: {url}")
+    progress(f"Opening verified product preview in a new browser tab: {url}")
+
     if shutil.which("termux-open-url"):
         completed = subprocess.run(["termux-open-url", url], text=True, capture_output=True)
         return completed.returncode == 0, (
@@ -114,12 +141,23 @@ def open_verified_browser(workspace: Path, progress: Progress) -> tuple[bool, st
             f"{completed.stdout}{completed.stderr}"
         )
     if shutil.which("am"):
-        completed = subprocess.run(["am", "start", "-a", "android.intent.action.VIEW", "-d", url], text=True, capture_output=True)
+        completed = subprocess.run(
+            [
+                "am", "start", "--activity-new-task", "-a",
+                "android.intent.action.VIEW", "-d", url,
+            ],
+            text=True,
+            capture_output=True,
+        )
         return completed.returncode == 0, (
             f"Browser file: {candidate}\nBrowser URL: {url}\n"
             f"HTTP verification: SHA-256 matched {expected_hash[:12]}\n"
-            f"Browser command: am start ... {url}\nExit code: {completed.returncode}\n"
+            f"Browser command: Android VIEW new-task {url}\nExit code: {completed.returncode}\n"
             f"{completed.stdout}{completed.stderr}"
         )
-    opened = webbrowser.open(url)
-    return bool(opened), f"Browser URL: {url}\nHTTP verification: SHA-256 matched {expected_hash[:12]}\nBrowser accepted={opened}."
+
+    opened, launch = _desktop_new_tab(url)
+    return opened, (
+        f"Browser file: {candidate}\nBrowser URL: {url}\n"
+        f"HTTP verification: SHA-256 matched {expected_hash[:12]}\n{launch}"
+    )
