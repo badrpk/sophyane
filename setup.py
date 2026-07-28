@@ -3,10 +3,10 @@ from setuptools import find_packages, setup
 
 setup(
     name="sophyane",
-    version="20.3.1",
+    version="21.0.0",
     description=(
-        "Adaptive local agentic software harness with validator-grounded "
-        "execution learning"
+        "Graph-native local agentic software harness with durable execution, "
+        "checkpointing and validator-grounded recovery"
     ),
     packages=find_packages(where="src"),
     package_dir={"": "src"},
