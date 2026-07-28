@@ -94,18 +94,54 @@ class GeminiProvider(Provider):
     def generate(self, prompt: str, system_prompt: str) -> str:
         model = urllib.parse.quote(self.model, safe="")
         key = urllib.parse.quote(self.api_key, safe="")
+
+        normalized_prompt = " ".join(prompt.lower().split())
+
+        # Planning calls require schema-constrained JSON. Artifact calls such
+        # as raw HTML must not inherit the planning schema, otherwise Gemini
+        # is prevented from returning the requested source document.
+        raw_artifact_markers = (
+            "output raw html only",
+            "output only missing javascript/html",
+            "beginning <!doctype html>",
+            "ending </html>",
+            "one complete self-contained index.html",
+            "continue the unfinished index.html",
+        )
+        raw_artifact_request = any(
+            marker in normalized_prompt
+            for marker in raw_artifact_markers
+        )
+
+        generation_config = {
+            "temperature": self.temperature,
+            "maxOutputTokens": (
+                max(self.max_tokens, 16384)
+                if raw_artifact_request
+                else self.max_tokens
+            ),
+        }
+
+        if not raw_artifact_request:
+            generation_config.update(
+                {
+                    "responseMimeType": "application/json",
+                    "responseJsonSchema": PLAN_SCHEMA,
+                }
+            )
+
         response = post_json(
             "https://generativelanguage.googleapis.com/"
             f"v1beta/models/{model}:generateContent?key={key}",
             {
                 "system_instruction": {"parts": [{"text": system_prompt}]},
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "temperature": self.temperature,
-                    "maxOutputTokens": self.max_tokens,
-                    "responseMimeType": "application/json",
-                    "responseJsonSchema": PLAN_SCHEMA,
-                },
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [{"text": prompt}],
+                    }
+                ],
+                "generationConfig": generation_config,
             },
             timeout=self.timeout,
         )

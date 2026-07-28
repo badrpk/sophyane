@@ -200,8 +200,14 @@ def _validate_html(html: str, request: str) -> str:
     return ""
 
 
-def _one_shot_browser_artifact(*, ask: Callable[[str], Any], original_request: str,
-                               workspace: Path, progress: Callable[[str], None]) -> str | None:
+def _one_shot_browser_artifact(
+    *,
+    ask: Callable[[str], Any],
+    original_request: str,
+    workspace: Path,
+    progress: Callable[[str], None],
+    ask_raw: Callable[[str], Any] | None = None,
+) -> str | None:
     target = workspace / "index.html"
     existing = ""
     if target.exists():
@@ -210,7 +216,10 @@ def _one_shot_browser_artifact(*, ask: Callable[[str], Any], original_request: s
         except Exception:
             existing = ""
     progress("Requesting one-shot provider-generated HTML edit" if existing else "Requesting one-shot provider-generated HTML artifact")
-    response = ask(_raw_html_prompt(original_request, existing))
+    artifact_ask = ask_raw or ask
+    response = artifact_ask(
+        _raw_html_prompt(original_request, existing)
+    )
     raw = getattr(response, "text", str(response))
     html = _extract_html(raw)
     partial = _extract_partial_html(raw)
@@ -228,7 +237,9 @@ def _one_shot_browser_artifact(*, ask: Callable[[str], Any], original_request: s
         progress(
             f"Repairing incomplete provider HTML ({attempt}/2; {len(partial)} characters preserved): {problem}"
         )
-        response = ask(_html_continuation_prompt(partial, problem))
+        response = artifact_ask(
+            _html_continuation_prompt(partial, problem)
+        )
         continuation = getattr(response, "text", str(response))
         partial = _join_html_continuation(partial, continuation)
         html = _extract_html(partial)

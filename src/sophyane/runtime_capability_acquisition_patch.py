@@ -104,6 +104,23 @@ def _is_internal_provider_prompt(message: str) -> bool:
         "tool action",
     )
 
+    # Browser artifact prompts are internal provider traffic. They request
+    # source code from the configured model and must never be consumed by
+    # the editable visual-session capability wrapper.
+    raw_artifact_markers = (
+        "output raw html only",
+        "output only missing javascript/html",
+        "beginning <!doctype html>",
+        "ending </html>",
+        "one complete self-contained index.html",
+        "one compact self-contained index.html",
+        "continue the unfinished index.html",
+        "final tail:",
+    )
+
+    if any(marker in text for marker in raw_artifact_markers):
+        return True
+
     if any(text.startswith(prefix) for prefix in strong_prefixes):
         return True
 
