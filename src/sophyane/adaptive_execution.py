@@ -289,8 +289,84 @@ def _file_bundle_action(plan: dict[str, Any]) -> dict[str, Any] | None:
     return {"type": "batch", "actions": actions} if actions else None
 
 
+def _normalise_action(action: Any) -> dict[str, Any] | None:
+    """Accept common provider action aliases and convert them to runtime actions."""
+    if not isinstance(action, dict):
+        return None
+
+    value = dict(action)
+    kind = str(value.get("type") or value.get("kind") or "").strip().lower()
+
+    aliases = {
+        "command": "run_command",
+        "cmd": "run_command",
+        "shell": "run_command",
+        "bash": "run_command",
+        "run": "run_command",
+        "execute": "run_command",
+        "exec": "run_command",
+        "file": "write_file",
+        "write": "write_file",
+        "create_file": "write_file",
+    }
+
+    if kind in aliases:
+        value["type"] = aliases[kind]
+    elif kind:
+        value["type"] = kind
+
+    if value.get("type") == "run_command":
+        command = (
+            value.get("command")
+            or value.get("cmd")
+            or value.get("content")
+        )
+        if not isinstance(command, str) or not command.strip():
+            return None
+        value["command"] = command.strip()
+
+    if value.get("type") in {"write_file", "append_file"}:
+        path = value.get("path") or value.get("file")
+        content = value.get("content")
+        if not isinstance(path, str) or not path.strip():
+            return None
+        if not isinstance(content, str):
+            return None
+        value["path"] = path.strip()
+
+    return value
+
+
 def _selected_action(runtime: Any, plan: dict[str, Any]) -> dict[str, Any] | None:
-    return _file_bundle_action(plan) or runtime.selected_action(plan)
+    bundle = _file_bundle_action(plan)
+    if bundle:
+        return bundle
+
+    # Prefer the explicit top-level action. Gemini commonly returns the full
+    # planning schema with its executable action nested here.
+    explicit = _normalise_action(plan.get("action"))
+    if explicit:
+        return explicit
+
+    selected_index = plan.get("selected_index")
+    candidates = plan.get("candidates")
+
+    if isinstance(candidates, list) and candidates:
+        if not isinstance(selected_index, int):
+            selected_index = 0
+
+        if 0 <= selected_index < len(candidates):
+            candidate = candidates[selected_index]
+            if isinstance(candidate, dict):
+                nested = _normalise_action(candidate.get("action"))
+                if nested:
+                    return nested
+
+                direct = _normalise_action(candidate)
+                if direct:
+                    return direct
+
+    return _normalise_action(runtime.selected_action(plan))
 
 
 def _command_text(action: dict[str, Any]) -> str:
@@ -302,7 +378,16 @@ def _command_text(action: dict[str, Any]) -> str:
 
 def _command_problem(action: dict[str, Any], workspace: Path) -> str:
     kind = str(action.get("type") or "").lower()
-    if kind not in {"run", "shell", "run_command", "bash", "run_interactive", "interactive", "play_demo"}:
+    if kind not in {
+        "command",
+        "run",
+        "shell",
+        "run_command",
+        "bash",
+        "run_interactive",
+        "interactive",
+        "play_demo",
+    }:
         return ""
     command = _command_text(action)
     if not command:
