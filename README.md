@@ -1,8 +1,38 @@
-# Sophyane
+# Sophyane 21.1
 
-**Local-first AI software engineering platform with repository intelligence, coded sandboxes, validator-driven execution, multi-provider orchestration, MCP interoperability, and native COI sub-agents.**
+**Local-first AI software engineering platform for planning, building, repairing, validating, executing, and delivering real software artifacts.**
 
-Sophyane runs on Linux, macOS, Windows, ChromeOS Linux, Android Termux, UserLAnd, VPS hosts, and lightweight edge systems. It can use local GGUF or Ollama models, cloud providers such as Gemini, OpenAI, Anthropic, xAI, Groq, OpenRouter and DeepSeek, or a local-first chain where cloud models rescue repeated validator failures.
+Sophyane combines a persistent engineering agent, semantic intent routing, durable graph execution, repository intelligence, coded sandboxes, validator-driven recovery, browser verification, multi-provider orchestration, MCP interoperability, and native COI sub-agents.
+
+It runs on Linux, macOS, Windows, ChromeOS Linux, Android Termux, UserLAnd, VPS hosts, and lightweight edge systems. It can use local GGUF or Ollama models, cloud providers such as Gemini, OpenAI, Anthropic, xAI, Groq, OpenRouter and DeepSeek, or a local-first chain in which a cloud model rescues repeated validator failures.
+
+## Current verified status
+
+Sophyane 21.1 has been verified end to end with Gemini on a browser-game task:
+
+```text
+request
+  → semantic interpretation
+  → provider planning
+  → isolated workspace
+  → complete index.html generation
+  → structural validation
+  → HTTP verification
+  → browser preview in a new tab
+```
+
+The verified run produced a 14 KB self-contained browser game, served it from the current workspace, confirmed an HTTP 200 response, recorded a SHA-256 fingerprint, and opened the exact verified page in Chromium.
+
+The bundled offline engineering benchmark currently reports:
+
+```text
+21 passed
+0 failed
+2 skipped
+100.0 score
+```
+
+The skipped checks depend on optional host capabilities: Node.js availability and live-provider mode. See [Benchmarking](docs/BENCHMARKS.md).
 
 ## Install
 
@@ -24,6 +54,17 @@ Start:
 sophyane
 ```
 
+Developer installation:
+
+```bash
+git clone https://github.com/badrpk/sophyane.git
+cd sophyane
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -e '.[dev]'
+pytest -q
+```
+
 ## What Sophyane includes
 
 ### Interactive engineering agent
@@ -33,11 +74,30 @@ sophyane
 - Explicit build, fix, run, test, browser and repository workflows
 - Live provider, validator and execution progress
 - Local-first inference with sticky cloud rescue
-- Provider-neutral artifact extraction and truncation recovery
+- Provider-neutral artifact extraction and bounded recovery
+- Cloud-aware response timeouts for slower complete artifacts
+- Human steering without forcing every request to stop for approval
+
+### Verified browser-product pipeline
+
+For browser applications and games, Sophyane can:
+
+1. Request one complete self-contained HTML artifact.
+2. Preserve raw provider evidence for diagnosis.
+3. Distinguish structural truncation from semantic defects.
+4. Continue only structurally incomplete documents.
+5. Request a full-document rewrite for semantic failures.
+6. Validate game controls and runtime invariants.
+7. Write the accepted artifact into the isolated workspace.
+8. Serve and verify that exact page over HTTP.
+9. Open the verified URL in a new browser tab.
+
+Recent reliability work prevents complete Snake games with semantic control defects from being incorrectly treated as truncated byte streams. Semantic repair remains the final prompt authority in the live TUI wrapper chain.
 
 ### Repository kernel
 
 ```bash
+sophyane-platform status
 sophyane-platform index .
 sophyane-platform checkpoint .
 sophyane-platform eval .
@@ -61,13 +121,6 @@ Sophyane prepares an isolated task workspace before execution. Generated command
 └── coi/               collaborative orchestration state
 ```
 
-Each COI workspace can contain:
-
-```text
-agents/  tasks/  runs/  events/  artifacts/  queues/
-knowledge/  contracts/  permissions/  metrics/
-```
-
 ### COI — Collaborative Orchestration Interface
 
 COI is Sophyane's internal coordination protocol. It manages agents, parent/child tasks, permissions, shared artifacts, event traces, validation and bounded execution.
@@ -80,16 +133,12 @@ sophyane-coi agent-manifest browser --role validator --skill accessibility --too
 
 A task contract contains a goal, owner, workspace, repository, permissions, dependencies, expected outputs, validators and timeout. Agent manifests declare roles, skills, tools, permissions, provider policy and maximum steps.
 
-COI is deliberately separate from MCP:
-
 - **COI** coordinates Sophyane's internal agents, tasks, memory, artifacts and evaluation.
 - **MCP** connects Sophyane to external tools, resources and services.
 
-See [docs/COI.md](docs/COI.md).
+See [COI](docs/COI.md).
 
 ### MCP interoperability
-
-Sophyane includes a dependency-free MCP-style tool bridge and catalog:
 
 ```bash
 sophyane --mcp-list
@@ -97,9 +146,9 @@ sophyane --mcp-call platform
 sophyane --mcp-call rag_query --mcp-args '{"q":"provider dispatcher"}'
 ```
 
-Built-in tools include local RAG, skills, budget status, sandboxed Python, platform probing and public web fetch. The catalog can be wrapped by full MCP stdio or HTTP servers without changing COI agent contracts.
+Built-in tools include local RAG, skills, budget status, sandboxed Python, platform probing and public web fetch. The catalog can be wrapped by full MCP stdio or HTTP servers without changing COI task contracts.
 
-See [docs/MCP.md](docs/MCP.md).
+See [MCP](docs/MCP.md).
 
 ### Native sub-agents
 
@@ -113,47 +162,20 @@ Sophyane supports bounded, provider-neutral agents such as:
 - Documentation agent
 - Learning and trace-analysis agent
 
-Sub-agents use the existing provider dispatcher instead of capturing a provider directly. Each agent receives a constrained task contract and shared context, and writes structured events and results locally.
-
-### Evaluation and tracing
-
-Evaluation is deterministic where possible and model-assisted only when appropriate. Reports may cover:
-
-- Correctness and acceptance criteria
-- Build and tests
-- Browser behavior and accessibility
-- Security and permission boundaries
-- Performance and responsiveness
-- Documentation and reproducibility
-
-Local JSONL traces record task transitions, providers, timing, files, validators and outcomes without requiring LangSmith.
-
-### Prompt guidance
-
-Use this compact pattern:
-
-```text
-Goal:
-Constraints:
-Context/files:
-Acceptance criteria:
-Tests:
-```
-
-```bash
-sophyane-platform advise "Create a responsive snake game with keyboard and touch controls"
-```
-
-See [docs/PROMPT_GUIDE.md](docs/PROMPT_GUIDE.md) and [docs/EVALUATION.md](docs/EVALUATION.md).
+Sub-agents use the provider dispatcher rather than capturing a provider directly. Each receives a constrained task contract and shared context, then writes structured events and results locally.
 
 ## Architecture
 
 ```text
 User / Application
         │
+Semantic intent + SLI profile
+        │
 Sophyane Supervisor
         │
-COI Orchestrator ─────────────── Local trace and evaluation
+Durable execution graph ───────── Checkpoints / interrupts / traces
+        │
+COI Orchestrator ──────────────── Contracts / permissions / sub-agents
         │
 Provider Dispatcher
    ┌────┴─────────┐
@@ -161,10 +183,40 @@ Local models   Cloud providers
         │
 Repository Kernel + Coded Sandbox
         │
-MCP Bridge ───── External tools and services
+Validators + repair policy
+        │
+Verified artifact delivery
+        │
+MCP Bridge ───────────────────── External tools and services
 ```
 
-Only the provider dispatcher chooses the active model. COI chooses the agent and task. MCP exposes tools. Validators decide whether execution is complete.
+Only the provider dispatcher chooses the active model. COI chooses the agent and task. MCP exposes tools. Validators determine whether execution is complete. Delivery occurs only after the relevant artifact checks pass.
+
+## Evaluation and benchmarking
+
+Run the deterministic product benchmark:
+
+```bash
+sophyane-benchmark
+```
+
+Write a JSON report:
+
+```bash
+sophyane-benchmark --output ~/sophyane-tests/sophyane-baseline.json
+```
+
+Include a configured live provider:
+
+```bash
+sophyane-benchmark --live
+```
+
+The suite covers responsive frontend artifacts, Python/Node/C++ execution where available, repository indexing, requested edits, rollback, verification, COI collaboration, permission boundaries, SLI defect detection, provider escalation, MCP tools and interruption persistence.
+
+Sophyane should be compared with orchestration frameworks such as LangGraph using the same model, prompts, timeouts, isolated workspaces and acceptance tests. Raw graph latency and complete software-delivery capability are separate measurements; Sophyane's benchmark claims apply only to the tasks actually executed.
+
+See [Benchmarking](docs/BENCHMARKS.md) and [Evaluation](docs/EVALUATION.md).
 
 ## Common commands
 
@@ -177,6 +229,7 @@ sophyane --doctor
 sophyane --capabilities
 sophyane-platform status
 sophyane-coi status
+sophyane-benchmark
 sophyane-web
 sophyane-browser
 ```
@@ -187,17 +240,42 @@ Inside the interactive CLI:
 /help       command help
 /status     provider and runtime state
 /new        start a fresh project
-/inspect    inspect plan and generated files
+/inspect    inspect the current prompt, plan and files
+/trace      show or hide raw provider responses
 /quit       exit
 ```
+
+## Prompt guidance
+
+Use this compact pattern for important work:
+
+```text
+Goal:
+Constraints:
+Context/files:
+Acceptance criteria:
+Tests:
+```
+
+Example:
+
+```text
+Create one polished self-contained browser game in index.html.
+Include keyboard and touch controls, visible state feedback, restart behavior,
+mobile support at 320 px width, and verify the final page over HTTP.
+```
+
+See [Prompt guide](docs/PROMPT_GUIDE.md).
 
 ## Provider modes
 
 At startup Sophyane can run:
 
-1. **Local first** — local model handles normal work; a configured cloud model takes ownership after repeated deterministic validator failures.
+1. **Local first** — a local model handles normal work; a configured cloud model can take ownership after repeated deterministic validator failures.
 2. **Cloud** — use the selected cloud provider directly.
 3. **Current configuration** — retain the existing provider chain.
+
+Cloud-provider calls use a longer default response window than local-model calls so complete engineering artifacts are not discarded at the old universal 60-second boundary. Explicit timeout values remain authoritative.
 
 Provider configuration is stored under `~/.config/sophyane/`. Secrets remain in private user configuration and are never committed to the repository.
 
@@ -217,23 +295,23 @@ Provider configuration is stored under `~/.config/sophyane/`. Secrets remain in 
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
+- [Benchmarking](docs/BENCHMARKS.md)
 - [COI](docs/COI.md)
 - [MCP](docs/MCP.md)
 - [Prompt guide](docs/PROMPT_GUIDE.md)
 - [Evaluation](docs/EVALUATION.md)
 - [Platform kernel](docs/PLATFORM_KERNEL.md)
 - [Download and installation](DOWNLOAD.md)
+- [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
 
-## Capability status
-
-Sophyane documentation uses three labels:
+## Capability labels
 
 - **Implemented** — available in the current release.
 - **Experimental** — usable but interfaces may change.
 - **Planned** — roadmap only and not presented as available.
 
-COI task contracts, local event tracing, agent manifests, the MCP-lite catalog, repository tools, sandbox preparation, evaluation and compaction are implemented. Distributed cross-device scheduling, a public agent marketplace and full remote MCP transport management remain planned or experimental depending on the adapter.
+COI task contracts, local event tracing, agent manifests, the MCP-lite catalog, repository tools, sandbox preparation, evaluation, compaction, semantic HTML repair, HTTP artifact verification and browser preview are implemented. Distributed cross-device scheduling, a public agent marketplace and full remote MCP transport management remain planned or experimental depending on the adapter.
 
 ## License
 
