@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 import urllib.parse
+import urllib.request
+from typing import Any
 
 from sophyane.providers.base import (
     Provider,
@@ -11,7 +14,32 @@ from sophyane.providers.base import (
     ProviderMetadata,
 )
 from sophyane.providers.http import post_json
+from sophyane.version import __version__
 
+
+ACTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "action": {
+            "type": "object",
+            "additionalProperties": True,
+            "description": "One executable Sophyane action.",
+        },
+        "files": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["path", "content"],
+                "additionalProperties": True,
+            },
+        },
+    },
+    "additionalProperties": True,
+}
 
 PLAN_SCHEMA = {
     "type": "object",
@@ -29,17 +57,10 @@ PLAN_SCHEMA = {
         "selected_index": {"type": "integer"},
         "selection_reason": {"type": "string"},
         "action": {"type": "object", "additionalProperties": True},
+        "files": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
     },
-    "required": [
-        "objective",
-        "success_criteria",
-        "deterministic_checks",
-        "candidates",
-        "selected_index",
-        "selection_reason",
-        "action",
-    ],
-    "additionalProperties": False,
+    "required": ["objective"],
+    "additionalProperties": True,
 }
 
 
@@ -47,7 +68,7 @@ class GeminiProvider(Provider):
     metadata = ProviderMetadata(
         provider_id="gemini",
         display_name="Google Gemini",
-        default_model="gemini-3.5-flash",
+        default_model="gemini-3.6-flash",
         environment_variable="GEMINI_API_KEY",
     )
 
@@ -57,7 +78,7 @@ class GeminiProvider(Provider):
         model: str,
         timeout: int = 180,
         temperature: float = 0.3,
-        max_tokens: int = 4096,
+        max_tokens: int = 0,
     ) -> None:
         super().__init__(
             api_key=api_key,
@@ -66,10 +87,7 @@ class GeminiProvider(Provider):
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        self.generation_config = {
-            "response_mime_type": "application/json",
-            "response_schema": PLAN_SCHEMA,
-        }
+        self._model_output_limit: int | None = None
         self._token_usage = {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -81,7 +99,7 @@ class GeminiProvider(Provider):
     def get_token_usage(self) -> dict[str, int]:
         return dict(self._token_usage)
 
-    def _record_usage(self, response: dict) -> None:
+    def _record_usage(self, response: dict[str, Any]) -> None:
         usage = response.get("usageMetadata")
         if not isinstance(usage, dict):
             return
@@ -91,92 +109,143 @@ class GeminiProvider(Provider):
         self._token_usage["total_tokens"] += int(usage.get("totalTokenCount", 0) or 0)
         self._token_usage["model_calls"] += 1
 
+    def _maximum_output_tokens(self) -> int:
+        """Read the active model's real outputTokenLimit from Gemini."""
+        if self._model_output_limit is not None:
+            return self._model_output_limit
+
+        model = urllib.parse.quote(self.model, safe="")
+        key = urllib.parse.quote(self.api_key, safe="")
+        request = urllib.request.Request(
+            "https://generativelanguage.googleapis.com/"
+            f"v1beta/models/{model}?key={key}",
+            headers={"User-Agent": f"Sophyane/{__version__}"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=min(self.timeout, 30)) as response:
+                payload = json.loads(response.read().decode("utf-8", errors="replace"))
+            limit = int(payload.get("outputTokenLimit", 0) or 0)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError, urllib.error.URLError):
+            limit = 0
+
+        # Gemini 2.5+ text models commonly expose 65,536 output tokens. This is
+        # only an offline fallback; a successful models.get response always wins.
+        self._model_output_limit = limit if limit > 0 else 65536
+        return self._model_output_limit
+
     @staticmethod
-    def _is_artifact_request(prompt: str, system_prompt: str) -> bool:
-        """Detect execution calls that must allow file/action JSON."""
-        text = f"{system_prompt}\n{prompt}".lower()
-        markers = (
+    def _response_mode(prompt: str, system_prompt: str) -> str:
+        """Classify the call as raw source, executable action JSON, or planning JSON."""
+        text = " ".join(f"{system_prompt}\n{prompt}".lower().split())
+
+        raw_markers = (
+            "output raw html only",
+            "raw html",
+            "beginning <!doctype html>",
+            "ending </html>",
+            "complete self-contained index.html",
+            "self-contained index.html",
+            "continue the unfinished index.html",
+            "output only missing javascript/html",
+            "one-shot provider-generated html",
+            "provider-generated html artifact",
+            "return source code only",
+            "output source code only",
+            "no json, markdown",
+        )
+        if any(marker in text for marker in raw_markers):
+            return "raw"
+
+        action_markers = (
             "compact provider repair",
-            "generate real source files",
+            "adaptive execution artifact request",
+            "return exactly one valid json object",
             "return one compact json object",
+            "top-level action",
             "write_file",
             "append_file",
             "run_command",
-            "top-level action",
             "files array",
-            "\"files\"",
+            '"files"',
             "artifact request",
         )
-        return any(marker in text for marker in markers)
+        if any(marker in text for marker in action_markers):
+            return "action"
+        return "plan"
 
-    def generate(self, prompt: str, system_prompt: str) -> str:
-        model = urllib.parse.quote(self.model, safe="")
-        key = urllib.parse.quote(self.api_key, safe="")
-
-        normalized_prompt = " ".join(prompt.lower().split())
-
-        # Planning calls require schema-constrained JSON. Artifact calls such
-        # as raw HTML must not inherit the planning schema, otherwise Gemini
-        # is prevented from returning the requested source document.
-        raw_artifact_markers = (
-            "output raw html only",
-            "output only missing javascript/html",
-            "beginning <!doctype html>",
-            "ending </html>",
-            "one complete self-contained index.html",
-            "continue the unfinished index.html",
-        )
-        raw_artifact_request = any(
-            marker in normalized_prompt
-            for marker in raw_artifact_markers
-        )
-
-        generation_config = {
-            "temperature": self.temperature,
-            "maxOutputTokens": (
-                max(self.max_tokens, 16384)
-                if raw_artifact_request
-                else self.max_tokens
-            ),
-        }
-
-        if not raw_artifact_request:
-            generation_config.update(
-                {
-                    "responseMimeType": "application/json",
-                    "responseJsonSchema": PLAN_SCHEMA,
-                }
-            )
-
-        response = post_json(
-            "https://generativelanguage.googleapis.com/"
-            f"v1beta/models/{model}:generateContent?key={key}",
-            {
-                "system_instruction": {"parts": [{"text": system_prompt}]},
-                "contents": [
-                    {
-                        "role": "user",
-                        "parts": [{"text": prompt}],
-                    }
-                ],
-                "generationConfig": generation_config,
-            },
-            timeout=self.timeout,
-        )
-        self._record_usage(response)
-
+    @staticmethod
+    def _extract_text(response: dict[str, Any]) -> str | None:
         try:
             parts = response["candidates"][0]["content"]["parts"]
-        except (KeyError, IndexError, TypeError) as error:
-            raise ProviderError(
-                "Unexpected Gemini response: " f"{json.dumps(response)[:1000]}"
-            ) from error
-
+        except (KeyError, IndexError, TypeError):
+            return None
         texts = [
             item["text"]
             for item in parts
             if isinstance(item, dict) and isinstance(item.get("text"), str)
         ]
-        if not texts:
-            raise ProviderError("Gemini returned no text.")
-        return "\n".join(texts).strip()
+        value = "\n".join(texts).strip()
+        return value or None
+
+    def generate(self, prompt: str, system_prompt: str) -> str:
+        model = urllib.parse.quote(self.model, safe="")
+        key = urllib.parse.quote(self.api_key, safe="")
+        mode = self._response_mode(prompt, system_prompt)
+        output_limit = self._maximum_output_tokens()
+
+        generation_config: dict[str, Any] = {
+            "temperature": self.temperature,
+            "maxOutputTokens": output_limit,
+        }
+        if mode != "raw":
+            generation_config.update(
+                {
+                    "responseMimeType": "application/json",
+                    "responseJsonSchema": ACTION_SCHEMA if mode == "action" else PLAN_SCHEMA,
+                }
+            )
+
+        payload = {
+            "system_instruction": {"parts": [{"text": system_prompt}]},
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": generation_config,
+        }
+
+        last_response: dict[str, Any] = {}
+        for attempt in range(2):
+            response = post_json(
+                "https://generativelanguage.googleapis.com/"
+                f"v1beta/models/{model}:generateContent?key={key}",
+                payload,
+                timeout=self.timeout,
+            )
+            self._record_usage(response)
+            last_response = response
+            text = self._extract_text(response)
+            if text:
+                return text
+
+            candidates = response.get("candidates")
+            finish_reason = ""
+            if isinstance(candidates, list) and candidates and isinstance(candidates[0], dict):
+                finish_reason = str(candidates[0].get("finishReason") or "")
+
+            if attempt == 0 and finish_reason in {
+                "MALFORMED_RESPONSE",
+                "MAX_TOKENS",
+                "OTHER",
+            }:
+                # Retry the same provider at full model capacity. For structured
+                # calls, use the smaller action schema on retry to avoid a complex
+                # planner schema blocking an otherwise valid executable response.
+                if mode == "plan":
+                    payload["generationConfig"] = dict(generation_config)
+                    payload["generationConfig"]["responseJsonSchema"] = ACTION_SCHEMA
+                continue
+            break
+
+        raise ProviderError(
+            "Unexpected Gemini response at maximum model output limit "
+            f"({output_limit} tokens): {json.dumps(last_response)[:1200]}"
+        )
