@@ -68,6 +68,7 @@ def main() -> int:
     from sophyane.runtime_sli_intent_patch import install_sli_intent_routing
     from sophyane.runtime_sli_mission_os import install_sli_mission_os
     from sophyane.runtime_sli_onset_feedback import install_sli_onset_feedback
+    from sophyane.runtime_software_routing_guard import install_software_routing_guard
     from sophyane.runtime_stagnation_patch import install_stagnation_patch
 
     install_quality_escalation()
@@ -102,6 +103,8 @@ def main() -> int:
     install_sli_brain()
     # Keep mission routing outermost after all provider wrappers.
     install_capability_acquisition_patch()
+    # Executable software projects must bypass editable visual-session routing.
+    install_software_routing_guard()
 
     try:
         from sophyane.platform_kernel import ensure_platform_filesystem
