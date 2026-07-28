@@ -1,3 +1,3 @@
 """Single source of truth for Sophyane's version."""
 
-__version__ = "20.3.1"
+__version__ = "21.0.0"
