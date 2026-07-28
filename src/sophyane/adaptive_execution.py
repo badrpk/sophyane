@@ -301,6 +301,8 @@ def _normalise_action(action: Any) -> dict[str, Any] | None:
         "command": "run_command",
         "cmd": "run_command",
         "shell": "run_command",
+        "shell_execute": "run_command",
+        "execute_shell": "run_command",
         "bash": "run_command",
         "run": "run_command",
         "execute": "run_command",
