@@ -114,6 +114,7 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     from sophyane.mobile_capability_prompt import install_mobile_capability_prompt
     from sophyane.runtime_self_contained_html_patch import install_self_contained_html_patch
     from sophyane.runtime_snake_semantic_repair import install_snake_semantic_repair
+    from sophyane.runtime_cloud_timeout_patch import install_cloud_timeout_patch
     from sophyane.workspace_attachment import install_workspace_attachment
     from sophyane import execution_runtime
     from sophyane.browser_runtime_v2 import open_verified_browser
@@ -147,6 +148,10 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
 
     from sophyane import tui_v2
 
+    # Cloud planning and complete browser artifacts can exceed one minute.
+    # Keep local providers bounded while giving cloud providers 120 seconds.
+    install_cloud_timeout_patch(tui_v2)
+
     def run_with_post_build_menu(**kwargs: Any) -> str:
         effective_kwargs = dict(kwargs)
         workspace = _effective_workspace(effective_kwargs)
@@ -173,7 +178,12 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
 
     original_call_provider = tui_v2.ObservableTUI.call_provider
 
-    def call_provider_with_execution_recovery(self: Any, message: str, *, timeout: int = 60) -> Any:
+    def call_provider_with_execution_recovery(
+        self: Any,
+        message: str,
+        *,
+        timeout: int | None = None,
+    ) -> Any:
         response = original_call_provider(self, message, timeout=timeout)
         execution_prompt = message.startswith("Execute this new project request:") or message.startswith(
             "Continue the SAME existing project"
