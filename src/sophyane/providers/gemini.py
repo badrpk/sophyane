@@ -129,8 +129,6 @@ class GeminiProvider(Provider):
         except (OSError, ValueError, TypeError, json.JSONDecodeError, urllib.error.URLError):
             limit = 0
 
-        # Gemini 2.5+ text models commonly expose 65,536 output tokens. This is
-        # only an offline fallback; a successful models.get response always wins.
         self._model_output_limit = limit if limit > 0 else 65536
         return self._model_output_limit
 
@@ -175,18 +173,26 @@ class GeminiProvider(Provider):
         return "plan"
 
     @staticmethod
-    def _extract_text(response: dict[str, Any]) -> str | None:
+    def _candidate_parts(response: dict[str, Any]) -> list[dict[str, Any]]:
         try:
             parts = response["candidates"][0]["content"]["parts"]
         except (KeyError, IndexError, TypeError):
-            return None
+            return []
+        return [item for item in parts if isinstance(item, dict)]
+
+    @classmethod
+    def _extract_text(cls, response: dict[str, Any]) -> str | None:
         texts = [
             item["text"]
-            for item in parts
-            if isinstance(item, dict) and isinstance(item.get("text"), str)
+            for item in cls._candidate_parts(response)
+            if isinstance(item.get("text"), str)
         ]
         value = "\n".join(texts).strip()
         return value or None
+
+    @classmethod
+    def _contains_function_call(cls, response: dict[str, Any]) -> bool:
+        return any(isinstance(item.get("functionCall"), dict) for item in cls._candidate_parts(response))
 
     def generate(self, prompt: str, system_prompt: str) -> str:
         model = urllib.parse.quote(self.model, safe="")
@@ -206,10 +212,13 @@ class GeminiProvider(Provider):
                 }
             )
 
-        payload = {
+        payload: dict[str, Any] = {
             "system_instruction": {"parts": [{"text": system_prompt}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": generation_config,
+            # Sophyane owns tool execution. Gemini must return text/source/JSON
+            # rather than invoking native or inherited function declarations.
+            "toolConfig": {"functionCallingConfig": {"mode": "NONE"}},
         }
 
         last_response: dict[str, Any] = {}
@@ -231,17 +240,24 @@ class GeminiProvider(Provider):
             if isinstance(candidates, list) and candidates and isinstance(candidates[0], dict):
                 finish_reason = str(candidates[0].get("finishReason") or "")
 
-            if attempt == 0 and finish_reason in {
-                "MALFORMED_RESPONSE",
-                "MAX_TOKENS",
-                "OTHER",
-            }:
-                # Retry the same provider at full model capacity. For structured
-                # calls, use the smaller action schema on retry to avoid a complex
-                # planner schema blocking an otherwise valid executable response.
+            function_call = self._contains_function_call(response)
+            if attempt == 0 and (
+                function_call
+                or finish_reason in {"MALFORMED_RESPONSE", "MAX_TOKENS", "OTHER"}
+            ):
                 if mode == "plan":
                     payload["generationConfig"] = dict(generation_config)
                     payload["generationConfig"]["responseJsonSchema"] = ACTION_SCHEMA
+                if function_call:
+                    payload["contents"] = [{
+                        "role": "user",
+                        "parts": [{
+                            "text": (
+                                "Do not call tools or functions. Return the requested final "
+                                "text, source code, or JSON directly.\n\n" + prompt
+                            )
+                        }],
+                    }]
                 continue
             break
 
