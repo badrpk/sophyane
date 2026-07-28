@@ -457,8 +457,13 @@ def _compact_repair_prompt(request: str, files: list[str], result: str) -> str:
         "\\\"content\\\":\\\"complete content\\\"}} "
         "or {\\\"files\\\":[{\\\"path\\\":\\\"relative/path\\\","
         "\\\"content\\\":\\\"complete content\\\"}]}. "
-        "Create one complete missing project file per response. "
-        "When files are ready, return one run_command action. "
+        "Keep every JSON response below 3500 characters. "
+        "Keep file content in each response below 2600 characters. "
+        "For a large file, first use write_file with the first chunk, then use "
+        "append_file for later chunks. Never resend the whole large file. "
+        "Each chunk must end at a safe source-code boundary, not inside a string. "
+        "Create or extend only one project file per response. "
+        "When all required files are ready, return exactly one run_command action. "
         "Use relative paths only and never use cd.\n"
         f"ORIGINAL TASK:\n{request[-7000:]}\n"
         f"CURRENT FILES:\n{existing}\n"
@@ -473,6 +478,10 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     workspace = (workspace or Path.cwd()).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
     progress = progress or (lambda _message: None)
+
+    # Software projects commonly require several file chunks, build commands,
+    # tests and repairs. Do not inherit an undersized caller budget.
+    max_steps = max(max_steps, 32)
 
     if _browser_request(original_request):
         try:
@@ -525,6 +534,12 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
         progress(f"Step {step}/{max_steps}: preparing {kind or 'action'}")
         ok, result = _execute(runtime, action, workspace, progress)
         evidence.append(f"Step {step}: {result}")
+
+        # Repair attempts are consecutive-failure limits, not a lifetime
+        # allowance. A successful action proves recovery and resets the budget.
+        if ok:
+            repairs = 0
+
         if not ok:
             if repairs >= 2:
                 return "Execution stopped safely after bounded repair attempts.\n\n" + "\n".join(evidence)
