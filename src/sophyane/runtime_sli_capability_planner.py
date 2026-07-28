@@ -167,25 +167,49 @@ def install_sli_capability_planner() -> None:
         plan = classify(original_request)
         progress = progress or (lambda _message: None)
 
-        # At this layer the complete original request is available. Honor an
-        # explicit absolute project directory instead of the earlier internal
-        # ~/.sophyane/workspaces allocation.
+        # The complete request is available at this layer. Prefer an explicit
+        # absolute workspace path. Semantic refinement may remove path
+        # separators, so fall back to the process launch directory when the
+        # request still clearly requires the current workspace.
         match = re.search(
             r"(?:work exclusively inside|work inside|workspace(?: is|:)?|"
-            r"current working directory(?: is|:)?)\\s*[`\"']?"
+            r"current working directory(?: is|:)?)\s*[`\"']?"
             r"(/[A-Za-z0-9_./~+@%=-]+)",
             original_request,
             flags=re.IGNORECASE,
         )
 
         if match:
-            raw_path = match.group(1).rstrip("`\"'.,;:)")
+            raw_path = match.group(1).rstrip("`\"'.,;:")
             workspace_path = Path(raw_path).expanduser().resolve()
             progress(
                 f"Using explicitly requested workspace: {workspace_path}"
             )
         else:
-            workspace_path = (workspace or Path.cwd()).resolve()
+            normalized_request = " ".join(
+                original_request.lower().split()
+            )
+            workspace_markers = (
+                "work exclusively inside",
+                "work inside",
+                "current working directory",
+                "in the current directory",
+                "inside the workspace",
+            )
+
+            if any(
+                marker in normalized_request
+                for marker in workspace_markers
+            ):
+                workspace_path = Path.cwd().resolve()
+                progress(
+                    "Explicit workspace path was unavailable after semantic "
+                    f"refinement; using caller directory: {workspace_path}"
+                )
+            else:
+                workspace_path = (
+                    workspace or Path.cwd()
+                ).resolve()
 
         workspace_path.mkdir(parents=True, exist_ok=True)
         progress(

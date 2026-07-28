@@ -130,24 +130,53 @@ def install_orchestration_patch() -> None:
             if target != root and root not in target.parents:
                 return False, f"File action rejected: {path} is outside the active workspace. Use a relative path in {workspace}."
 
-            content = str(normalized.get("content") or normalized.get("text") or "")
-            if kind == "write_file" and target.exists():
-                existing = target.read_text(encoding="utf-8", errors="replace")
-                new_starts_document = content.lstrip().lower().startswith(("<!doctype", "<html", "#include", "import ", "from "))
-                same_prefix = bool(existing and content and existing[:80] == content[:80])
-                if (new_starts_document or same_prefix) and len(content) > len(existing):
-                    target.write_text(content, encoding="utf-8")
-                    progress(f"Replaced {target} with a larger, more complete version ({len(content)} characters)")
-                    return True, f"Replaced {target} with a larger version ({target.stat().st_size} total bytes)."
-                if not new_starts_document and not same_prefix:
-                    with target.open("a", encoding="utf-8") as handle:
-                        handle.write(content)
-                    progress(f"Converted repeated write_file to append_file for {target}")
-                    return True, f"Appended continuation to {target} ({target.stat().st_size} total bytes)."
-                return True, (
-                    f"Ignored a shorter or duplicate replacement for {path}. Existing file is {len(existing)} bytes; "
-                    "continue with append_file, verification, or a complete larger replacement."
+            content = str(
+                normalized.get("content")
+                or normalized.get("text")
+                or ""
+            )
+
+            # Repair provider output that contains literal backslash-n text
+            # rather than actual line breaks.
+            if "\\n" in content and "\n" not in content:
+                content = (
+                    content
+                    .replace("\\r\\n", "\n")
+                    .replace("\\n", "\n")
+                    .replace("\\t", "\t")
                 )
+                normalized = dict(normalized)
+                normalized["content"] = content
+                progress(f"Decoded escaped line breaks for {path}")
+
+            if kind == "write_file" and target.exists():
+                existing = target.read_text(
+                    encoding="utf-8",
+                    errors="replace",
+                )
+
+                if content == existing:
+                    return True, (
+                        f"File already matches requested content: {path} "
+                        f"({target.stat().st_size} bytes)."
+                    )
+
+                # write_file is replacement, never an inferred continuation.
+                temporary = target.with_name(
+                    target.name + ".sophyane.tmp"
+                )
+                temporary.write_text(content, encoding="utf-8")
+                temporary.replace(target)
+
+                progress(
+                    f"Atomically replaced {target} "
+                    f"({len(existing)} -> {len(content)} characters)"
+                )
+                return True, (
+                    f"Atomically replaced {target} "
+                    f"({target.stat().st_size} total bytes)."
+                )
+
 
         if kind in {"run", "shell", "run_command", "bash", "run_interactive", "interactive", "play_demo"}:
             command = str(normalized.get("command") or normalized.get("cmd") or normalized.get("content") or "").strip()
@@ -159,10 +188,24 @@ def install_orchestration_patch() -> None:
         except (ValueError, OSError) as error:
             return False, f"Action rejected safely: {error}"
 
-        if not ok and result.startswith("Repeated command blocked:"):
-            return True, result + ". This inspection already succeeded; choose a different verification or finish with respond."
-        if not ok and result.startswith("Repeated write_file blocked"):
-            return True, result + " Continue with append_file or verify the existing file."
+        if not ok and result.startswith(
+            "Repeated command blocked:"
+        ):
+            return False, (
+                result
+                + ". A repeated command is not proof of success. "
+                  "Repair the project or run a distinct verification."
+            )
+
+        if not ok and result.startswith(
+            "Repeated write_file blocked"
+        ):
+            return False, (
+                result
+                + ". Return a complete write_file replacement or an "
+                  "explicit append_file continuation."
+            )
+
         return ok, result
 
     runtime.execute_action = execute_action
