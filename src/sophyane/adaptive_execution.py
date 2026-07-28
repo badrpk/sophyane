@@ -503,6 +503,7 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     current = initial_text
     evidence: list[str] = []
     repairs = 0
+    successful_commands: set[str] = set()
     for step in range(1, max_steps + 1):
         plan = runtime.extract_plan(current)
         action = _selected_action(runtime, plan) if plan else None
@@ -555,8 +556,47 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             current = "Premature completion: no artifact exists."
             continue
         progress(f"Step {step}/{max_steps}: preparing {kind or 'action'}")
+
+        command_kinds = {
+            "command",
+            "run",
+            "shell",
+            "run_command",
+            "bash",
+            "run_interactive",
+            "interactive",
+            "play_demo",
+        }
+
+        command_text = (
+            _command_text(action)
+            if kind in command_kinds
+            else ""
+        )
+
+        if command_text and command_text in successful_commands:
+            result = (
+                "Verification already passed earlier with exit code 0: "
+                f"{command_text}"
+            )
+            evidence.append(f"Step {step}: {result}")
+            progress(result)
+
+            return (
+                "Project implementation and verification completed "
+                "successfully.\n\nExecution evidence:\n"
+                + "\n".join(evidence)
+            )
+
         ok, result = _execute(runtime, action, workspace, progress)
         evidence.append(f"Step {step}: {result}")
+
+        if (
+            command_text
+            and ok
+            and "Exit code: 0" in result
+        ):
+            successful_commands.add(command_text)
 
         # Repair attempts are consecutive-failure limits, not a lifetime
         # allowance. A successful action proves recovery and resets the budget.
