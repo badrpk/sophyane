@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import re
 
 
 def install_deep_agent_runtime() -> None:
@@ -22,8 +23,27 @@ def install_deep_agent_runtime() -> None:
     original_call_provider = tui_v2.ObservableTUI.call_provider
 
     def new_workspace(self: Any) -> Path:
-        workspace = original_new_workspace(self)
-        prepared = prepare_workspace(workspace, request=str(getattr(self, "active_request", "") or ""))
+        request = str(getattr(self, "active_request", "") or "")
+
+        # Honor an explicit autonomous benchmark/project workspace. This keeps
+        # generated artifacts in the directory requested by the caller instead
+        # of silently moving them under ~/.sophyane/workspaces.
+        match = re.search(
+            r"work exclusively inside\\s+(/[A-Za-z0-9_./~+@%=-]+)",
+            request,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+            raw = match.group(1).rstrip(".,;:)")
+            requested = Path(raw).expanduser().resolve()
+            requested.mkdir(parents=True, exist_ok=True)
+            workspace = requested
+            self.progress(f"Using explicitly requested workspace: {workspace}")
+        else:
+            workspace = original_new_workspace(self)
+
+        prepared = prepare_workspace(workspace, request=request)
         self.progress(f"Sandbox ready: {prepared}")
         return prepared
 

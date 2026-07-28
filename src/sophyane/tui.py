@@ -31,6 +31,7 @@ class Style:
 
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -51,6 +52,34 @@ def _artifact_snapshot(workspace: Path) -> dict[str, tuple[int, int]]:
         except OSError:
             continue
     return snapshot
+
+
+def _effective_workspace(kwargs: dict[str, Any]) -> Path:
+    """Resolve the workspace before snapshots and adaptive wrappers run."""
+    original_request = str(kwargs.get("original_request") or "")
+    match = re.search(
+        r"(?:work exclusively inside|work inside|workspace(?: is|:)?|"
+        r"current working directory(?: is|:)?)\s*[`\"']?"
+        r"(/[A-Za-z0-9_./~+@%=-]+)",
+        original_request,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return Path(match.group(1).rstrip("`\"'.,;:")).expanduser().resolve()
+
+    normalized = " ".join(original_request.lower().split())
+    caller_directory_markers = (
+        "current working directory",
+        "in the current directory",
+        "work exclusively inside",
+        "work inside",
+        "inside the workspace",
+    )
+    if any(marker in normalized for marker in caller_directory_markers):
+        return Path.cwd().resolve()
+
+    supplied = kwargs.get("workspace")
+    return Path(supplied or Path.cwd()).expanduser().resolve()
 
 
 def _execution_succeeded(result: str, before: dict[str, tuple[int, int]], workspace: Path) -> bool:
@@ -115,9 +144,13 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     from sophyane import tui_v2
 
     def run_with_post_build_menu(**kwargs: Any) -> str:
-        workspace = Path(kwargs.get("workspace")).resolve()
+        effective_kwargs = dict(kwargs)
+        workspace = _effective_workspace(effective_kwargs)
+        workspace.mkdir(parents=True, exist_ok=True)
+        effective_kwargs["workspace"] = workspace
+
         before = _artifact_snapshot(workspace)
-        result = run_adaptive_loop(**kwargs)
+        result = run_adaptive_loop(**effective_kwargs)
         if _execution_succeeded(result, before, workspace):
             PostBuildMenu(workspace).run()
         elif workspace.is_dir():

@@ -200,8 +200,14 @@ def _validate_html(html: str, request: str) -> str:
     return ""
 
 
-def _one_shot_browser_artifact(*, ask: Callable[[str], Any], original_request: str,
-                               workspace: Path, progress: Callable[[str], None]) -> str | None:
+def _one_shot_browser_artifact(
+    *,
+    ask: Callable[[str], Any],
+    original_request: str,
+    workspace: Path,
+    progress: Callable[[str], None],
+    ask_raw: Callable[[str], Any] | None = None,
+) -> str | None:
     target = workspace / "index.html"
     existing = ""
     if target.exists():
@@ -210,7 +216,10 @@ def _one_shot_browser_artifact(*, ask: Callable[[str], Any], original_request: s
         except Exception:
             existing = ""
     progress("Requesting one-shot provider-generated HTML edit" if existing else "Requesting one-shot provider-generated HTML artifact")
-    response = ask(_raw_html_prompt(original_request, existing))
+    artifact_ask = ask_raw or ask
+    response = artifact_ask(
+        _raw_html_prompt(original_request, existing)
+    )
     raw = getattr(response, "text", str(response))
     html = _extract_html(raw)
     partial = _extract_partial_html(raw)
@@ -228,7 +237,9 @@ def _one_shot_browser_artifact(*, ask: Callable[[str], Any], original_request: s
         progress(
             f"Repairing incomplete provider HTML ({attempt}/2; {len(partial)} characters preserved): {problem}"
         )
-        response = ask(_html_continuation_prompt(partial, problem))
+        response = artifact_ask(
+            _html_continuation_prompt(partial, problem)
+        )
         continuation = getattr(response, "text", str(response))
         partial = _join_html_continuation(partial, continuation)
         html = _extract_html(partial)
@@ -278,8 +289,93 @@ def _file_bundle_action(plan: dict[str, Any]) -> dict[str, Any] | None:
     return {"type": "batch", "actions": actions} if actions else None
 
 
+def _normalise_action(action: Any) -> dict[str, Any] | None:
+    """Accept common provider action aliases and convert them to runtime actions."""
+    if not isinstance(action, dict):
+        return None
+
+    value = dict(action)
+    kind = str(value.get("type") or value.get("kind") or "").strip().lower()
+
+    aliases = {
+        "command": "run_command",
+        "cmd": "run_command",
+        "shell": "run_command",
+        "shell_execute": "run_command",
+        "execute_shell": "run_command",
+        "bash": "run_command",
+        "run": "run_command",
+        "execute": "run_command",
+        "exec": "run_command",
+        "file": "write_file",
+        "write": "write_file",
+        "create_file": "write_file",
+        "complete": "message",
+        "completed": "message",
+        "done": "message",
+        "finish": "message",
+        "finished": "message",
+        "final": "message",
+        "success": "message",
+    }
+
+    if kind in aliases:
+        value["type"] = aliases[kind]
+    elif kind:
+        value["type"] = kind
+
+    if value.get("type") == "run_command":
+        command = (
+            value.get("command")
+            or value.get("cmd")
+            or value.get("content")
+        )
+        if not isinstance(command, str) or not command.strip():
+            return None
+        value["command"] = command.strip()
+
+    if value.get("type") in {"write_file", "append_file"}:
+        path = value.get("path") or value.get("file")
+        content = value.get("content")
+        if not isinstance(path, str) or not path.strip():
+            return None
+        if not isinstance(content, str):
+            return None
+        value["path"] = path.strip()
+
+    return value
+
+
 def _selected_action(runtime: Any, plan: dict[str, Any]) -> dict[str, Any] | None:
-    return _file_bundle_action(plan) or runtime.selected_action(plan)
+    bundle = _file_bundle_action(plan)
+    if bundle:
+        return bundle
+
+    # Prefer the explicit top-level action. Gemini commonly returns the full
+    # planning schema with its executable action nested here.
+    explicit = _normalise_action(plan.get("action"))
+    if explicit:
+        return explicit
+
+    selected_index = plan.get("selected_index")
+    candidates = plan.get("candidates")
+
+    if isinstance(candidates, list) and candidates:
+        if not isinstance(selected_index, int):
+            selected_index = 0
+
+        if 0 <= selected_index < len(candidates):
+            candidate = candidates[selected_index]
+            if isinstance(candidate, dict):
+                nested = _normalise_action(candidate.get("action"))
+                if nested:
+                    return nested
+
+                direct = _normalise_action(candidate)
+                if direct:
+                    return direct
+
+    return _normalise_action(runtime.selected_action(plan))
 
 
 def _command_text(action: dict[str, Any]) -> str:
@@ -291,7 +387,16 @@ def _command_text(action: dict[str, Any]) -> str:
 
 def _command_problem(action: dict[str, Any], workspace: Path) -> str:
     kind = str(action.get("type") or "").lower()
-    if kind not in {"run", "shell", "run_command", "bash", "run_interactive", "interactive", "play_demo"}:
+    if kind not in {
+        "command",
+        "run",
+        "shell",
+        "run_command",
+        "bash",
+        "run_interactive",
+        "interactive",
+        "play_demo",
+    }:
         return ""
     command = _command_text(action)
     if not command:
@@ -351,11 +456,27 @@ def _execute(runtime: Any, action: dict[str, Any], workspace: Path,
 
 
 def _compact_repair_prompt(request: str, files: list[str], result: str) -> str:
+    existing = ", ".join(files[-40:]) if files else "(none)"
     return (
-        "Return one compact JSON object only. Generate real source files before commands. "
-        "Use {\"files\":[{\"path\":\"relative\",\"content\":\"complete code\"}]} or one action. "
-        "Never use cd or repeat user words as a command. Never append a complete file; write_file replaces it.\n"
-        f"Request: {request[-320:]}\nFiles: {files[-12:]}\nLast result: {result[-450:]}"
+        "ADAPTIVE EXECUTION ARTIFACT REQUEST. "
+        "Return exactly one valid JSON object with no markdown. "
+        "Use either "
+        "{\\\"action\\\":{\\\"type\\\":\\\"write_file\\\","
+        "\\\"path\\\":\\\"relative/path\\\","
+        "\\\"content\\\":\\\"complete content\\\"}} "
+        "or {\\\"files\\\":[{\\\"path\\\":\\\"relative/path\\\","
+        "\\\"content\\\":\\\"complete content\\\"}]}. "
+        "Keep every JSON response below 3500 characters. "
+        "Keep file content in each response below 2600 characters. "
+        "For a large file, first use write_file with the first chunk, then use "
+        "append_file for later chunks. Never resend the whole large file. "
+        "Each chunk must end at a safe source-code boundary, not inside a string. "
+        "Create or extend only one project file per response. "
+        "When all required files are ready, return exactly one run_command action. "
+        "Use relative paths only and never use cd.\n"
+        f"ORIGINAL TASK:\n{request[-7000:]}\n"
+        f"CURRENT FILES:\n{existing}\n"
+        f"LAST RESPONSE OR RESULT:\n{result[-1800:]}"
     )
 
 
@@ -366,6 +487,10 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     workspace = (workspace or Path.cwd()).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
     progress = progress or (lambda _message: None)
+
+    # Software projects commonly require several file chunks, build commands,
+    # tests and repairs. Do not inherit an undersized caller budget.
+    max_steps = max(max_steps, 32)
 
     if _browser_request(original_request):
         try:
@@ -380,24 +505,106 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     current = initial_text
     evidence: list[str] = []
     repairs = 0
+    successful_commands: set[str] = set()
     for step in range(1, max_steps + 1):
         plan = runtime.extract_plan(current)
         action = _selected_action(runtime, plan) if plan else None
         if not action:
+            rejected = (current or "").strip()
+            prefix = rejected[:900].replace("\n", "\\n")
+            progress(
+                "Provider response was not an executable action "
+                f"(length={len(rejected)}, prefix={prefix!r})"
+            )
+            evidence.append(
+                f"Rejected response: length={len(rejected)} prefix={prefix!r}"
+            )
+
             if repairs >= 2:
-                return "Execution stopped safely: provider could not produce a usable artifact.\n\n" + "\n".join(evidence)
+                return (
+                    "Execution stopped safely: provider could not produce "
+                    "a usable artifact.\n\n" + "\n".join(evidence)
+                )
+
             repairs += 1
             progress(f"Requesting compact provider repair ({repairs}/2)")
-            response = ask(_compact_repair_prompt(original_request, _files(workspace), current))
+            response = ask(
+                _compact_repair_prompt(
+                    original_request,
+                    _files(workspace),
+                    rejected,
+                )
+            )
             current = getattr(response, "text", str(response))
             continue
         kind = str(action.get("type") or "").lower()
+
+        # Completion aliases are normalized by _normalise_action, but keep
+        # this defensive conversion for plans supplied by older adapters.
+        if kind in {
+            "complete",
+            "completed",
+            "done",
+            "finish",
+            "finished",
+            "final",
+            "success",
+        }:
+            action = dict(action)
+            action["type"] = "message"
+            kind = "message"
+
         if kind in {"respond", "message"} and not _files(workspace):
             current = "Premature completion: no artifact exists."
             continue
         progress(f"Step {step}/{max_steps}: preparing {kind or 'action'}")
+
+        command_kinds = {
+            "command",
+            "run",
+            "shell",
+            "run_command",
+            "bash",
+            "run_interactive",
+            "interactive",
+            "play_demo",
+        }
+
+        command_text = (
+            _command_text(action)
+            if kind in command_kinds
+            else ""
+        )
+
+        if command_text and command_text in successful_commands:
+            result = (
+                "Verification already passed earlier with exit code 0: "
+                f"{command_text}"
+            )
+            evidence.append(f"Step {step}: {result}")
+            progress(result)
+
+            return (
+                "Project implementation and verification completed "
+                "successfully.\n\nExecution evidence:\n"
+                + "\n".join(evidence)
+            )
+
         ok, result = _execute(runtime, action, workspace, progress)
         evidence.append(f"Step {step}: {result}")
+
+        if (
+            command_text
+            and ok
+            and "Exit code: 0" in result
+        ):
+            successful_commands.add(command_text)
+
+        # Repair attempts are consecutive-failure limits, not a lifetime
+        # allowance. A successful action proves recovery and resets the budget.
+        if ok:
+            repairs = 0
+
         if not ok:
             if repairs >= 2:
                 return "Execution stopped safely after bounded repair attempts.\n\n" + "\n".join(evidence)

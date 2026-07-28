@@ -123,7 +123,19 @@ def install_provider_context_patch() -> None:
         stdin_fd: int | None = None
         saved_terminal: list[Any] | None = None
 
-        if sys.stdin.isatty():
+        # Automated runners may create a pseudo-TTY with `script`.
+        # SOPHYANE_NONINTERACTIVE disables live keyboard steering so piped
+        # input cannot cancel or restart an active provider generation.
+        interactive_input = (
+            sys.stdin.isatty()
+            and os.environ.get(
+                "SOPHYANE_NONINTERACTIVE",
+                "",
+            ).strip().lower()
+            not in {"1", "true", "yes", "on"}
+        )
+
+        if interactive_input:
             try:
                 stdin_fd = sys.stdin.fileno()
                 saved_terminal = termios.tcgetattr(stdin_fd)
@@ -225,6 +237,21 @@ def install_provider_context_patch() -> None:
                                 if char == "\x03":
                                     cancel_generation(generation)
                                     raise KeyboardInterrupt
+
+                                # A bare Enter can remain in the terminal input
+                                # buffer after submitting or approving a request.
+                                # It is not a live instruction and must never
+                                # cancel a provider generation.
+                                if not steering and char in {"\r", "\n"}:
+                                    continue
+
+                                # Ignore other non-printable terminal control
+                                # bytes unless steering is already active.
+                                if (
+                                    not steering
+                                    and not char.isprintable()
+                                ):
+                                    continue
 
                                 if not steering:
                                     steering = True
