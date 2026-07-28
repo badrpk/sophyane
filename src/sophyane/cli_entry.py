@@ -69,6 +69,7 @@ def main() -> int:
     from sophyane.runtime_sli_mission_os import install_sli_mission_os
     from sophyane.runtime_sli_onset_feedback import install_sli_onset_feedback
     from sophyane.runtime_software_routing_guard import install_software_routing_guard
+    from sophyane.runtime_snake_semantic_repair import install_snake_semantic_repair
     from sophyane.runtime_stagnation_patch import install_stagnation_patch
 
     install_quality_escalation()
@@ -105,6 +106,9 @@ def main() -> int:
     install_capability_acquisition_patch()
     # Executable software projects must bypass editable visual-session routing.
     install_software_routing_guard()
+    # Semantic browser-game repair must see the final wrapped validator and
+    # continuation prompt, so it is installed after all other runtime patches.
+    install_snake_semantic_repair()
 
     try:
         from sophyane.platform_kernel import ensure_platform_filesystem

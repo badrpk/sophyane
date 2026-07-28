@@ -23,7 +23,12 @@ def test_desktop_preview_uses_new_tab_api(monkeypatch):
 
 
 def test_verified_preview_opens_after_http_hash_check(tmp_path: Path, monkeypatch):
-    html = "<!doctype html><html><body><script>let x=1;</script>preview</body></html>"
+    html = (
+        "<!doctype html><html><body><main><h1>Verified product preview</h1>"
+        "<p>This fixture intentionally exceeds the minimum browser-artifact safety size.</p>"
+        "</main><script>let x=1;document.body.dataset.ready=String(x);</script>"
+        "</body></html>"
+    )
     (tmp_path / "index.html").write_text(html, encoding="utf-8")
     monkeypatch.setattr(browser_runtime_v2.shutil, "which", lambda _name: None)
     opened = []
