@@ -1019,6 +1019,14 @@ def wrap_adaptive_loop(
             flush=True,
         )
 
+        try:
+            from sophyane.semantic_ontology_bridge import note_execution_success
+            note_execution_success(
+                str(kwargs.get("original_request") or request or "")
+            )
+        except Exception:
+            pass
+
         return "\n\n".join(rendered_results)
 
     run._sophyane_v20_wrapped = True
