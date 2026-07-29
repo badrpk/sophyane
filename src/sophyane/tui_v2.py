@@ -279,9 +279,12 @@ def _pure_media_request(message: str) -> bool:
 
 def _execution_requested(message: str) -> bool:
     try:
-        from sophyane.capability_gap_messages import is_unavailable_external_request
-        if is_unavailable_external_request(message):
+        from sophyane.capability_registry import is_execution_capability
+        decision = is_execution_capability(message)
+        if decision is False:
             return False
+        if decision is True:
+            return True
     except Exception:
         pass
     # Deterministic filesystem capabilities always execute (never chat).

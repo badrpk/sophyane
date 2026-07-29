@@ -55,14 +55,15 @@ def _route(message: str, has_project: bool) -> str:
     text = message.lower()
 
 
-    # External inbox/account access is chat/capability-gap — never build/continue.
+    # CapabilityRegistry owns integration/FS routing hints.
     try:
-        from sophyane.capability_gap_messages import (
-            is_email_access_request,
-            is_unavailable_external_request,
-        )
-        if is_email_access_request(message) or is_unavailable_external_request(message):
-            return "chat"
+        from sophyane.capability_registry import resolve_capability
+        hit = resolve_capability(message)
+        if hit is not None:
+            if not hit.available or hit.route in {"gap", "chat"}:
+                return "chat"
+            if hit.route in {"execution", "filesystem"}:
+                return "execution"
     except Exception:
         pass
 
