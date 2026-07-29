@@ -1,6 +1,5 @@
 """Observable Sophyane terminal interface with persistent project sessions."""
 from __future__ import annotations
-from sophyane.local_inspection import inspect_local_request
 
 import json
 import queue
@@ -36,21 +35,6 @@ def _clean_message(message: str) -> str:
 
 
 def _simple_chat_reply(message: str) -> str | None:
-    try:
-        from sophyane.native_capability import try_any_native_reply
-        _native_reply = try_any_native_reply(message)
-        if _native_reply:
-            return _native_reply
-    except Exception:
-        pass
-
-    try:
-        from sophyane.capability_gap_messages import capability_gap_reply
-        gap = capability_gap_reply(message)
-        if gap:
-            return gap
-    except Exception:
-        pass
     text = " ".join(message.strip().lower().split())
     if text in {"hi", "hello", "hey", "salam", "assalamualaikum", "assalamu alaikum"}:
         return "Hello! What would you like me to build, fix, research, or explain?"
@@ -58,135 +42,6 @@ def _simple_chat_reply(message: str) -> str | None:
         return "You’re welcome."
     if text in {"sophyane --version", "sophyane -v", "--version", "version"}:
         return f"Sophyane {__version__}"
-
-    # SOPHYANE_CAPABILITY_EXECUTOR_FASTPATH_V1
-    # Grounded deterministic capabilities run before provider planning.
-    try:
-        from sophyane.capability_executors import execute_deterministic_text
-
-        executor_reply = execute_deterministic_text(
-            message,
-            workspace=Path.cwd(),
-        )
-        if executor_reply is not None:
-            return executor_reply
-    except Exception:
-        # Never break the existing adaptive/provider fallback.
-        pass
-
-    inspection_reply = inspect_local_request(message)
-    if inspection_reply is not None:
-        return inspection_reply
-    if any(
-        phrase in text
-        for phrase in (
-            "python version",
-            "version of python",
-            "which python",
-            "python is installed",
-            "installed python",
-            "what version of python",
-        )
-    ):
-        import sys
-        return f"Python {sys.version.split()[0]} ({sys.executable})"
-
-    # Lightweight PATH lookups: locate X / where is X / which X
-    # Also handles "Which git is being used?" by taking the first token.
-    for prefix in ("locate ", "where is ", "which "):
-        if text.startswith(prefix):
-            import shutil
-            rest = text[len(prefix):].strip(" .?")
-            name = rest.split()[0] if rest else ""
-            name = name.strip(" .?!,")
-            if name and name.replace("-", "").replace("_", "").isalnum():
-                found = shutil.which(name)
-                if found:
-                    return f"{name}: {found}"
-                return f"{name}: not found on PATH"
-            break
-
-    # Simple environment inspect
-    # Identity / OS / shell / home
-    if any(p in text for p in ("what shell", "which shell", "shell am i", "my shell")):
-        import os
-        return f"shell: {os.environ.get('SHELL', 'unknown')}"
-    if text in {"who am i", "whoami", "who am i?", "whoami?"}:
-        import os
-        return f"user: {os.environ.get('USER') or os.environ.get('USERNAME') or 'unknown'}"
-    if any(
-        p in text
-        for p in (
-            "what operating system",
-            "which os",
-            "what os",
-            "operating system is this",
-            "what platform",
-        )
-    ):
-        import platform
-        return (
-            f"OS: {platform.system()} {platform.release()} "
-            f"({platform.platform()})"
-        )
-    if any(
-        p in text
-        for p in (
-            "what architecture",
-            "machine architecture",
-            "cpu architecture",
-            "what arch",
-        )
-    ):
-        import platform
-        return f"arch: {platform.machine()} ({platform.processor() or 'n/a'})"
-    # Path-only home questions. Do NOT match list/count folder intents.
-    home_path_phrases = (
-        "what is my home directory",
-        "what is home",
-        "where is home",
-        "where is my home",
-        "show home directory",
-        "show my home directory",
-        "home directory path",
-        "$home",
-    )
-    listing_markers = (
-        "list ",
-        "count ",
-        "how many",
-        "number of",
-        "folders in",
-        "directories in",
-        "folder in",
-        "directory in",
-    )
-    if any(p in text for p in home_path_phrases) and not any(
-        m in text for m in listing_markers
-    ):
-        # Exact short forms only when not listing
-        if text in {"home directory", "my home directory", "my home"} or any(
-            p in text for p in home_path_phrases
-        ):
-            from pathlib import Path as P
-            return f"home: {P.home()}"
-
-    if text in {"show path", "show path.", "print path", "what is path", "what is my path"}:
-        import os
-        return f"PATH={os.environ.get('PATH', '')}"
-    if any(
-        p in text
-        for p in (
-            "current working directory",
-            "working directory",
-            "what is cwd",
-            "show cwd",
-            "where am i",
-        )
-    ):
-        import os
-        return f"cwd: {os.getcwd()}"
-
     return None
 
 
@@ -300,84 +155,11 @@ def _pure_media_request(message: str) -> bool:
 
 
 def _execution_requested(message: str) -> bool:
-    try:
-        from sophyane.collaborative_workers import plan_workers
-        from sophyane.native_capability import try_native_status_reply
-        if try_native_status_reply(message):
-            return False
-        plan = plan_workers(message)
-        if (plan.use_neuron or plan.use_nifdu) and not plan.use_llm:
-            return False  # TUI should take chat/simple path → combined reply
-    except Exception:
-        pass
-    try:
-        from sophyane.capability_registry import is_execution_capability
-        decision = is_execution_capability(message)
-        if decision is False:
-            return False
-        if decision is True:
-            return True
-    except Exception:
-        pass
-    # Deterministic filesystem capabilities always execute (never chat).
-    try:
-        from sophyane.runtime_filesystem_capabilities_v20 import classify_request
-        if classify_request(message):
-            return True
-    except Exception:
-        pass
     text = " ".join(message.lower().split())
 
     # Standalone media creation is not a software build request.
     if _pure_media_request(message):
         return False
-
-    # Read-only local-environment inspection still requires execution.
-    inspection_patterns = (
-        r"^\s*locate\b",
-        r"^\s*which\b",
-        r"\bwhere\s+is\b",
-        r"^\s*find\b",
-        r"\bshow\s+(?:me\s+)?(?:the\s+)?path\b",
-        r"\bexecutable\b",
-        r"\bcommand\s+path\b",
-    )
-
-    inspection_targets = (
-        "python",
-        "python3",
-        "pytest",
-        "pip",
-        "pip3",
-        "git",
-        "node",
-        "npm",
-        "java",
-        "javac",
-        "gcc",
-        "g++",
-        "clang",
-        "cargo",
-        "rustc",
-        "go",
-        "docker",
-        "podman",
-        "cmake",
-        "make",
-        "bash",
-        "zsh",
-        "fish",
-        "shell",
-        "executable",
-        "command",
-    )
-
-    if (
-        any(re.search(pattern, text) for pattern in inspection_patterns)
-        and any(target in text for target in inspection_targets)
-    ):
-        return True
-
     advice = (
         "what should", "which project", "project should", "ideas", "recommend",
         "suggest", "explain", "tell me about", "what is", "how does", "can i",
@@ -821,16 +603,6 @@ class ObservableTUI:
                 lines.append(f"- {path.relative_to(self.active_workspace)} ({path.stat().st_size} bytes)")
         return "\n".join(lines)
 
-
-    def read_prompt(self, prompt: str = "❯ ") -> str:
-        """Read one interactive user prompt."""
-        try:
-            return input(prompt)
-        except EOFError:
-            raise
-        except KeyboardInterrupt:
-            raise
-
     def run(self) -> int:
         print(f"\n◆ Sophyane {__version__}")
         print(f"provider {self.config.get('provider')}  model {self.config.get('model')}")
@@ -902,57 +674,120 @@ class ObservableTUI:
                 request_for_model = f"Answer directly. No JSON or tool action.\n{context_message}"
 
 
-# SOPHYANE_SEMANTIC_FILESYSTEM_V13
             if (
                 executable
                 and _is_latest_file_inspection_request(message)
             ):
                 self.last_mode = "execution"
-                self.active_request = message
-                self.project_requirements = [message]
+                self.progress(
+                    "Running deterministic read-only filesystem inspection"
+                )
+                report = _latest_user_file_report()
+                self.last_raw = report
+                print()
+                print(report)
+                print()
+                return
 
-                request_for_model = f"""ORIGINAL USER REQUEST:
-{message}
+            # SOPHYANE_LATEST_FILE_FASTPATH_V4
+            # Examine every likely request variable. Do not stop at an empty
+            # variable merely because it exists in locals().
+            _inspection_candidates = []
 
-SLI SEMANTIC ONTOLOGY:
-- domain: filesystem
-- intent: inspect_file_metadata
-- operation: latest_modified_regular_file
-- capability: filesystem.latest_modified
-- scope: active_workspace
-- access_mode: read_only
-- mutation_allowed: false
-- network_required: false
-- browser_required: false
-- project_generation_required: false
+            for _inspection_name in (
+                "original_message",
+                "original_request",
+                "user_message",
+                "message",
+                "request",
+                "approved_request",
+                "refined_request",
+                "resolved_request",
+                "semantic_request",
+                "user_input",
+                "prompt",
+                "text",
+            ):
+                if _inspection_name not in locals():
+                    continue
 
-AVAILABLE GROUNDED ACTION:
-{{
-  "type": "filesystem.latest_modified",
-  "scope": "workspace",
-  "include_hidden": false,
-  "evidence_required": [
-    "absolute_path",
-    "relative_path",
-    "mtime_ns",
-    "modified_iso",
-    "size_bytes"
-  ]
-}}
+                _inspection_value = locals()[_inspection_name]
 
-Interpret the ORIGINAL USER REQUEST semantically.
+                if _inspection_value is None:
+                    continue
 
-If it requests the latest, last, newest, most recently edited,
-modified, changed, updated, or amended file, return exactly one
-compact JSON action using `filesystem.latest_modified`.
+                if isinstance(_inspection_value, str):
+                    _inspection_text = _inspection_value.strip()
+                else:
+                    _inspection_text = str(_inspection_value).strip()
 
-Do not return run_command.
-Do not run ls, find, pytest, unittest, compilation, browser actions,
-or project generation for this read-only metadata query.
-Do not invent a filename.
-The runtime will execute the action deterministically and SLI will
-validate the returned filesystem evidence.
-"""
+                if _inspection_text:
+                    _inspection_candidates.append(_inspection_text)
+
+            # Also inspect common TUI state attributes when available.
+            for _inspection_attribute in (
+                "last_user_message",
+                "last_message",
+                "current_message",
+                "current_request",
+                "original_request",
+                "last_request",
+            ):
+                _inspection_value = getattr(
+                    self,
+                    _inspection_attribute,
+                    None,
+                )
+
+                if _inspection_value is None:
+                    continue
+
+                _inspection_text = str(_inspection_value).strip()
+
+                if _inspection_text:
+                    _inspection_candidates.append(_inspection_text)
+
+            _matched_inspection_prompt = next(
+                (
+                    _candidate
+                    for _candidate in _inspection_candidates
+                    if _sophyane_latest_file_request(_candidate)
+                ),
+                None,
+            )
+
+            if _matched_inspection_prompt is not None:
+                self.progress(
+                    "Running deterministic read-only filesystem inspection"
+                )
+
+                _inspection_report = _sophyane_latest_file_result()
+
+                if hasattr(self, "last_mode"):
+                    self.last_mode = "inspection"
+
+                if hasattr(self, "last_raw"):
+                    self.last_raw = _inspection_report
+
+                print()
+                print(_inspection_report)
+                print()
+                return
+
+            # SOPHYANE_PENDING_FILE_INTERCEPT_V6
+            from .request_intercepts import (
+                consume_pending_latest_file_query,
+                latest_file_report,
+            )
+
+            if consume_pending_latest_file_query():
+                self.progress(
+                    "Running deterministic read-only filesystem inspection"
+                )
+                print()
+                print(latest_file_report())
+                print()
+                return
 
             self.progress("Thinking and planning" if executable else "Getting direct response")
             try:
@@ -970,45 +805,9 @@ validate the returned filesystem evidence.
                 self.progress("Execution request received; entering adaptive runtime")
                 try:
                     workspace = self._workspace_for(continuing)
-                    # SOPHYANE_CANONICAL_ACTIVE_REQUEST
-                    # SOPHYANE_USE_CANONICAL_REQUEST_SNAPSHOT
-                    # The semantic layer preserves live keyboard instructions
-                    # in a dedicated snapshot because active_request can be
-                    # reset or replaced during provider refinement.
-                    snapshot = str(
-                        getattr(
-                            self,
-                            "_sophyane_canonical_request_snapshot",
-                            "",
-                        )
-                        or ""
-                    ).strip()
-
-                    active_request = str(
-                        getattr(self, "active_request", "")
-                        or ""
-                    ).strip()
-
-                    # Prevent a snapshot from a previous turn being reused.
-                    if (
-                        snapshot
-                        and message.casefold() in snapshot.casefold()
-                    ):
-                        canonical_request = snapshot
-                    elif (
-                        active_request
-                        and message.casefold()
-                        in active_request.casefold()
-                    ):
-                        canonical_request = active_request
-                    else:
-                        canonical_request = message.strip()
-
-                    # SOPHYANE_TRACE_CANONICAL_BEFORE_STRUCTURED_LOOP
-
                     text = run_structured_loop(
                         initial_text=text,
-                        original_request=canonical_request,
+                        original_request=message,
                         ask=lambda prompt: self.call_provider(prompt),
                         workspace=workspace,
                         max_steps=8 if self.small_local else 16,

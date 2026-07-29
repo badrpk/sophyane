@@ -367,3 +367,5 @@ def reset_registry_for_tests() -> CapabilityRegistry:
     _REGISTRY = CapabilityRegistry()
     _register_defaults(_REGISTRY)
     return _REGISTRY
+
+# native_status registered via ensure_native_status_capability()
