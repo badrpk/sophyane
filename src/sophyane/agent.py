@@ -77,6 +77,10 @@ class SophyaneAgent:
             _native = try_native_status_reply(message)
             if _native:
                 return AgentResponse(_native)
+            from sophyane.collaborative_workers import try_combined_reply
+            _combined = try_combined_reply(message)
+            if _combined:
+                return AgentResponse(_combined)
         except Exception:
             pass
 
