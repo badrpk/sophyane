@@ -1,5 +1,11 @@
+
 """Execution recovery helpers shared by current and older Sophyane TUIs."""
 from __future__ import annotations
+
+from sophyane.environment_constraints import (
+    constraint_for_command,
+    learn_constraints_from_result,
+)
 
 import hashlib
 import time
@@ -183,10 +189,29 @@ def install_orchestration_patch() -> None:
             if not command:
                 return False, "Command action rejected: missing command. Return a concrete command or respond with completion."
 
+            known_constraint = constraint_for_command(workspace, command)
+            if known_constraint:
+                return False, known_constraint
+
         try:
             ok, result = original_execute(normalized, workspace, progress)
         except (ValueError, OSError) as error:
             return False, f"Action rejected safely: {error}"
+
+        if kind in {
+            "run",
+            "shell",
+            "run_command",
+            "bash",
+            "run_interactive",
+            "interactive",
+            "play_demo",
+        }:
+            learn_constraints_from_result(
+                workspace,
+                command,
+                result,
+            )
 
         if not ok and result.startswith(
             "Repeated command blocked:"

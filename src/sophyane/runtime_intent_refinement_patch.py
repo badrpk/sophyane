@@ -299,9 +299,44 @@ def install_intent_refinement() -> None:
                 self.progress("Approved request received; entering adaptive runtime")
                 try:
                     workspace = self._workspace_for(continuing)
+                    # SOPHYANE_CANONICAL_REQUEST_IN_INTENT_WRAPPER
+                    snapshot = str(
+                        getattr(
+                            self,
+                            "_sophyane_canonical_request_snapshot",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+
+                    active_request = str(
+                        getattr(
+                            self,
+                            "active_request",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+
+                    if (
+                        snapshot
+                        and refined_message.casefold()
+                        in snapshot.casefold()
+                    ):
+                        canonical_request = snapshot
+                    elif (
+                        active_request
+                        and refined_message.casefold()
+                        in active_request.casefold()
+                    ):
+                        canonical_request = active_request
+                    else:
+                        canonical_request = refined_message
+
+
                     text = tui_v2.run_structured_loop(
                         initial_text=text,
-                        original_request=refined_message,
+                        original_request=canonical_request,
                         ask=lambda prompt: self.call_provider(prompt),
                         workspace=workspace,
                         max_steps=8 if self.small_local else 16,

@@ -152,6 +152,12 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     # Keep local providers bounded while giving cloud providers 120 seconds.
     install_cloud_timeout_patch(tui_v2)
 
+    # SOPHYANE_POST_BUILD_GATE_V19
+    from sophyane.request_classification import (
+        requires_post_build_menu as _requires_post_build_menu,
+    )
+
+
     def run_with_post_build_menu(**kwargs: Any) -> str:
         effective_kwargs = dict(kwargs)
         workspace = _effective_workspace(effective_kwargs)
@@ -160,9 +166,30 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
 
         before = _artifact_snapshot(workspace)
         result = run_adaptive_loop(**effective_kwargs)
-        if _execution_succeeded(result, before, workspace):
+
+        # SOPHYANE_POST_BUILD_GATE_V17
+        original_request = str(
+            effective_kwargs.get("original_request")
+            or ""
+        )
+
+        show_project_menu = (
+            _requires_post_build_menu(original_request)
+        )
+
+        if (
+            show_project_menu
+            and _execution_succeeded(
+                result,
+                before,
+                workspace,
+            )
+        ):
             PostBuildMenu(workspace).run()
-        elif workspace.is_dir():
+        elif (
+            show_project_menu
+            and workspace.is_dir()
+        ):
             print(
                 "\n❌ Project build/update did not complete. "
                 "The previous working files were preserved; the success menu was not opened.",

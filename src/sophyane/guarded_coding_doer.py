@@ -98,10 +98,89 @@ class GuardedCodingDoerRuntime(CodingDoerRuntime):
         verdict = super()._verify(prompt, objective, criteria, history, observation)
         evidence = self._evidence_state()
         missing: list[str] = []
-        if self._requires_mutation and not evidence["file_evidence"]:
+
+        request_text = f"{prompt}\n{objective}".lower()
+
+        explicit_read_only = any(
+            phrase in request_text
+            for phrase in (
+                "read-only",
+                "read only",
+                "do not write",
+                "do not create",
+                "do not modify",
+                "do not edit",
+                "do not patch",
+                "without changing",
+                "without modifying",
+                "report its",
+                "report the",
+                "find the",
+                "list the",
+                "show the",
+                "inspect the",
+                "check the",
+            )
+        )
+
+        positive_mutation_request = any(
+            phrase in request_text
+            for phrase in (
+                "create a file",
+                "create the file",
+                "write a file",
+                "write the file",
+                "modify the file",
+                "edit the file",
+                "patch the file",
+                "update the file",
+                "fix the code",
+                "implement the",
+                "build the",
+                "develop the",
+                "add a feature",
+                "change the code",
+                "replace the code",
+            )
+        )
+
+        mutation_required = (
+            self._requires_mutation
+            and not explicit_read_only
+        ) or positive_mutation_request
+
+        # A successful command with non-empty stdout is sufficient evidence
+        # for a read-only inspection/reporting objective. Do not allow the
+        # language-model verifier to demand an unrelated workspace mutation.
+        if explicit_read_only and evidence["successful_command_evidence"]:
+            command_data = observation.get("command", {})
+            stdout = str(command_data.get("stdout") or "").strip()
+
+            if not stdout and history:
+                for record in reversed(history):
+                    prior_observation = getattr(record, "observation", {}) or {}
+                    prior_command = prior_observation.get("command", {})
+                    stdout = str(prior_command.get("stdout") or "").strip()
+                    if stdout:
+                        break
+
+            if stdout:
+                verdict["goal_met"] = True
+                verdict["missing_requirements"] = []
+                verdict["next_instruction"] = ""
+                verdict["final_answer"] = stdout
+                return verdict
+
+        if mutation_required and not evidence["file_evidence"]:
             missing.append("No file creation or patch evidence exists")
-        if self._requires_command and not evidence["successful_command_evidence"]:
-            missing.append("No successful command or test execution evidence exists")
+
+        if (
+            self._requires_command
+            and not evidence["successful_command_evidence"]
+        ):
+            missing.append(
+                "No successful command or test execution evidence exists"
+            )
         if missing:
             verdict["goal_met"] = False
             existing = [str(item) for item in verdict.get("missing_requirements", [])]

@@ -65,6 +65,8 @@ def main() -> int:
     from sophyane.runtime_sli_brain import install_sli_brain
     from sophyane.runtime_sli_builder import install_sli_builder
     from sophyane.runtime_sli_capability_planner import install_sli_capability_planner
+    # SOPHYANE_FILESYSTEM_CAPABILITIES_V20
+    from sophyane.runtime_filesystem_capabilities_v20 import install_filesystem_capabilities_v20
     from sophyane.runtime_sli_intent_patch import install_sli_intent_routing
     from sophyane.runtime_sli_mission_os import install_sli_mission_os
     from sophyane.runtime_sli_onset_feedback import install_sli_onset_feedback
@@ -92,6 +94,8 @@ def main() -> int:
     # Install capability planning before specialized browser builders so software
     # requests receive a deterministic project type and safe scaffold first.
     install_sli_capability_planner()
+    # SOPHYANE_FILESYSTEM_CAPABILITIES_V20
+    install_filesystem_capabilities_v20()
     # SLI assembles premium browser artifacts itself. Install before the asset
     # pipeline so verified downloaded photos are supplied to the builder.
     install_sli_builder()

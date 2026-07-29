@@ -387,8 +387,15 @@ def apply_live_instruction(
 
     merged = "\n".join(lines)
 
+    # SOPHYANE_TRACE_CANONICAL_AFTER_MERGE
+
+    # SOPHYANE_PERSIST_CANONICAL_REQUEST_SNAPSHOT
+    # active_request may be cleared or replaced after provider refinement.
+    # Preserve the authoritative merged user intent separately so execution
+    # receives every live keyboard instruction.
     try:
         tui.active_request = merged
+        tui._sophyane_canonical_request_snapshot = merged
     except Exception:
         pass
 

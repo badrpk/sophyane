@@ -6,8 +6,10 @@ stdin/stdout/stderr so users can actually interact with demos.
 from __future__ import annotations
 
 import re
+import json
 import subprocess
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -23,6 +25,211 @@ def _looks_interactive(command: str) -> bool:
     return any(re.search(pattern, text) for pattern in patterns)
 
 
+
+
+# SOPHYANE_SEMANTIC_FILESYSTEM_V13
+_FILESYSTEM_LATEST_ACTIONS_V13 = {
+    "filesystem.latest_modified",
+    "filesystem_latest_modified",
+    "latest_modified_file",
+    "latest_file",
+    "inspect_latest_file",
+}
+
+
+def _filesystem_latest_modified_v13(
+    workspace: Path,
+) -> tuple[bool, str]:
+    """Execute a grounded read-only latest-file ontology action."""
+    root = workspace.expanduser().resolve()
+
+    # SOPHYANE_FILESYSTEM_FILTER_V18
+    # Internal Sophyane state changes during every execution and must not
+    # compete with files deliberately amended by the user.
+    ignored_directories = {
+        ".sophyane",
+        ".git",
+        ".hg",
+        ".svn",
+        "__pycache__",
+        "node_modules",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".tox",
+        ".nox",
+        ".venv",
+        "venv",
+        "build",
+        "dist",
+    }
+
+    ignored_suffixes = {
+        ".pyc",
+        ".pyo",
+        ".swp",
+        ".swo",
+        ".tmp",
+        ".lock",
+    }
+
+    candidates: list[tuple[int, Path, int]] = []
+
+    try:
+        root_stat = root.stat()
+    except OSError as error:
+        return False, json.dumps(
+            {
+                "ok": False,
+                "action": "filesystem.latest_modified",
+                "error": f"workspace unavailable: {error}",
+                "workspace": str(root),
+                "sli_grounded": False,
+            },
+            ensure_ascii=False,
+        )
+
+    del root_stat
+
+    for current, directories, filenames in __import__("os").walk(root):
+        directories[:] = [
+            name
+            for name in directories
+            if name not in ignored_directories
+            and not name.startswith(".git")
+        ]
+
+        current_path = Path(current)
+
+        for filename in filenames:
+            candidate = current_path / filename
+
+            try:
+                if candidate.suffix.lower() in ignored_suffixes:
+                    continue
+
+                if not candidate.is_file():
+                    continue
+
+                stat = candidate.stat()
+
+                candidates.append(
+                    (
+                        stat.st_mtime_ns,
+                        candidate.resolve(),
+                        stat.st_size,
+                    )
+                )
+            except (
+                FileNotFoundError,
+                PermissionError,
+                OSError,
+            ):
+                continue
+
+    if not candidates:
+        return False, json.dumps(
+            {
+                "ok": False,
+                "action": "filesystem.latest_modified",
+                "workspace": str(root),
+                "error": "no accessible regular files found",
+                "candidate_count": 0,
+                "read_only": True,
+                "sli_grounded": False,
+            },
+            ensure_ascii=False,
+        )
+
+    modified_ns, latest, size = max(
+        candidates,
+        key=lambda item: item[0],
+    )
+
+    try:
+        relative = latest.relative_to(root)
+    except ValueError:
+        relative = latest
+
+    modified = datetime.fromtimestamp(
+        modified_ns / 1_000_000_000,
+        tz=timezone.utc,
+    )
+
+    # Re-stat the winning path after selection so evidence reflects
+    # its current state rather than only the scan snapshot.
+    try:
+        verified_stat = latest.stat()
+    except OSError as error:
+        return False, json.dumps(
+            {
+                "ok": False,
+                "action": "filesystem.latest_modified",
+                "workspace": str(root),
+                "error": f"winning file could not be verified: {error}",
+                "read_only": True,
+                "sli_grounded": False,
+            },
+            ensure_ascii=False,
+        )
+
+    if verified_stat.st_mtime_ns != modified_ns:
+        modified_ns = verified_stat.st_mtime_ns
+        size = verified_stat.st_size
+        modified = datetime.fromtimestamp(
+            modified_ns / 1_000_000_000,
+            tz=timezone.utc,
+        )
+
+    evidence = {
+        "ok": True,
+        "action": "filesystem.latest_modified",
+        "ontology": {
+            "domain": "filesystem",
+            "intent": "inspect_file_metadata",
+            "operation": "latest_modified_regular_file",
+            "scope": "active_workspace",
+            "access_mode": "read_only",
+        },
+        "workspace": str(root),
+        "relative_path": str(relative),
+        "absolute_path": str(latest),
+        "mtime_ns": modified_ns,
+        "modified_iso": modified.isoformat(),
+        "size_bytes": size,
+        "candidate_count": len(candidates),
+        "is_regular_file": latest.is_file(),
+        "exists": latest.exists(),
+        "read_only": True,
+        "mutation_performed": False,
+        "network_used": False,
+        "browser_used": False,
+        "provider_selected_action": True,
+        "runtime_executed_action": True,
+        "sli_evidence": [
+            "filesystem stat succeeded",
+            "winning path exists",
+            "winning path is a regular file",
+            "mtime_ns was read from the filesystem",
+            "absolute path is inside the active workspace",
+        ],
+        "sli_grounded": (
+            latest.exists()
+            and latest.is_file()
+            and (
+                latest == root
+                or root in latest.parents
+            )
+        ),
+    }
+
+    return bool(evidence["sli_grounded"]), json.dumps(
+        evidence,
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
 def install_runtime_patch() -> None:
     from sophyane import execution_runtime as runtime
 
@@ -33,6 +240,28 @@ def install_runtime_patch() -> None:
 
     def execute_action(action: dict[str, Any], workspace: Path, progress: Any) -> tuple[bool, str]:
         kind = str(action.get("type") or action.get("action") or "").strip().lower()
+
+        # SOPHYANE_SEMANTIC_FILESYSTEM_V13
+        if kind in _FILESYSTEM_LATEST_ACTIONS_V13:
+            progress(
+                "SLI executing grounded capability: "
+                "filesystem.latest_modified"
+            )
+            ok, result = _filesystem_latest_modified_v13(
+                workspace
+            )
+            if ok:
+                progress(
+                    "SLI evidence validated: path, mtime, "
+                    "regular-file status and workspace scope"
+                )
+            else:
+                progress(
+                    "SLI evidence validation failed for "
+                    "filesystem.latest_modified"
+                )
+            return ok, result
+
 
         if kind in {"analyze_log", "analyse_log", "analyze", "verify_result", "check_result"}:
             note = str(

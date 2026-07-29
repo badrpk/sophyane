@@ -25,8 +25,94 @@ class CapabilityPlan:
     confidence: float
 
 
+# SOPHYANE_FILESYSTEM_PLANNER_V16
+def _latest_modified_file_request(request: str) -> bool:
+    """Recognize a semantic request for the latest modified file."""
+    text = " ".join(
+        str(request or "").lower().split()
+    )
+
+    file_objects = (
+        "file",
+        "files",
+        "document",
+        "documents",
+    )
+
+    recency_terms = (
+        "last",
+        "latest",
+        "newest",
+        "most recent",
+        "most recently",
+        "recently",
+    )
+
+    modification_terms = (
+        "amended",
+        "amendment",
+        "modified",
+        "changed",
+        "edited",
+        "updated",
+        "touched",
+        "worked on",
+    )
+
+    question_terms = (
+        "what",
+        "which",
+        "show",
+        "find",
+        "tell",
+        "identify",
+        "locate",
+    )
+
+    has_file = any(
+        term in text
+        for term in file_objects
+    )
+
+    has_recency = any(
+        term in text
+        for term in recency_terms
+    )
+
+    has_modification = any(
+        term in text
+        for term in modification_terms
+    )
+
+    has_question = any(
+        term in text
+        for term in question_terms
+    )
+
+    return (
+        has_file
+        and has_recency
+        and (
+            has_modification
+            or has_question
+        )
+    )
+
+
 def classify(request: str) -> CapabilityPlan:
     text = str(request or "").lower()
+
+    # SOPHYANE_FILESYSTEM_PLANNER_V16
+    if _latest_modified_file_request(request):
+        return CapabilityPlan(
+            "filesystem_inspection",
+            "",
+            "active workspace",
+            ("filesystem.latest_modified",),
+            "FILESYSTEM_LATEST_MODIFIED",
+            0.99,
+        )
+
     language = ""
     for marker, value in (
         ("c++", "C++"), ("c#", "C#"), ("rust", "Rust"), ("python", "Python"),
@@ -216,10 +302,107 @@ def install_sli_capability_planner() -> None:
             f"SLI Capability Planner: {plan.project_type} / {plan.language or 'unspecified'} / "
             f"{plan.target} / {plan.builder}"
         )
+        # SOPHYANE_FILESYSTEM_PLANNER_V16
+        if plan.builder == "FILESYSTEM_LATEST_MODIFIED":
+            from sophyane import execution_runtime as runtime
+
+            progress(
+                "SLI Ontology: filesystem / "
+                "inspect_file_metadata / "
+                "filesystem.latest_modified"
+            )
+
+            progress(
+                "SLI Capability Binding: provider interpretation "
+                "accepted; deterministic runtime owns execution"
+            )
+
+            action = {
+                "type": "filesystem.latest_modified",
+                "scope": "workspace",
+                "access_mode": "read_only",
+                "original_request": original_request,
+                "provider_interpretation": str(
+                    initial_text or ""
+                ),
+            }
+
+            ok, evidence = runtime.execute_action(
+                action,
+                workspace_path,
+                progress,
+            )
+
+            if not ok:
+                progress(
+                    "SLI Validation: grounded filesystem "
+                    "evidence rejected"
+                )
+                return (
+                    "Filesystem inspection failed.\n\n"
+                    + str(evidence)
+                )
+
+            progress(
+                "SLI Validation: grounded filesystem "
+                "evidence accepted"
+            )
+
+            try:
+                payload = json.loads(
+                    str(evidence)
+                )
+            except json.JSONDecodeError:
+                return (
+                    "The latest-file capability completed, "
+                    "but its evidence was not valid JSON.\n\n"
+                    + str(evidence)
+                )
+
+            relative_path = str(
+                payload.get("relative_path")
+                or payload.get("absolute_path")
+                or "<unknown>"
+            )
+
+            modified = str(
+                payload.get("modified_iso")
+                or "<unknown>"
+            )
+
+            size = payload.get(
+                "size_bytes",
+                "<unknown>",
+            )
+
+            candidate_count = payload.get(
+                "candidate_count",
+                "<unknown>",
+            )
+
+            return (
+                "Most recently amended file:\n"
+                f"{relative_path}\n\n"
+                f"Modified: {modified}\n"
+                f"Size: {size} bytes\n"
+                f"Files inspected: {candidate_count}\n\n"
+                "Grounding evidence:\n"
+                "- Read directly from filesystem metadata\n"
+                "- Verified as an existing regular file\n"
+                "- Verified inside the active workspace\n"
+                "- No mutation performed\n"
+                "- No browser opened\n"
+                "- No shell command selected by the provider"
+            )
+
         if plan.builder != "CPP_ANDROID_SCAFFOLD":
             return original(
-                initial_text=initial_text, original_request=original_request, ask=ask,
-                workspace=workspace_path, max_steps=max_steps, progress=progress,
+                initial_text=initial_text,
+                original_request=original_request,
+                ask=ask,
+                workspace=workspace_path,
+                max_steps=max_steps,
+                progress=progress,
             )
 
         files = _cpp_android_files(plan)

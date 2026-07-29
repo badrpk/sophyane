@@ -75,8 +75,17 @@ def _safe_target(path: str, workspace: Path) -> Path:
 
 def execute_action(action: dict[str, Any], workspace: Path) -> str:
     kind = str(action.get("type") or action.get("action") or "").strip().lower()
+    if kind in {"answer", "final_answer", "reply"}:
+        kind = "respond"
     if kind in {"respond", "message"}:
-        return str(action.get("message") or action.get("content") or "")
+        return str(
+            action.get("message")
+            or action.get("content")
+            or action.get("answer")
+            or action.get("text")
+            or action.get("response")
+            or ""
+        )
     if kind == "write_file":
         target = _safe_target(str(action.get("path") or ""), workspace)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -131,6 +140,8 @@ def run_structured_loop(*, initial_text: str, original_request: str, ask: Callab
         result = execute_action(action, workspace)
         evidence.append(f"Step {step}: {result}")
         kind = str(action.get("type") or "").lower()
+        if kind in {"answer", "final_answer", "reply"}:
+            kind = "respond"
         if kind in {"respond", "message", "open_browser", "browser"}:
             return (result or str(action.get("message") or "")) + "\n\nExecution evidence:\n" + "\n".join(evidence)
         followup = (

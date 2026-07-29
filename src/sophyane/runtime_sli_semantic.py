@@ -29,6 +29,17 @@ _TECHNOLOGIES = {
     "c++", "c#", ".net", "node.js", "javascript", "typescript", "python", "rust",
     "java", "kotlin", "swift", "php", "go", "golang", "html", "css", "sql",
     "sqlite", "postgresql", "mysql", "llama.cpp", "qwen2.5", "gpt-5", "gemini",
+    # SOPHYANE_SEMANTIC_FILESYSTEM_V13
+    "filesystem",
+    "file metadata",
+    "latest modified file",
+    "most recently modified",
+    "read only",
+    "workspace scope",
+    "mtime",
+    "mtime_ns",
+    "filesystem.latest_modified",
+
 }
 _KNOWN = _ACTIONS | _ARTIFACTS | _TECHNOLOGIES | {
     "for", "a", "an", "the", "my", "your", "our", "to", "from", "of", "is",

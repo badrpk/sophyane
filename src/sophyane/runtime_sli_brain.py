@@ -53,16 +53,134 @@ def _profile(message: str) -> str:
 
 def _route(message: str, has_project: bool) -> str:
     text = message.lower()
+
+    # SOPHYANE_FILESYSTEM_CAPABILITIES_V20_EARLY_ROUTE
+    # Deterministic filesystem capabilities must be recognized before generic
+    # explanation markers such as "what is".
+    try:
+        from sophyane.runtime_filesystem_capabilities_v20 import classify_request
+
+        if classify_request(message):
+            return "execution"
+    except Exception:
+        # Preserve the existing SLI route if the optional capability module
+        # is unavailable or cannot classify this request.
+        pass
+
     if has_project and any(x in text for x in (
         "continue", "update", "improve", "change", "fix", "modify", "add ", "remove ",
         "existing", "above", "same project", "reopen",
     )):
         return "continue_project"
+
+    # Natural-language computer and filesystem inspection requests must execute
+    # real tools rather than being answered as ordinary chat.
+    inspection_verbs = (
+        "find",
+        "locate",
+        "list",
+        "show",
+        "inspect",
+        "check",
+        "search",
+        "identify",
+        "tell me which",
+        "which file",
+        "which folder",
+        "what file",
+        "what folder",
+        "in which file",
+        "where is",
+        "where was",
+    )
+
+    inspection_objects = (
+        "file",
+        "files",
+        "folder",
+        "folders",
+        "directory",
+        "directories",
+        "filesystem",
+        "file system",
+        "computer",
+        "machine",
+        "disk",
+        "drive",
+        "repository",
+        "repo",
+        "process",
+        "port",
+        "memory",
+        "cpu",
+        "storage",
+    )
+
+    inspection_attributes = (
+        "latest",
+        "last",
+        "recent",
+        "recently",
+        "newest",
+        "oldest",
+        "largest",
+        "smallest",
+        "modified",
+        "amended",
+        "amendment",
+        "changed",
+        "created",
+        "updated",
+        "size",
+        "name",
+        "path",
+        "date",
+        "time",
+        "number",
+        "count",
+    )
+
+    has_inspection_verb = any(term in text for term in inspection_verbs)
+    has_inspection_object = any(term in text for term in inspection_objects)
+    has_inspection_attribute = any(
+        term in text for term in inspection_attributes
+    )
+
+    # Explanations and conceptual questions should remain chat even when they
+    # mention filesystem objects or attributes.
+    explanation_markers = (
+        "explain",
+        "what is",
+        "what are",
+        "what does",
+        "how does",
+        "how do",
+        "why does",
+        "why do",
+        "meaning of",
+        "definition of",
+        "tell me about",
+        "describe how",
+    )
+
+    is_explanation = any(
+        text.startswith(marker)
+        for marker in explanation_markers
+    )
+
+    if (
+        not is_explanation
+        and has_inspection_object
+        and (has_inspection_verb or has_inspection_attribute)
+    ):
+        return "execution"
+
     if re.search(
         r"\b(build|make|create|design|develop|implement|write|fix|repair|patch|run|test|deploy|open|continue|convert|install|integrate|optimi[sz]e|add|remove|change|update|improve|modify)\b",
         text,
     ):
         return "execution"
+
     return "chat"
 
 
@@ -189,15 +307,14 @@ def _confidence_value(ledger: Any) -> float:
 
 
 def _human_choice_materially_useful(ledger: Any) -> bool:
-    """Ask only when SLI has a genuine semantic decision to resolve."""
+    """Do not open a blocking HITL menu.
 
-    uncertain = tuple(
-        getattr(ledger, "uncertain_terms", ()) or ()
-    )
-    confidence = _confidence_value(ledger)
-
-    return bool(uncertain) and confidence < 0.78
-
+    Sophyane already supports live keyboard/Tab interjection while providers
+    and execution are running, so the separate ten-second semantic steering
+    menu is unnecessary duplication.
+    """
+    # SOPHYANE_DISABLE_DUPLICATE_BLOCKING_STEERING
+    return False
 
 
 def _confirm(self: Any, original: str, *, has_project: bool, tui_v2: Any) -> tuple[str, str] | None:

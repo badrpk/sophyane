@@ -5,6 +5,8 @@ model output into safe workspace artifacts, execution and mechanical verificatio
 """
 from __future__ import annotations
 
+from sophyane.environment_constraints import verification_result_is_meaningful
+
 import json
 import re
 import shlex
@@ -419,6 +421,66 @@ def _command_problem(action: dict[str, Any], workspace: Path) -> str:
     return ""
 
 
+_DISCOVERY_REQUEST_PATTERNS = (
+    r"\blocate\b",
+    r"\bfind\b",
+    r"\bwhere\s+is\b",
+    r"\bwhere(?:'s|\s+is)\b",
+    r"\bshow\s+(?:me\s+)?(?:the\s+)?path\b",
+    r"\bwhich\b",
+)
+
+
+def _command_stdout(result: str) -> str:
+    """Extract STDOUT from a formatted command execution result."""
+
+    match = re.search(
+        r"STDOUT:\s*(.*?)\s*STDERR:",
+        str(result or ""),
+        re.DOTALL,
+    )
+    return match.group(1).strip() if match else ""
+
+
+def _discovery_request_completed(
+    request: str,
+    action: dict[str, Any],
+    ok: bool,
+    result: str,
+) -> bool:
+    """Return True when a read-only discovery request produced an answer."""
+
+    if not ok:
+        return False
+
+    kind = str(action.get("type") or "").lower()
+    if kind not in {
+        "command",
+        "run",
+        "shell",
+        "run_command",
+        "bash",
+    }:
+        return False
+
+    request_text = str(request or "").lower()
+
+    if not any(
+        re.search(pattern, request_text)
+        for pattern in _DISCOVERY_REQUEST_PATTERNS
+    ):
+        return False
+
+    result_text = str(result or "")
+
+    if "Exit code: 0" not in result_text:
+        return False
+
+    # `find` exits successfully even when it finds nothing, so non-empty
+    # stdout is required before treating the request as complete.
+    return bool(_command_stdout(result_text))
+
+
 def _execute(runtime: Any, action: dict[str, Any], workspace: Path,
              progress: Callable[[str], None]) -> tuple[bool, str]:
     kind = str(action.get("type") or "").lower()
@@ -479,6 +541,27 @@ def _compact_repair_prompt(request: str, files: list[str], result: str) -> str:
         f"LAST RESPONSE OR RESULT:\n{result[-1800:]}"
     )
 
+
+_READ_ONLY_INSPECTION_HINTS = (
+    "which file",
+    "what file",
+    "find file",
+    "latest file",
+    "largest file",
+    "newest file",
+    "oldest file",
+    "modified",
+    "amendment",
+    "last amendment",
+    "filesystem",
+    "folder",
+    "directory",
+    "memory usage",
+)
+
+def _read_only_inspection(request: str) -> bool:
+    t = request.lower()
+    return any(x in t for x in _READ_ONLY_INSPECTION_HINTS)
 
 def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable[[str], Any],
                       workspace: Path | None = None, max_steps: int = 12,
@@ -576,7 +659,11 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             else ""
         )
 
-        if command_text and command_text in successful_commands:
+        if (
+            command_text
+            and command_text in successful_commands
+            and not command_text.lstrip().startswith(("echo ", "printf "))
+        ):
             result = (
                 "Verification already passed earlier with exit code 0: "
                 f"{command_text}"
@@ -593,10 +680,26 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
         ok, result = _execute(runtime, action, workspace, progress)
         evidence.append(f"Step {step}: {result}")
 
+        if _discovery_request_completed(
+            original_request,
+            action,
+            ok,
+            result,
+        ):
+            return (
+                "Discovery completed successfully.\n\n"
+                + result
+                + "\n\nExecution evidence:\n"
+                + "\n".join(evidence)
+            )
+
         if (
             command_text
             and ok
-            and "Exit code: 0" in result
+            and verification_result_is_meaningful(
+                command_text,
+                result,
+            )
         ):
             successful_commands.add(command_text)
 

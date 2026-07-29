@@ -51,6 +51,8 @@ def _normalize_action(raw: Any) -> dict[str, Any]:
     if not action.get("type") and isinstance(action.get("action"), str):
         action["type"] = action.pop("action")
     kind = str(action.get("type", "")).strip().lower()
+    if kind in {"answer", "final_answer", "reply"}:
+        kind = "respond"
     action["type"] = kind
     if kind == "run_command" and not isinstance(action.get("argv"), list):
         command = action.pop("command", "")
