@@ -270,6 +270,13 @@ def _pure_media_request(message: str) -> bool:
 
 
 def _execution_requested(message: str) -> bool:
+    # Deterministic filesystem capabilities always execute (never chat).
+    try:
+        from sophyane.runtime_filesystem_capabilities_v20 import classify_request
+        if classify_request(message):
+            return True
+    except Exception:
+        pass
     text = " ".join(message.lower().split())
 
     # Standalone media creation is not a software build request.
