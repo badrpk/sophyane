@@ -72,6 +72,14 @@ class SophyaneAgent:
 
         if not message:
             return AgentResponse("Please enter a request.")
+        try:
+            from sophyane.native_capability import try_native_status_reply
+            _native = try_native_status_reply(message)
+            if _native:
+                return AgentResponse(_native)
+        except Exception:
+            pass
+
 
         try:
             from sophyane.capability_gap_messages import capability_gap_reply

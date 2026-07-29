@@ -83,3 +83,16 @@ def status() -> dict[str, Any]:
             "neuron_sha": "af27f80",
         },
     }
+
+
+def status_text() -> str:
+    """Human one-shot for registry / chat; no engine logic inlined."""
+    s = status()
+    lines = [
+        "Native workers",
+        f"  nifdu : {'OK' if s['nifdu']['available'] else 'missing'}  {s['nifdu'].get('path') or ''}",
+        f"  neuron: {'OK' if s['neuron']['available'] else 'missing'}  {s['neuron'].get('path') or ''}",
+        "Roles: Sophyane=policy | Neuron=SNN | NIFDU=product C++",
+        "No duplicated engine code in Sophyane.",
+    ]
+    return "\n".join(lines)
