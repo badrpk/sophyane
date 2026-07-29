@@ -36,6 +36,14 @@ def _clean_message(message: str) -> str:
 
 
 def _simple_chat_reply(message: str) -> str | None:
+
+    try:
+        from sophyane.capability_gap_messages import capability_gap_reply
+        gap = capability_gap_reply(message)
+        if gap:
+            return gap
+    except Exception:
+        pass
     text = " ".join(message.strip().lower().split())
     if text in {"hi", "hello", "hey", "salam", "assalamualaikum", "assalamu alaikum"}:
         return "Hello! What would you like me to build, fix, research, or explain?"
@@ -270,6 +278,12 @@ def _pure_media_request(message: str) -> bool:
 
 
 def _execution_requested(message: str) -> bool:
+    try:
+        from sophyane.capability_gap_messages import is_unavailable_external_request
+        if is_unavailable_external_request(message):
+            return False
+    except Exception:
+        pass
     # Deterministic filesystem capabilities always execute (never chat).
     try:
         from sophyane.runtime_filesystem_capabilities_v20 import classify_request

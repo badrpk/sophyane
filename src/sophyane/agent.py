@@ -73,6 +73,14 @@ class SophyaneAgent:
         if not message:
             return AgentResponse("Please enter a request.")
 
+        try:
+            from sophyane.capability_gap_messages import capability_gap_reply
+            gap = capability_gap_reply(message)
+            if gap:
+                return AgentResponse(gap)
+        except Exception:
+            pass
+
         # Persistent timer ticks must not pollute conversation memory or call LLMs.
         if message.lower() in {"/daemon-tick", "daemon-tick", "/daemon"}:
             from sophyane.daemon_runtime import run_daemon_tick

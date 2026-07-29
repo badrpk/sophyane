@@ -54,6 +54,18 @@ def _profile(message: str) -> str:
 def _route(message: str, has_project: bool) -> str:
     text = message.lower()
 
+
+    # External inbox/account access is chat/capability-gap — never build/continue.
+    try:
+        from sophyane.capability_gap_messages import (
+            is_email_access_request,
+            is_unavailable_external_request,
+        )
+        if is_email_access_request(message) or is_unavailable_external_request(message):
+            return "chat"
+    except Exception:
+        pass
+
     # SOPHYANE_FILESYSTEM_CAPABILITIES_V20_EARLY_ROUTE
     # Deterministic filesystem capabilities must be recognized before generic
     # explanation markers such as "what is".
