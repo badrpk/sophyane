@@ -1,5 +1,6 @@
 """Observable Sophyane terminal interface with persistent project sessions."""
 from __future__ import annotations
+from sophyane.local_inspection import inspect_local_request
 
 import json
 import queue
@@ -42,6 +43,10 @@ def _simple_chat_reply(message: str) -> str | None:
         return "You’re welcome."
     if text in {"sophyane --version", "sophyane -v", "--version", "version"}:
         return f"Sophyane {__version__}"
+
+    inspection_reply = inspect_local_request(message)
+    if inspection_reply is not None:
+        return inspection_reply
     if any(
         phrase in text
         for phrase in (
@@ -57,17 +62,82 @@ def _simple_chat_reply(message: str) -> str | None:
         return f"Python {sys.version.split()[0]} ({sys.executable})"
 
     # Lightweight PATH lookups: locate X / where is X / which X
+    # Also handles "Which git is being used?" by taking the first token.
     for prefix in ("locate ", "where is ", "which "):
         if text.startswith(prefix):
             import shutil
-            name = text[len(prefix):].strip(" .?")
-            # single simple token only (avoid shell injection / multi-word tasks)
-            if name and " " not in name and name.replace("-", "").replace("_", "").isalnum():
+            rest = text[len(prefix):].strip(" .?")
+            name = rest.split()[0] if rest else ""
+            name = name.strip(" .?!,")
+            if name and name.replace("-", "").replace("_", "").isalnum():
                 found = shutil.which(name)
                 if found:
                     return f"{name}: {found}"
                 return f"{name}: not found on PATH"
             break
+
+    # Simple environment inspect
+    # Identity / OS / shell / home
+    if any(p in text for p in ("what shell", "which shell", "shell am i", "my shell")):
+        import os
+        return f"shell: {os.environ.get('SHELL', 'unknown')}"
+    if text in {"who am i", "whoami", "who am i?", "whoami?"}:
+        import os
+        return f"user: {os.environ.get('USER') or os.environ.get('USERNAME') or 'unknown'}"
+    if any(
+        p in text
+        for p in (
+            "what operating system",
+            "which os",
+            "what os",
+            "operating system is this",
+            "what platform",
+        )
+    ):
+        import platform
+        return (
+            f"OS: {platform.system()} {platform.release()} "
+            f"({platform.platform()})"
+        )
+    if any(
+        p in text
+        for p in (
+            "what architecture",
+            "machine architecture",
+            "cpu architecture",
+            "what arch",
+        )
+    ):
+        import platform
+        return f"arch: {platform.machine()} ({platform.processor() or 'n/a'})"
+    if any(
+        p in text
+        for p in (
+            "home directory",
+            "my home",
+            "what is home",
+            "where is home",
+            "$home",
+        )
+    ):
+        from pathlib import Path as P
+        return f"home: {P.home()}"
+
+    if text in {"show path", "show path.", "print path", "what is path", "what is my path"}:
+        import os
+        return f"PATH={os.environ.get('PATH', '')}"
+    if any(
+        p in text
+        for p in (
+            "current working directory",
+            "working directory",
+            "what is cwd",
+            "show cwd",
+            "where am i",
+        )
+    ):
+        import os
+        return f"cwd: {os.getcwd()}"
 
     return None
 
