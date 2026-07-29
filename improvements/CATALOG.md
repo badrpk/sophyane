@@ -7,3 +7,4 @@ This is a blockchain-*style* ledger of insights, not an untrusted auto-merge of
 executable patches into `main`.
 - 2026-07-15: 1 proposals · merkle `86faf9b27d1b8ff2…` · device `penguin-889b882e`
 - 2026-07-18: 487 proposals · merkle `6ae92b63a29f50b1…` · device `penguin-889b882e`
+- 2026-07-29: 1 proposals · merkle `fc8c35c0b76c6ffc…` · device `runnervmvrwv9-aae95289`
