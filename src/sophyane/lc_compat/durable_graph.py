@@ -38,17 +38,21 @@ class DurableExecutor:
         tid = thread_id or str(uuid.uuid4())
         ckpt = checkpoint_id or f"ckpt_{tid}_{int(time.time()*1000)}"
         ts = ThreadState(thread_id=tid, checkpoint_id=ckpt, status="running")
+        state_in = dict(initial)
         try:
             result = self.graph.invoke(
-                initial,
+                state_in,
                 checkpoint_id=ckpt,
                 resume=resume,
+                ignore_interrupt_once=resume,
                 return_result=True,
             )
             if hasattr(result, "state"):
                 ts.values = dict(result.state)
-                ts.next_nodes = [result.next_node] if result.next_node else []
-                ts.status = "done" if result.completed else "running"
+                ts.next_nodes = [result.next_node] if getattr(result, "next_node", None) else []
+                ts.status = "done" if getattr(result, "completed", True) else "running"
+                if getattr(result, "checkpoint_id", None):
+                    ts.checkpoint_id = result.checkpoint_id
             else:
                 ts.values = dict(result)
                 ts.status = "done"
@@ -56,6 +60,12 @@ class DurableExecutor:
             ts.status = "interrupted"
             ts.next_nodes = [gi.node]
             ts.checkpoint_id = gi.checkpoint_id or ckpt
+            # Prefer state from DurableStore checkpoint written by graph_runtime
+            saved = self.store.get("checkpoint", ts.checkpoint_id) if ts.checkpoint_id else None
+            if isinstance(saved, dict) and isinstance(saved.get("state"), dict):
+                ts.values = dict(saved["state"])
+            else:
+                ts.values = dict(state_in)
             self._save_thread(ts)
             return ts
         self._save_thread(ts)
