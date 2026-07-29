@@ -453,21 +453,23 @@ def execute_capability(
         )
 
     if capability == "filesystem.folder_count":
-        count = 0
-
-        for _, directories, _ in os.walk(root):
-            directories[:] = [
-                name
-                for name in directories
-                if name not in IGNORED_DIRECTORIES
+        try:
+            folders = [
+                entry
+                for entry in root.iterdir()
+                if entry.is_dir()
+                and not entry.is_symlink()
+                and entry.name not in IGNORED_DIRECTORIES
+                and not entry.name.startswith(".")
             ]
-            count += len(directories)
+        except OSError as error:
+            return False, f"Could not count folders under {root}: {error}"
 
         return True, evidence(
             root,
             capability,
             scope,
-            count=count,
+            folder_count=len(folders),
         )
 
     if capability == "filesystem.directory_size":
@@ -756,9 +758,10 @@ def format_result(raw: str) -> str:
         )
 
     if capability == "filesystem.folder_count":
+        count = data.get("count", data.get("folder_count", 0))
         return (
-            f"Folders: {data['count']}\n"
-            f"Scope: {data['scope']}"
+            f"Folders: {count}\n"
+            f"Scope: {data.get('scope', 'unknown')}"
         )
 
     if capability == "filesystem.directory_size":
