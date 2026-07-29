@@ -167,7 +167,8 @@ def context_fingerprint(request: str) -> str:
     return "|".join(sorted(set(toks)))
 
 
-def char_ngram_vec(term: str, n: int = 3) -> dict[str, float]:
+def char_ngram_vec(term: str, n: int = 2) -> dict[str, float]:
+    """Default bigrams — short words need smaller n for non-zero overlap."""
     s = f"#{term}#"
     counts: dict[str, float] = defaultdict(float)
     for i in range(max(0, len(s) - n + 1)):
@@ -502,18 +503,215 @@ def known_roles() -> dict[str, str]:
     return out
 
 
+def _jaccard(left: Any, right: Any) -> float:
+    """Return Jaccard similarity for two iterable collections."""
+    a = {str(x).lower() for x in (left or []) if str(x).strip()}
+    b = {str(x).lower() for x in (right or []) if str(x).strip()}
+
+    if not a or not b:
+        return 0.0
+
+    return len(a & b) / len(a | b)
+
+
+def _relation_neighbors(
+    data: dict[str, Any],
+    term: str,
+) -> set[tuple[str, str]]:
+    """Return relation-labelled neighbors in either graph direction."""
+    neighbors: set[tuple[str, str]] = set()
+
+    for edge in data.get("relations", []):
+        src = canonicalize(str(edge.get("src", "")))
+        dst = canonicalize(str(edge.get("dst", "")))
+        rel = str(edge.get("rel", "")).strip().lower()
+
+        if not src or not dst or not rel:
+            continue
+
+        if src == term:
+            neighbors.add((rel, dst))
+
+        if dst == term:
+            neighbors.add((f"inverse:{rel}", src))
+
+    return neighbors
+
+
+def _direct_relation_score(
+    data: dict[str, Any],
+    left: str,
+    right: str,
+) -> float:
+    """Return bounded evidence for a direct graph connection."""
+    best = 0.0
+
+    for edge in data.get("relations", []):
+        src = canonicalize(str(edge.get("src", "")))
+        dst = canonicalize(str(edge.get("dst", "")))
+
+        if {src, dst} != {left, right}:
+            continue
+
+        weight = max(0.0, float(edge.get("weight", 0.0)))
+        best = max(best, min(1.0, math.log1p(weight) / math.log(11.0)))
+
+    return best
+
+
+def _semantic_similarity(
+    data: dict[str, Any],
+    left: str,
+    right: str,
+) -> float:
+    """Combine lexical, alias, role, hierarchy, context, and graph evidence."""
+    terms = data.get("terms", {})
+    left_meta = terms.get(left, {})
+    right_meta = terms.get(right, {})
+
+    left_vec = left_meta.get("embedding") or char_ngram_vec(left)
+    right_vec = right_meta.get("embedding") or char_ngram_vec(right)
+    lexical = cosine(left_vec, right_vec)
+
+    left_aliases = {
+        canonicalize(str(alias))
+        for alias in left_meta.get("aliases", [])
+        if canonicalize(str(alias))
+    }
+    right_aliases = {
+        canonicalize(str(alias))
+        for alias in right_meta.get("aliases", [])
+        if canonicalize(str(alias))
+    }
+
+    alias_match = (
+        right in left_aliases
+        or left in right_aliases
+        or bool(left_aliases & right_aliases)
+    )
+
+    left_role = str(left_meta.get("role", "")).upper()
+    right_role = str(right_meta.get("role", "")).upper()
+    same_role = bool(left_role and left_role == right_role)
+
+    parent_similarity = _jaccard(
+        left_meta.get("parents", []),
+        right_meta.get("parents", []),
+    )
+
+    context_similarity = _jaccard(
+        left_meta.get("contexts", []),
+        right_meta.get("contexts", []),
+    )
+
+    left_neighbors = _relation_neighbors(data, left)
+    right_neighbors = _relation_neighbors(data, right)
+    neighbor_similarity = _jaccard(left_neighbors, right_neighbors)
+
+    direct_relation = _direct_relation_score(data, left, right)
+
+    score = (
+        0.30 * lexical
+        + 0.40 * float(alias_match)
+        + 0.08 * float(same_role)
+        + 0.08 * parent_similarity
+        + 0.06 * context_similarity
+        + 0.06 * neighbor_similarity
+        + 0.02 * direct_relation
+    )
+
+    # Explicit aliases must always rank as strongly related.
+    if alias_match:
+        score = max(score, 0.85)
+
+    return round(min(1.0, max(0.0, score)), 6)
+
+
+def repair_bidirectional_aliases(
+    data: dict[str, Any] | None = None,
+    *,
+    save: bool = True,
+) -> dict[str, Any]:
+    """Make known alias relationships reciprocal and normalize embeddings."""
+    ontology = data if data is not None else _load()
+    terms = ontology.setdefault("terms", {})
+    additions = 0
+
+    # First normalize every existing term.
+    for term, meta in list(terms.items()):
+        meta.setdefault("aliases", [])
+        meta.setdefault("parents", [])
+        meta.setdefault("contexts", [])
+        meta["embedding"] = char_ngram_vec(term)
+
+        parent = SEED_PARENTS.get(term)
+        if parent and parent not in meta["parents"]:
+            meta["parents"].append(parent)
+
+    # Then make aliases reciprocal where both terms exist.
+    for term, meta in list(terms.items()):
+        normalized_aliases = []
+
+        for raw_alias in meta.get("aliases", []):
+            alias = canonicalize(str(raw_alias))
+
+            if not alias or alias == term:
+                continue
+
+            if alias not in normalized_aliases:
+                normalized_aliases.append(alias)
+
+            alias_meta = terms.get(alias)
+            if alias_meta is None:
+                continue
+
+            reverse = alias_meta.setdefault("aliases", [])
+            if term not in reverse:
+                reverse.append(term)
+                additions += 1
+
+        meta["aliases"] = normalized_aliases
+
+    ontology["updated_at"] = time.time()
+
+    if save:
+        _save(ontology)
+
+    return {
+        "alias_links_added": additions,
+        "term_count": len(terms),
+        "path": str(ONTOLOGY_FILE),
+    }
+
+
 def similar_terms(term: str, limit: int = 5) -> list[tuple[str, float]]:
+    """Return graph-aware semantic neighbors for a known or unknown term."""
     data = _load()
     terms = data.get("terms", {})
-    target = canonicalize(term) or term.lower()
-    vec = terms.get(target, {}).get("embedding") or char_ngram_vec(target)
-    scored = []
-    for other, meta in terms.items():
+    target = canonicalize(term) or term.lower().strip()
+
+    # Allow querying an alias even when it is not its own canonical entry.
+    if target not in terms:
+        for candidate, meta in terms.items():
+            aliases = {
+                canonicalize(str(alias))
+                for alias in meta.get("aliases", [])
+            }
+            if target in aliases:
+                target = candidate
+                break
+
+    scored: list[tuple[str, float]] = []
+
+    for other in terms:
         if other == target:
             continue
-        scored.append((other, cosine(vec, meta.get("embedding") or char_ngram_vec(other))))
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return scored[:limit]
+
+        score = _semantic_similarity(data, target, other)
+        scored.append((other, score))
+
+    scored.sort(key=lambda item: (-item[1], item[0]))
+    return scored[: max(0, int(limit))]
 
 
 def relation_graph_summary(limit: int = 30) -> list[dict[str, Any]]:
