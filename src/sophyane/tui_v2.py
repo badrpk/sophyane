@@ -110,18 +110,36 @@ def _simple_chat_reply(message: str) -> str | None:
     ):
         import platform
         return f"arch: {platform.machine()} ({platform.processor() or 'n/a'})"
-    if any(
-        p in text
-        for p in (
-            "home directory",
-            "my home",
-            "what is home",
-            "where is home",
-            "$home",
-        )
+    # Path-only home questions. Do NOT match list/count folder intents.
+    home_path_phrases = (
+        "what is my home directory",
+        "what is home",
+        "where is home",
+        "where is my home",
+        "show home directory",
+        "show my home directory",
+        "home directory path",
+        "$home",
+    )
+    listing_markers = (
+        "list ",
+        "count ",
+        "how many",
+        "number of",
+        "folders in",
+        "directories in",
+        "folder in",
+        "directory in",
+    )
+    if any(p in text for p in home_path_phrases) and not any(
+        m in text for m in listing_markers
     ):
-        from pathlib import Path as P
-        return f"home: {P.home()}"
+        # Exact short forms only when not listing
+        if text in {"home directory", "my home directory", "my home"} or any(
+            p in text for p in home_path_phrases
+        ):
+            from pathlib import Path as P
+            return f"home: {P.home()}"
 
     if text in {"show path", "show path.", "print path", "what is path", "what is my path"}:
         import os
