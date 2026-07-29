@@ -16,6 +16,16 @@ from sophyane.execution_runtime import extract_plan, run_structured_loop, select
 from sophyane.version import __version__
 
 
+
+# SOPHYANE_RUNTIME_BOOTSTRAP_V6
+from .request_intercepts import (
+    install_input_capture as _sophyane_install_input_capture,
+    print_startup_ontology_once as _sophyane_print_startup_ontology_once,
+)
+
+_sophyane_install_input_capture()
+_sophyane_print_startup_ontology_once()
+
 def _clean_message(message: str) -> str:
     """Remove copied terminal prompt glyphs and harmless leading whitespace."""
     value = message.strip()
@@ -32,6 +42,33 @@ def _simple_chat_reply(message: str) -> str | None:
         return "You’re welcome."
     if text in {"sophyane --version", "sophyane -v", "--version", "version"}:
         return f"Sophyane {__version__}"
+    if any(
+        phrase in text
+        for phrase in (
+            "python version",
+            "version of python",
+            "which python",
+            "python is installed",
+            "installed python",
+            "what version of python",
+        )
+    ):
+        import sys
+        return f"Python {sys.version.split()[0]} ({sys.executable})"
+
+    # Lightweight PATH lookups: locate X / where is X / which X
+    for prefix in ("locate ", "where is ", "which "):
+        if text.startswith(prefix):
+            import shutil
+            name = text[len(prefix):].strip(" .?")
+            # single simple token only (avoid shell injection / multi-word tasks)
+            if name and " " not in name and name.replace("-", "").replace("_", "").isalnum():
+                found = shutil.which(name)
+                if found:
+                    return f"{name}: {found}"
+                return f"{name}: not found on PATH"
+            break
+
     return None
 
 
@@ -150,6 +187,53 @@ def _execution_requested(message: str) -> bool:
     # Standalone media creation is not a software build request.
     if _pure_media_request(message):
         return False
+
+    # Read-only local-environment inspection still requires execution.
+    inspection_patterns = (
+        r"^\s*locate\b",
+        r"^\s*which\b",
+        r"\bwhere\s+is\b",
+        r"^\s*find\b",
+        r"\bshow\s+(?:me\s+)?(?:the\s+)?path\b",
+        r"\bexecutable\b",
+        r"\bcommand\s+path\b",
+    )
+
+    inspection_targets = (
+        "python",
+        "python3",
+        "pytest",
+        "pip",
+        "pip3",
+        "git",
+        "node",
+        "npm",
+        "java",
+        "javac",
+        "gcc",
+        "g++",
+        "clang",
+        "cargo",
+        "rustc",
+        "go",
+        "docker",
+        "podman",
+        "cmake",
+        "make",
+        "bash",
+        "zsh",
+        "fish",
+        "shell",
+        "executable",
+        "command",
+    )
+
+    if (
+        any(re.search(pattern, text) for pattern in inspection_patterns)
+        and any(target in text for target in inspection_targets)
+    ):
+        return True
+
     advice = (
         "what should", "which project", "project should", "ideas", "recommend",
         "suggest", "explain", "tell me about", "what is", "how does", "can i",
@@ -219,6 +303,281 @@ def _render_nonexecuting_response(text: str) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return str(plan.get("objective") or "I could not produce a direct answer.").strip()
+
+
+
+
+def _is_latest_file_inspection_request(message: str) -> bool:
+    """Recognize requests asking for the most recently changed user file."""
+    text = " ".join(str(message).lower().split())
+
+    file_terms = (
+        "file",
+        "files",
+    )
+    latest_terms = (
+        "last amendment",
+        "latest amendment",
+        "last amended",
+        "latest amended",
+        "last modified",
+        "latest modified",
+        "modified most recently",
+        "changed most recently",
+        "most recently changed",
+        "most recently modified",
+        "newest file",
+        "latest file",
+    )
+    machine_terms = (
+        "computer",
+        "machine",
+        "system",
+        "home",
+        "my files",
+        "my computer",
+    )
+
+    has_file = any(term in text for term in file_terms)
+    has_latest = any(term in text for term in latest_terms)
+    has_machine = any(term in text for term in machine_terms)
+
+    # The original wording contains "file", "computer", "last", and
+    # "amendment", so recognize that natural-language form as well.
+    amendment_form = (
+        has_file
+        and "amendment" in text
+        and any(term in text for term in ("last", "latest", "recent"))
+    )
+
+    # Explicit latest/newest-file wording is sufficient by itself.
+    # Machine terms improve confidence but are not mandatory.
+    return has_file and (has_latest or amendment_form)
+
+
+def _latest_user_file_report() -> str:
+    """Return real evidence for the newest accessible regular user file."""
+    import datetime
+    import os
+
+    root = Path.home().resolve()
+
+    # Ignore volatile caches and Sophyane's own runtime state so merely asking
+    # the question does not make a generated log become the newest user file.
+    ignored_names = {
+        ".cache",
+        "__pycache__",
+        ".npm",
+        ".cargo",
+        ".rustup",
+        ".local",
+        ".ollama",
+        "node_modules",
+        ".venv",
+        "venv",
+    }
+
+    ignored_parts = {
+        ".git",
+        "__pycache__",
+        "node_modules",
+    }
+
+    newest_path = None
+    newest_stat = None
+    scanned = 0
+    denied = 0
+
+    def onerror(_error):
+        nonlocal denied
+        denied += 1
+
+    for current, directories, filenames in os.walk(
+        root,
+        topdown=True,
+        followlinks=False,
+        onerror=onerror,
+    ):
+        current_path = Path(current)
+
+        directories[:] = [
+            name
+            for name in directories
+            if name not in ignored_names
+            and name not in ignored_parts
+            and not name.endswith(
+                (
+                    ".bak",
+                    ".backup",
+                )
+            )
+        ]
+
+        for filename in filenames:
+            candidate = current_path / filename
+
+            if any(part in ignored_parts for part in candidate.parts):
+                continue
+
+            try:
+                if candidate.is_symlink() or not candidate.is_file():
+                    continue
+
+                stat = candidate.stat()
+                scanned += 1
+            except (OSError, PermissionError):
+                denied += 1
+                continue
+
+            if newest_stat is None or stat.st_mtime_ns > newest_stat.st_mtime_ns:
+                newest_path = candidate
+                newest_stat = stat
+
+    if newest_path is None or newest_stat is None:
+        return (
+            "No accessible regular file was found under "
+            f"{root}.\n"
+            f"Unreadable entries: {denied}"
+        )
+
+    modified = datetime.datetime.fromtimestamp(
+        newest_stat.st_mtime
+    ).astimezone()
+
+    return (
+        "Most recently modified accessible user file:\n"
+        f"Path: {newest_path}\n"
+        f"Modified: {modified.isoformat(timespec='seconds')}\n"
+        f"Size: {newest_stat.st_size} bytes\n"
+        f"Search root: {root}\n"
+        f"Regular files inspected: {scanned}\n"
+        f"Unreadable entries skipped: {denied}"
+    )
+
+
+def _sophyane_latest_file_request(message: str) -> bool:
+    """Detect requests for the most recently modified file."""
+    text = " ".join(str(message).lower().split())
+
+    if "file" not in text:
+        return False
+
+    phrases = (
+        "last amendment",
+        "latest amendment",
+        "last amended",
+        "latest amended",
+        "last modified",
+        "latest modified",
+        "modified most recently",
+        "changed most recently",
+        "most recently changed",
+        "most recently modified",
+        "newest file",
+        "latest file",
+    )
+
+    amendment_wording = (
+        "amendment" in text
+        and any(word in text for word in ("last", "latest", "recent"))
+    )
+
+    return any(phrase in text for phrase in phrases) or amendment_wording
+
+
+def _sophyane_latest_file_result() -> str:
+    """Perform a deterministic read-only scan of the user's home."""
+    import datetime
+    import os
+
+    root = Path.home().resolve()
+
+    ignored_directories = {
+        ".cache",
+        ".git",
+        ".npm",
+        ".cargo",
+        ".rustup",
+        ".ollama",
+        "__pycache__",
+        "node_modules",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".venv",
+        "venv",
+    }
+
+    ignored_suffixes = (
+        ".pyc",
+        ".pyo",
+        ".swp",
+        ".tmp",
+    )
+
+    newest_path = None
+    newest_stat = None
+    inspected = 0
+    skipped = 0
+
+    def onerror(_error):
+        nonlocal skipped
+        skipped += 1
+
+    for current, directories, filenames in os.walk(
+        root,
+        topdown=True,
+        followlinks=False,
+        onerror=onerror,
+    ):
+        directories[:] = [
+            name
+            for name in directories
+            if name not in ignored_directories
+        ]
+
+        current_path = Path(current)
+
+        for filename in filenames:
+            if filename.endswith(ignored_suffixes):
+                continue
+
+            candidate = current_path / filename
+
+            try:
+                if candidate.is_symlink() or not candidate.is_file():
+                    continue
+
+                stat = candidate.stat()
+                inspected += 1
+            except (OSError, PermissionError):
+                skipped += 1
+                continue
+
+            if newest_stat is None or stat.st_mtime_ns > newest_stat.st_mtime_ns:
+                newest_path = candidate
+                newest_stat = stat
+
+    if newest_path is None or newest_stat is None:
+        return (
+            "No accessible regular file was found.\n"
+            f"Search root: {root}\n"
+            f"Unreadable entries skipped: {skipped}"
+        )
+
+    modified = datetime.datetime.fromtimestamp(
+        newest_stat.st_mtime
+    ).astimezone()
+
+    return (
+        "Most recently modified accessible user file:\n"
+        f"Path: {newest_path}\n"
+        f"Modified: {modified.isoformat(timespec='seconds')}\n"
+        f"Size: {newest_stat.st_size} bytes\n"
+        f"Search root: {root}\n"
+        f"Files inspected: {inspected}\n"
+        f"Unreadable entries skipped: {skipped}"
+    )
 
 
 class ObservableTUI:
@@ -318,6 +677,16 @@ class ObservableTUI:
                 lines.append(f"- {path.relative_to(self.active_workspace)} ({path.stat().st_size} bytes)")
         return "\n".join(lines)
 
+
+    def read_prompt(self, prompt: str = "❯ ") -> str:
+        """Read one interactive user prompt."""
+        try:
+            return input(prompt)
+        except EOFError:
+            raise
+        except KeyboardInterrupt:
+            raise
+
     def run(self) -> int:
         print(f"\n◆ Sophyane {__version__}")
         print(f"provider {self.config.get('provider')}  model {self.config.get('model')}")
@@ -388,6 +757,59 @@ class ObservableTUI:
                 self.last_mode = "chat"
                 request_for_model = f"Answer directly. No JSON or tool action.\n{context_message}"
 
+
+# SOPHYANE_SEMANTIC_FILESYSTEM_V13
+            if (
+                executable
+                and _is_latest_file_inspection_request(message)
+            ):
+                self.last_mode = "execution"
+                self.active_request = message
+                self.project_requirements = [message]
+
+                request_for_model = f"""ORIGINAL USER REQUEST:
+{message}
+
+SLI SEMANTIC ONTOLOGY:
+- domain: filesystem
+- intent: inspect_file_metadata
+- operation: latest_modified_regular_file
+- capability: filesystem.latest_modified
+- scope: active_workspace
+- access_mode: read_only
+- mutation_allowed: false
+- network_required: false
+- browser_required: false
+- project_generation_required: false
+
+AVAILABLE GROUNDED ACTION:
+{{
+  "type": "filesystem.latest_modified",
+  "scope": "workspace",
+  "include_hidden": false,
+  "evidence_required": [
+    "absolute_path",
+    "relative_path",
+    "mtime_ns",
+    "modified_iso",
+    "size_bytes"
+  ]
+}}
+
+Interpret the ORIGINAL USER REQUEST semantically.
+
+If it requests the latest, last, newest, most recently edited,
+modified, changed, updated, or amended file, return exactly one
+compact JSON action using `filesystem.latest_modified`.
+
+Do not return run_command.
+Do not run ls, find, pytest, unittest, compilation, browser actions,
+or project generation for this read-only metadata query.
+Do not invent a filename.
+The runtime will execute the action deterministically and SLI will
+validate the returned filesystem evidence.
+"""
+
             self.progress("Thinking and planning" if executable else "Getting direct response")
             try:
                 response = self.call_provider(request_for_model)
@@ -404,9 +826,45 @@ class ObservableTUI:
                 self.progress("Execution request received; entering adaptive runtime")
                 try:
                     workspace = self._workspace_for(continuing)
+                    # SOPHYANE_CANONICAL_ACTIVE_REQUEST
+                    # SOPHYANE_USE_CANONICAL_REQUEST_SNAPSHOT
+                    # The semantic layer preserves live keyboard instructions
+                    # in a dedicated snapshot because active_request can be
+                    # reset or replaced during provider refinement.
+                    snapshot = str(
+                        getattr(
+                            self,
+                            "_sophyane_canonical_request_snapshot",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+
+                    active_request = str(
+                        getattr(self, "active_request", "")
+                        or ""
+                    ).strip()
+
+                    # Prevent a snapshot from a previous turn being reused.
+                    if (
+                        snapshot
+                        and message.casefold() in snapshot.casefold()
+                    ):
+                        canonical_request = snapshot
+                    elif (
+                        active_request
+                        and message.casefold()
+                        in active_request.casefold()
+                    ):
+                        canonical_request = active_request
+                    else:
+                        canonical_request = message.strip()
+
+                    # SOPHYANE_TRACE_CANONICAL_BEFORE_STRUCTURED_LOOP
+
                     text = run_structured_loop(
                         initial_text=text,
-                        original_request=message,
+                        original_request=canonical_request,
                         ask=lambda prompt: self.call_provider(prompt),
                         workspace=workspace,
                         max_steps=8 if self.small_local else 16,

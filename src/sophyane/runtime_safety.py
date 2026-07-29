@@ -8,6 +8,30 @@ from typing import Any
 _SEEN: dict[str, dict[str, int]] = {}
 
 
+def _unsafe_root_scan(command: str) -> str | None:
+    """Reject broad recursive reads starting at the filesystem root."""
+
+    text = " ".join(command.strip().split())
+
+    if not text:
+        return None
+
+    patterns = (
+        r"(?:^|[;&|]\s*)find\s+/(?:\s|$)",
+        r"(?:^|[;&|]\s*)grep\s+(?:-[^\s]*[Rr][^\s]*\s+)+.*\s/(?:\s|$)",
+        r"(?:^|[;&|]\s*)ls\s+(?:-[^\s]*R[^\s]*\s+)+/(?:\s|$)",
+        r"(?:^|[;&|]\s*)du(?:\s+-[^\s]+)*\s+/(?:\s|$)",
+    )
+
+    if any(re.search(pattern, text) for pattern in patterns):
+        return (
+            "broad recursive scanning of the filesystem root is not allowed; "
+            "search the workspace or a specific known directory instead"
+        )
+
+    return None
+
+
 def _unsafe_external_write(command: str, workspace: Path) -> str | None:
     text = command.strip()
     root = str(workspace.resolve())
@@ -32,6 +56,10 @@ def install_runtime_safety() -> None:
         kind = str(normalized.get("type") or "").lower()
         if kind in {"run", "shell", "run_command", "bash", "run_interactive", "interactive", "play_demo"}:
             command = str(normalized.get("command") or normalized.get("cmd") or normalized.get("content") or "").strip()
+            reason = _unsafe_root_scan(command)
+            if reason:
+                return False, f"Command blocked: {reason}."
+
             reason = _unsafe_external_write(command, workspace)
             if reason:
                 return False, f"Command blocked: {reason}. Use only {workspace}."

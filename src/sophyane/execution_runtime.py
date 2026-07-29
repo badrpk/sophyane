@@ -6,6 +6,7 @@ import hashlib
 import http.server
 import json
 import os
+import signal
 import shutil
 import subprocess
 import threading
@@ -19,7 +20,7 @@ Progress = Callable[[str], None]
 MAX_CAPTURE = 12000
 VALID_ACTIONS = {
     "write_file", "append_file", "mkdir", "run", "shell", "run_command", "bash",
-    "open_browser", "browser", "respond", "message", "run_interactive", "interactive",
+    "open_browser", "browser", "respond", "message", "answer", "final_answer", "reply", "run_interactive", "interactive",
     "play_demo", "analyze_log", "verify", "check",
 }
 _BROWSER_SERVERS: dict[Path, tuple[http.server.ThreadingHTTPServer, threading.Thread, str]] = {}
@@ -83,6 +84,7 @@ def _run_with_heartbeat(command: str, workspace: Path, progress: Progress) -> st
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        start_new_session=True,
     )
     started = time.monotonic()
     next_update = 0
@@ -92,8 +94,12 @@ def _run_with_heartbeat(command: str, workspace: Path, progress: Progress) -> st
             progress(f"Running command ({elapsed}s): {command}")
             next_update += 5
         time.sleep(1)
-        if elapsed >= 180:
-            process.kill()
+        if elapsed >= 60:
+            progress(f"Command timed out after 60s: {command}")
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             break
     stdout, stderr = process.communicate()
     return (
@@ -200,15 +206,21 @@ def _normalize_action(value: Any) -> dict[str, Any] | None:
         return None
 
     kind = str(value.get("type") or value.get("kind") or value.get("name") or "").strip().lower()
+    if kind in {"answer", "final_answer", "reply"}:
+        kind = "respond"
     if kind in VALID_ACTIONS:
         normalized = dict(value)
         normalized["type"] = kind
         return normalized
 
     action_value = value.get("action")
-    if isinstance(action_value, str) and action_value.strip().lower() in VALID_ACTIONS:
-        normalized = dict(value)
-        normalized["type"] = action_value.strip().lower()
+    if isinstance(action_value, str):
+        action_kind = action_value.strip().lower()
+        if action_kind in {"answer", "final_answer", "reply"}:
+            action_kind = "respond"
+        if action_kind in VALID_ACTIONS:
+            normalized = dict(value)
+            normalized["type"] = action_kind
         normalized.pop("action", None)
         return normalized
     if isinstance(action_value, dict):
@@ -240,7 +252,15 @@ def execute_action(action: dict[str, Any], workspace: Path, progress: Progress) 
     kind = str(action.get("type") or "").strip().lower()
     progress(f"Action: {kind or 'unknown'}")
     if kind in {"respond", "message"}:
-        return True, str(action.get("message") or action.get("content") or "")
+        return True, str(
+            action.get("message")
+            or action.get("content")
+            or action.get("answer")
+            or action.get("text")
+            or action.get("response")
+            or action.get("result")
+            or ""
+        )
     if kind in {"write_file", "append_file"}:
         target = _safe_target(str(action.get("path") or action.get("file") or ""), workspace)
         target.parent.mkdir(parents=True, exist_ok=True)
