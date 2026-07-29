@@ -85,3 +85,5 @@ runtime/
 .sophyane-partial-index.html
 *.bak*
 *.pre-v*
+*.ontology-backup-*
+src/sophyane/providers/*.pre-v*
