@@ -222,13 +222,16 @@ class StateGraph:
 
     @staticmethod
     def merge(base: State, update: State) -> State:
+        """Shallow merge with last-write-wins.
+
+        List values are replaced, not concatenated. Nodes that want to grow a
+        list must return the full new list themselves (e.g. ``trace + [name]``).
+        Automatic list-append was double-applying those updates and corrupting
+        traces (e.g. ``['a','a','b',...]``).
+        """
         merged = dict(base)
         for key, value in update.items():
-            previous = merged.get(key)
-            if isinstance(previous, list) and isinstance(value, list):
-                merged[key] = [*previous, *value]
-            else:
-                merged[key] = value
+            merged[key] = value
         return merged
 
     def _run_node(self, name: str, state: State) -> tuple[State | Command, int]:
@@ -419,3 +422,25 @@ def fan_out(
         return [worker(value) for value in items]
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         return list(executor.map(worker, items))
+
+
+def _invoke_linear(nodes, edges, start, end, state):
+    """Deterministic single-path invoke for fixed edge maps.
+
+    edges: dict[str, str] direct edges; start/end are sentinel strings.
+    """
+    current = edges.get(start)
+    seen_steps = 0
+    max_steps = max(32, len(nodes) * 4)
+    while current and current != end and seen_steps < max_steps:
+        fn = nodes.get(current)
+        if fn is None:
+            break
+        update = fn(state) or {}
+        if isinstance(state, dict) and isinstance(update, dict):
+            state = {**state, **update}
+        else:
+            state = update
+        current = edges.get(current)
+        seen_steps += 1
+    return state
