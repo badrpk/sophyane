@@ -300,6 +300,12 @@ def _pure_media_request(message: str) -> bool:
 
 
 def _execution_requested(message: str) -> bool:
+    # explain-tool chat short-circuit: "explain pytest" is documentation, not a test run
+    _t = " ".join(str(message or "").lower().split())
+    if _t.startswith(("explain ", "what is ", "what are ", "how does ", "how do ")):
+        if not any(v in _t for v in (" run ", " execute ", " install ", " fix ", " write ", " create ")):
+            # bare "explain X" / "what is X" stay chat even if X is a test tool name
+            return False
     try:
         from sophyane.collaborative_workers import plan_workers
         from sophyane.native_capability import try_native_status_reply

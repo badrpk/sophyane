@@ -9,7 +9,7 @@ from sophyane.providers.gemini import GeminiProvider
 
 
 def _provider() -> GeminiProvider:
-    return GeminiProvider(api_key="test-key",  # noqa: S105 — fixture only, not a real credential, model="gemini-3.6-flash")
+    return GeminiProvider(api_key="test-key", model="gemini-3.6-flash")  # fixture only
 
 
 def test_response_mode_separates_raw_html_actions_and_plans() -> None:
