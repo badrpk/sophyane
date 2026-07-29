@@ -134,8 +134,13 @@ class GeminiProvider(Provider):
 
     @staticmethod
     def _response_mode(prompt: str, system_prompt: str) -> str:
-        """Classify the call as raw source, executable action JSON, or planning JSON."""
+        """Classify the call as chat, raw source, action JSON, or planning JSON."""
         text = " ".join(f"{system_prompt}\n{prompt}".lower().split())
+
+        # The caller already knows whether this is ordinary conversation.
+        # Do not force direct user-facing answers through PLAN_SCHEMA.
+        if "sophyane_response_mode: chat" in text:
+            return "chat"
 
         raw_markers = (
             "output raw html only",
@@ -151,6 +156,10 @@ class GeminiProvider(Provider):
             "return source code only",
             "output source code only",
             "no json, markdown",
+            # Chat / direct response must not use planner JSON schema
+            "answer directly",
+            "no json or tool action",
+            "answer the user in plain language",
         )
         if any(marker in text for marker in raw_markers):
             return "raw"
@@ -164,6 +173,10 @@ class GeminiProvider(Provider):
             "write_file",
             "append_file",
             "run_command",
+            # SOPHYANE_SEMANTIC_FILESYSTEM_V13
+            "filesystem.latest_modified",
+            "filesystem_latest_modified",
+            "latest_modified_file",
             "files array",
             '"files"',
             "artifact request",
@@ -204,7 +217,7 @@ class GeminiProvider(Provider):
             "temperature": self.temperature,
             "maxOutputTokens": output_limit,
         }
-        if mode != "raw":
+        if mode not in {"raw", "chat"}:
             generation_config.update(
                 {
                     "responseMimeType": "application/json",

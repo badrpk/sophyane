@@ -246,7 +246,12 @@ class SophyaneAgent:
             prompt = "\n\n".join(sections)
             if len(prompt) > 6000:
                 prompt = prompt[-6000:]
-            system = SYSTEM_PROMPT
+            system = (
+                SYSTEM_PROMPT
+                + "\n\nSOPHYANE_RESPONSE_MODE: CHAT"
+                + "\nReturn a direct user-facing answer."
+                + "\nDo not return planner JSON or executable action JSON."
+            )
         try:
             text = self.provider.generate(prompt, system)
         except ProviderError as error:
