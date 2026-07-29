@@ -73,14 +73,10 @@ class SophyaneAgent:
         if not message:
             return AgentResponse("Please enter a request.")
         try:
-            from sophyane.native_capability import try_native_status_reply
-            _native = try_native_status_reply(message)
+            from sophyane.native_capability import try_any_native_reply
+            _native = try_any_native_reply(message)
             if _native:
                 return AgentResponse(_native)
-            from sophyane.collaborative_workers import try_combined_reply
-            _combined = try_combined_reply(message)
-            if _combined:
-                return AgentResponse(_combined)
         except Exception:
             pass
 
