@@ -83,3 +83,5 @@ runtime/
 .documentation-backup-*/
 .sophyane-provider-response-*
 .sophyane-partial-index.html
+*.bak*
+*.pre-v*
