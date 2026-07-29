@@ -81,6 +81,19 @@ class SophyaneAgent:
         except Exception:
             pass
 
+        # SOPHYANE_CAPABILITY_EXECUTOR_FASTPATH_V1
+        # Run available deterministic capabilities without spending provider
+        # tokens or entering the adaptive software-build loop.
+        try:
+            from sophyane.capability_executors import execute_deterministic_text
+
+            executor_reply = execute_deterministic_text(message)
+            if executor_reply is not None:
+                return AgentResponse(executor_reply)
+        except Exception:
+            # Existing routing remains the safe fallback.
+            pass
+
         # Persistent timer ticks must not pollute conversation memory or call LLMs.
         if message.lower() in {"/daemon-tick", "daemon-tick", "/daemon"}:
             from sophyane.daemon_runtime import run_daemon_tick

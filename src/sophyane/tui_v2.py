@@ -52,6 +52,21 @@ def _simple_chat_reply(message: str) -> str | None:
     if text in {"sophyane --version", "sophyane -v", "--version", "version"}:
         return f"Sophyane {__version__}"
 
+    # SOPHYANE_CAPABILITY_EXECUTOR_FASTPATH_V1
+    # Grounded deterministic capabilities run before provider planning.
+    try:
+        from sophyane.capability_executors import execute_deterministic_text
+
+        executor_reply = execute_deterministic_text(
+            message,
+            workspace=Path.cwd(),
+        )
+        if executor_reply is not None:
+            return executor_reply
+    except Exception:
+        # Never break the existing adaptive/provider fallback.
+        pass
+
     inspection_reply = inspect_local_request(message)
     if inspection_reply is not None:
         return inspection_reply
