@@ -584,8 +584,16 @@ def _semantic_similarity(
         if canonicalize(str(alias))
     }
 
+    # Two separately stored terms may canonicalize to the same concept,
+    # for example "folder" and "directory".
+    same_canonical_concept = (
+        left != right
+        and canonicalize(left) == canonicalize(right)
+    )
+
     alias_match = (
-        right in left_aliases
+        same_canonical_concept
+        or right in left_aliases
         or left in right_aliases
         or bool(left_aliases & right_aliases)
     )
@@ -648,14 +656,52 @@ def repair_bidirectional_aliases(
         if parent and parent not in meta["parents"]:
             meta["parents"].append(parent)
 
-    # Then make aliases reciprocal where both terms exist.
+    # Reconstruct reciprocal aliases for separately stored terms that
+    # canonicalize to the same concept.
+    canonical_groups: dict[str, list[str]] = defaultdict(list)
+
+    for term in terms:
+        canonical = canonicalize(term) or term
+        canonical_groups[canonical].append(term)
+
+    for members in canonical_groups.values():
+        if len(members) < 2:
+            continue
+
+        for term in members:
+            aliases = terms[term].setdefault("aliases", [])
+
+            for other in members:
+                if other != term and other not in aliases:
+                    aliases.append(other)
+                    additions += 1
+
+    # Then make explicit aliases reciprocal where both surface terms exist.
     for term, meta in list(terms.items()):
         normalized_aliases = []
 
         for raw_alias in meta.get("aliases", []):
-            alias = canonicalize(str(raw_alias))
+            alias = re.sub(
+                r"[^a-z0-9_\-]+",
+                " ",
+                str(raw_alias).lower(),
+            ).strip()
 
             if not alias or alias == term:
+                continue
+
+            # Prefer an existing surface-form term. Otherwise retain the
+            # normalized alias as evidence without inventing a term entry.
+            if alias not in terms:
+                matching_terms = [
+                    candidate
+                    for candidate in terms
+                    if canonicalize(candidate) == canonicalize(alias)
+                ]
+                if len(matching_terms) == 1:
+                    alias = matching_terms[0]
+
+            if alias == term:
                 continue
 
             if alias not in normalized_aliases:
@@ -685,25 +731,53 @@ def repair_bidirectional_aliases(
 
 
 def similar_terms(term: str, limit: int = 5) -> list[tuple[str, float]]:
-    """Return graph-aware semantic neighbors for a known or unknown term."""
+    """Return graph-aware semantic neighbors without returning the query itself."""
     data = _load()
     terms = data.get("terms", {})
-    target = canonicalize(term) or term.lower().strip()
 
-    # Allow querying an alias even when it is not its own canonical entry.
-    if target not in terms:
-        for candidate, meta in terms.items():
-            aliases = {
-                canonicalize(str(alias))
-                for alias in meta.get("aliases", [])
-            }
-            if target in aliases:
-                target = candidate
-                break
+    surface = re.sub(
+        r"[^a-z0-9_\\-]+",
+        " ",
+        str(term).lower(),
+    ).strip()
+
+    # Preserve an exact stored surface term. This matters when both
+    # "folder" and "directory" exist but canonicalize to one concept.
+    if surface in terms:
+        target = surface
+    else:
+        canonical = canonicalize(surface) or surface
+        target = canonical
+
+        # Resolve an unknown surface form through explicit aliases.
+        if target not in terms:
+            for candidate, meta in terms.items():
+                raw_aliases = {
+                    re.sub(
+                        r"[^a-z0-9_\\-]+",
+                        " ",
+                        str(alias).lower(),
+                    ).strip()
+                    for alias in meta.get("aliases", [])
+                }
+
+                canonical_aliases = {
+                    canonicalize(alias) or alias
+                    for alias in raw_aliases
+                    if alias
+                }
+
+                if (
+                    surface in raw_aliases
+                    or canonical in canonical_aliases
+                ):
+                    target = candidate
+                    break
 
     scored: list[tuple[str, float]] = []
 
     for other in terms:
+        # Never return the exact selected term as its own neighbor.
         if other == target:
             continue
 
