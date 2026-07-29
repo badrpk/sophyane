@@ -250,6 +250,17 @@ class SophyaneAgent:
         try:
             text = self.provider.generate(prompt, system)
         except ProviderError as error:
+            message = str(error).strip().lower()
+            expected_cancellation = (
+                "provider generation cancelled" in message
+                or "local generation cancelled" in message
+            )
+            if expected_cancellation:
+                self.logger.info(
+                    "Provider generation cancelled for live steering: %s",
+                    error,
+                )
+                return AgentResponse("")
             self.logger.exception("Provider generation failed")
             chain = getattr(self.provider, "chain", None)
             chain_note = (

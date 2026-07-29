@@ -203,6 +203,10 @@ def install_provider_context_patch() -> None:
                 )
                 thread.start()
 
+                # Prevent buffered input from the original prompt submission
+                # or a multiline paste from being mistaken for live steering.
+                steering_ready_at = time.monotonic() + 1.0
+
                 next_update = 5
                 announced = ""
                 steering = False
@@ -237,6 +241,15 @@ def install_provider_context_patch() -> None:
                                 if char == "\x03":
                                     cancel_generation(generation)
                                     raise KeyboardInterrupt
+
+                                # During the initial grace period, consume and
+                                # discard buffered printable input instead of
+                                # cancelling the active provider generation.
+                                if (
+                                    not steering
+                                    and now < steering_ready_at
+                                ):
+                                    continue
 
                                 # A bare Enter can remain in the terminal input
                                 # buffer after submitting or approving a request.
