@@ -34,20 +34,22 @@ jobs:
         with:
           gradle-version: "8.13"
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Show build environment
         run: |
           java -version
           gradle --version
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-
-      - name: Accept Android SDK licenses
-        run: |
-          yes | sdkmanager --licenses >/dev/null || true
+          command -v sdkmanager
+          sdkmanager --version
 
       - name: Install Android SDK 36
         run: |
-          sdkmanager \
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install \
             "platform-tools" \
             "platforms;android-36" \
             "build-tools;36.0.0"
