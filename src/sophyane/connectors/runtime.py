@@ -213,12 +213,10 @@ def try_connector_reply(message: str, profile: str | None = None) -> str | None:
 
     if is_email_request and is_outbound_request:
         return (
-            "Gmail IMAP here is read-only (cannot send).
-
-"
-            "I can draft a message for you to paste into Gmail.
-"
-            "Say: draft email to Saudia about ISB to SFO next month flexible dates."
+            "Gmail IMAP here is read-only and cannot send messages.\n\n"
+            "I can draft an email for you to paste into Gmail.\n"
+            "For example: draft an email to Saudia about an Islamabad "
+            "to San Francisco ticket next month with flexible dates."
         )
 
     match = resolve_connector_op(message, profile=profile)
