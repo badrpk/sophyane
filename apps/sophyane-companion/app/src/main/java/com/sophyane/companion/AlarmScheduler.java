@@ -86,6 +86,14 @@ public final class AlarmScheduler {
                 .putLong(KEY_TRIGGER, triggerAtMillis)
                 .putString(KEY_LABEL, label)
                 .apply();
+
+        // SOPHYANE_SHARED_ALARM_STATUS
+        AlarmStatusFile.write(
+                context,
+                true,
+                triggerAtMillis,
+                label
+        );
     }
 
     public static void cancel(Context context) {
@@ -111,6 +119,13 @@ public final class AlarmScheduler {
                 .edit()
                 .clear()
                 .apply();
+
+        AlarmStatusFile.write(
+                context,
+                false,
+                0L,
+                ""
+        );
     }
 
     public static void restore(Context context) {
@@ -122,6 +137,13 @@ public final class AlarmScheduler {
 
         if (trigger > System.currentTimeMillis() && canScheduleExact(context)) {
             schedule(context, trigger, label);
+        } else {
+            AlarmStatusFile.write(
+                    context,
+                    false,
+                    0L,
+                    ""
+            );
         }
     }
 

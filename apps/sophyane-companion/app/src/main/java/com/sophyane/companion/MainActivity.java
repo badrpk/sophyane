@@ -155,6 +155,8 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshStatus() {
+        // SOPHYANE_REFRESH_SHARED_ALARM_STATUS
+        AlarmStatusFile.writeCurrent(this);
         statusText.setText(AlarmScheduler.status(this));
     }
 

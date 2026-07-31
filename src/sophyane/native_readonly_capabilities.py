@@ -171,89 +171,64 @@ def _battery_data() -> dict[str, Any] | None:
 
 # SOPHYANE_ANDROID_ALARM_STATUS_READBACK
 def _read_android_alarm_status() -> dict[str, Any] | None:
-    """Query Companion through an Android ordered broadcast."""
-    command = _first_command("am")
+    """Read Companion alarm status exported to shared Downloads."""
+    candidates = (
+        Path.home()
+        / "storage"
+        / "downloads"
+        / "SophyaneAlarmStatus.json",
 
-    if not command:
-        return None
-
-    raw = _run(
-        [
-            command,
-            "broadcast",
-            "--receiver-foreground",
-            "-a",
-            "com.sophyane.companion.QUERY_ALARM",
-            "-n",
-            (
-                "com.sophyane.companion/"
-                ".AlarmQueryReceiver"
-            ),
-        ],
-        timeout=8.0,
+        Path("/storage/emulated/0/Download/SophyaneAlarmStatus.json"),
     )
 
-    if not raw:
+    status_file = next(
+        (
+            candidate
+            for candidate in candidates
+            if candidate.is_file()
+        ),
+        None,
+    )
+
+    if status_file is None:
         return None
 
-    lowered = raw.casefold()
-
-    if any(
-        marker in lowered
-        for marker in (
-            "securityexception",
-            "permission denial",
-            "unable to resolve",
-            "unknown receiver",
-            "error:",
+    try:
+        data = json.loads(
+            status_file.read_text(
+                encoding="utf-8",
+                errors="replace",
+            )
         )
-    ):
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return None
 
-    def number(name: str) -> int:
-        match = re.search(
-            rf"(?<!\\w){re.escape(name)}="
-            rf"(\\d+)",
-            raw,
-            flags=re.I,
+    if not isinstance(data, dict):
+        return None
+
+    try:
+        trigger_millis = int(
+            data.get("trigger_millis", 0) or 0
         )
+    except (TypeError, ValueError):
+        trigger_millis = 0
 
-        if not match:
-            return 0
+    scheduled = bool(data.get("scheduled"))
 
-        try:
-            return int(match.group(1))
-        except ValueError:
-            return 0
-
-    def text_value(name: str) -> str:
-        match = re.search(
-            rf"(?<!\\w){re.escape(name)}="
-            rf"([^,}}\\]]*)",
-            raw,
-            flags=re.I,
-        )
-
-        return match.group(1).strip() if match else ""
-
-    scheduled = number("scheduled") == 1
-    trigger_millis = number("trigger_millis")
-    label = text_value("label")
-    source = text_value("source")
-
-    # Some Android builds print Bundle values in a different order.
-    # A valid alarm must still contain a future millisecond timestamp.
-    if not scheduled and trigger_millis > int(
+    if trigger_millis <= int(
         datetime.now().timestamp() * 1000
     ):
-        scheduled = True
+        scheduled = False
+        trigger_millis = 0
 
     return {
         "scheduled": scheduled,
         "trigger_millis": trigger_millis,
-        "label": label,
-        "source": source,
-        "raw": raw,
+        "label": str(data.get("label") or ""),
+        "source": str(data.get("source") or ""),
+        "updated_millis": data.get("updated_millis", 0),
+        "path": str(status_file),
+        "raw": data,
     }
 
 
@@ -263,7 +238,7 @@ def _alarm_status_reply() -> str:
     if status is None:
         return (
             "I cannot read Sophyane Companion's alarm status yet. "
-            "Install or update Companion to version 0.2.0, open it once, "
+            "Install or update Companion to version 0.4.0, open it once, "
             "and then ask again."
         )
 
