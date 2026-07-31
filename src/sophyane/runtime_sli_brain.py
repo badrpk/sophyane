@@ -222,6 +222,35 @@ def _criteria(profile: str, message: str) -> tuple[str, ...]:
 
 
 def decide(message: str, *, has_project: bool) -> BrainDecision:
+
+    # SOPHYANE_FILESYSTEM_LIST_DECISION
+    clean_request = " ".join(str(message or "").strip().split())
+    lowered_request = clean_request.casefold()
+    filesystem_list_prefixes = (
+        "list files",
+        "list folders",
+        "list directories",
+        "show files",
+        "show folders",
+        "show directories",
+        "display files",
+        "display folders",
+        "view files",
+        "view folders",
+        "check files",
+        "check folders",
+    )
+    if lowered_request.startswith(filesystem_list_prefixes):
+        return BrainDecision(
+            route="execution",
+            profile="FILESYSTEM_TASK",
+            refined_request=clean_request,
+            criteria=(
+                "Read the requested directory from the local filesystem.",
+                "Return grounded names without inventing entries.",
+                "Do not modify files or directories.",
+            ),
+        )
     raw = _clean(message)
     profile = _profile(raw)
     route = _route(raw, has_project)
@@ -335,10 +364,27 @@ def _confirm(self: Any, original: str, *, has_project: bool, tui_v2: Any) -> tup
 
     candidate = original
     while True:
-        # Semantic consultation is narrow: known anchors remain frozen and only
-        # unknown terms are offered to the active model. If the model fails or
-        # drifts, SLI falls back to its own normalized ledger.
-        ledger = resolve(candidate, self.call_provider, timeout=18)
+        # SOPHYANE_GROUNDED_SEMANTIC_BYPASS
+        # Deterministic local capabilities already have an exact operation.
+        # Do not spend a cloud/local model call interpreting known commands.
+        grounded_action = None
+        try:
+            from sophyane.runtime_filesystem_capabilities_v20 import (
+                classify_request,
+            )
+            grounded_action = classify_request(candidate)
+        except Exception:
+            grounded_action = None
+
+        if grounded_action is not None:
+            from sophyane.runtime_sli_semantic import analyze
+
+            ledger = analyze(candidate)
+        else:
+            # Semantic consultation is narrow: known anchors remain frozen
+            # and only unknown terms are offered to the active model.
+            ledger = resolve(candidate, self.call_provider, timeout=18)
+
         decision = decide(ledger.normalized, has_project=has_project)
         self.progress(f"SLI Brain: {decision.route} / {decision.profile}")
         if ledger.uncertain_terms:

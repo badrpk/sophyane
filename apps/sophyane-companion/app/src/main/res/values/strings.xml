@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Sophyane Companion</string>
+    <string name="alarm_channel_name">Wake-up alarms</string>
+    <string name="alarm_channel_description">Exact alarms created by Sophyane</string>
+</resources>

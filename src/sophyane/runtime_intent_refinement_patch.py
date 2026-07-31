@@ -61,14 +61,25 @@ def _parse_refinement(raw: str, original: str, *, has_project: bool, tui_v2: Any
 
 
 def _confirm_refinement(self: Any, original: str, *, has_project: bool, tui_v2: Any) -> tuple[str, str] | None:
+    clean = str(original or "").strip()
+
     # Standalone media requests are direct-response tasks. Do not ask a
     # language model whether they are software builds and do not show the
     # execution approval menu.
-    if tui_v2._pure_media_request(original):
+    if tui_v2._pure_media_request(clean):
         self.progress("Media request detected; using direct response route")
-        return "chat", original.strip()
+        return "chat", clean
 
-    candidate = original
+    # Ordinary informational chat has a deterministic route. Sending it
+    # through intent refinement creates an unnecessary provider call and
+    # allows internal SLI semantic JSON to leak into the user-facing turn.
+    continuing = tui_v2._project_continuation(clean, has_project)
+    executable = tui_v2._execution_requested(clean)
+
+    if not continuing and not executable:
+        return "chat", clean
+
+    candidate = clean
     while True:
         self.progress("Refining intent with the language model")
         try:
@@ -178,8 +189,184 @@ def install_intent_refinement() -> None:
                     continue
 
             self.emit("You", message)
+
+            # SOPHYANE_ACTIVE_NATIVE_CHOICE_DISPATCH
+            normalized_choice = " ".join(message.casefold().split())
+
+            if (
+                getattr(self, "_native_choice_context", "") == "saas_agents"
+                and normalized_choice
+                in {"1", "2", "3", "4", "5", "6", "7"}
+            ):
+                choices = {
+                    "1": (
+                        "SophyaneAgent",
+                        "Public customer-facing API and conversational agent.",
+                    ),
+                    "2": (
+                        "Multi-agent supervisor",
+                        "Routes complex requests, creates task graphs, launches "
+                        "specialists, enforces concurrency and retry limits, "
+                        "and coordinates completion.",
+                    ),
+                    "3": (
+                        "Specialist workers",
+                        "Perform domain-specific services such as coding, "
+                        "support, analysis, document processing and automation.",
+                    ),
+                    "4": (
+                        "Executor worker",
+                        "Runs validated tools and deterministic operations.",
+                    ),
+                    "5": (
+                        "Reviewer worker",
+                        "Validates, compares and merges worker results before "
+                        "delivery to the customer.",
+                    ),
+                    "6": (
+                        "Native workers",
+                        "Provide fast and inexpensive local deterministic "
+                        "capabilities without spending LLM tokens.",
+                    ),
+                    "7": (
+                        "LLM provider worker",
+                        "Provides generative reasoning through Gemini, OpenAI "
+                        "or another configured model provider.",
+                    ),
+                }
+
+                name, purpose = choices[normalized_choice]
+                self._native_choice_selected = normalized_choice
+
+                self.emit(
+                    "Sophyane",
+                    f"Selected option {normalized_choice}: {name}\n"
+                    f"{purpose}\n\n"
+                    "Type `proceed` to continue with this option, "
+                    "`options` to show the numbered list again, or enter "
+                    "another number.",
+                )
+                continue
+
+            if (
+                getattr(self, "_native_choice_context", "") == "saas_agents"
+                and normalized_choice
+                in {
+                    "options",
+                    "show options",
+                    "show numbering",
+                    "show numbers",
+                    "give above numbering",
+                    "give above numbering and option i will select to proceed",
+                }
+            ):
+                self.emit(
+                    "Sophyane",
+                    "Select a SaaS component:\n"
+                    "1. SophyaneAgent — public customer-facing API/chat agent\n"
+                    "2. Multi-agent supervisor — orchestration and routing\n"
+                    "3. Specialist workers — domain-specific services\n"
+                    "4. Executor worker — validated tool execution\n"
+                    "5. Reviewer worker — output validation and merging\n"
+                    "6. Native workers — fast deterministic local services\n"
+                    "7. LLM provider worker — generative model reasoning\n\n"
+                    "Enter a number from 1 to 7.",
+                )
+                continue
+
+            if (
+                getattr(self, "_native_choice_context", "") == "saas_agents"
+                and normalized_choice in {"proceed", "continue", "go ahead", "next"}
+            ):
+                selected = str(
+                    getattr(self, "_native_choice_selected", "") or ""
+                ).strip()
+
+                choices = {
+                    "1": (
+                        "SophyaneAgent",
+                        "Expose SophyaneAgent through an authenticated HTTP API. "
+                        "Add tenant isolation, request validation, quotas, "
+                        "streaming responses, audit logs and usage accounting.",
+                    ),
+                    "2": (
+                        "Multi-agent supervisor",
+                        "Place the supervisor behind SophyaneAgent. It should "
+                        "classify requests, create bounded task graphs, assign "
+                        "specialists, enforce worker and retry limits, collect "
+                        "results and send them to the reviewer.",
+                    ),
+                    "3": (
+                        "Specialist workers",
+                        "Create a registry of service-specific worker roles with "
+                        "declared capabilities, permissions, timeouts and token "
+                        "budgets.",
+                    ),
+                    "4": (
+                        "Executor worker",
+                        "Connect the executor to validated tools with tenant "
+                        "permissions, idempotency controls, timeouts and an "
+                        "immutable audit trail.",
+                    ),
+                    "5": (
+                        "Reviewer worker",
+                        "Require reviewer validation for worker output, factual "
+                        "grounding, policy checks and final response merging.",
+                    ),
+                    "6": (
+                        "Native workers",
+                        "Expose deterministic capabilities first and invoke an "
+                        "LLM only when native execution cannot satisfy the "
+                        "request.",
+                    ),
+                    "7": (
+                        "LLM provider worker",
+                        "Create a provider service behind the supervisor with "
+                        "model routing, per-tenant API keys, token budgets, "
+                        "timeouts, fallback providers and timestamped usage "
+                        "accounting.",
+                    ),
+                }
+
+                if selected not in choices:
+                    self.emit(
+                        "Sophyane",
+                        "Select an option from 1 to 7 before proceeding.",
+                    )
+                    continue
+
+                name, implementation = choices[selected]
+
+                self.emit(
+                    "Sophyane",
+                    f"Proceeding with option {selected}: {name}\n\n"
+                    f"{implementation}\n\n"
+                    "Recommended SaaS flow:\n"
+                    "Customer/API → SophyaneAgent → Supervisor → "
+                    "Selected worker → Reviewer → Response",
+                )
+
+                self._native_choice_context = ""
+                self._native_choice_selected = ""
+                continue
+
             quick = tui_v2._simple_chat_reply(message)
             if quick is not None:
+                # SOPHYANE_ACTIVE_NATIVE_CHOICE_STORE
+                if (
+                    "Recommended Sophyane architecture for SaaS services:"
+                    in quick
+                ):
+                    self._native_choice_context = "saas_agents"
+                    self._native_choice_selected = ""
+
+                    if "Enter a number from 1 to 7." not in quick:
+                        quick = (
+                            quick
+                            + "\n\nSelect an option by entering a number "
+                            "from 1 to 7."
+                        )
+
                 self.emit("Sophyane", quick)
                 continue
 

@@ -1,0 +1,89 @@
+name: Build Sophyane Companion APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "apps/sophyane-companion/**"
+      - ".github/workflows/build-sophyane-companion.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: apps/sophyane-companion
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Show build environment
+        run: |
+          java -version
+          gradle --version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+
+      - name: Accept Android SDK licenses
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Install Android SDK 36
+        run: |
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0"
+
+      - name: Validate project files
+        run: |
+          test -f settings.gradle.kts
+          test -f build.gradle.kts
+          test -f app/build.gradle.kts
+          test -f app/src/main/AndroidManifest.xml
+          test -f app/src/main/java/com/sophyane/companion/MainActivity.java
+          test -f app/src/main/java/com/sophyane/companion/AlarmScheduler.java
+          test -f app/src/main/java/com/sophyane/companion/AlarmReceiver.java
+          test -f app/src/main/java/com/sophyane/companion/BootReceiver.java
+          test -f app/src/main/java/com/sophyane/companion/RingActivity.java
+
+      - name: Build debug APK
+        run: |
+          gradle \
+            --no-daemon \
+            --stacktrace \
+            :app:assembleDebug
+
+      - name: Verify APK
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          ls -lh "$APK"
+          sha256sum "$APK" | tee app-debug.apk.sha256
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sophyane-companion-debug-apk
+          path: |
+            apps/sophyane-companion/app/build/outputs/apk/debug/app-debug.apk
+            apps/sophyane-companion/app-debug.apk.sha256
+          if-no-files-found: error
+          retention-days: 30

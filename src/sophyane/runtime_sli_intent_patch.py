@@ -12,6 +12,18 @@ def install_sli_intent_routing() -> None:
     current_execution_requested = tui_v2._execution_requested
 
     def execution_requested(message: str) -> bool:
+        # SOPHYANE_GROUNDED_FILESYSTEM_ROUTING
+        # Filesystem inspection must run against real local state even when
+        # the generic intent router incorrectly labels it direct_response.
+        try:
+            from sophyane.runtime_filesystem_capabilities_v20 import (
+                classify_request,
+            )
+            if classify_request(message):
+                return True
+        except Exception:
+            pass
+
         decision = classify_intent(message, has_project=False)
         if decision.route == "direct_response":
             return False

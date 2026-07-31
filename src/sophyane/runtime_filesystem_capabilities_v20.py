@@ -236,6 +236,27 @@ def classify_request(request: str) -> dict[str, Any] | None:
     ):
         return {"type": "filesystem.oldest_file"}
 
+    # SOPHYANE_FILESYSTEM_LIST_FILES_CLASSIFIER
+    if (
+        (
+            "list files" in text
+            or "show files" in text
+            or "display files" in text
+            or "view files" in text
+        )
+        and not (
+            "count" in text
+            or "how many" in text
+            or "number of" in text
+            or "largest" in text
+            or "biggest" in text
+            or "latest" in text
+            or "newest" in text
+            or "oldest" in text
+        )
+    ):
+        return {"type": "filesystem.list_files"}
+
     if (
         (
             "list folders" in text
@@ -425,6 +446,29 @@ def execute_capability(
             capability,
             scope,
             count=len(files),
+        )
+
+    # SOPHYANE_FILESYSTEM_LIST_FILES_EXECUTOR
+    if capability == "filesystem.list_files":
+        try:
+            entries = sorted(
+                (
+                    p.name
+                    for p in root.iterdir()
+                    if p.is_file()
+                    and not p.is_symlink()
+                ),
+                key=str.casefold,
+            )
+        except OSError as error:
+            return False, f"Unable to list files: {error}"
+
+        return True, evidence(
+            root,
+            capability,
+            scope,
+            count=len(entries),
+            entries=entries,
         )
 
     if capability == "filesystem.list_folders":
@@ -874,13 +918,13 @@ def wrap_adaptive_loop(
 
         request = "\n\n".join(request_parts).strip()
 
-        action = (
-            classify_request(final_request)
-            or classify_request(original_request)
-            or classify_request(request)
-        )
+                # SOPHYANE_CANONICAL_FILESYSTEM_CLASSIFICATION
+        # Generated provider output and merged runtime text must never alter
+        # the deterministic operation selected from the user's request.
+        action = classify_request(original_request)
 
         if action is None:
+
             return original(**kwargs)
 
         workspace = Path(

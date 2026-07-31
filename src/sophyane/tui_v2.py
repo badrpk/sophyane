@@ -36,6 +36,22 @@ def _clean_message(message: str) -> str:
 
 
 def _simple_chat_reply(message: str) -> str | None:
+    # SOPHYANE_NATIVE_READONLY_DISPATCH
+    try:
+        from sophyane.native_readonly_capabilities import (
+            try_native_readonly_reply,
+        )
+
+        native_reply = try_native_readonly_reply(
+            message,
+            cwd=Path.cwd(),
+        )
+        if native_reply is not None:
+            return native_reply
+    except Exception:
+        # Native capability failure must never break ordinary chat routing.
+        pass
+
     try:
         from sophyane.capability_executors import try_connector_fast_path
         _cr = try_connector_fast_path(message)
@@ -785,6 +801,11 @@ class ObservableTUI:
         self.last_mode = "none"
         self.trace = False
 
+        # SOPHYANE_NATIVE_CHOICE_STATE_INIT
+        # Preserve interactive selections from deterministic native replies.
+        self._native_choice_context: str = ""
+        self._native_choice_selected: str = ""
+
     @property
     def small_local(self) -> bool:
         return str(self.config.get("provider") or "").lower() in {"local_gguf", "ollama"}
@@ -837,15 +858,99 @@ class ObservableTUI:
         return self._new_workspace()
 
     def _context_prompt(self, message: str, *, continuing: bool) -> str:
+        """Build context without contaminating unrelated new requests."""
+        clean_message = str(message or "").strip()
+
         if self.small_local:
             if continuing and self.active_request:
-                return f"Project: {self.active_request[:180]}\nChange: {message[:320]}"
-            return message[:600]
+                return (
+                    f"Project: {self.active_request[:180]}\n"
+                    f"Change: {clean_message[:320]}"
+                )
+            return clean_message[:600]
+
+        # Project continuations explicitly require prior project context.
+        if continuing and self.active_request:
+            return (
+                f"Existing project request: {self.active_request[:700]}\n\n"
+                f"Current requested change: {clean_message}"
+            )
+
+        # Only include chat history when the current message clearly refers
+        # to something from the previous turn. Independent questions must
+        # remain isolated, especially because a small local fallback may
+        # overweight stale assistant/tool content.
+        lowered = clean_message.casefold()
+        followup_prefixes = (
+            "and ",
+            "also ",
+            "but ",
+            "so ",
+            "then ",
+            "continue",
+            "next",
+            "why ",
+            "how about",
+            "what about",
+            "tell me more",
+            "explain more",
+            "explain it",
+            "do it",
+            "fix it",
+            "change it",
+            "update it",
+            "that ",
+            "this ",
+        )
+        followup_exact = {
+            "yes",
+            "no",
+            "ok",
+            "okay",
+            "why",
+            "how",
+            "continue",
+            "next",
+            "more",
+            "do that",
+            "do it",
+            "same",
+        }
+        reference_words = (
+            " it ",
+            " that ",
+            " this ",
+            " they ",
+            " them ",
+            " those ",
+            " previous ",
+            " above ",
+            " earlier ",
+            " same ",
+        )
+
+        padded = f" {lowered} "
+        is_followup = (
+            lowered in followup_exact
+            or lowered.startswith(followup_prefixes)
+            or any(word in padded for word in reference_words)
+        )
+
+        if not is_followup:
+            return clean_message
+
         recent = self.history[-2:]
         if not recent:
-            return message
-        context = "\n".join(f"{role}: {content[:700]}" for role, content in recent)
-        return f"Conversation context:\n{context}\n\nCurrent user message: {message}"
+            return clean_message
+
+        context = "\n".join(
+            f"{role}: {content[:700]}"
+            for role, content in recent
+        )
+        return (
+            f"Conversation context:\n{context}\n\n"
+            f"Current user message: {clean_message}"
+        )
 
     def _inspect(self) -> str:
         plan = extract_plan(self.last_raw)
@@ -913,8 +1018,101 @@ class ObservableTUI:
                     continue
 
             self.emit("You", message)
+
+            # SOPHYANE_NATIVE_CHOICE_STATE_DISPATCH
+            normalized_choice = " ".join(message.casefold().split())
+
+            if (
+                getattr(self, "_native_choice_context", "") == "saas_agents"
+                and normalized_choice in {"1", "2", "3", "4", "5", "6", "7"}
+            ):
+                choices = {
+                    "1": (
+                        "SophyaneAgent",
+                        "Use it as the public customer-facing API/chat agent."
+                    ),
+                    "2": (
+                        "Multi-agent supervisor",
+                        "Use it to route complex SaaS requests, split work among "
+                        "specialists, enforce worker limits, coordinate retries "
+                        "and merge task-graph execution."
+                    ),
+                    "3": (
+                        "Specialist workers",
+                        "Use them for domain-specific services such as coding, "
+                        "support, analysis, automation and document processing."
+                    ),
+                    "4": (
+                        "Executor worker",
+                        "Use it for validated tool calls and deterministic actions."
+                    ),
+                    "5": (
+                        "Reviewer worker",
+                        "Use it to validate and merge outputs before delivery."
+                    ),
+                    "6": (
+                        "Native workers",
+                        "Use them for fast, low-cost deterministic capabilities."
+                    ),
+                    "7": (
+                        "LLM provider worker",
+                        "Use it only when generative reasoning is required."
+                    ),
+                }
+
+                name, purpose = choices[normalized_choice]
+                self._native_choice_selected = name
+
+                self.emit(
+                    "Sophyane",
+                    f"Selected: {name}\n{purpose}\n\n"
+                    "Type `proceed` to generate the implementation plan, "
+                    "or choose another number.",
+                )
+                continue
+
+            if normalized_choice in {"proceed", "continue", "go ahead"}:
+                selected = str(
+                    getattr(self, "_native_choice_selected", "") or ""
+                ).strip()
+
+                if selected == "Multi-agent supervisor":
+                    self._native_choice_context = ""
+                    self._native_choice_selected = ""
+
+                    self.emit(
+                        "Sophyane",
+                        "Proceeding with the Multi-agent supervisor for SaaS.\n\n"
+                        "Implementation target:\n"
+                        "Customer/API → SophyaneAgent → Supervisor → "
+                        "Specialist workers → Reviewer → Response\n\n"
+                        "The supervisor should provide tenant isolation, "
+                        "authentication, quotas, task routing, bounded retries, "
+                        "worker concurrency limits, audit events, usage accounting "
+                        "and failure recovery. This is now the authoritative SaaS "
+                        "architecture selection.",
+                    )
+                    continue
+
+                if selected:
+                    self.emit(
+                        "Sophyane",
+                        f"Proceeding with {selected} as the selected SaaS component.",
+                    )
+                    self._native_choice_context = ""
+                    self._native_choice_selected = ""
+                    continue
+
             quick = _simple_chat_reply(message)
             if quick is not None:
+                # SOPHYANE_NATIVE_CHOICE_STATE_STORE
+                if (
+                    "Recommended Sophyane architecture for SaaS services:"
+                    in quick
+                ):
+                    self._native_choice_context = "saas_agents"
+                    self._native_choice_selected = ""
+
                 self.emit("Sophyane", quick)
                 continue
 
