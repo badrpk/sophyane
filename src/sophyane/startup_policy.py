@@ -145,7 +145,8 @@ def choose_startup_provider() -> dict[str, Any]:
             save_config(updated)
             llm["active_provider"] = cloud_id
             save_json(LLM_FILE, llm, private=False)
-            print(f"Mode: cloud; provider: {cloud_id}", file=sys.stderr)
+            if str(os.environ.get("SOPHYANE_VERBOSE_STARTUP") or os.environ.get("SOPHYANE_VERBOSE") or "").strip().lower() in {"1","true","yes","on"}:
+        print(f"Mode: cloud; provider: {cloud_id}", file=sys.stderr)
             return updated
 
     elif local:
