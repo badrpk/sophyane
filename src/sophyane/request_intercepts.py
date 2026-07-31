@@ -211,24 +211,35 @@ def latest_file_report() -> str:
 
 
 def print_startup_ontology_once() -> None:
-    """Print ontology report only when SOPHYANE_VERBOSE is set."""
+    """Show detailed startup diagnostics only when requested."""
     global _ONTOLOGY_PRINTED
+
     if _ONTOLOGY_PRINTED:
         return
-    import os
-    if not os.environ.get("SOPHYANE_VERBOSE") and not os.environ.get("SOPHYANE_VERBOSE_STARTUP"):
-        _ONTOLOGY_PRINTED = True
-        return
+
     _ONTOLOGY_PRINTED = True
+
+    verbose = str(
+        os.environ.get("SOPHYANE_VERBOSE_STARTUP", "")
+    ).strip().lower()
+
+    if verbose not in {"1", "true", "yes", "on"}:
+        return
+
     try:
         from .semantic_ontology import render_semantic_ontology_report
+
         print(render_semantic_ontology_report())
     except Exception as error:
-        print()
-        print("Semantic ontology")
-        print("────────────────────────────────────────────────────────")
-        print(f"Ontology inspection unavailable: {error}")
-        print()
+        print(f"◆ Startup diagnostics unavailable: {error}")
+
+
+# SOPHYANE_RAW_INPUT_CAPTURE_V6
+
+_PENDING_LATEST_FILE_QUERY = False
+_INPUT_CAPTURE_INSTALLED = False
+_ORIGINAL_BUILTIN_INPUT = None
+_ORIGINAL_RICH_CONSOLE_INPUT = None
 
 
 def _remember_typed_input(value: object) -> None:

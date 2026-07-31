@@ -12,19 +12,36 @@ def _runtime_identity() -> str:
         config = load_config()
     except Exception:
         config = {}
-    provider = str(config.get("provider") or "not configured")
+
     model = str(config.get("model") or "not configured")
-    return f"◆ Sophyane {__version__} | provider: {provider} | model: {model}"
+
+    try:
+        from sophyane.connectors.runtime import list_connectors
+
+        email_ready = any(
+            connector.connector_id.startswith("email")
+            and connector.available
+            for connector in list_connectors()
+        )
+    except Exception:
+        email_ready = False
+
+    status = [model]
+
+    if email_ready:
+        status.append("Email connected")
+
+    status.append("Ready")
+
+    return (
+        f"◆ Sophyane {__version__}\n"
+        + " · ".join(status)
+    )
 
 
 def _user_start_tips() -> str:
-    return (
-        "Use `/setup` to change models or credentials, `/status` to inspect the active chain, "
-        "`/new` for a fresh project, and `/quit` to exit.\n"
-        "Prompt note: state the goal, constraints, acceptance criteria, and tests.\n"
-        "Platform tools: `sophyane-platform status|index|checkpoint|eval|compact|advise`.\n"
-        "Generated commands stay inside the task workspace. Updates preserve repositories and user work.\n"
-    )
+    """Normal startup intentionally remains uncluttered."""
+    return ""
 
 
 def _metadata_only_invocation() -> bool:
