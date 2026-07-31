@@ -22,7 +22,25 @@ from typing import Any
 
 
 def _normalize(text: str) -> str:
-    return " ".join(str(text or "").casefold().strip().split())
+    # SOPHYANE_SYSTEM_STORAGE_PHRASE_FIX
+    normalized = " ".join(
+        str(text or "").casefold().strip().split()
+    )
+
+    common_typos = {
+        "sytem": "system",
+        "storge": "storage",
+        "configration": "configuration",
+        "configuraton": "configuration",
+    }
+
+    words = normalized.split()
+    corrected = [
+        common_typos.get(word.strip("?!.,:"), word.strip("?!.,:"))
+        for word in words
+    ]
+
+    return " ".join(corrected)
 
 
 def _run(
@@ -1187,6 +1205,11 @@ def try_native_readonly_reply(
             "kernel version",
             "system information",
             "system info",
+            "system configuration",
+            "system configuration information",
+            "show system configuration",
+            "my system configuration",
+            "device system information",
             "what os",
         )
     ):
@@ -1242,6 +1265,12 @@ def try_native_readonly_reply(
         for phrase in (
             "storage information",
             "storage info",
+            "storage capacity",
+            "my storage capacity",
+            "what is storage capacity",
+            "what storage capacity",
+            "total storage",
+            "disk capacity",
             "disk usage",
             "free storage",
             "available storage",
