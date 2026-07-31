@@ -215,10 +215,10 @@ def try_connector_reply(message: str, profile: str | None = None) -> str | None:
         return (
             "Gmail IMAP here is read-only (cannot send).
 
-I can draft a message for you to paste into Gmail.
-Say: draft email to Saudia about ISB to SFO next month flexible dates."
-            "It can read and search inbox messages, but it cannot "
-            "send, reply to, forward, or compose email."
+"
+            "I can draft a message for you to paste into Gmail.
+"
+            "Say: draft email to Saudia about ISB to SFO next month flexible dates."
         )
 
     match = resolve_connector_op(message, profile=profile)
