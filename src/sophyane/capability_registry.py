@@ -374,8 +374,7 @@ def _register_defaults(reg: CapabilityRegistry) -> None:
             tags=("local",),
         )
     )
-    # Must be last: catch-all. is_execution_capability ignores this id.
-        reg.register(
+    reg.register(
         CapabilitySpec(
             capability_id="email_send",
             title="Outbound email",
