@@ -15,6 +15,7 @@ import re
 import shutil
 import socket
 import subprocess
+from urllib.parse import quote
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -166,6 +167,227 @@ def _battery_data() -> dict[str, Any] | None:
         data["status"] = status
 
     return data
+
+
+# SOPHYANE_ANDROID_ALARM_STATUS_READBACK
+def _read_android_alarm_status() -> dict[str, Any] | None:
+    """Query the actual alarm saved by Sophyane Companion."""
+    command = _first_command("content")
+
+    if not command:
+        return None
+
+    raw = _run(
+        [
+            command,
+            "query",
+            "--uri",
+            "content://com.sophyane.companion.alarmstatus/status",
+        ],
+        timeout=6.0,
+    )
+
+    if not raw:
+        return None
+
+    lowered = raw.casefold()
+
+    if (
+        "no result found" in lowered
+        or "unknown uri" in lowered
+        or "securityexception" in lowered
+        or "failed to find provider" in lowered
+        or "error" in lowered
+    ):
+        return None
+
+    def value(name: str) -> str:
+        match = re.search(
+            rf"(?:^|[\s,]){re.escape(name)}=([^,\n]+)",
+            raw,
+            flags=re.I,
+        )
+        return match.group(1).strip() if match else ""
+
+    scheduled_text = value("scheduled")
+    trigger_text = value("trigger_millis")
+    label = value("label")
+    source = value("source")
+
+    try:
+        scheduled = int(scheduled_text) == 1
+    except (TypeError, ValueError):
+        scheduled = scheduled_text.casefold() in {
+            "true",
+            "yes",
+        }
+
+    try:
+        trigger_millis = int(trigger_text)
+    except (TypeError, ValueError):
+        trigger_millis = 0
+
+    return {
+        "scheduled": scheduled,
+        "trigger_millis": trigger_millis,
+        "label": label,
+        "source": source,
+        "raw": raw,
+    }
+
+
+def _alarm_status_reply() -> str:
+    status = _read_android_alarm_status()
+
+    if status is None:
+        return (
+            "I cannot read Sophyane Companion's alarm status yet. "
+            "Install or update Companion to version 0.2.0, open it once, "
+            "and then ask again."
+        )
+
+    if (
+        not status.get("scheduled")
+        or int(status.get("trigger_millis") or 0) <= 0
+    ):
+        return (
+            "No future alarm is currently saved in "
+            "Sophyane Companion."
+        )
+
+    trigger_millis = int(status["trigger_millis"])
+    trigger = datetime.fromtimestamp(
+        trigger_millis / 1000.0
+    ).astimezone()
+
+    label = str(status.get("label") or "Wake up").strip()
+    clock = trigger.strftime("%I:%M %p").lstrip("0")
+    date = trigger.strftime("%A, %d %B %Y")
+
+    return (
+        f"Your next alarm is {clock} on {date}. "
+        f"Label: {label}."
+    )
+
+
+# SOPHYANE_ANDROID_ALARM_BRIDGE
+def _parse_alarm_time(text: str) -> tuple[int, int] | None:
+    """Parse common alarm time forms such as 0700am, 7 am and 19:30."""
+    normalized = _normalize(text)
+
+    # 0700am, 0730 pm, 7am, 7:30pm
+    compact = re.search(
+        r"\b(\d{1,2})(?::?(\d{2}))?\s*(am|pm)\b",
+        normalized,
+        flags=re.I,
+    )
+
+    if compact:
+        hour = int(compact.group(1))
+        minute = int(compact.group(2) or 0)
+        meridiem = compact.group(3).lower()
+
+        if not 1 <= hour <= 12 or not 0 <= minute <= 59:
+            return None
+
+        if meridiem == "am":
+            hour = 0 if hour == 12 else hour
+        else:
+            hour = 12 if hour == 12 else hour + 12
+
+        return hour, minute
+
+    # Four-digit 24-hour time: 0700, 1930
+    four_digit = re.search(
+        r"(?<!\d)([01]\d|2[0-3])([0-5]\d)(?!\d)",
+        normalized,
+    )
+
+    if four_digit:
+        return int(four_digit.group(1)), int(four_digit.group(2))
+
+    # Colon-based 24-hour time: 7:00, 19:30
+    colon = re.search(
+        r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)",
+        normalized,
+    )
+
+    if colon:
+        return int(colon.group(1)), int(colon.group(2))
+
+    return None
+
+
+def _android_alarm_reply(message: str) -> str:
+    parsed = _parse_alarm_time(message)
+
+    if parsed is None:
+        return (
+            "I understood that you want an alarm, but I could not determine "
+            "the time. Use a form such as `7:00 am`, `0700`, or `19:30`."
+        )
+
+    hour, minute = parsed
+    label = "Wake up"
+
+    label_match = re.search(
+        r"\b(?:label|called|named)\s+(.+)$",
+        str(message or "").strip(),
+        flags=re.I,
+    )
+
+    if label_match:
+        candidate = label_match.group(1).strip(" .")
+        if candidate:
+            label = candidate[:80]
+
+    uri = (
+        "sophyane://alarm/create"
+        f"?hour={hour}"
+        f"&minute={minute}"
+        f"&label={quote(label)}"
+    )
+
+    am = _first_command("am")
+
+    if not am:
+        return (
+            "The Android activity manager is unavailable, so Sophyane could "
+            "not open the Companion alarm service."
+        )
+
+    result = _run(
+        [
+            am,
+            "start",
+            "-a",
+            "android.intent.action.VIEW",
+            "-d",
+            uri,
+        ],
+        timeout=8.0,
+    )
+
+    lowered = result.casefold()
+
+    if (
+        "error" in lowered
+        or "unable to resolve" in lowered
+        or "activity not started" in lowered
+    ):
+        return (
+            "Sophyane Companion could not be opened. Confirm that the app is "
+            "installed, then open it once and grant Alarms & reminders access.\n"
+            f"Android result: {result}"
+        )
+
+    display = f"{hour:02d}:{minute:02d}"
+
+    return (
+        f"Opened Sophyane Companion and requested the next alarm for "
+        f"{display} with label “{label}”. "
+        "The Companion app schedules the alarm natively through Android."
+    )
 
 
 def _time_reply() -> str:
@@ -879,6 +1101,40 @@ def try_native_readonly_reply(
         for pattern in agent_architecture_patterns
     ):
         return _agent_architecture_reply()
+
+    # Read the real alarm from Sophyane Companion.
+    alarm_status_phrases = (
+        "what is morning alarm time",
+        "what is my alarm time",
+        "what time is my alarm",
+        "when is my alarm",
+        "show my alarm",
+        "show alarm time",
+        "next alarm",
+        "alarm status",
+        "check alarm",
+        "current alarm",
+        "saved alarm",
+    )
+
+    if any(
+        phrase in text
+        for phrase in alarm_status_phrases
+    ):
+        return _alarm_status_reply()
+
+    # Native Android wake-up alarm
+    alarm_words = (
+        "set alarm",
+        "create alarm",
+        "wake me",
+        "wake me up",
+        "alarm for",
+        "alarm at",
+    )
+
+    if any(phrase in text for phrase in alarm_words):
+        return _android_alarm_reply(message)
 
     # Time and calendar
     if re.fullmatch(

@@ -43,6 +43,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Read-only bridge used by Sophyane to obtain the
+             actual alarm stored by this companion application. -->
+        <provider
+            android:name=".AlarmStatusProvider"
+            android:authorities="com.sophyane.companion.alarmstatus"
+            android:enabled="true"
+            android:exported="true"
+            android:grantUriPermissions="false" />
+
         <receiver
             android:name=".AlarmReceiver"
             android:exported="false" />
