@@ -37,6 +37,13 @@ def _clean_message(message: str) -> str:
 
 def _simple_chat_reply(message: str) -> str | None:
     try:
+        from sophyane.capability_executors import try_connector_fast_path
+        _cr = try_connector_fast_path(message)
+        if _cr:
+            return _cr
+    except Exception:
+        pass
+    try:
         from sophyane.native_capability import try_any_native_reply
         _native_reply = try_any_native_reply(message)
         if _native_reply:
@@ -877,14 +884,6 @@ class ObservableTUI:
         while True:
             try:
                 message = _clean_message(self.read_prompt("❯ "))
-        try:
-            from sophyane.capability_executors import try_connector_fast_path
-            _cr = try_connector_fast_path(message)
-            if _cr:
-                self.emit(_cr)
-                continue
-        except Exception:
-            pass
                 reset_semantic_request(self)
             except (EOFError, KeyboardInterrupt):
                 print()

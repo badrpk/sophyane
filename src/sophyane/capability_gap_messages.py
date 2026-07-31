@@ -7,6 +7,16 @@ from sophyane.capability_registry import (
 )
 
 
+
+def _email_connector_handles(message: str) -> bool:
+    try:
+        from sophyane.connectors.runtime import resolve_connector_op
+        m = resolve_connector_op(message)
+        return bool(m and str(m.connector_id).startswith("email") and m.available)
+    except Exception:
+        return False
+
+
 def is_email_access_request(message: str) -> bool:
     hit = resolve_capability(message)
     return bool(hit and hit.capability_id == "email")
@@ -18,6 +28,8 @@ def is_unavailable_external_request(message: str) -> bool:
 
 
 def capability_gap_reply(message: str) -> str | None:
+    if _email_connector_handles(message):
+        return None
     return gap_or_direct_reply(message)
 
 
