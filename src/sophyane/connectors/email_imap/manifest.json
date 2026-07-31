@@ -42,7 +42,9 @@
         "last email i sent",
         "outgoing email",
         "sent mail",
-        "my last sent"
+        "my last sent",
+        "latest outgoing email",
+        "most recent email i sent"
       ]
     }
   },

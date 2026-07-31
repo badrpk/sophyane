@@ -109,6 +109,23 @@ def resolve_connector_op(message: str, profile: str | None = None) -> ConnectorO
         for op_name, op_meta in (manifest.get("ops") or {}).items():
             hints = [h.lower() for h in ((op_meta or {}).get("match_hints") or [])]
             score = sum(1 for h in hints if h in text)
+
+            sent_markers = (
+                "outgoing",
+                "sent email",
+                "sent mail",
+                "email i sent",
+                "mail i sent",
+            )
+            wants_sent = any(marker in text for marker in sent_markers)
+
+            # Never route a sent-mail request to the inbox latest operation.
+            if wants_sent and op_name == "latest":
+                score = 0
+
+            # Strongly prefer the Sent mailbox operation.
+            if wants_sent and op_name == "sent":
+                score += 10
             if score == 0 and resources:
                 if op_name == "latest" and any(
                     w in text for w in ("last", "latest", "what was")

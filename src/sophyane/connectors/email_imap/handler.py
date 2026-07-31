@@ -250,7 +250,7 @@ def execute(
     try:
         if op == "latest":
             return _op_latest(user, pw)
-        if op == "sent":
+        if op in ("sent", "latest_sent"):
             return _op_sent(user, pw)
         if op == "search":
             query = str(args.get("query") or args.get("message") or "").strip()
