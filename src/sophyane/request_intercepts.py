@@ -226,7 +226,8 @@ def print_startup_ontology_once() -> None:
         return
     except Exception as error:
         print()
-        print("Semantic ontology")
+        if __import__("os").environ.get("SOPHYANE_VERBOSE"):
+    print("Semantic ontology")
         print("────────────────────────────────────────────────────────")
         print(f"Ontology inspection unavailable: {error}")
         print()
