@@ -171,8 +171,8 @@ def _battery_data() -> dict[str, Any] | None:
 
 # SOPHYANE_ANDROID_ALARM_STATUS_READBACK
 def _read_android_alarm_status() -> dict[str, Any] | None:
-    """Query the actual alarm saved by Sophyane Companion."""
-    command = _first_command("content")
+    """Query Companion through an Android ordered broadcast."""
+    command = _first_command("am")
 
     if not command:
         return None
@@ -180,11 +180,17 @@ def _read_android_alarm_status() -> dict[str, Any] | None:
     raw = _run(
         [
             command,
-            "query",
-            "--uri",
-            "content://com.sophyane.companion.alarmstatus/status",
+            "broadcast",
+            "--receiver-foreground",
+            "-a",
+            "com.sophyane.companion.QUERY_ALARM",
+            "-n",
+            (
+                "com.sophyane.companion/"
+                ".AlarmQueryReceiver"
+            ),
         ],
-        timeout=6.0,
+        timeout=8.0,
     )
 
     if not raw:
@@ -192,40 +198,55 @@ def _read_android_alarm_status() -> dict[str, Any] | None:
 
     lowered = raw.casefold()
 
-    if (
-        "no result found" in lowered
-        or "unknown uri" in lowered
-        or "securityexception" in lowered
-        or "failed to find provider" in lowered
-        or "error" in lowered
+    if any(
+        marker in lowered
+        for marker in (
+            "securityexception",
+            "permission denial",
+            "unable to resolve",
+            "unknown receiver",
+            "error:",
+        )
     ):
         return None
 
-    def value(name: str) -> str:
+    def number(name: str) -> int:
         match = re.search(
-            rf"(?:^|[\s,]){re.escape(name)}=([^,\n]+)",
+            rf"(?<!\\w){re.escape(name)}="
+            rf"(\\d+)",
             raw,
             flags=re.I,
         )
+
+        if not match:
+            return 0
+
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return 0
+
+    def text_value(name: str) -> str:
+        match = re.search(
+            rf"(?<!\\w){re.escape(name)}="
+            rf"([^,}}\\]]*)",
+            raw,
+            flags=re.I,
+        )
+
         return match.group(1).strip() if match else ""
 
-    scheduled_text = value("scheduled")
-    trigger_text = value("trigger_millis")
-    label = value("label")
-    source = value("source")
+    scheduled = number("scheduled") == 1
+    trigger_millis = number("trigger_millis")
+    label = text_value("label")
+    source = text_value("source")
 
-    try:
-        scheduled = int(scheduled_text) == 1
-    except (TypeError, ValueError):
-        scheduled = scheduled_text.casefold() in {
-            "true",
-            "yes",
-        }
-
-    try:
-        trigger_millis = int(trigger_text)
-    except (TypeError, ValueError):
-        trigger_millis = 0
+    # Some Android builds print Bundle values in a different order.
+    # A valid alarm must still contain a future millisecond timestamp.
+    if not scheduled and trigger_millis > int(
+        datetime.now().timestamp() * 1000
+    ):
+        scheduled = True
 
     return {
         "scheduled": scheduled,
