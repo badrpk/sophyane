@@ -127,6 +127,20 @@ def _op_search(user: str, pw: str, query: str, limit: int = 40) -> dict[str, Any
         body = _body(msg)
         blob = f"{frm}\n{subj}\n{body}".lower()
         score = sum(1 for t in terms if t in blob)
+        # Prefer entity / filing / corporate mail over newsletters
+        blob_l = blob
+        for marker, w in (
+            (" inc", 3),
+            (" llc", 3),
+            (" corp", 2),
+            ("reinstatement", 3),
+            ("good standing", 3),
+            ("filing", 2),
+            ("order #", 2),
+        ):
+            if marker in blob_l:
+                score += w
+
         if terms and score <= 0:
             continue
         scored.append((score, frm, subj, body.strip()[:350]))

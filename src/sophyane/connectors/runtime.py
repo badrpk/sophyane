@@ -78,6 +78,26 @@ def resolve_connector_op(message: str, profile: str | None = None) -> ConnectorO
     text = " ".join(str(message or "").lower().split())
     if not text:
         return None
+
+    # Outbound / compose is not the read-only IMAP connector.
+    outbound_markers = (
+        "send email",
+        "send an email",
+        "send a mail",
+        "compose email",
+        "write an email",
+        "email to ",
+        "mail to ",
+        "draft an email",
+        "draft email",
+    )
+    if any(p in text for p in outbound_markers) or (
+        "send" in text
+        and "email" in text
+        and any(w in text for w in (" to ", "airline", "ticket", "booking", "ask for"))
+    ):
+        return None
+
     best: ConnectorOpMatch | None = None
     best_score = 0
     for manifest in _iter_manifests():
@@ -168,6 +188,39 @@ def run_connector(
 
 
 def try_connector_reply(message: str, profile: str | None = None) -> str | None:
+    text = " ".join(str(message or "").lower().split())
+
+    outbound_email_words = {
+        "send",
+        "compose",
+        "write",
+        "draft",
+        "reply",
+        "forward",
+        "email to",
+        "mail to",
+    }
+
+    email_resources = {
+        "email",
+        "mail",
+        "gmail",
+        "inbox",
+    }
+
+    is_email_request = any(word in text for word in email_resources)
+    is_outbound_request = any(word in text for word in outbound_email_words)
+
+    if is_email_request and is_outbound_request:
+        return (
+            "Gmail IMAP here is read-only (cannot send).
+
+I can draft a message for you to paste into Gmail.
+Say: draft email to Saudia about ISB to SFO next month flexible dates."
+            "It can read and search inbox messages, but it cannot "
+            "send, reply to, forward, or compose email."
+        )
+
     match = resolve_connector_op(message, profile=profile)
     if match is None:
         return None
