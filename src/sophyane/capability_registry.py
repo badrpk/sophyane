@@ -213,9 +213,36 @@ _FS_HOME = _re(r"\bhome\s+directory\b", r"\bmy\s+home\b")
 
 
 def _match_email(text: str) -> bool:
-    if not _EMAIL.search(text):
+    """Gap only when user asks about email AND IMAP connector cannot handle it."""
+    text = " ".join(str(text or "").lower().split())
+    if not text:
         return False
-    return any(c in text for c in _EMAIL_CUES) or "my email" in text or "my e-mail" in text
+    # Outbound handled by email_send / connector read-only message
+    if any(
+        p in text
+        for p in (
+            "send email",
+            "send an email",
+            "compose email",
+            "draft an email",
+            "email to ",
+            "mail to ",
+        )
+    ) or ("send" in text and "email" in text):
+        return False
+    cues = any(c in text for c in _EMAIL_CUES) or "my email" in text or "my e-mail" in text
+    if not cues:
+        return False
+    # If connector would resolve latest/search, do not claim "not configured"
+    try:
+        from sophyane.connectors.runtime import resolve_connector_op
+        match = resolve_connector_op(text)
+        if match is not None and match.available:
+            return False
+    except Exception:
+        pass
+    return True
+
 
 
 def _match_fs(text: str) -> bool:
