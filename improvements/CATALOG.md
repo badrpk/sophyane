@@ -10,3 +10,4 @@ executable patches into `main`.
 - 2026-07-29: 1 proposals · merkle `fc8c35c0b76c6ffc…` · device `runnervmvrwv9-aae95289`
 - 2026-07-29: 8 proposals · merkle `20eafd2efc3f16c5…` · device `Badar-0da80220`
 - 2026-07-30: 1 proposals · merkle `ca6349abe909e2fa…` · device `runnervmvrwv9-aae95289`
+- 2026-07-31: 1 proposals · merkle `a15bd1a421d88283…` · device `runnervmvrwv9-aae95289`
