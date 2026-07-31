@@ -375,32 +375,33 @@ def _register_defaults(reg: CapabilityRegistry) -> None:
         )
     )
     # Must be last: catch-all. is_execution_capability ignores this id.
+        reg.register(
+        CapabilitySpec(
+            capability_id="email_send",
+            title="Outbound email",
+            route="gap",
+            available=False,
+            priority=Priority.CRITICAL_GAP,
+            match=lambda t: (
+                "send email" in t
+                or "send an email" in t
+                or ("send" in t and "email" in t and " to " in t)
+                or "compose email" in t
+                or "draft an email" in t
+            ),
+            gap_message=(
+                "I cannot send email from this session.\n\n"
+                "Outbound SMTP is not configured (read-only IMAP only).\n\n"
+                "Options:\n"
+                "1. I can draft the message text here for you to paste into Gmail.\n"
+                "2. Ask to scaffold a local SMTP send script (you supply SMTP secrets).\n"
+                "3. For Saudia tickets, check saudia.com or the app for ISB → SFO flexible dates.\n"
+            ),
+        )
+    )
+    # Must be last: catch-all. is_execution_capability ignores this id.
     reg.register(
-
-    CapabilitySpec(
-        capability_id="email_send",
-        title="Outbound email",
-        route="gap",
-        available=False,
-        priority=Priority.CRITICAL_GAP,
-        match=lambda t: (
-            "send email" in t
-            or "send an email" in t
-            or ("send" in t and "email" in t and " to " in t)
-            or "compose email" in t
-            or "draft an email" in t
-        ),
-        gap_message=(
-            "I cannot send email from this session.\n\n"
-            "Outbound SMTP is not configured (read-only IMAP only).\n\n"
-            "Options:\n"
-            "1. I can draft the message text here for you to paste into Gmail.\n"
-            "2. Ask to scaffold a local SMTP send script (you supply SMTP secrets).\n"
-            "3. For Saudia tickets, check saudia.com or the app for ISB → SFO flexible dates.\n"
-        ),
-    ),
-
-    CapabilitySpec(
+        CapabilitySpec(
             capability_id="general_chat",
             title="General chat",
             route="chat",
@@ -410,6 +411,9 @@ def _register_defaults(reg: CapabilityRegistry) -> None:
             tags=("chat",),
         )
     )
+
+
+
 
 
 def reset_registry_for_tests() -> CapabilityRegistry:
