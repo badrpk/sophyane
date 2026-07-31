@@ -878,9 +878,6 @@ class ObservableTUI:
             raise
 
     def run(self) -> int:
-        print(f"\n◆ Sophyane {__version__}")
-        print(f"provider {self.config.get('provider')}  model {self.config.get('model')}")
-        print("Projects keep one workspace across follow-up edits. /new starts a fresh project. /inspect shows raw plan and files. /quit exits.\n")
         while True:
             try:
                 message = _clean_message(self.read_prompt("❯ "))

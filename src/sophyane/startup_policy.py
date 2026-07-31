@@ -1,6 +1,8 @@
 """Startup provider policy and configured-provider summary."""
 from __future__ import annotations
 
+import os
+
 import json
 import sys
 from pathlib import Path
@@ -73,14 +75,35 @@ def choose_startup_provider() -> dict[str, Any]:
     local = _local_candidate(config, llm)
     clouds = _configured_clouds()
 
-    print("\nConfigured AI providers", file=sys.stderr)
-    print("───────────────────────", file=sys.stderr)
-    print(f"  {'✓' if local else '✗'} Local: {local[0] + ' / ' + local[1] if local else 'not configured'}", file=sys.stderr)
-    if clouds:
-        for provider_id, label in clouds:
-            print(f"  ✓ Cloud API: {label} ({provider_id})", file=sys.stderr)
-    else:
-        print("  ✗ Cloud API: none configured", file=sys.stderr)
+    verbose_startup = str(
+        os.environ.get("SOPHYANE_VERBOSE_STARTUP")
+        or os.environ.get("SOPHYANE_VERBOSE")
+        or ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
+    if verbose_startup:
+        print("\nConfigured AI providers", file=sys.stderr)
+        print("───────────────────────", file=sys.stderr)
+        local_label = (
+            local[0] + " / " + local[1]
+            if local
+            else "not configured"
+        )
+        print(
+            f"  {'✓' if local else '✗'} Local: {local_label}",
+            file=sys.stderr,
+        )
+        if clouds:
+            for provider_id, label in clouds:
+                print(
+                    f"  ✓ Cloud API: {label} ({provider_id})",
+                    file=sys.stderr,
+                )
+        else:
+            print(
+                "  ✗ Cloud API: none configured",
+                file=sys.stderr,
+            )
 
     if not sys.stdin.isatty():
         return config
