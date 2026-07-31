@@ -69,6 +69,14 @@ def _cloud_model(provider_id: str, config: dict[str, Any], llm: dict[str, Any]) 
     return str(plugin.metadata.default_model) if plugin else ""
 
 
+def _verbose_startup_enabled() -> bool:
+    return str(
+        os.environ.get("SOPHYANE_VERBOSE_STARTUP")
+        or os.environ.get("SOPHYANE_VERBOSE")
+        or ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def choose_startup_provider() -> dict[str, Any]:
     config = load_config()
     llm = _load_llm()
@@ -145,14 +153,22 @@ def choose_startup_provider() -> dict[str, Any]:
             save_config(updated)
             llm["active_provider"] = cloud_id
             save_json(LLM_FILE, llm, private=False)
-            if str(os.environ.get("SOPHYANE_VERBOSE_STARTUP") or os.environ.get("SOPHYANE_VERBOSE") or "").strip().lower() in {"1","true","yes","on"}:
-        print(f"Mode: cloud; provider: {cloud_id}", file=sys.stderr)
+            if _verbose_startup_enabled():
+                print(
+                    f"Mode: cloud; provider: {cloud_id}",
+                    file=sys.stderr,
+                )
             return updated
 
     elif local:
         print("Mode: local only; no cloud rescue API is configured.", file=sys.stderr)
     elif clouds:
-        print(f"Mode: cloud ({clouds[0][0]}); no local model is configured.", file=sys.stderr)
+        if _verbose_startup_enabled():
+            print(
+                f"Mode: cloud ({clouds[0][0]}); "
+                "no local model is configured.",
+                file=sys.stderr,
+            )
     else:
         print("No usable provider is configured. Run `sophyane --setup`.", file=sys.stderr)
     return config
