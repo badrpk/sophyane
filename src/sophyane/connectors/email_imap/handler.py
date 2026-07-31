@@ -172,6 +172,67 @@ def _op_search(user: str, pw: str, query: str, limit: int = 40) -> dict[str, Any
     return {"ok": True, "matches": len(top), "formatted": "\n".join(lines)}
 
 
+
+def _op_sent(user: str, pw: str) -> dict[str, Any]:
+    """Latest message from Gmail Sent Mail (or common Sent folder names)."""
+    M = imaplib.IMAP4_SSL("imap.gmail.com")
+    M.login(user, pw)
+    candidates = (
+        '"[Gmail]/Sent Mail"',
+        '"[Gmail]/Sent Mail"',
+        "Sent",
+        "INBOX.Sent",
+        '"[Google Mail]/Sent Mail"',
+    )
+    selected = None
+    for name in candidates:
+        typ, _ = M.select(name)
+        if typ == "OK":
+            selected = name
+            break
+    if not selected:
+        M.logout()
+        return {
+            "ok": False,
+            "error": "no_sent_folder",
+            "message": "Could not open Gmail Sent Mail folder.",
+        }
+    typ, data = M.search(None, "ALL")
+    ids = data[0].split() if data and data[0] else []
+    if not ids:
+        M.logout()
+        return {"ok": True, "formatted": "Sent folder is empty.", "empty": True}
+    typ, msg_data = M.fetch(ids[-1], "(RFC822)")
+    msg = email_lib.message_from_bytes(msg_data[0][1])
+    body = _body(msg)
+    words = re.findall(r"\b\w+\b", body)
+    to = _dec(msg.get("To"))
+    frm = _dec(msg.get("From"))
+    subj = _dec(msg.get("Subject"))
+    preview = body.strip()[:500] or "(no plain text body)"
+    formatted = (
+        "┌─ Latest outgoing email\n"
+        f"│ Folder   {selected}\n"
+        f"│ From     {frm}\n"
+        f"│ To       {to}\n"
+        f"│ Subject  {subj}\n"
+        f"│ Words    {len(words)}\n"
+        "├─ Preview\n"
+        + "\n".join("│ " + ln for ln in preview.splitlines()[:12])
+        + "\n└─"
+    )
+    M.logout()
+    return {
+        "ok": True,
+        "folder": selected,
+        "from": frm,
+        "to": to,
+        "subject": subj,
+        "word_count": len(words),
+        "formatted": formatted,
+    }
+
+
 def execute(
     *,
     op: str,
@@ -189,6 +250,8 @@ def execute(
     try:
         if op == "latest":
             return _op_latest(user, pw)
+        if op == "sent":
+            return _op_sent(user, pw)
         if op == "search":
             query = str(args.get("query") or args.get("message") or "").strip()
             return _op_search(user, pw, query)

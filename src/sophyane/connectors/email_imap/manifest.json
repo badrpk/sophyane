@@ -1,10 +1,22 @@
 {
   "id": "email.imap",
   "title": "Gmail IMAP (read-only)",
-  "match_resources": ["email", "e-mail", "inbox", "gmail", "mail"],
+  "match_resources": [
+    "email",
+    "e-mail",
+    "inbox",
+    "gmail",
+    "mail"
+  ],
   "ops": {
     "latest": {
-      "match_hints": ["last email", "latest email", "last mail", "my last email", "what was my last email"]
+      "match_hints": [
+        "last email",
+        "latest email",
+        "last mail",
+        "my last email",
+        "what was my last email"
+      ]
     },
     "search": {
       "match_hints": [
@@ -21,7 +33,21 @@
         "what company",
         "which company"
       ]
+    },
+    "sent": {
+      "match_hints": [
+        "last outgoing email",
+        "last sent email",
+        "latest sent email",
+        "last email i sent",
+        "outgoing email",
+        "sent mail",
+        "my last sent"
+      ]
     }
   },
-  "required_secrets": ["imap_user", "imap_app_password"]
+  "required_secrets": [
+    "imap_user",
+    "imap_app_password"
+  ]
 }

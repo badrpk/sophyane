@@ -129,7 +129,9 @@ def resolve_connector_op(message: str, profile: str | None = None) -> ConnectorO
                 ):
                     score = 2
             if op_name == "search" and score > 0:
-                score += 1  # prefer search over latest on ties
+                score += 1
+            if op_name == "sent" and score > 0:
+                score += 2  # prefer search over latest on ties
             if score <= 0:
                 continue
             if score > best_score:
