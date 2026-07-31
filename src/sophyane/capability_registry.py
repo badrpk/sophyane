@@ -217,7 +217,6 @@ def _match_email(text: str) -> bool:
     text = " ".join(str(text or "").lower().split())
     if not text:
         return False
-    # Outbound handled by email_send / connector read-only message
     if any(
         p in text
         for p in (
@@ -230,10 +229,11 @@ def _match_email(text: str) -> bool:
         )
     ) or ("send" in text and "email" in text):
         return False
+    if not _EMAIL.search(text):
+        return False
     cues = any(c in text for c in _EMAIL_CUES) or "my email" in text or "my e-mail" in text
     if not cues:
         return False
-    # If connector would resolve latest/search, do not claim "not configured"
     try:
         from sophyane.connectors.runtime import resolve_connector_op
         match = resolve_connector_op(text)
@@ -411,9 +411,6 @@ def _register_defaults(reg: CapabilityRegistry) -> None:
             tags=("chat",),
         )
     )
-
-
-
 
 
 def reset_registry_for_tests() -> CapabilityRegistry:
