@@ -37,6 +37,17 @@ def _clean_message(message: str) -> str:
 
 def _simple_chat_reply(message: str) -> str | None:
     # SOPHYANE_NATIVE_READONLY_DISPATCH
+    # SOPHYANE_PERSISTENT_MEMORY_DISPATCH
+    try:
+        from sophyane.memory_architecture import try_memory_reply
+
+        memory_reply = try_memory_reply(message)
+        if memory_reply is not None:
+            return memory_reply
+    except Exception:
+        # Memory failure must not break ordinary Sophyane routing.
+        pass
+
     try:
         from sophyane.native_readonly_capabilities import (
             try_native_readonly_reply,
