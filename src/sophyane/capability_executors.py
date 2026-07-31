@@ -272,3 +272,13 @@ __all__ = [
     "execute_deterministic_capability",
     "execute_deterministic_text",
 ]
+
+
+def try_connector_fast_path(message: str) -> str | None:
+    """Generic connector dispatch (manifest-driven)."""
+    try:
+        from sophyane.connectors.runtime import try_connector_reply
+        return try_connector_reply(message)
+    except Exception:
+        return None
+

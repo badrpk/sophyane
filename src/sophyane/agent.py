@@ -68,6 +68,13 @@ class SophyaneAgent:
         self.logger = logger
 
     def ask(self, message: str) -> AgentResponse:
+        try:
+            from sophyane.capability_executors import try_connector_fast_path
+            _cr = try_connector_fast_path(message)
+            if _cr:
+                return AgentResponse(_cr)
+        except Exception:
+            pass
         message = message.strip()
 
         if not message:

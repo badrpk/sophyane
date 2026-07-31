@@ -87,3 +87,8 @@ runtime/
 *.pre-v*
 *.ontology-backup-*
 src/sophyane/providers/*.pre-v*
+
+# secrets vault (never commit)
+**/.local/state/sophyane/vault/
+vault/
+

@@ -1,0 +1,13 @@
+{
+  "id": "email.imap",
+  "title": "Gmail IMAP (read-only)",
+  "module": "sophyane.connectors.email_imap.handler",
+  "vault_keys": ["imap_user", "imap_app_password"],
+  "match_resources": ["email", "inbox", "gmail", "mail"],
+  "ops": {
+    "latest": {
+      "description": "Latest inbox message summary",
+      "match_hints": ["last", "latest", "what was", "check my", "word count", "read my"]
+    }
+  }
+}

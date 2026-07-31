@@ -877,6 +877,14 @@ class ObservableTUI:
         while True:
             try:
                 message = _clean_message(self.read_prompt("❯ "))
+        try:
+            from sophyane.capability_executors import try_connector_fast_path
+            _cr = try_connector_fast_path(message)
+            if _cr:
+                self.emit(_cr)
+                continue
+        except Exception:
+            pass
                 reset_semantic_request(self)
             except (EOFError, KeyboardInterrupt):
                 print()
