@@ -90,8 +90,26 @@ def resolve_connector_op(message: str, profile: str | None = None) -> ConnectorO
             hints = [h.lower() for h in ((op_meta or {}).get("match_hints") or [])]
             score = sum(1 for h in hints if h in text)
             if score == 0 and resources:
-                if any(w in text for w in ("last", "latest", "check", "read", "show", "what was")):
+                if op_name == "latest" and any(
+                    w in text for w in ("last", "latest", "what was")
+                ):
                     score = 1
+                elif op_name == "search" and any(
+                    w in text
+                    for w in (
+                        "find",
+                        "search",
+                        "see",
+                        "look",
+                        "company",
+                        "own",
+                        "in my email",
+                        "in my mail",
+                    )
+                ):
+                    score = 2
+            if op_name == "search" and score > 0:
+                score += 1  # prefer search over latest on ties
             if score <= 0:
                 continue
             if score > best_score:
@@ -153,7 +171,12 @@ def try_connector_reply(message: str, profile: str | None = None) -> str | None:
     match = resolve_connector_op(message, profile=profile)
     if match is None:
         return None
-    result = run_connector(match.connector_id, match.op, profile=profile)
+    result = run_connector(
+        match.connector_id,
+        match.op,
+        args={"query": message, "message": message},
+        profile=profile,
+    )
     if not result.get("ok"):
         return result.get("message") or f"Connector error: {result.get('error')}"
     fmt = result.get("formatted")

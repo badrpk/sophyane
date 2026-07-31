@@ -1,13 +1,27 @@
 {
   "id": "email.imap",
   "title": "Gmail IMAP (read-only)",
-  "module": "sophyane.connectors.email_imap.handler",
-  "vault_keys": ["imap_user", "imap_app_password"],
-  "match_resources": ["email", "inbox", "gmail", "mail"],
+  "match_resources": ["email", "e-mail", "inbox", "gmail", "mail"],
   "ops": {
     "latest": {
-      "description": "Latest inbox message summary",
-      "match_hints": ["last", "latest", "what was", "check my", "word count", "read my"]
+      "match_hints": ["last email", "latest email", "last mail", "my last email", "what was my last email"]
+    },
+    "search": {
+      "match_hints": [
+        "in my email",
+        "in my mail",
+        "from my inbox",
+        "search email",
+        "search my email",
+        "find in email",
+        "find in my email",
+        "look in my email",
+        "see in my email",
+        "company in email",
+        "what company",
+        "which company"
+      ]
     }
-  }
+  },
+  "required_secrets": ["imap_user", "imap_app_password"]
 }

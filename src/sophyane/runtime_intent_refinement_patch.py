@@ -144,13 +144,6 @@ def install_intent_refinement() -> None:
         return
 
     def run(self: Any) -> int:
-        print(f"\n◆ Sophyane {tui_v2.__version__}")
-        print(f"provider {self.config.get('provider')}  model {self.config.get('model')}")
-        print(
-            "Requests are refined by the language model before execution. "
-            "Approve, edit, or cancel the refined request. /new starts a fresh project. "
-            "/inspect shows raw plan and files. /quit exits.\n"
-        )
         while True:
             try:
                 message = tui_v2._clean_message(self.read_prompt("❯ "))
