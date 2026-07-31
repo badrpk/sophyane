@@ -178,3 +178,22 @@ def inspect_local_request(message: str) -> str | None:
         return f"Home: {Path.home()}"
 
     return None
+
+def _email_followup_reply(message: str) -> str | None:
+    """EMAIL digit/integration follow-ups without importing tui_v2."""
+    t = " ".join(str(message or "").strip().lower().split())
+    if t in {"1", "2", "3", "4"}:
+        return (
+            "Pick an email path with a full sentence, for example:\n"
+            "  2) Read workspace file mail/last.eml and count words.\n"
+            "  3) Scaffold a read-only IMAP script using SOPHYANE_IMAP_USER "
+            "and SOPHYANE_IMAP_APP_PASSWORD (do not paste the app password)."
+        )
+    if any(p in t for p in ("integrate email", "how to integrate email", "email with sophyane")):
+        try:
+            from sophyane.capability_gap_messages import EMAIL_INTEGRATION_GUIDE
+            return EMAIL_INTEGRATION_GUIDE
+        except Exception:
+            return "Email: paste, local .eml, or IMAP env SOPHYANE_IMAP_USER / SOPHYANE_IMAP_APP_PASSWORD."
+    return None
+

@@ -299,6 +299,39 @@ def _pure_media_request(message: str) -> bool:
     return has_media_subject and not requests_implementation
 
 
+
+def _email_option_digit_reply(message: str) -> str | None:
+    """Clarify bare 1-4 and email-integration questions."""
+    t = " ".join(str(message or "").strip().lower().split())
+    if t in {"1", "2", "3", "4"}:
+        return (
+            "Pick an email path with a full sentence, for example:\n"
+            "  1) Paste the email body here.\n"
+            "  2) Read workspace file mail/last.eml and count words.\n"
+            "  3) Scaffold a read-only IMAP script using SOPHYANE_IMAP_USER "
+            "and SOPHYANE_IMAP_APP_PASSWORD (do not paste the app password).\n"
+            "Bare digits are ambiguous without that request text."
+        )
+    if any(
+        p in t
+        for p in (
+            "integrate email",
+            "email with sophyane",
+            "options how to integrate",
+            "how to integrate email",
+        )
+    ):
+        try:
+            from sophyane.capability_gap_messages import EMAIL_INTEGRATION_GUIDE
+            return EMAIL_INTEGRATION_GUIDE
+        except Exception:
+            return (
+                "Email options: paste body; local .eml in workspace; "
+                "or scaffold IMAP via env SOPHYANE_IMAP_USER / SOPHYANE_IMAP_APP_PASSWORD."
+            )
+    return None
+
+
 def _execution_requested(message: str) -> bool:
     # explain-tool chat short-circuit: "explain pytest" is documentation, not a test run
     _t = " ".join(str(message or "").lower().split())
