@@ -35,12 +35,20 @@ def _normalize(text: str) -> str:
     }
 
     words = normalized.split()
-    corrected = [
-        common_typos.get(word.strip("?!.,:"), word.strip("?!.,:"))
-        for word in words
-    ]
+    corrected = []
 
-    return " ".join(corrected)
+    for word in words:
+        clean_word = word.strip("?!.,:;")
+
+        # Ignore standalone punctuation such as "?".
+        if not clean_word:
+            continue
+
+        corrected.append(
+            common_typos.get(clean_word, clean_word)
+        )
+
+    return " ".join(corrected).strip()
 
 
 def _run(
@@ -1054,6 +1062,30 @@ def try_native_readonly_reply(
 
     if not text:
         return None
+
+    # SOPHYANE_EXACT_NATIVE_TIME_ROUTING
+    # Current local time is deterministic device state and must never be
+    # answered by Gemini or a local language model.
+    exact_time_queries = {
+        "time",
+        "time now",
+        "current time",
+        "local time",
+        "show time",
+        "show current time",
+        "tell me the time",
+        "tell me current time",
+        "what time is it",
+        "what time is it now",
+        "what is time",
+        "what is time now",
+        "what is the time",
+        "what is the time now",
+        "current time now",
+    }
+
+    if text in exact_time_queries:
+        return _time_reply()
 
     # Grounded model-token accounting
     token_usage_patterns = (
