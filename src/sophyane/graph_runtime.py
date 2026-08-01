@@ -222,16 +222,32 @@ class StateGraph:
 
     @staticmethod
     def merge(base: State, update: State) -> State:
-        """Shallow merge with last-write-wins.
+        """Merge node output into graph state.
 
-        List values are replaced, not concatenated. Nodes that want to grow a
-        list must return the full new list themselves (e.g. ``trace + [name]``).
-        Automatic list-append was double-applying those updates and corrupting
-        traces (e.g. ``['a','a','b',...]``).
+        Scalar and mapping values use last-write-wins. List updates support
+        both common node styles safely:
+
+        1. Incremental update: ``{"trace": ["node"]}``
+           Appends to the existing list.
+
+        2. Full-state update: ``{"trace": state["trace"] + ["node"]}``
+           Replaces with the already-expanded list without duplicating items.
         """
         merged = dict(base)
+
         for key, value in update.items():
-            merged[key] = value
+            existing = merged.get(key)
+
+            if isinstance(existing, list) and isinstance(value, list):
+                # A node may return the complete expanded list. Detect that
+                # form before treating the value as an incremental append.
+                if value[: len(existing)] == existing:
+                    merged[key] = list(value)
+                else:
+                    merged[key] = [*existing, *value]
+            else:
+                merged[key] = value
+
         return merged
 
     def _run_node(self, name: str, state: State) -> tuple[State | Command, int]:

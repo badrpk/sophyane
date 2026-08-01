@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from sophyane.config import CONFIG_DIR, load_config, load_json, save_config, save_json
+from sophyane.config import CONFIG_DIR, load_config, load_json, save_json
 from sophyane.local_runtime import (
     GGUF_DIR,
     GGUF_STATE_FILE,

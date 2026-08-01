@@ -4,11 +4,7 @@ from __future__ import annotations
 
 import json
 
-from sophyane.providers.base import (
-    Provider,
-    ProviderError,
-    ProviderMetadata,
-)
+from sophyane.providers.base import Provider, ProviderError
 from sophyane.providers.http import post_json
 
 

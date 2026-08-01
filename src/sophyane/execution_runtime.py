@@ -76,7 +76,13 @@ def _clip(value: str) -> str:
     return value[:MAX_CAPTURE] + f"\n… output truncated ({len(value) - MAX_CAPTURE} more characters)"
 
 
-def _run_with_heartbeat(command: str, workspace: Path, progress: Progress) -> str:
+def _run_with_heartbeat(
+    command: str,
+    workspace: Path,
+    progress: Progress,
+    *,
+    timeout: int = 60,
+) -> str:
     process = subprocess.Popen(
         command,
         shell=True,
@@ -94,8 +100,10 @@ def _run_with_heartbeat(command: str, workspace: Path, progress: Progress) -> st
             progress(f"Running command ({elapsed}s): {command}")
             next_update += 5
         time.sleep(1)
-        if elapsed >= 60:
-            progress(f"Command timed out after 60s: {command}")
+        if elapsed >= timeout:
+            progress(
+                f"Command timed out after {timeout}s: {command}"
+            )
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
@@ -279,7 +287,44 @@ def execute_action(action: dict[str, Any], workspace: Path, progress: Progress) 
         command = str(action.get("command") or action.get("content") or action.get("cmd") or "").strip()
         if not command:
             return False, "Command action did not contain a command."
-        return True, _run_with_heartbeat(command, workspace, progress)
+        try:
+            requested_timeout = int(
+                action.get("timeout") or 60
+            )
+        except (TypeError, ValueError):
+            requested_timeout = 60
+
+        timeout = max(
+            1,
+            min(requested_timeout, 1800),
+        )
+
+        result = _run_with_heartbeat(
+            command,
+            workspace,
+            progress,
+            timeout=timeout,
+        )
+
+        exit_code = None
+
+        for line in result.splitlines():
+            if not line.startswith("Exit code:"):
+                continue
+
+            try:
+                exit_code = int(
+                    line.split(":", 1)[1].strip()
+                )
+            except (TypeError, ValueError):
+                exit_code = None
+
+            break
+
+        # A command action is successful only when the real process exits 0.
+        # Previously every completed command returned ok=True, causing failed
+        # installs and failed tests to open the success menu.
+        return exit_code == 0, result
     if kind in {"run_interactive", "interactive", "play_demo"}:
         command = str(action.get("command") or action.get("content") or action.get("cmd") or "").strip()
         if not command:

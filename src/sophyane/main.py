@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from typing import Any
 
 from sophyane.agent import SophyaneAgent
@@ -18,7 +17,6 @@ from sophyane.logging_config import configure_logging
 from sophyane.memory import MemoryStore
 from sophyane.plugin_loader import PluginLoader
 from sophyane.setup_wizard import run_setup_wizard
-from sophyane.tools import tools_description
 from sophyane.version import __version__
 
 

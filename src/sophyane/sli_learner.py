@@ -1,7 +1,6 @@
 """Convert execution traces into source-aware SLI memories."""
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from sophyane import sli

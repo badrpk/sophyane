@@ -209,7 +209,7 @@ def probe_platform() -> PlatformReport:
 def format_platform_report(report: PlatformReport | None = None) -> str:
     report = report or probe_platform()
     lines = [
-        f"Sophyane platform probe",
+        "Sophyane platform probe",
         f"  OS family:        {report.os_family}",
         f"  OS:               {report.os_name}",
         f"  Arch:             {report.arch}",

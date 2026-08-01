@@ -11,7 +11,6 @@ import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 from sophyane.config import WORKSPACE_DIR, ensure_directories
 from sophyane.repository import repository_report

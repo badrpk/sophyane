@@ -1,5 +1,5 @@
 import unittest
-from sophyane.state_graph import END, START, MemorySaver, StateGraph
+from sophyane.state_graph import END, MemorySaver, StateGraph
 
 
 class StateGraphTests(unittest.TestCase):

@@ -6,8 +6,6 @@ always know how to pay and how to contact Sophyane.
 
 from __future__ import annotations
 
-import re
-from typing import Any
 
 
 def _match(text: str, *needles: str) -> bool:

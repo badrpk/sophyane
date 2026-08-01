@@ -1,6 +1,4 @@
-import tempfile
 import unittest
-from pathlib import Path
 
 from sophyane.runtime_safety import _unsafe_root_scan
 

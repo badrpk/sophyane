@@ -708,23 +708,36 @@ def main() -> int:
         return 0
 
     if args.ask:
+        from collections.abc import Callable
+
         from sophyane.expert.answer import answer_tough_question
 
-        generate = None
+        generate_callback: Callable[[str, str], str] | None = None
+
         try:
             from sophyane.config import load_config
             from sophyane.main import create_provider as _create_provider
 
             provider = _create_provider(load_config())
 
-            def generate(prompt: str, system: str) -> str:
+            def provider_generate(
+                prompt: str,
+                system: str,
+            ) -> str:
                 return provider.generate(prompt, system)
+
+            generate_callback = provider_generate
         except Exception:  # noqa: BLE001
-            generate = None
+            generate_callback = None
+
         result = answer_tough_question(
             str(args.ask),
-            generate=generate,
-            mode="hybrid" if generate else "expert",
+            generate=generate_callback,
+            mode=(
+                "hybrid"
+                if generate_callback is not None
+                else "expert"
+            ),
         )
         print(result["answer"])
         return 0

@@ -16,7 +16,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable, Literal, Protocol
+from typing import Any, Iterable, Literal, Protocol
 
 from sophyane.config import DATA_DIR, ensure_directories
 

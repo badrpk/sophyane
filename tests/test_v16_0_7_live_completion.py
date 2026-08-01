@@ -18,11 +18,11 @@ def test_version_and_runtime_identity(monkeypatch) -> None:
         "sophyane.cli_entry.load_config",
         lambda: {"provider": "gemini", "model": "gemini-test"},
     )
-    assert __version__ == "20.3.1"
+    assert __version__ == "21.1.0"
     identity = _runtime_identity()
     assert f"Sophyane {__version__}" in identity
-    assert "provider: gemini" in identity
-    assert "model: gemini-test" in identity
+    assert "gemini-test" in identity
+    assert identity.endswith("Ready")
 
 
 def test_common_gemini_action_and_check_forms_are_normalized() -> None:

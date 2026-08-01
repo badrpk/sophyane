@@ -271,51 +271,6 @@ def clear_pending_latest_file_query() -> None:
     _PENDING_LATEST_FILE_QUERY = False
 
 
-def install_input_capture() -> None:
-    """Capture raw TUI input before semantic refinement removes its context."""
-    global _INPUT_CAPTURE_INSTALLED
-    global _ORIGINAL_BUILTIN_INPUT
-    global _ORIGINAL_RICH_CONSOLE_INPUT
-
-    if _INPUT_CAPTURE_INSTALLED:
-        return
-
-    _INPUT_CAPTURE_INSTALLED = True
-
-    import builtins
-
-    _ORIGINAL_BUILTIN_INPUT = builtins.input
-
-    def captured_builtin_input(prompt: object = "") -> str:
-        value = _ORIGINAL_BUILTIN_INPUT(prompt)
-        _remember_typed_input(value)
-        return value
-
-    captured_builtin_input.__name__ = "captured_builtin_input"
-    builtins.input = captured_builtin_input
-
-    # Rich Console.input does not necessarily call builtins.input, so wrap it
-    # separately when Rich is available.
-    try:
-        from rich.console import Console
-
-        _ORIGINAL_RICH_CONSOLE_INPUT = Console.input
-
-        def captured_rich_input(self, *args, **kwargs):
-            value = _ORIGINAL_RICH_CONSOLE_INPUT(
-                self,
-                *args,
-                **kwargs,
-            )
-            _remember_typed_input(value)
-            return value
-
-        captured_rich_input.__name__ = "captured_rich_input"
-        Console.input = captured_rich_input
-    except Exception:
-        # Built-in input capture remains active.
-        pass
-
 # SOPHYANE_MULTI_TUI_INPUT_CAPTURE_V8
 
 _MULTI_TUI_CAPTURE_INSTALLED = False
@@ -323,9 +278,11 @@ _CAPTURED_ORIGINALS = {}
 
 
 def install_input_capture() -> None:
-    """Capture input from common Python terminal UI frameworks.
+    """Capture typed input from supported terminal UI frameworks.
 
-    This definition intentionally replaces the earlier V6 implementation.
+    This is the single canonical input-capture installer. It includes
+    built-in input handling and optional integrations for available TUI
+    frameworks.
     """
     global _MULTI_TUI_CAPTURE_INSTALLED
 
@@ -346,8 +303,9 @@ def install_input_capture() -> None:
         if not getattr(original, "_sophyane_capture_v8", False):
             _CAPTURED_ORIGINALS["builtins.input"] = original
 
+            _bound_captured_builtin_input = original
             def captured_builtin_input(prompt=""):
-                value = original(prompt)
+                value = _bound_captured_builtin_input(prompt)
                 _remember_typed_input(value)
                 return value
 
@@ -368,8 +326,9 @@ def install_input_capture() -> None:
         if not getattr(original, "_sophyane_capture_v8", False):
             _CAPTURED_ORIGINALS["rich.Console.input"] = original
 
+            _bound_captured_rich_input = original
             def captured_rich_input(self, *args, **kwargs):
-                value = original(self, *args, **kwargs)
+                value = _bound_captured_rich_input(self, *args, **kwargs)
                 _remember_typed_input(value)
                 return value
 
@@ -392,8 +351,9 @@ def install_input_capture() -> None:
                 "prompt_toolkit.PromptSession.prompt"
             ] = original
 
+            _bound_captured_prompt_session = original
             def captured_prompt_session(self, *args, **kwargs):
-                value = original(self, *args, **kwargs)
+                value = _bound_captured_prompt_session(self, *args, **kwargs)
                 _remember_typed_input(value)
                 return value
 
@@ -416,12 +376,13 @@ def install_input_capture() -> None:
                 "prompt_toolkit.PromptSession.prompt_async"
             ] = original_async
 
+            _bound_captured_prompt_session_async = original_async
             async def captured_prompt_session_async(
                 self,
                 *args,
                 **kwargs,
             ):
-                value = await original_async(
+                value = await _bound_captured_prompt_session_async(
                     self,
                     *args,
                     **kwargs,
@@ -448,8 +409,9 @@ def install_input_capture() -> None:
                 "prompt_toolkit.shortcuts.prompt"
             ] = original
 
+            _bound_captured_shortcuts_prompt = original
             def captured_shortcuts_prompt(*args, **kwargs):
-                value = original(*args, **kwargs)
+                value = _bound_captured_shortcuts_prompt(*args, **kwargs)
                 _remember_typed_input(value)
                 return value
 
@@ -470,8 +432,9 @@ def install_input_capture() -> None:
         if not getattr(original, "_sophyane_capture_v8", False):
             _CAPTURED_ORIGINALS["questionary.Question.ask"] = original
 
+            _bound_captured_questionary_ask = original
             def captured_questionary_ask(self, *args, **kwargs):
-                value = original(self, *args, **kwargs)
+                value = _bound_captured_questionary_ask(self, *args, **kwargs)
                 _remember_typed_input(value)
                 return value
 
@@ -494,12 +457,13 @@ def install_input_capture() -> None:
                 "questionary.Question.unsafe_ask"
             ] = original
 
+            _bound_captured_questionary_unsafe_ask = original
             def captured_questionary_unsafe_ask(
                 self,
                 *args,
                 **kwargs,
             ):
-                value = original(self, *args, **kwargs)
+                value = _bound_captured_questionary_unsafe_ask(self, *args, **kwargs)
                 _remember_typed_input(value)
                 return value
 
@@ -522,8 +486,9 @@ def install_input_capture() -> None:
                 "InquirerPy.BaseSimplePrompt.execute"
             ] = original
 
+            _bound_captured_inquirer_execute = original
             def captured_inquirer_execute(self, *args, **kwargs):
-                value = original(self, *args, **kwargs)
+                value = _bound_captured_inquirer_execute(self, *args, **kwargs)
                 _remember_typed_input(value)
                 return value
 
@@ -546,12 +511,13 @@ def install_input_capture() -> None:
                 "InquirerPy.BaseSimplePrompt.execute_async"
             ] = original_async
 
+            _bound_captured_inquirer_execute_async = original_async
             async def captured_inquirer_execute_async(
                 self,
                 *args,
                 **kwargs,
             ):
-                value = await original_async(
+                value = await _bound_captured_inquirer_execute_async(
                     self,
                     *args,
                     **kwargs,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from sophyane.budget import record_usage, reset_usage, status as budget_status
 from sophyane.capabilities import capability_matrix
 from sophyane.checkpoint import list_checkpoints, save_checkpoint
-from sophyane.hitl import list_pending, request_approval, resolve
+from sophyane.hitl import request_approval, resolve
 from sophyane.interpreter import run_python
 from sophyane.mcp_bridge import call_tool, list_tools
 from sophyane.observability import end_run, list_traces, start_run

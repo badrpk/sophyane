@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import socket
-import struct
 import subprocess
 import time
 import urllib.request

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import json
-import os
 import subprocess
 from pathlib import Path
 from typing import Any

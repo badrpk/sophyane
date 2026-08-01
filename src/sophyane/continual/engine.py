@@ -330,7 +330,6 @@ def federated_aggregate() -> dict[str, Any]:
     _ensure_dirs()
     # Copy local into peers pool for this round
     if (LOCAL_DIR / "adapter.bin").exists():
-        peer = str(_opt_meta().get("peer_id") or "local")
         dest = PEERS_DIR / "self"
         dest.mkdir(parents=True, exist_ok=True)
         shutil.copy2(LOCAL_DIR / "adapter.bin", dest / "adapter.bin")

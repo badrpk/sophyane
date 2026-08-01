@@ -14,7 +14,6 @@ import shlex
 import shutil
 import socket
 import subprocess
-import sys
 import tempfile
 import time
 import urllib.error
@@ -1101,7 +1100,6 @@ def execute_contract(
         final_context = context
         current: dict[str, ActionResult] = {}
         failed_action = ""
-        failure = ""
 
         for action in contract.actions:
             if not dependencies_satisfied(action, current):
@@ -1116,7 +1114,6 @@ def execute_contract(
                 current[action.action_id] = result
                 all_results.append(result)
                 failed_action = action.action_id
-                failure = result.error
                 break
 
             result = selected_registry.execute(
@@ -1128,7 +1125,6 @@ def execute_contract(
 
             if not result.ok:
                 failed_action = action.action_id
-                failure = result.error
                 previous_failure = result.to_dict()
                 break
 

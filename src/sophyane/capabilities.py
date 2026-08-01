@@ -7,7 +7,7 @@ observe, and stay safe. This module is the single inventory used by --capabiliti
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from sophyane.version import __version__

@@ -8,10 +8,8 @@ mechanical acceptance checks.  LLMs choose work; these classes enforce it.
 from __future__ import annotations
 
 import ast
-import fnmatch
 import hashlib
 import json
-import os
 import re
 import subprocess
 import sys

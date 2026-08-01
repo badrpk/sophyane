@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from sophyane.edge_agent import EDGE_SYSTEM_PROMPT, build_edge_health, edge_chat
+from sophyane.edge_agent import build_edge_health, edge_chat
 from sophyane.hardware_registry import (
     format_hardware_report,
     hardware_compatibility_report,

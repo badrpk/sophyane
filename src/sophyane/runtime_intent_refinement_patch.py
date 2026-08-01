@@ -1,7 +1,6 @@
 """LLM-assisted intent refinement with explicit user approval before execution."""
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from sophyane.runtime_semantic_instruction import apply_live_instruction
@@ -437,6 +436,28 @@ def install_intent_refinement() -> None:
                 or tui_v2._pure_media_request(refined_message)
             ):
                 route = "chat"
+
+            # SOPHYANE_HARNESS_FINAL_ROUTE_AUTHORITY_V1
+            # The intent-refinement model may incorrectly downgrade a strong
+            # repository/build task to chat. The original user message has
+            # final authority for deterministic harness routing.
+            try:
+                from sophyane.harness_task_policy import (
+                    is_execution_request,
+                )
+
+                if is_execution_request(message):
+                    route = (
+                        "continue_project"
+                        if has_project
+                        and tui_v2._project_continuation(
+                            message,
+                            has_project,
+                        )
+                        else "execution"
+                    )
+            except Exception:
+                pass
 
             continuing = route == "continue_project"
             executable = route in {"execution", "continue_project"}

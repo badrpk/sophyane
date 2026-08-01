@@ -1,5 +1,4 @@
 from pathlib import Path
-from types import SimpleNamespace
 
 from sophyane import browser_runtime_v2
 from sophyane.providers import gemini as gemini_module

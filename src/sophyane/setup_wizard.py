@@ -16,7 +16,7 @@ from sophyane.config import (
     prompt_secret,
     save_config,
 )
-from sophyane.model_catalog import CLOUD_COMPANIES, LOCAL_MODELS, CompanyChoice, ModelChoice
+from sophyane.model_catalog import CLOUD_COMPANIES, LOCAL_MODELS, CompanyChoice
 from sophyane.plugin_loader import PluginLoader
 
 

@@ -93,6 +93,114 @@ def _simple_chat_reply(message: str) -> str | None:
     if text in {"sophyane --version", "sophyane -v", "--version", "version"}:
         return f"Sophyane {__version__}"
 
+    # SOPHYANE_TUI_FILESYSTEM_V20_FASTPATH
+    # Filesystem capabilities previously existed only around the adaptive
+    # software loop. Chat-classified local filesystem questions bypassed that
+    # loop and incorrectly reached the provider.
+    try:
+        from sophyane.runtime_filesystem_capabilities_v20 import (
+            classify_request,
+            execute_capability,
+            format_result,
+        )
+
+        from sophyane.harness_task_policy import (
+            filesystem_only_request,
+        )
+
+        filesystem_action = (
+            classify_request(message)
+            if filesystem_only_request(message)
+            else None
+        )
+
+        if filesystem_action is not None:
+            filesystem_ok, filesystem_raw = execute_capability(
+                filesystem_action,
+                Path.cwd(),
+                message,
+            )
+
+            if filesystem_ok:
+                return format_result(filesystem_raw)
+
+            return (
+                "Filesystem capability failed safely:\n"
+                + filesystem_raw
+            )
+    except Exception as error:
+        import os
+
+        if os.environ.get("SOPHYANE_DEBUG_FILESYSTEM") == "1":
+            return (
+                "Filesystem capability error: "
+                f"{type(error).__name__}: {error}"
+            )
+
+    # SOPHYANE_TUI_UNIFIED_EXECUTION_KERNEL_V1
+    # The interactive TUI has its own routing path and does not necessarily
+    # call SophyaneAgent.ask(). Execute grounded local capabilities here before
+    # SLI classification or any provider request.
+    try:
+        from sophyane.unified_execution_kernel import execute_text
+
+        kernel_reply = execute_text(
+            message,
+            workspace=Path.cwd(),
+        )
+        if kernel_reply is not None:
+            return kernel_reply
+    except Exception as error:
+        # Keep chat/provider fallback available, but expose diagnostics when
+        # explicitly requested through the environment.
+        import os
+
+        if os.environ.get("SOPHYANE_DEBUG_KERNEL") == "1":
+            return (
+                "Unified execution-kernel error: "
+                f"{type(error).__name__}: {error}"
+            )
+
+    # Allow selected Sophyane utility commands to be used naturally inside
+    # the interactive CLI instead of hallucinating their output through an LLM.
+    normalized_command = " ".join(message.strip().split())
+
+    if normalized_command in {
+        "sophyane-mission list",
+        "sophyane mission list",
+        "/mission list",
+        "mission list",
+    }:
+        try:
+            from sophyane.mission_engine import MissionStore
+
+            store = MissionStore()
+            with store.connect() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM missions
+                    ORDER BY created_at DESC
+                    LIMIT 20
+                    """
+                ).fetchall()
+
+            missions = [dict(row) for row in rows]
+
+            return json.dumps(
+                {
+                    "ok": True,
+                    "count": len(missions),
+                    "missions": missions,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        except Exception as error:
+            return (
+                "Could not list missions: "
+                f"{type(error).__name__}: {error}"
+            )
+
     # SOPHYANE_CAPABILITY_EXECUTOR_FASTPATH_V1
     # Grounded deterministic capabilities run before provider planning.
     try:
@@ -106,6 +214,17 @@ def _simple_chat_reply(message: str) -> str | None:
             return executor_reply
     except Exception:
         # Never break the existing adaptive/provider fallback.
+        pass
+
+    # SOPHYANE_HARNESS_EXECUTION_HINT_V1
+    # Do not return a conversational answer for repository tasks that require
+    # filesystem changes, commands, tests, benchmarks, or iterative repair.
+    try:
+        from sophyane.harness_task_policy import is_execution_request
+
+        if is_execution_request(message):
+            return None
+    except Exception:
         pass
 
     inspection_reply = inspect_local_request(message)
@@ -367,6 +486,16 @@ def _email_option_digit_reply(message: str) -> str | None:
 
 
 def _execution_requested(message: str) -> bool:
+    # Strong repository/build requests must be resolved before narrower
+    # capability classifiers are allowed to veto execution.
+    try:
+        from sophyane.harness_task_policy import is_execution_request
+
+        if is_execution_request(message):
+            return True
+    except Exception:
+        pass
+
     # explain-tool chat short-circuit: "explain pytest" is documentation, not a test run
     _t = " ".join(str(message or "").lower().split())
     if _t.startswith(("explain ", "what is ", "what are ", "how does ", "how do ")):
@@ -546,18 +675,8 @@ def _is_latest_file_inspection_request(message: str) -> bool:
         "newest file",
         "latest file",
     )
-    machine_terms = (
-        "computer",
-        "machine",
-        "system",
-        "home",
-        "my files",
-        "my computer",
-    )
-
     has_file = any(term in text for term in file_terms)
     has_latest = any(term in text for term in latest_terms)
-    has_machine = any(term in text for term in machine_terms)
 
     # The original wording contains "file", "computer", "last", and
     # "amendment", so recognize that natural-language form as well.

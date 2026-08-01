@@ -96,6 +96,20 @@ class SophyaneAgent:
         except Exception:
             pass
 
+        # SOPHYANE_UNIFIED_EXECUTION_KERNEL_V1
+        # One typed execution kernel owns deterministic local actions before
+        # provider planning. Existing deterministic capabilities remain
+        # registered inside the kernel for compatibility.
+        try:
+            from sophyane.unified_execution_kernel import execute_text
+
+            kernel_reply = execute_text(message)
+            if kernel_reply is not None:
+                return AgentResponse(kernel_reply)
+        except Exception:
+            # Preserve existing routing if a kernel capability fails to load.
+            pass
+
         # SOPHYANE_CAPABILITY_EXECUTOR_FASTPATH_V1
         # Run available deterministic capabilities without spending provider
         # tokens or entering the adaptive software-build loop.

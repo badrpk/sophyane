@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 from sophyane.cloud.pricing import COMPETITOR_HINT, estimate_cost, list_plans
 from sophyane.cloud.store import PortalStore
@@ -1190,6 +1189,26 @@ class PortalApp:
                     # Prefer grounded research when model is weak/wrong vs sources
                     if sources and search_meta.get("ok") and grounded:
                         low_reply = (reply or "").lower()
+
+                        # Compare the model response with the primary search
+                        # extract. `sources` intentionally contains citation
+                        # metadata only, so obtain textual evidence from the
+                        # original search result.
+                        search_results = search_meta.get("results") or []
+                        primary_result = (
+                            search_results[0]
+                            if search_results
+                            and isinstance(search_results[0], dict)
+                            else {}
+                        )
+                        primary_snip = str(
+                            primary_result.get("snippet")
+                            or primary_result.get("content")
+                            or primary_result.get("text")
+                            or primary_result.get("description")
+                            or grounded
+                            or ""
+                        ).strip()
                         primary_low = primary_snip.lower()
                         weak = len((reply or "").strip()) < 80
                         # Hallucination guards

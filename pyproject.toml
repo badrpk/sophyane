@@ -55,6 +55,8 @@ sophyane-coi = "sophyane.coi_cli:main"
 sophyane-release = "sophyane.release_cli:main"
 sophyane-audit = "sophyane.audit_cli:main"
 sophyane-benchmark = "sophyane.benchmark_cli:main"
+sophyane-mcp = "sophyane.mcp_server:main"
+sophyane-mission = "sophyane.mission_cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

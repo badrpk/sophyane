@@ -244,10 +244,6 @@ def telegram_get_me() -> dict[str, Any]:
         data = _tg_api("getMe")
         if data.get("ok"):
             result = data.get("result") or {}
-            # cache username
-            e = load_messaging_env()
-            if result.get("username") and MESSAGING_ENV.exists():
-                pass
             return {"ok": True, "bot": result}
         return {"ok": False, "error": data}
     except Exception as err:  # noqa: BLE001

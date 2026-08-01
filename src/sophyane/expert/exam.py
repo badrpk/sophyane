@@ -49,8 +49,19 @@ def _llm_generate():
 
         return gen
     except Exception as error:  # noqa: BLE001
-        def gen(prompt: str, system: str) -> str:
-            raise RuntimeError(str(error))
+        # Exception target variables are cleared after the except block.
+        # Capture a stable string so the deferred generator remains usable.
+        error_message = (
+            f"{type(error).__name__}: {error}"
+        )
+
+        def gen(
+            prompt: str,
+            system: str,
+            _error_message: str = error_message,
+        ) -> str:
+            del prompt, system
+            raise RuntimeError(_error_message)
 
         return gen
 

@@ -6,9 +6,7 @@ from __future__ import annotations
 import hashlib, hmac, json, os, secrets, smtplib, ssl, time, uuid
 from email.mime.text import MIMEText
 from pathlib import Path
-from typing import Any
 from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
 
 # In-memory store (per process). Optional JSON persistence under product data dir.
 _USERS: dict[str, dict] = {}          # email_lower -> user

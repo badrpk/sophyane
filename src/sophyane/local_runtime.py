@@ -435,7 +435,6 @@ def _ensure_zstd(progress: ProgressFn | None = None) -> str | None:
         target = BIN_DIR / "zstd"
         shutil.copy2(bin_path, target)
         target.chmod(0o755)
-        lib_dir = extract / "usr" / "lib"
         # Prefer multiarch lib path when present.
         for so in extract.rglob("libzstd.so*"):
             dest_lib = Path.home() / ".local" / "lib"

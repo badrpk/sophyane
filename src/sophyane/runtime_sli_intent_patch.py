@@ -12,6 +12,20 @@ def install_sli_intent_routing() -> None:
     current_execution_requested = tui_v2._execution_requested
 
     def execution_requested(message: str) -> bool:
+        # SOPHYANE_HARNESS_EXECUTION_OVERRIDE_V1
+        # Strong build, repository, benchmark and long-loop requests must be
+        # resolved before the generic SLI direct-response classifier can veto
+        # execution.
+        try:
+            from sophyane.harness_task_policy import (
+                is_execution_request,
+            )
+
+            if is_execution_request(message):
+                return True
+        except Exception:
+            pass
+
         # SOPHYANE_GROUNDED_FILESYSTEM_ROUTING
         # Filesystem inspection must run against real local state even when
         # the generic intent router incorrectly labels it direct_response.

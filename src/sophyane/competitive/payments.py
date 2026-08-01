@@ -3,7 +3,7 @@ Loads secrets from ~/.config/sophyane/{stripe,payments,crypto}.env when present.
 Never logs secrets. Falls back to demo mode if Stripe API unreachable.
 """
 from __future__ import annotations
-import json, os, time, uuid, hashlib, urllib.request, ssl
+import json, os, time, uuid, urllib.request, ssl
 from pathlib import Path
 from typing import Any
 

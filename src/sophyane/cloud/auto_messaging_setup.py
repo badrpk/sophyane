@@ -13,17 +13,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from sophyane.cloud.messaging import (
-    MESSAGING_ENV,
-    discover_telegram_chat,
-    notify_owner,
-    public_status,
-    send_email,
-    send_telegram,
-    send_whatsapp,
-    telegram_get_me,
-    _upsert_messaging_env,
-)
+from sophyane.cloud.messaging import discover_telegram_chat, notify_owner, public_status, send_telegram, telegram_get_me, _upsert_messaging_env
 
 WA_STATUS = Path.home() / ".local/share/sophyane/messaging-bridge/state/status.json"
 WA_SEND = Path.home() / ".local/share/sophyane/messaging-bridge/wa_send.sh"

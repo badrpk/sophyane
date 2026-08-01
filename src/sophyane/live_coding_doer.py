@@ -12,9 +12,8 @@ import shlex
 import sys
 import threading
 import time
-from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Callable, Iterator, TextIO
+from typing import Any, Iterator, TextIO
 
 from sophyane.doer import StepRecord
 from sophyane.guarded_coding_doer import GuardedCodingDoerRuntime

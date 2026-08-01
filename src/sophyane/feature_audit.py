@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import time
-import urllib.request
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -116,7 +114,6 @@ def run_full_audit() -> dict[str, Any]:
 
     # App factory
     try:
-        from pathlib import Path
         import tempfile
 
         from sophyane.kernel.app_factory import create_app
@@ -183,7 +180,6 @@ def run_full_audit() -> dict[str, Any]:
     # Chip install helpers
     try:
         import tempfile
-        from pathlib import Path
 
         from sophyane.appliance import write_chip_install_script, write_systemd_unit
 
@@ -201,7 +197,6 @@ def run_full_audit() -> dict[str, Any]:
 
     # Browser assets
     try:
-        from pathlib import Path
 
         from sophyane.browser.launcher import BROWSER_HOME, find_chromium
 

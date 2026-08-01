@@ -16,14 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from sophyane.cloud.messaging import (
-    _tg_api,
-    load_messaging_env,
-    merchant_contacts,
-    send_email,
-    send_telegram,
-    send_whatsapp,
-)
+from sophyane.cloud.messaging import _tg_api, load_messaging_env, merchant_contacts, send_email, send_whatsapp
 
 DB_PATH = Path.home() / ".local" / "state" / "sophyane" / "cloud" / "channel_links.db"
 OFFSET_PATH = Path.home() / ".local" / "state" / "sophyane" / "telegram_offset.json"

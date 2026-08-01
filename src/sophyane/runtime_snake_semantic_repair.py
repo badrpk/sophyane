@@ -7,7 +7,6 @@ reverse guards used by frontier models.
 from __future__ import annotations
 
 import re
-from typing import Any
 
 
 def _vector_reverse_guard(source: str) -> bool:

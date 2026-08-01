@@ -73,6 +73,36 @@ def select_scope(
     if any(
         phrase in text
         for phrase in (
+            "my mobile",
+            "my phone",
+            "mobile storage",
+            "phone storage",
+            "android storage",
+            "internal storage",
+            "shared storage",
+            "whole mobile",
+            "entire mobile",
+        )
+    ):
+        candidates = (
+            Path.home() / "storage" / "shared",
+            Path("/storage/emulated/0"),
+            Path.home() / "storage",
+        )
+
+        for candidate in candidates:
+            try:
+                resolved = candidate.expanduser().resolve()
+                if resolved.exists() and resolved.is_dir():
+                    return resolved, "android_shared_storage"
+            except OSError:
+                continue
+
+        return Path.home().resolve(), "user_home_fallback"
+
+    if any(
+        phrase in text
+        for phrase in (
             "my computer",
             "whole computer",
             "home directory",

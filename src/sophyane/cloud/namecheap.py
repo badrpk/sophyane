@@ -204,7 +204,10 @@ class NamecheapClient:
         params: dict[str, str] = {"SLD": sld, "TLD": tld}
         for h in hosts:
             params.update(h)
-        root = self._call("namecheap.domains.dns.setHosts", **params)
+        self._call(
+            "namecheap.domains.dns.setHosts",
+            **params,
+        )
         return {
             "ok": True,
             "domain": domain,

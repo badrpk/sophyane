@@ -18,7 +18,6 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from sophyane.native_backends import probe_nifdu, probe_neuron

@@ -10,7 +10,7 @@ import time
 from dataclasses import asdict, dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
 from .goal_execution import ExecutionEvent
 

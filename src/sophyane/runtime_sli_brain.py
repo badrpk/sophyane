@@ -559,3 +559,12 @@ def install_sli_brain() -> None:
     refinement._confirm_refinement = _confirm
     tui_v2.ObservableTUI._context_prompt = context_prompt
     refinement._sli_brain_installed = True
+
+# SOPHYANE_HARNESS_EXECUTION_POLICY_V1
+def harness_execution_override(message: str) -> bool:
+    """Return True for repository tasks requiring real tool execution."""
+    try:
+        from sophyane.harness_task_policy import is_execution_request
+        return is_execution_request(message)
+    except Exception:
+        return False

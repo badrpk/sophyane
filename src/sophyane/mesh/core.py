@@ -25,9 +25,7 @@ from sophyane.mesh.discovery import (
 from sophyane.mesh.federation import (
     local_share_stats,
     pick_best_compute_peer,
-    remote_capabilities,
     remote_chat,
-    remote_exec_safe,
     remote_storage_get,
     remote_storage_list,
     remote_storage_put,

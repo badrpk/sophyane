@@ -50,11 +50,9 @@ class MultiProviderLLM:
         raise RuntimeError("All providers failed: " + "; ".join(errors))
 
 def from_sophyane_config() -> MultiProviderLLM:
-    """Best-effort load from installed Sophyane provider chain."""
-    chain: list[tuple[str, Any]] = []
-    try:
-        from sophyane.providers.gemini import GeminiProvider  # type: ignore
-        # caller must inject keys; this is structural only
-    except Exception:
-        pass
-    return MultiProviderLLM(chain=chain)
+    """Return the compatibility provider chain.
+
+    Provider construction is not yet wired into this compatibility layer, so
+    the chain remains empty until explicit configuration integration is added.
+    """
+    return MultiProviderLLM(chain=[])

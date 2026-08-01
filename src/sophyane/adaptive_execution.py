@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from sophyane.environment_constraints import verification_result_is_meaningful
 
-import json
 import re
 import shlex
+import sys
 import shutil
 from pathlib import Path
 from typing import Any, Callable
@@ -517,10 +517,24 @@ def _execute(runtime: Any, action: dict[str, Any], workspace: Path,
     return runtime.execute_action(action, workspace, progress)
 
 
+def execution_prefix_for_repair(request: str) -> str:
+    try:
+        from sophyane.harness_task_policy import execution_prefix
+        return execution_prefix(request)
+    except Exception:
+        return (
+            "Return one executable JSON action for the current task. "
+            "Do not return prose."
+        )
+
+
 def _compact_repair_prompt(request: str, files: list[str], result: str) -> str:
     existing = ", ".join(files[-40:]) if files else "(none)"
     return (
-        "ADAPTIVE EXECUTION ARTIFACT REQUEST. "
+        "ADAPTIVE EXECUTION REPAIR FOR THE CURRENT TASK. "
+        "Ignore unrelated cached output and any previous-task response. "
+        "This prompt requires a local software-runtime JSON action only. "
+        "Do not answer with explanation, planning prose, Markdown, or examples. "
         "Return exactly one valid JSON object with no markdown. "
         "Use either "
         "{\\\"action\\\":{\\\"type\\\":\\\"write_file\\\","
@@ -536,9 +550,13 @@ def _compact_repair_prompt(request: str, files: list[str], result: str) -> str:
         "Create or extend only one project file per response. "
         "When all required files are ready, return exactly one run_command action. "
         "Use relative paths only and never use cd.\n"
-        f"ORIGINAL TASK:\n{request[-7000:]}\n"
-        f"CURRENT FILES:\n{existing}\n"
-        f"LAST RESPONSE OR RESULT:\n{result[-1800:]}"
+        "EXECUTION CONTRACT:\n"
+        + execution_prefix_for_repair(request)
+        + "\n"
+        + f"ORIGINAL TASK:\n{request[-7000:]}\n"
+        + f"CURRENT FILES:\n{existing}\n"
+        f"LAST RESPONSE OR RESULT:\n{result[-1800:]}\n"
+        "Choose the single next unfinished action for ORIGINAL TASK only."
     )
 
 
@@ -567,7 +585,17 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                       workspace: Path | None = None, max_steps: int = 12,
                       progress: Callable[[str], None] | None = None) -> str:
     from sophyane import execution_runtime as runtime
-    workspace = (workspace or Path.cwd()).resolve()
+    requested_workspace = (workspace or Path.cwd()).resolve()
+
+    try:
+        from sophyane.harness_workspace import select_workspace
+        workspace = select_workspace(
+            original_request,
+            requested_workspace,
+        )
+    except Exception:
+        workspace = requested_workspace
+
     workspace.mkdir(parents=True, exist_ok=True)
     progress = progress or (lambda _message: None)
 
@@ -585,13 +613,130 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
         except Exception as error:
             progress(f"One-shot browser generation failed: {type(error).__name__}: {error}")
 
-    current = initial_text
+    # `current` contains only the provider response that may be parsed as an
+    # executable action. Repair prompts add the execution contract through
+    # execution_prefix_for_repair() when another provider call is required.
+    current = str(initial_text or "")
+
     evidence: list[str] = []
     repairs = 0
     successful_commands: set[str] = set()
+
+    # A provider may initially return a complete multi-file Markdown project.
+    # Materialize that bundle once. Subsequent iterations must inspect, build,
+    # test or perform targeted repairs instead of regenerating the project.
+    markdown_bundle_written = False
+
+    # Deterministic post-generation verification is a small state machine:
+    # create an isolated project environment, install dependencies with an
+    # Android-friendly timeout, then run the project's own tests.
+    deterministic_verification_stage = ""
+
     for step in range(1, max_steps + 1):
-        plan = runtime.extract_plan(current)
-        action = _selected_action(runtime, plan) if plan else None
+        # After the initial multi-file bundle is materialized, do not depend on
+        # the provider to emit a run_command action. Sophyane owns the next
+        # deterministic step: install declared dependencies and execute tests.
+        if deterministic_verification_stage == "prepare":
+            project_python = workspace / ".venv" / "bin" / "python"
+
+            if project_python.is_file():
+                deterministic_verification_stage = "install"
+            else:
+                action = {
+                    "type": "run_command",
+                    "command": (
+                        f"{shlex.quote(sys.executable)} -m venv .venv"
+                    ),
+                    "timeout": 300,
+                    "deterministic_post_bundle_verification": "prepare",
+                }
+                plan = None
+                deterministic_verification_stage = "prepare_running"
+                progress(
+                    "Creating isolated project virtual environment"
+                )
+
+        elif deterministic_verification_stage == "install":
+            project_python = workspace / ".venv" / "bin" / "python"
+            requirements = workspace / "requirements.txt"
+
+            if requirements.is_file():
+                command = (
+                    f"{shlex.quote(str(project_python))} "
+                    "-m pip install --disable-pip-version-check "
+                    "--no-input -r requirements.txt"
+                )
+            else:
+                command = (
+                    f"{shlex.quote(str(project_python))} "
+                    "-m pip install --disable-pip-version-check "
+                    "--no-input pytest"
+                )
+
+            action = {
+                "type": "run_command",
+                "command": command,
+                "timeout": 900,
+                "deterministic_post_bundle_verification": "install",
+            }
+            plan = None
+            deterministic_verification_stage = "install_running"
+            progress(
+                "Installing project dependencies "
+                "with Android-native build allowance"
+            )
+
+        elif deterministic_verification_stage == "test":
+            project_python = workspace / ".venv" / "bin" / "python"
+
+            action = {
+                "type": "run_command",
+                "command": (
+                    f"{shlex.quote(str(project_python))} "
+                    "-m pytest -q"
+                ),
+                "timeout": 300,
+                "deterministic_post_bundle_verification": "test",
+            }
+            plan = None
+            deterministic_verification_stage = "test_running"
+            progress("Running isolated project test suite")
+
+        else:
+            plan = runtime.extract_plan(current)
+            action = _selected_action(runtime, plan) if plan else None
+        if not action and not markdown_bundle_written:
+            try:
+                from sophyane.multifile_artifact_extractor import (
+                    as_batch_action,
+                )
+
+                action = as_batch_action(current)
+
+                if action is not None:
+                    children = action.get("actions") or []
+                    progress(
+                        "Extracted initial provider Markdown project bundle: "
+                        f"{len(children)} safe file(s)"
+                    )
+            except Exception as error:
+                progress(
+                    "Markdown project extraction failed safely: "
+                    f"{type(error).__name__}: {error}"
+                )
+
+        elif not action and markdown_bundle_written:
+            # Do not repeatedly replace the project with fresh prose bundles.
+            # Feed an explicit verification requirement into bounded repair.
+            current = (
+                "The initial project bundle is already materialized. "
+                "Do not regenerate or resend project files. "
+                "Return one executable run_command action that inspects, "
+                "installs dependencies if required, or runs the relevant "
+                "tests. Use actual command output for later targeted repairs.\n\n"
+                + str(current or "")
+            )
+
         if not action:
             rejected = (current or "").strip()
             prefix = rejected[:900].replace("\n", "\\n")
@@ -603,14 +748,14 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                 f"Rejected response: length={len(rejected)} prefix={prefix!r}"
             )
 
-            if repairs >= 2:
+            if repairs >= 5:
                 return (
                     "Execution stopped safely: provider could not produce "
                     "a usable artifact.\n\n" + "\n".join(evidence)
                 )
 
             repairs += 1
-            progress(f"Requesting compact provider repair ({repairs}/2)")
+            progress(f"Requesting compact provider repair ({repairs}/5)")
             response = ask(
                 _compact_repair_prompt(
                     original_request,
@@ -621,6 +766,14 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             current = getattr(response, "text", str(response))
             continue
         kind = str(action.get("type") or "").lower()
+
+        if (
+            kind == "batch"
+            and action.get("artifact_source")
+            == "markdown_multifile_bundle"
+        ):
+            markdown_bundle_written = True
+            deterministic_verification_stage = "prepare"
 
         # Completion aliases are normalized by _normalise_action, but keep
         # this defensive conversion for plans supplied by older adapters.
@@ -679,6 +832,58 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
 
         ok, result = _execute(runtime, action, workspace, progress)
         evidence.append(f"Step {step}: {result}")
+
+        verification_phase = action.get(
+            "deterministic_post_bundle_verification"
+        )
+
+        if verification_phase == "prepare":
+            if ok:
+                deterministic_verification_stage = "install"
+                current = ""
+                continue
+
+            return (
+                "Execution stopped safely: project virtual environment "
+                "could not be created.\n\nExecution evidence:\n"
+                + "\n".join(evidence)
+            )
+
+        if verification_phase == "install":
+            if ok:
+                deterministic_verification_stage = "test"
+                current = ""
+                continue
+
+            # Installation failures are deterministic environment evidence.
+            # Do not send unrelated repair prompts through generic connectors.
+            return (
+                "Execution stopped safely: dependency installation failed. "
+                "The generated project remains preserved.\n\n"
+                "Execution evidence:\n"
+                + "\n".join(evidence)
+            )
+
+        if verification_phase == "test":
+            if ok:
+                successful_commands.add(_command_text(action))
+                return (
+                    "Project implementation and verification completed "
+                    "successfully.\n\nWorkspace: "
+                    + str(workspace)
+                    + "\n\nExecution evidence:\n"
+                    + "\n".join(evidence)
+                )
+
+            # A real pytest failure may now be sent for a targeted source fix.
+            deterministic_verification_stage = ""
+            current = _compact_repair_prompt(
+                original_request,
+                _files(workspace),
+                result,
+            )
+            repairs = 0
+            continue
 
         if _discovery_request_completed(
             original_request,

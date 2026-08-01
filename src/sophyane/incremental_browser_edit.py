@@ -6,7 +6,6 @@ model is not forced to rewrite an entire working document.
 """
 from __future__ import annotations
 
-import html as html_lib
 import re
 from pathlib import Path
 from typing import Any, Callable
