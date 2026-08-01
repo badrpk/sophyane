@@ -251,10 +251,23 @@ if __name__ == "__main__":
     print(calculate(2, "+", 3))
 """
 
-    message = "Hello, World!"
-    quoted = re.search(r'["“](.{1,200}?)[”"]', request)
-    if quoted:
-        message = quoted.group(1)
+    print_call = re.search(
+        r"""print\(\s*(['"])(.*?)\1\s*\)""",
+        request,
+        re.S,
+    )
+
+    if print_call:
+        message = print_call.group(2)
+    else:
+        message = "Hello, World!"
+        quoted = re.search(
+            r"""["“'](.{1,200}?)[”"']""",
+            request,
+            re.S,
+        )
+        if quoted:
+            message = quoted.group(1)
 
     return f"""def main() -> None:
     print({message!r})
