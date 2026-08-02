@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from sophyane.decision_visibility import is_fatal_provider_error, normalize_candidates
@@ -291,6 +293,114 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
                 f"planner={last_error}; artifacts={type(error).__name__}: {error}"
             ) from error
 
+    @staticmethod
+    def _requested_workspace_files(
+        prompt: str,
+        objective: str,
+        criteria: list[str],
+    ) -> list[str]:
+        """Extract explicit relative file paths requested by the user."""
+        combined = "\n".join(
+            [
+                str(prompt or ""),
+                str(objective or ""),
+                *(str(item) for item in criteria),
+            ]
+        )
+
+        candidates = re.findall(
+            r"""(?<![\w./-])(
+                (?:[A-Za-z0-9_.-]+/)*
+                [A-Za-z0-9_.-]+
+                \.(?:py|toml|md|json|yaml|yml|txt|ini|cfg|cpp|cc|cxx|h|hpp|js|ts|html|css)
+            )(?![\w./-])""",
+            combined,
+            re.X,
+        )
+
+        files: list[str] = []
+
+        for candidate in candidates:
+            normalized = candidate.strip().replace("\\", "/")
+
+            if (
+                not normalized
+                or normalized.startswith("/")
+                or normalized.startswith("../")
+                or "/../" in normalized
+                or normalized in files
+            ):
+                continue
+
+            files.append(normalized)
+
+        return files
+
+    def _reconcile_filesystem_verdict(
+        self,
+        verdict: dict[str, Any],
+        prompt: str,
+        objective: str,
+        criteria: list[str],
+    ) -> dict[str, Any]:
+        """Override unsupported model claims with actual filesystem evidence."""
+        root = Path(self.workspace).expanduser().resolve()
+
+        requested_files = self._requested_workspace_files(
+            prompt,
+            objective,
+            criteria,
+        )
+
+        missing_files = [
+            relative
+            for relative in requested_files
+            if not (root / relative).is_file()
+        ]
+
+        if not missing_files:
+            return verdict
+
+        missing_requirements = [
+            f"{relative} is missing from the workspace"
+            for relative in missing_files
+        ]
+
+        report = getattr(self.executor, "report", None)
+        file_evidence = getattr(report, "files", []) if report is not None else []
+
+        successful_writes = [
+            item
+            for item in file_evidence
+            if (
+                getattr(item, "operation", "") in {
+                    "write",
+                    "create",
+                    "replace",
+                    "patch",
+                }
+                and bool(getattr(item, "ok", True))
+            )
+        ]
+
+        if not successful_writes:
+            missing_requirements.append(
+                "No successful filesystem write evidence exists"
+            )
+
+        verdict["goal_met"] = False
+        verdict["confidence"] = 0
+        verdict["missing_requirements"] = missing_requirements
+        verdict["next_instruction"] = (
+            "Create the missing files using concrete filesystem actions, "
+            "inspect the actual workspace, then run the required tests "
+            "or commands."
+        )
+        verdict["final_answer"] = ""
+        verdict["verification_mode"] = "filesystem_reconciliation"
+
+        return verdict
+
     def _verify(
         self,
         prompt: str,
@@ -351,4 +461,12 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
                     "verification_mode": "deterministic_evidence_override",
                 }
             )
+
+        verdict = self._reconcile_filesystem_verdict(
+            verdict,
+            prompt,
+            objective,
+            criteria,
+        )
+
         return verdict
