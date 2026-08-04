@@ -34,7 +34,7 @@ def _runtime_identity() -> str:
 
     status.append("Ready")
     if os.environ.get("SOPHYANE_SLI_ONLY") == "1" or os.environ.get("SOPHYANE_SESSION_MODE") == "sli_chunks":
-        status = ["SLI chunks", "Ready"]
+        status = [("SLI Graph" if os.environ.get("SOPHYANE_SLI_GRAPH") == "1" else "SLI chunks"), "Ready"]
 
     if os.environ.get("SOPHYANE_SLI_CONTINUOUS") == "1":
         status = ["Continuous SLI learning", "Ready"]
@@ -45,7 +45,7 @@ def _runtime_identity() -> str:
             "Continuous SLI learning · Ready"
             if os.environ.get("SOPHYANE_SLI_CONTINUOUS") == "1"
             else (
-                "Cascade · Ready" if __import__("os").environ.get("SOPHYANE_SESSION_MODE")=="cascade" else ("SLI chunks · Ready" if __import__("os").environ.get("SOPHYANE_SLI_ONLY")=="1" else "SLI chunks · Ready")
+                "Cascade · Ready" if __import__("os").environ.get("SOPHYANE_SESSION_MODE")=="cascade" else (("SLI Graph · Ready" if os.environ.get("SOPHYANE_SLI_GRAPH") == "1" else "SLI chunks · Ready") if __import__("os").environ.get("SOPHYANE_SLI_ONLY")=="1" else ("SLI Graph · Ready" if os.environ.get("SOPHYANE_SLI_GRAPH") == "1" else "SLI chunks · Ready"))
                 if (
                     os.environ.get("SOPHYANE_SLI_ONLY") == "1"
                     or os.environ.get("SOPHYANE_SESSION_MODE") == "sli_chunks"
