@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Callable
 
 Progress = Callable[[str], None]
-
 ROOT = Path.home() / ".local/share/sophyane/continuous_sli/topics"
 
 FACETS = (
@@ -29,9 +28,9 @@ FACETS = (
 )
 
 SOURCE_VIEWS = (
-    "implementation code",
+    "repositories",
     "technical documentation",
-    "reference architecture",
+    "reference architectures",
     "tests and benchmarks",
 )
 
@@ -65,16 +64,11 @@ def _env_int(name: str, default: int, minimum: int = 1) -> int:
 
 
 def _request(topic: str, iteration: int) -> tuple[str, str, str]:
+    """Return a search-shaped query that cannot be mistaken for a build task."""
     facet = FACETS[iteration % len(FACETS)]
     source_view = SOURCE_VIEWS[(iteration // len(FACETS)) % len(SOURCE_VIEWS)]
-    instruction = (
-        "Acquire, validate and learn multiple permissively licensed sources about "
-        f"{topic}, focusing on {facet}. Prefer substantial {source_view}; inspect "
-        "all relevant source, documentation and test files rather than only one "
-        "browser entry point. Semantically chunk, embed, deduplicate and promote "
-        "novel reusable knowledge into SLI memory. Do not generate an unrelated demo."
-    )
-    return instruction, facet, source_view
+    query = f"{topic} {facet} {source_view} permissive license"
+    return query, facet, source_view
 
 
 def _embedding_status() -> str:
@@ -103,6 +97,7 @@ def learn_topic(
 
     max_iterations = max_iterations or _env_int("SOPHYANE_TOPIC_MAX_ITERATIONS", 24)
     novelty_patience = novelty_patience or _env_int("SOPHYANE_TOPIC_NOVELTY_PATIENCE", 4)
+    failure_patience = _env_int("SOPHYANE_TOPIC_FAILURE_PATIENCE", 3)
 
     topic_root = ROOT / _slug(topic)
     topic_root.mkdir(parents=True, exist_ok=True)
@@ -111,6 +106,7 @@ def learn_topic(
     total_new = 0
     successes = 0
     no_novelty = 0
+    failures = 0
     stopped_reason = "iteration_limit"
 
     saved = {name: os.environ.get(name) for name in (
@@ -118,17 +114,19 @@ def learn_topic(
         "SOPHYANE_NO_AUTO_OPEN",
         "SOPHYANE_BROWSER_PREVIEW",
         "SOPHYANE_CONTINUOUS_AUTO_PREVIEW",
+        "SOPHYANE_TOPIC_LEARNING",
     )}
     os.environ["SOPHYANE_DISABLE_BROWSER_OPEN"] = "1"
     os.environ["SOPHYANE_NO_AUTO_OPEN"] = "1"
     os.environ["SOPHYANE_BROWSER_PREVIEW"] = "0"
     os.environ["SOPHYANE_CONTINUOUS_AUTO_PREVIEW"] = "0"
+    os.environ["SOPHYANE_TOPIC_LEARNING"] = "1"
 
     progress(f"Topic curriculum: {topic}")
     progress(f"Embedding backend: {_embedding_status()}")
     progress(
         f"Iterations: up to {max_iterations}; saturation after "
-        f"{novelty_patience} consecutive zero-novelty rounds"
+        f"{novelty_patience} successful zero-novelty rounds"
     )
 
     try:
@@ -142,7 +140,14 @@ def learn_topic(
             learned = int(event.chunks_learned)
             total_new += learned
             successes += int(event.success)
-            no_novelty = no_novelty + 1 if learned == 0 else 0
+
+            if event.success:
+                failures = 0
+                no_novelty = no_novelty + 1 if learned == 0 else 0
+            else:
+                failures += 1
+                no_novelty = 0
+
             record = {
                 "iteration": iteration + 1,
                 "facet": facet,
@@ -154,15 +159,20 @@ def learn_topic(
                 "seconds": event.elapsed_seconds,
             }
             records.append(record)
-            (topic_root / "events.jsonl").open("a", encoding="utf-8").write(
-                json.dumps(record, ensure_ascii=False) + "\n"
-            )
+            with (topic_root / "events.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
             progress(
-                f"Topic coverage progress: +{learned} chunks; "
-                f"total +{total_new}; zero-novelty streak {no_novelty}/{novelty_patience}"
+                f"Topic coverage progress: +{learned} chunks; total +{total_new}; "
+                f"successful zero-novelty {no_novelty}/{novelty_patience}; "
+                f"failure streak {failures}/{failure_patience}"
             )
+
             if no_novelty >= novelty_patience:
                 stopped_reason = "semantic_saturation"
+                break
+            if failures >= failure_patience:
+                stopped_reason = "acquisition_failure"
                 break
     except KeyboardInterrupt:
         stopped_reason = "user_interrupt"
