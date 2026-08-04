@@ -227,3 +227,253 @@ if __name__ == "__main__":
         print(json.dumps(one_cycle(progress=print), indent=2))
     else:
         run_forever()
+
+# SOPHYANE_REVISION_MANIFEST_V1
+#
+# Skip unchanged repository roots before file traversal and avoid merging when
+# the current cycle learned no new chunks.
+
+_one_cycle_before_revision_manifest = one_cycle
+
+
+def one_cycle(progress=None) -> dict:
+    from sophyane.code_memory.repository_efficiency import (
+        record_manifest,
+        repository_revision,
+        should_skip_revision,
+        unchanged_report,
+    )
+
+    progress = progress or print
+    cfg = load_config()
+    state = load_state()
+
+    roots: list[Path] = []
+
+    if cfg.get("enable_local", True):
+        for raw_root in (
+            cfg.get("local_roots")
+            or []
+        ):
+            root = Path(
+                raw_root
+            ).expanduser()
+
+            if root.exists():
+                roots.append(
+                    root
+                )
+
+    if cfg.get("enable_github", True):
+        for url in (
+            cfg.get("github_repos")
+            or []
+        ):
+            progress(
+                f"github: ensure {url}"
+            )
+
+            cloned = ensure_github_clone(
+                url
+            )
+
+            if cloned is not None:
+                roots.append(
+                    cloned
+                )
+
+    if not roots:
+        return {
+            "error":
+                "no roots available",
+
+            "memory":
+                len(
+                    ChunkStore().ids
+                ),
+        }
+
+    index = (
+        int(
+            state.get(
+                "cursor"
+            )
+            or 0
+        )
+        % len(roots)
+    )
+
+    chosen = roots[index]
+
+    state["cursor"] = (
+        index
+        + 1
+    )
+
+    progress(
+        "cycle root "
+        f"[{index + 1}/{len(roots)}]: "
+        f"{chosen}"
+    )
+
+    limit_files = int(
+        cfg.get(
+            "limit_files_per_root"
+        )
+        or 80
+    )
+
+    limit_chunks = int(
+        cfg.get(
+            "limit_chunks_per_root"
+        )
+        or 250
+    )
+
+    source = (
+        "continuous:"
+        + chosen.name
+    )
+
+    revision = repository_revision(
+        chosen
+    )
+
+    skip, reason = should_skip_revision(
+        chosen,
+        source=source,
+        revision=revision,
+        limit_files=limit_files,
+        limit_chunks=limit_chunks,
+    )
+
+    if skip:
+        memory_size = len(
+            ChunkStore().ids
+        )
+
+        report = unchanged_report(
+            chosen,
+            revision=revision,
+            memory_size=memory_size,
+            reason=reason,
+        )
+
+        progress(
+            "revision manifest hit: "
+            f"{chosen}; {reason}"
+        )
+
+        merged = 0
+
+    else:
+        progress(
+            "revision manifest miss: "
+            f"{reason}; revision={revision[:36]}"
+        )
+
+        report = acquire_tree(
+            chosen,
+            limit_files=limit_files,
+            limit_chunks=limit_chunks,
+            source=source,
+            progress=progress,
+        )
+
+        report["revision"] = (
+            revision
+        )
+
+        manifest = record_manifest(
+            chosen,
+            source=source,
+            revision=revision,
+            limit_files=limit_files,
+            limit_chunks=limit_chunks,
+            report=report,
+        )
+
+        report["manifest"] = str(
+            manifest
+        )
+
+        learned = int(
+            report.get(
+                "chunks_added",
+                0,
+            )
+            or 0
+        )
+
+        merged = 0
+
+        if (
+            learned > 0
+            and cfg.get(
+                "auto_merge",
+                True,
+            )
+        ):
+            store = ChunkStore()
+
+            merged = family_merge(
+                store,
+                max_merges=8,
+            )
+
+            try:
+                auto_merge_by_shared_tags(
+                    store,
+                    min_parts=2,
+                    max_merges=5,
+                )
+            except Exception:
+                pass
+
+        elif learned == 0:
+            progress(
+                "merge skipped: acquisition added zero chunks"
+            )
+
+    state["cycles"] = (
+        int(
+            state.get(
+                "cycles"
+            )
+            or 0
+        )
+        + 1
+    )
+
+    state["last_report"] = {
+        "ts":
+            time.time(),
+
+        "root":
+            str(chosen),
+
+        "acquire":
+            report,
+
+        "rich_merged":
+            merged,
+
+        "memory":
+            len(
+                ChunkStore().ids
+            ),
+    }
+
+    save_state(
+        state
+    )
+
+    progress(
+        "memory now: "
+        f"{state['last_report']['memory']} "
+        f"rich_merged={merged}"
+    )
+
+    return state[
+        "last_report"
+    ]

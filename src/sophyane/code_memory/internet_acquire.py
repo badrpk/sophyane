@@ -3311,3 +3311,70 @@ from sophyane.code_memory.strict_acquisition_guard import (
 _install_strict_acquisition_guard(
     globals()
 )
+
+# SOPHYANE_BROWSER_ENTRY_PREFILTER_V1
+#
+# internet_acquire imports acquire_tree into this module. Wrap only that local
+# reference so continuous/local acquisition remains unaffected.
+
+from sophyane.code_memory.acquire import acquire_tree as _acquire_tree_before_browser_prefilter
+
+
+def acquire_tree(
+    root,
+    *,
+    limit_files=200,
+    limit_chunks=1000,
+    source="acquire",
+    progress=None,
+):
+    from sophyane.code_memory.repository_efficiency import (
+        browser_entry_files,
+        browser_prefilter_report,
+    )
+    from sophyane.code_memory.store import ChunkStore
+
+    callback = (
+        progress
+        or (
+            lambda _message:
+                None
+        )
+    )
+
+    skipped = browser_prefilter_report(
+        Path(root),
+        source=source,
+        memory_size=len(
+            ChunkStore().ids
+        ),
+    )
+
+    if skipped is not None:
+        callback(
+            "SLI browser prefilter skip: "
+            f"{root}; "
+            f"{skipped['skip_reason']}"
+        )
+
+        return skipped
+
+    entries = browser_entry_files(
+        Path(root)
+    )
+
+    if str(source).lower().startswith(
+        "internet:"
+    ):
+        callback(
+            "SLI browser prefilter passed: "
+            f"{len(entries)} entry point(s)"
+        )
+
+    return _acquire_tree_before_browser_prefilter(
+        root,
+        limit_files=limit_files,
+        limit_chunks=limit_chunks,
+        source=source,
+        progress=progress,
+    )
