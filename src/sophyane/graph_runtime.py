@@ -7,6 +7,14 @@ telemetry and bounded parallel fan-out.
 """
 from __future__ import annotations
 
+# --- sophyane native fast-path hook ---
+try:
+    from sophyane.native.fast_path import try_fast_path as _sophyane_try_fast_path
+except Exception:
+    _sophyane_try_fast_path = None
+# --- end fast-path import ---
+
+
 import json
 import sqlite3
 import time

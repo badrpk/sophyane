@@ -56,6 +56,12 @@ const io=new IntersectionObserver(es=>es.forEach(e=>e.isIntersecting&&e.target.c
 
 
 def install_sli_builder() -> None:
+    try:
+        from sophyane.code_memory.install_hook import install_code_memory_generator
+        install_code_memory_generator()
+    except Exception:
+        pass
+
     from sophyane import adaptive_execution
 
     if getattr(adaptive_execution, "_sli_builder_installed", False):

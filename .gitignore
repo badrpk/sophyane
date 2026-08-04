@@ -44,23 +44,14 @@ Thumbs.db
 *.tmp
 *.bak
 *.swp
-__pycache__/
 
 # Local secrets
-.env
-.env.*
-!.env.example
-*.key
-*.pem
 
 # Recursive self-improvement runtime data
 improvement_chain.jsonl
 continual/
 *.before-*
 *.backup
-*.bak
-.env
-.env.*
 *.backup*
 *~
 credentials*
@@ -92,3 +83,13 @@ src/sophyane/providers/*.pre-v*
 **/.local/state/sophyane/vault/
 vault/
 
+
+# Sophyane runtime/generated state
+.sophyane-checkpoints/
+.sophyane-workspace/
+.sophyane-workspace-candidates/
+**/__pycache__/
+*.pyc
+src/sophyane/code_memory/*.broken-*
+src/sophyane/code_memory/*.before-*
+src/sophyane/*.before-*

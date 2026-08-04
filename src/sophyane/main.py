@@ -3,6 +3,14 @@
 
 from __future__ import annotations
 
+# --- sophyane native fast-path hook ---
+try:
+    from sophyane.native.fast_path import try_fast_path as _sophyane_try_fast_path
+except Exception:
+    _sophyane_try_fast_path = None
+# --- end fast-path import ---
+
+
 import argparse
 from typing import Any
 
