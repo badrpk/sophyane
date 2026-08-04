@@ -531,3 +531,38 @@ def try_sli_chunks(message: str, workspace=None, progress=None):
 
 # SOPHYANE_FLYWHEEL_ROUTER_V1
 # Note: cascade is handled in sli_cascade / TUI; router stays pure SLI.
+
+_sli_try_chunks_before_graph = try_sli_chunks
+
+
+# SOPHYANE_SLI_GRAPH_ENTRY_V3
+import os as _sli_g_os
+
+def try_sli_chunks(message: str, workspace=None, progress=None):
+    progress = progress or (lambda _m: None)
+    use = _sli_g_os.environ.get("SOPHYANE_SLI_GRAPH", "1").strip().lower() not in {
+        "0", "false", "no",
+    }
+    if use:
+        try:
+            from sophyane.sli_graph import run_sli_graph
+            state = run_sli_graph(message, workspace=workspace, progress=progress)
+            if state.success and state.report:
+                return state.report
+            prev = _sli_g_os.environ.get("SOPHYANE_SLI_GRAPH")
+            _sli_g_os.environ["SOPHYANE_SLI_GRAPH"] = "0"
+            try:
+                legacy = _sli_try_chunks_before_graph(
+                    message, workspace=workspace, progress=progress
+                )
+            finally:
+                if prev is None:
+                    _sli_g_os.environ.pop("SOPHYANE_SLI_GRAPH", None)
+                else:
+                    _sli_g_os.environ["SOPHYANE_SLI_GRAPH"] = prev
+            if legacy and "Success: True" in str(legacy):
+                return legacy
+            return state.report or legacy
+        except Exception as e:
+            progress(f"SLI-graph entry error: {e}")
+    return _sli_try_chunks_before_graph(message, workspace=workspace, progress=progress)
