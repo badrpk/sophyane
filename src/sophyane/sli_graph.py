@@ -38,7 +38,7 @@ class SLIState:
 def classify(state: SLIState, progress: Progress) -> SLIState:
     q = (state.request or "").lower()
     progress(f"SLI-graph: classify «{state.request[:80]}»")
-    if any(k in q for k in ("website on", "webpage about", "informational site", "site on ")):
+    if any(k in q for k in ("website on", "website about", "website for", "webpage about", "webpage on", "informational site", "site on ", "site about ")):
         state.route = "topic_site"
     elif any(
         k in q
@@ -103,7 +103,24 @@ def try_memory_router(state: SLIState, progress: Progress) -> SLIState:
 def try_topic(state: SLIState, progress: Progress) -> SLIState:
     if state.success:
         return state
-    progress("SLI-graph: topic site")
+    progress("SLI-graph: rich topic-site orchestration")
+    try:
+        rich = __import__("sophyane.code_memory.sli_rich_site_compose", fromlist=["*"])
+        is_topic = getattr(rich, "is_topic_site_request", lambda _r: True)
+        if not is_topic(state.request):
+            return state
+        fn = getattr(rich, "compose_rich_topic_site", None)
+        if fn is not None:
+            out = fn(state.request, Path(state.workspace), progress=progress)
+            state.report = str(out[0] if isinstance(out, tuple) else out or "")
+            _ok(state)
+            state.log(f"rich-topic success={state.success}")
+            if state.success:
+                return state
+    except Exception as e:
+        state.errors.append(f"rich-topic:{e}")
+        progress(f"SLI-graph rich topic error: {e}; using safe topic fallback")
+
     try:
         mod = __import__("sophyane.code_memory.topic_site_compose", fromlist=["*"])
         is_topic = getattr(mod, "is_topic_site_request", lambda _r: True)
@@ -118,10 +135,10 @@ def try_topic(state: SLIState, progress: Progress) -> SLIState:
             out = fn(state.request, workspace=Path(state.workspace), progress=progress)
         state.report = str(out[0] if isinstance(out, tuple) else out or "")
         _ok(state)
-        state.log(f"topic success={state.success}")
+        state.log(f"topic-fallback success={state.success}")
     except Exception as e:
         state.errors.append(f"topic:{e}")
-        progress(f"SLI-graph topic error: {e}")
+        progress(f"SLI-graph topic fallback error: {e}")
     return state
 
 
