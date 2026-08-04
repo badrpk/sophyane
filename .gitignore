@@ -94,3 +94,8 @@ src/sophyane/code_memory/*.broken-*
 src/sophyane/code_memory/*.before-*
 src/sophyane/*.before-*
 scripts/sophyane_autofix_bot.py
+
+# SLI acquisition runtime state
+src/sophyane/code_memory/internet_acquire.py.before-*
+src/sophyane/code_memory/internet_acquire.py.broken-*
+src/sophyane/code_memory/*.damaged-*

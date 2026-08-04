@@ -86,3 +86,63 @@ try:
         _CS.add_chunk = _wrapped_add
 except Exception:
     pass
+
+# SOPHYANE_BATCH_ACQUIRE_V1
+# The original acquisition logic is retained, but the ChunkStore constructor
+# is temporarily wrapped so all add_chunk calls share one batch and write the
+# full semantic index only once.
+
+_acquire_tree_before_batch = acquire_tree
+
+
+def acquire_tree(
+    root,
+    *,
+    limit_files=200,
+    limit_chunks=1000,
+    source="acquire",
+    progress=None,
+):
+    from sophyane.code_memory import store as _store_module
+
+    original_class = _store_module.ChunkStore
+    created = []
+
+    class _BatchChunkStore(original_class):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.begin_batch()
+            created.append(self)
+
+    # acquire.py imported ChunkStore into its own global namespace.
+    original_global = globals().get(
+        "ChunkStore",
+        original_class,
+    )
+
+    globals()["ChunkStore"] = _BatchChunkStore
+    _store_module.ChunkStore = _BatchChunkStore
+
+    try:
+        return _acquire_tree_before_batch(
+            root,
+            limit_files=limit_files,
+            limit_chunks=limit_chunks,
+            source=source,
+            progress=progress,
+        )
+
+    finally:
+        for instance in created:
+            try:
+                while instance._batch_depth > 0:
+                    instance.end_batch()
+            except Exception as error:
+                if progress:
+                    progress(
+                        "batch flush warning: "
+                        f"{type(error).__name__}: {error}"
+                    )
+
+        globals()["ChunkStore"] = original_global
+        _store_module.ChunkStore = original_class
