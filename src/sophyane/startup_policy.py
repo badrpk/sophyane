@@ -119,7 +119,7 @@ def choose_startup_provider() -> dict[str, Any]:
 
     if local and clouds:
         print("\nStart this session with:", file=sys.stderr)
-        print("  1. SLI chunks — code memory (no LLM if valid assembly)", file=sys.stderr)
+        print("  1. SLI Graph — memory + internet, no LLM", file=sys.stderr)
         print("  2. Local LLM — Ollama / on-device model", file=sys.stderr)
         print(f"  3. Cloud LLM — use {clouds[0][1]}", file=sys.stderr)
         print("  4. Continuous SLI learning — repeat until Ctrl+C", file=sys.stderr)
@@ -131,19 +131,23 @@ def choose_startup_provider() -> dict[str, Any]:
 
         if answer in {"", "1"}:
             # Tier 1: SLI chunks ONLY — no LLM fallback (forces SLI strength)
-            os.environ["SOPHYANE_SESSION_MODE"] = "sli_chunks"
+            os.environ["SOPHYANE_SESSION_MODE"] = "sli_graph"
+            os.environ["SOPHYANE_SLI_GRAPH"] = "1"
+            os.environ["SOPHYANE_SLI_ONLY"] = "1"
             os.environ["SOPHYANE_SLI_ONLY"] = "1"
             updated = dict(config)
             # Keep config readable but mark session as SLI-owned
             updated.update({"company": "SLI", "timeout": 60})
             save_config(updated)
-            print("Mode: SLI chunks ONLY (no local/cloud LLM fallback)", file=sys.stderr)
+            print("Mode: SLI Graph + internet (no local/cloud LLM)", file=sys.stderr)
             return updated
 
 
         # SOPHYANE_CONTINUOUS_SLI_STARTUP_V1
         if answer == "4":
-            os.environ["SOPHYANE_SESSION_MODE"] = "sli_chunks"
+            os.environ["SOPHYANE_SESSION_MODE"] = "sli_graph"
+            os.environ["SOPHYANE_SLI_GRAPH"] = "1"
+            os.environ["SOPHYANE_SLI_ONLY"] = "1"
             os.environ["SOPHYANE_SLI_ONLY"] = "1"
             os.environ["SOPHYANE_SLI_CONTINUOUS"] = "1"
 
