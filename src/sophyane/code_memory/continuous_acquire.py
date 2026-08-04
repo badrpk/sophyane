@@ -220,14 +220,6 @@ def run_forever() -> None:
             print(f"cycle error: {e}")
         time.sleep(sleep_s)
 
-
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "once":
-        print(json.dumps(one_cycle(progress=print), indent=2))
-    else:
-        run_forever()
-
 # SOPHYANE_REVISION_MANIFEST_V1
 #
 # Skip unchanged repository roots before file traversal and avoid merging when
@@ -477,3 +469,10 @@ def one_cycle(progress=None) -> dict:
     return state[
         "last_report"
     ]
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "once":
+        print(json.dumps(one_cycle(progress=print), indent=2))
+    else:
+        run_forever()
