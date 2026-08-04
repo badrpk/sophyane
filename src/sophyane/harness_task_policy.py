@@ -27,6 +27,10 @@ EXECUTION_VERBS = {
     "generate",
     "run",
     "continue",
+    "write",
+    "make",
+    "execute",
+    "compile",
 }
 
 SOFTWARE_TERMS = {
@@ -49,6 +53,36 @@ SOFTWARE_TERMS = {
     "tests",
     "backend",
     "runtime",
+    "python",
+    "javascript",
+    "typescript",
+    "c++",
+    "script",
+    "source file",
+    ".py",
+    ".pyw",
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".cpp",
+    ".cc",
+    ".cxx",
+    ".c",
+    ".h",
+    ".hpp",
+    ".java",
+    ".rs",
+    ".go",
+    ".html",
+    ".css",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".sh",
 }
 
 PROTECTED_TERMS = {
@@ -58,6 +92,12 @@ PROTECTED_TERMS = {
     "sophyane": "Sophyane",
     "mcp": "Model Context Protocol",
 }
+
+_SOURCE_FILE = re.compile(
+    r"(?:^|[\s'\"`])(?:[A-Za-z0-9_.-]+)"
+    r"\.(?:py|pyw|js|mjs|cjs|ts|tsx|jsx|cpp|cc|cxx|c|h|hpp|java|rs|go|html|css|json|ya?ml|toml|sh)\b",
+    re.I,
+)
 
 
 @dataclass(frozen=True)
@@ -78,13 +118,14 @@ def _contains_phrase(text: str, phrase: str) -> bool:
 
 def is_execution_request(message: str) -> bool:
     text = normalize(message)
-    words = set(re.findall(r"[a-z0-9_+-]+", text))
+    words = set(re.findall(r"[a-z0-9_+.-]+", text))
 
     verb_hit = bool(words.intersection(EXECUTION_VERBS))
     domain_hit = any(
         _contains_phrase(text, term)
         for term in SOFTWARE_TERMS
     )
+    explicit_source_file = bool(_SOURCE_FILE.search(text))
 
     long_loop = any(
         phrase in text
@@ -100,7 +141,7 @@ def is_execution_request(message: str) -> bool:
         )
     )
 
-    return (verb_hit and domain_hit) or long_loop
+    return (verb_hit and (domain_hit or explicit_source_file)) or long_loop
 
 
 def is_compound_request(message: str) -> bool:
@@ -160,13 +201,18 @@ def filesystem_only_request(message: str) -> bool:
         "mcp server",
         "benchmark backend",
         "startup speed",
+        "source file",
+        "python",
+        "javascript",
+        "typescript",
+        "compile",
+        "execute",
+        "run it",
     )
 
     has_fs = any(term in text for term in fs_terms)
-    has_non_fs = any(term in text for term in non_fs_terms)
+    has_non_fs = any(term in text for term in non_fs_terms) or bool(_SOURCE_FILE.search(text))
 
-    # Compound cleanup requests are still filesystem tasks when every requested
-    # operation concerns files/storage.
     storage_workflow = (
         ("mobile" in text or "storage" in text)
         and any(term in text for term in ("largest", "duplicate"))
