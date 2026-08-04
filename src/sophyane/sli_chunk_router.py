@@ -164,3 +164,41 @@ def resolve_tier(
         return selected_mode, None
 
     return "none", None
+
+# SOPHYANE_PYTHON_HARNESS_ROUTE_V1
+# Domain-first routing: explicit Python harness requests never enter the
+# browser composer, preview path or generic semantic assembler.
+
+_SLI_PRE_PYTHON_HARNESS_TRY = try_sli_chunks
+
+
+def try_sli_chunks(
+    message: str,
+    workspace=None,
+    progress=None,
+):
+    from pathlib import Path as _HarnessPath
+
+    from sophyane.code_memory.python_harness_compose import (
+        compose_python_harness_request,
+        detect_python_harness_request,
+    )
+
+    if detect_python_harness_request(message):
+        target = (
+            _HarnessPath(workspace)
+            if workspace is not None
+            else _HarnessPath.cwd() / ".sophyane-workspace"
+        )
+
+        return compose_python_harness_request(
+            message,
+            target,
+            progress=progress,
+        )
+
+    return _SLI_PRE_PYTHON_HARNESS_TRY(
+        message,
+        workspace=workspace,
+        progress=progress,
+    )

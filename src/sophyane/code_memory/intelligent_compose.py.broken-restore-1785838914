@@ -1,0 +1,680 @@
+"""Dependency-aware SLI browser composer.
+
+The linker separates:
+
+1. capabilities — semantic functions such as application_state;
+2. components — selected microchunks;
+3. symbols — callable exports such as createState.
+
+A required capability is satisfied by `provides`.
+A required callable/interface is satisfied by `exports`.
+"""
+from __future__ import annotations
+
+import html
+import re
+
+from pathlib import Path
+from typing import Any, Callable
+
+
+def _ensure_exercise_seed(doc: str) -> str:
+    if not doc:
+        return doc
+    if "startExerciseApp" not in doc:
+        return doc
+    if re.search(r'answer\s*:\s*["\']mat["\']', doc):
+        return doc
+    seed = (
+        "\n<script>\n"
+        "window.SLI_EXERCISE_ITEMS = [\n"
+        '  { prompt: "The cat sat on the ___", answer: "mat" },\n'
+        '  { prompt: "Birds can ___", answer: "fly" },\n'
+        '  { prompt: "Water is ___", answer: "wet" },\n'
+        '  { prompt: "The sun rises in the ___", answer: "east" }\n'
+        "];\n"
+        "document.addEventListener(\"DOMContentLoaded\", function () {\n"
+        "  if (typeof startExerciseApp === \"function\") {\n"
+        "    startExerciseApp(window.SLI_EXERCISE_ITEMS);\n"
+        "  }\n"
+        "});\n"
+        "</script>\n"
+    )
+    if re.search(r"</body>", doc, flags=re.I):
+        return re.sub(r"</body>", seed + "</body>", doc, count=1, flags=re.I)
+    return doc + seed
+
+from sophyane.code_memory.capability_graph import (
+    CAPABILITIES,
+    RequestPlan,
+    retrieve_capability_graph,
+)
+
+
+Progress = Callable[[str], None]
+
+
+LANGUAGE_DATASET_PROVIDER = """
+<script id="sli-language-dataset-provider">
+window.SLI_EXERCISE_ITEMS = [
+  {prompt: "The cat sat on the ___", answer: "mat"},
+  {prompt: "Birds can ___", answer: "fly"},
+  {prompt: "Water is ___", answer: "wet"},
+  {prompt: "The sun rises in the ___", answer: "east"}
+];
+</script>
+"""
+
+
+
+
+
+
+def _normalise_values(value: object) -> set[str]:
+    if isinstance(value, str):
+        value = [value]
+
+    if not isinstance(value, (list, tuple, set)):
+        return set()
+
+    return {
+        str(item).strip()
+        for item in value
+        if str(item).strip()
+    }
+
+
+def _chunk_contract(chunk: Any) -> tuple[set[str], set[str], set[str]]:
+    metadata = dict(getattr(chunk, "meta", None) or {})
+
+    return (
+        _normalise_values(metadata.get("provides")),
+        _normalise_values(metadata.get("requires")),
+        _normalise_values(metadata.get("exports")),
+    )
+
+
+def _extract_html_parts(source: str) -> tuple[str, str, str]:
+    styles = re.findall(
+        r"<style[^>]*>(.*?)</style>",
+        source,
+        flags=re.I | re.S,
+    )
+
+    scripts = re.findall(
+        r"<script[^>]*>(.*?)</script>",
+        source,
+        flags=re.I | re.S,
+    )
+
+    body_match = re.search(
+        r"<body[^>]*>(.*?)</body>",
+        source,
+        flags=re.I | re.S,
+    )
+
+    body = body_match.group(1) if body_match else ""
+
+    body = re.sub(
+        r"<script[^>]*>.*?</script>",
+        "",
+        body,
+        flags=re.I | re.S,
+    )
+
+    body = re.sub(
+        r"<style[^>]*>.*?</style>",
+        "",
+        body,
+        flags=re.I | re.S,
+    )
+
+    return (
+        body.strip(),
+        "\n".join(styles).strip(),
+        "\n".join(scripts).strip(),
+    )
+
+
+def _clean_javascript(source: str) -> str:
+    source = source.strip()
+
+    if not source:
+        return ""
+
+    if re.search(
+        r"(?m)^\s*(?:import|export)\s",
+        source,
+    ):
+        return ""
+
+    if any(
+        marker in source
+        for marker in (
+            "require(",
+            "module.exports",
+            "process.env",
+            "__dirname",
+        )
+    ):
+        return ""
+
+    return source
+
+
+def _provider_rank(signature: Any) -> tuple[int, int, int, str]:
+    return (
+        0 if getattr(signature, "explicit_contract", False) else 1,
+        0 if str(getattr(signature, "source", "")) == (
+            "seed:sli-microcapabilities"
+        ) else 1,
+        int(getattr(signature, "size", 0) or 0),
+        str(getattr(signature, "chunk_id", "")),
+    )
+
+
+def _select_initial_components(
+    plan: RequestPlan,
+    matches: dict[str, list[Any]],
+    signatures: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    selected: list[str] = []
+    selected_set: set[str] = set()
+    missing: list[str] = []
+
+    for need in plan.capabilities:
+        rows = matches.get(need.name, [])
+
+        if not rows:
+            missing.append(need.name)
+            continue
+
+        # Prefer explicit contract providers over legacy inferred chunks.
+        rows = sorted(
+            rows,
+            key=lambda row: (
+                0
+                if signatures[row.chunk_id].explicit_contract
+                else 1,
+                -float(row.score),
+                int(row.size),
+                row.chunk_id,
+            ),
+        )
+
+        chosen = rows[0]
+
+        if chosen.chunk_id not in selected_set:
+            selected.append(chosen.chunk_id)
+            selected_set.add(chosen.chunk_id)
+
+    return selected, missing
+
+
+def _current_contract(
+    selected_ids: list[str],
+    signatures: dict[str, Any],
+) -> tuple[set[str], set[str], set[str]]:
+    provides: set[str] = set()
+    requires: set[str] = set()
+    exports: set[str] = set()
+
+    for chunk_id in selected_ids:
+        signature = signatures[chunk_id]
+
+        provides.update(signature.provides)
+        requires.update(signature.requires)
+        exports.update(signature.exports)
+
+    return provides, requires, exports
+
+
+def _find_provider(
+    requirement: str,
+    signatures: dict[str, Any],
+) -> str | None:
+    candidates = []
+
+    for chunk_id, signature in signatures.items():
+        if signature.excluded_reason:
+            continue
+
+        # Requirement can be either a capability or a callable symbol.
+        if (
+            requirement in signature.provides
+            or requirement in signature.exports
+        ):
+            candidates.append(signature)
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=_provider_rank)
+    return candidates[0].chunk_id
+
+
+def _expand_dependencies(
+    selected_ids: list[str],
+    signatures: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    selected = list(selected_ids)
+    selected_set = set(selected)
+
+    while True:
+        provides, requires, exports = _current_contract(
+            selected,
+            signatures,
+        )
+
+        # Capabilities and exported symbols are separate namespaces, but either
+        # may satisfy a requirement with the same declared name.
+        satisfied = provides | exports
+        unresolved = sorted(requires - satisfied)
+
+        if not unresolved:
+            return selected, []
+
+        added = False
+        impossible: list[str] = []
+
+        for requirement in unresolved:
+            provider_id = _find_provider(
+                requirement,
+                signatures,
+            )
+
+            if provider_id is None:
+                impossible.append(requirement)
+                continue
+
+            if provider_id not in selected_set:
+                selected.append(provider_id)
+                selected_set.add(provider_id)
+                added = True
+
+        if impossible:
+            return selected, impossible
+
+        if not added:
+            # No progress means the remaining dependency set is cyclic or
+            # incorrectly declared.
+            return selected, unresolved
+
+
+def _dependency_order(
+    selected_ids: list[str],
+    signatures: dict[str, Any],
+) -> list[str]:
+    remaining = set(selected_ids)
+    ordered: list[str] = []
+
+    available_capabilities: set[str] = set()
+    available_exports: set[str] = set()
+
+    while remaining:
+        ready: list[str] = []
+
+        for chunk_id in remaining:
+            signature = signatures[chunk_id]
+
+            satisfied = (
+                available_capabilities
+                | available_exports
+            )
+
+            if signature.requires <= satisfied:
+                ready.append(chunk_id)
+
+        if not ready:
+            # A capability requirement may be jointly supplied by another
+            # selected component. Use a deterministic order rather than
+            # corrupting the source or looping forever.
+            ready = list(remaining)
+
+        ready.sort(
+            key=lambda chunk_id: (
+                signatures[chunk_id].placement != "html_document",
+                len(signatures[chunk_id].requires),
+                signatures[chunk_id].size,
+                chunk_id,
+            )
+        )
+
+        for chunk_id in ready:
+            signature = signatures[chunk_id]
+
+            ordered.append(chunk_id)
+            available_capabilities.update(signature.provides)
+            available_exports.update(signature.exports)
+            remaining.remove(chunk_id)
+
+    return ordered
+
+
+def _coverage(
+    plan: RequestPlan,
+    final_source: str,
+) -> tuple[float, list[str]]:
+    low = final_source.lower()
+
+    total = 0.0
+    covered = 0.0
+    missing: list[str] = []
+
+    for need in plan.capabilities:
+        definition = CAPABILITIES[need.name]
+
+        count = sum(
+            signal in low
+            for signal in definition["signals"]
+        )
+
+        total += need.importance
+
+        if count >= definition["minimum_signals"]:
+            covered += need.importance
+        else:
+            missing.append(need.name)
+
+    return (
+        covered / total if total else 1.0,
+        missing,
+    )
+
+
+def _behavior_checks(source: str) -> dict[str, bool]:
+    low = source.lower()
+
+    return {
+        "document": (
+            "<html" in low
+            and "<body" in low
+            and 'id="app"' in low
+        ),
+        "state": (
+            "function createstate" in low
+            and "currentindex" in low
+        ),
+        "data_model": (
+            "function normaliseitems" in low
+            and "prompt" in low
+            and "answer" in low
+        ),
+        "answer_normalization": (
+            "function normaliseanswer" in low
+        ),
+        "answer_validation": (
+            "function validateanswer" in low
+        ),
+        "rendering": (
+            "function renderprompt" in low
+        ),
+        "input": (
+            "function bindexercisecontrols" in low
+            and "addeventlistener" in low
+        ),
+        "feedback": (
+            "function renderfeedback" in low
+        ),
+        "score": (
+            "function recordattempt" in low
+        ),
+        "next": (
+            "function advanceitem" in low
+        ),
+        "reset": (
+            "function resetstate" in low
+        ),
+        "entry": (
+            "function startexerciseapp" in low
+            and "domcontentloaded" in low
+        ),
+    }
+
+
+def compose_browser_request(
+    request: str,
+    workspace: Path,
+    store: Any,
+    *,
+    progress: Progress | None = None,
+) -> tuple[str, list[str]]:
+    progress = progress or (lambda _message: None)
+
+    plan, matches, signatures = retrieve_capability_graph(
+        store,
+        request,
+        per_capability=2,
+    )
+
+    progress(
+        "SLI capability graph planned "
+        f"{len(plan.capabilities)} requirements"
+    )
+
+    for need in plan.capabilities:
+        rows = matches.get(need.name, [])
+
+        progress(
+            f"SLI capability {need.name}: "
+            + (
+                ", ".join(
+                    f"{row.chunk_id}:{row.score:.2f}"
+                    for row in rows
+                )
+                if rows
+                else "no compatible evidence"
+            )
+        )
+
+    selected_ids, missing_evidence = _select_initial_components(
+        plan,
+        matches,
+        signatures,
+    )
+
+    if missing_evidence:
+        return (
+            "SLI capability graph could not find compatible chunks.\n"
+            "Missing retrieval evidence: "
+            + ", ".join(missing_evidence)
+            + "\nNo LLM fallback was used.",
+            [],
+        )
+
+    selected_ids, unresolved = _expand_dependencies(
+        selected_ids,
+        signatures,
+    )
+
+    if unresolved:
+        return (
+            "SLI capability graph has unresolved dependencies.\n"
+            "Missing capability or symbol providers: "
+            + ", ".join(unresolved)
+            + "\nNo LLM fallback was used.",
+            [],
+        )
+
+    ordered_ids = _dependency_order(
+        selected_ids,
+        signatures,
+    )
+
+    bodies: list[str] = []
+    styles: list[str] = []
+    scripts: list[str] = []
+
+    for chunk_id in ordered_ids:
+        chunk = store.chunks.get(chunk_id)
+
+        if chunk is None:
+            continue
+
+        source = str(chunk.text or "")
+        language = str(chunk.language or "").lower()
+
+        if language == "html":
+            body, css, javascript = _extract_html_parts(source)
+
+            if body:
+                bodies.append(
+                    f"<!-- chunk:{chunk_id} -->\n{body}"
+                )
+
+            if css:
+                styles.append(
+                    f"/* chunk:{chunk_id} */\n{css}"
+                )
+
+            javascript = _clean_javascript(javascript)
+
+            if javascript:
+                scripts.append(
+                    f"/* chunk:{chunk_id} */\n{javascript}"
+                )
+
+        elif language == "css":
+            if source.strip():
+                styles.append(
+                    f"/* chunk:{chunk_id} */\n{source.strip()}"
+                )
+
+        elif language in {"javascript", "typescript"}:
+            javascript = _clean_javascript(source)
+
+            if javascript:
+                scripts.append(
+                    f"/* chunk:{chunk_id} */\n{javascript}"
+                )
+
+    if not bodies:
+        bodies.append('<main id="app"></main>')
+
+    title = html.escape(request[:100])
+
+    final_source = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title>
+<style>
+html,body{{margin:0;min-height:100%;font-family:system-ui,sans-serif}}
+body{{padding:1rem;background:#f4f6f8}}
+{chr(10).join(styles)}
+</style>
+</head>
+<body>
+{chr(10).join(bodies)}
+<script>
+"use strict";
+{chr(10).join(scripts)}
+</script>
+</body>
+</html>
+"""
+
+    coverage, missing_capabilities = _coverage(
+        plan,
+        final_source,
+    )
+
+    behavior = _behavior_checks(final_source)
+
+    failed_behavior = [
+        name
+        for name, passed in behavior.items()
+        if not passed
+    ]
+
+    workspace.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    candidate = workspace / "index.html"
+
+    if (
+        coverage < 0.90
+        or missing_capabilities
+        or failed_behavior
+    ):
+        candidate.unlink(missing_ok=True)
+
+        return (
+            "SLI capability-graph composition rejected.\n"
+            f"Capability coverage: {coverage:.1%}\n"
+            "Missing capabilities: "
+            + (
+                ", ".join(missing_capabilities)
+                if missing_capabilities
+                else "none"
+            )
+            + "\nFailed behavior checks: "
+            + (
+                ", ".join(failed_behavior)
+                if failed_behavior
+                else "none"
+            )
+            + "\nUsed chunks: "
+            + ", ".join(ordered_ids)
+            + "\nNo LLM fallback was used.",
+            [],
+        )
+
+        request_low = request.lower()
+    is_language_exercise = (
+        any(term in request_low for term in ("word", "sentence", "letter", "spelling"))
+        and any(term in request_low for term in ("game", "quiz", "exercise"))
+    )
+
+    if (
+        is_language_exercise
+        and 'id="sli-language-dataset-provider"' not in final_source
+    ):
+        final_source = re.sub(
+            r"<body([^>]*)>",
+            lambda match: (
+                match.group(0)
+                + "\n"
+                + LANGUAGE_DATASET_PROVIDER
+            ),
+            final_source,
+            count=1,
+            flags=re.I,
+        )
+
+candidate.write_text(
+        final_source,
+        encoding="utf-8",
+    )
+
+    return (
+        "\n".join(
+            [
+                "Sophyane component-linker composer",
+                f"Request: {request}",
+                f"Capabilities required: {len(plan.capabilities)}",
+                f"Capability coverage: {coverage:.1%}",
+                "Behavior checks: "
+                + ", ".join(
+                    f"{name}=passed"
+                    for name in behavior
+                ),
+                "Used chunks: " + ", ".join(ordered_ids),
+                "Files: index.html",
+                "Success: True",
+                (
+                    "Inference: SLI capability/component/symbol graph only; "
+                    "no local/cloud LLM"
+                ),
+            ]
+        ),
+        ordered_ids,
+    )
+
+
+__all__ = [
+    "compose_browser_request",
+]

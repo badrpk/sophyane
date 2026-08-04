@@ -1,5 +1,10 @@
 """Observable Sophyane terminal interface with persistent project sessions."""
 from __future__ import annotations
+try:
+    from sophyane.native.fast_path import try_fast_path as _sophyane_try_fast_path
+except Exception:
+    _sophyane_try_fast_path = None
+
 from sophyane.local_inspection import inspect_local_request
 
 import json
@@ -36,6 +41,49 @@ def _clean_message(message: str) -> str:
 
 
 def _simple_chat_reply(message: str) -> str | None:
+    # SOPHYANE_NATIVE_FAST_PATH_DISPATCH
+    try:
+        if _sophyane_try_fast_path is not None:
+            _fp = _sophyane_try_fast_path(message)
+            if _fp is not None:
+                return _fp.text
+    except Exception:
+        pass
+
+    # SOPHYANE_SLI_CHUNK_TIER
+    import os as _sophyane_os
+
+    _sli_only = (
+        _sophyane_os.environ.get(
+            "SOPHYANE_SLI_ONLY",
+            "",
+        ) == "1"
+        or _sophyane_os.environ.get(
+            "SOPHYANE_SESSION_MODE",
+            "",
+        ) == "sli_chunks"
+    )
+
+    if _sli_only:
+        try:
+            from pathlib import Path as _SliPath
+            from sophyane.sli_chunk_router import (
+                try_sli_chunks as _sli_route,
+            )
+
+            return _sli_route(
+                message,
+                workspace=(
+                    _SliPath.cwd()
+                    / ".sophyane-workspace"
+                ),
+            )
+        except Exception as _sli_error:
+            return (
+                "SLI-only routing failure: "
+                f"{_sli_error}"
+            )
+
     # SOPHYANE_NATIVE_READONLY_DISPATCH
     # SOPHYANE_PERSISTENT_MEMORY_DISPATCH
     try:

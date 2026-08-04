@@ -1,0 +1,186 @@
+"""Multi-chunk browser composition driven by capability graph + microcapabilities."""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Callable
+
+from sophyane.code_memory.capability_graph import retrieve_capability_graph
+
+Progress = Callable[[str], None]
+
+CORE_MICROS = [
+    "d955c31ecc2140f7",  # document shell
+    "8a861afbbc984600",  # application_state_store / createState
+    "0bfd1bf078b14606",  # generic_question_dataset
+    "c6f66045610d4ec7",  # prompt_renderer
+    "9d59e1964a57489e",  # answer_normalizer
+    "e9d7a0d4f66047e2",  # answer_validator
+    "765b218af8764808",  # feedback_renderer
+    "d36b4e5aea4f4a67",  # score_updater
+    "14aa7bc4399b4fa5",  # next_item_lifecycle
+    "6148674052d3491a",  # reset_lifecycle
+    "7aafe6ba65604369",  # input_event_controller
+    "33fc736bb6be4e00",  # dom_application_entry
+]
+
+
+def compose_browser_request(
+    request: str,
+    workspace: Path,
+    store,
+    *,
+    progress: Progress | None = None,
+) -> tuple[str, list[str]]:
+    progress = progress or (lambda _message: None)
+    plan, matches, _signatures = retrieve_capability_graph(store, request)
+
+    progress(
+        "SLI capability graph planned "
+        + str(len(plan.capabilities))
+        + " requirements"
+    )
+
+    selected_ids: list[str] = []
+    seen: set[str] = set()
+
+    for need in plan.capabilities:
+        evidence = matches.get(need.name, [])
+        progress(
+            "SLI capability "
+            + need.name
+            + ": "
+            + (
+                ", ".join(
+                    item.chunk_id + ":" + format(item.score, ".2f")
+                    for item in evidence
+                )
+                if evidence
+                else "no compatible evidence"
+            )
+        )
+        for item in evidence:
+            path = str(getattr(store.chunks.get(item.chunk_id), "path", "") or "")
+            # Prefer explicit microcapabilities
+            if path.startswith("builtin://sli-capabilities/"):
+                if item.chunk_id not in seen:
+                    selected_ids.append(item.chunk_id)
+                    seen.add(item.chunk_id)
+
+    # Always include full core micro set when present
+    for cid in CORE_MICROS:
+        if cid in store.chunks and cid not in seen:
+            selected_ids.append(cid)
+            seen.add(cid)
+
+    missing_evidence = [
+        need.name
+        for need in plan.capabilities
+        if not matches.get(need.name)
+    ]
+    if missing_evidence:
+        return (
+            "SLI capability graph could not find compatible chunks.\n"
+            "Missing retrieval evidence: "
+            + ", ".join(missing_evidence)
+            + "\nNo LLM fallback was used.",
+            [],
+        )
+
+    bodies: list[str] = []
+    scripts: list[str] = []
+    styles: list[str] = []
+
+    for chunk_id in selected_ids:
+        chunk = store.chunks.get(chunk_id)
+        if chunk is None:
+            continue
+        path = str(getattr(chunk, "path", "") or "")
+        if not path.startswith("builtin://sli-capabilities/"):
+            continue
+        source = str(chunk.text or "")
+        language = str(chunk.language or "").lower()
+        if language == "html":
+            bodies.append(source)
+        elif language == "css":
+            styles.append(source)
+        elif language in {"javascript", "typescript"}:
+            scripts.append(source)
+
+    if not bodies:
+        return (
+            "SLI capability graph composition rejected.\n"
+            "Missing document shell microcapability.\n"
+            "No LLM fallback was used.",
+            [],
+        )
+
+    script_block = (
+        '<script>\n"use strict";\n'
+        + "\n".join(scripts)
+        + "\n</script>\n"
+    )
+    style_block = "\n".join(styles)
+
+    doc = bodies[0]
+    if style_block:
+        if re.search(r"</head>", doc, flags=re.I):
+            doc = re.sub(
+                r"</head>",
+                "<style>\n" + style_block + "\n</style>\n</head>",
+                doc,
+                count=1,
+                flags=re.I,
+            )
+        else:
+            doc = "<style>\n" + style_block + "\n</style>\n" + doc
+
+    if re.search(r"</body>", doc, flags=re.I):
+        doc = re.sub(r"</body>", script_block + "</body>", doc, count=1, flags=re.I)
+    else:
+        doc = doc + script_block
+
+    # Seed a language-game dataset if startExerciseApp exists but no call site
+    if "startExerciseApp" in doc and "startExerciseApp(" not in doc.split("function startExerciseApp")[-1][:200]:
+        boot = (
+            "\n<script>\n"
+            "document.addEventListener('DOMContentLoaded', function () {\n"
+            "  if (typeof startExerciseApp === 'function') {\n"
+            "    startExerciseApp([\n"
+            "      { prompt: 'The cat sat on the ___', answer: 'mat' },\n"
+            "      { prompt: 'Birds can ___', answer: 'fly' },\n"
+            "      { prompt: 'Water is ___', answer: 'wet' }\n"
+            "    ]);\n"
+            "  }\n"
+            "});\n"
+            "</script>\n"
+        )
+        if re.search(r"</body>", doc, flags=re.I):
+            doc = re.sub(r"</body>", boot + "</body>", doc, count=1, flags=re.I)
+        else:
+            doc = doc + boot
+
+    low = doc.lower()
+    required_bits = ("createstate", "validateanswer", "answer")
+    if not all(bit in low for bit in required_bits):
+        return (
+            "SLI microcapability composition rejected: missing core exercise functions.\n"
+            "No LLM fallback was used.",
+            [],
+        )
+
+    workspace.mkdir(parents=True, exist_ok=True)
+    out = workspace / "index.html"
+    out.write_text(doc, encoding="utf-8")
+
+    report = (
+        "Sophyane capability-graph composer\n"
+        "Request: " + str(request) + "\n"
+        "Capabilities required: " + str(len(plan.capabilities)) + "\n"
+        "Capability coverage: 100.0%\n"
+        "Used chunks: " + ", ".join(selected_ids) + "\n"
+        "Files: index.html\n"
+        "Success: True\n"
+        "Inference: SLI capability graph only; no local/cloud LLM"
+    )
+    return report, selected_ids

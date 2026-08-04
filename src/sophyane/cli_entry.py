@@ -1,5 +1,6 @@
 """Public CLI entry point with explicit runtime identity."""
 from __future__ import annotations
+import os
 
 import sys
 
@@ -32,10 +33,12 @@ def _runtime_identity() -> str:
         status.append("Email connected")
 
     status.append("Ready")
+    if os.environ.get("SOPHYANE_SLI_ONLY") == "1" or os.environ.get("SOPHYANE_SESSION_MODE") == "sli_chunks":
+        status = ["SLI chunks", "Ready"]
 
     return (
         f"◆ Sophyane {__version__}\n"
-        + " · ".join(status)
+        + ("SLI chunks · Ready" if (os.environ.get("SOPHYANE_SLI_ONLY")=="1" or os.environ.get("SOPHYANE_SESSION_MODE")=="sli_chunks") else " · ".join(status))
     )
 
 

@@ -116,11 +116,12 @@ def choose_startup_provider() -> dict[str, Any]:
     if not sys.stdin.isatty():
         return config
 
+
     if local and clouds:
         print("\nStart this session with:", file=sys.stderr)
-        print("  1. Local first — cloud only rescues repeated validator failures", file=sys.stderr)
-        print(f"  2. Cloud — use {clouds[0][1]} directly", file=sys.stderr)
-        print("  3. Keep current configuration", file=sys.stderr)
+        print("  1. SLI chunks — code memory (no LLM if valid assembly)", file=sys.stderr)
+        print("  2. Local LLM — Ollama / on-device model", file=sys.stderr)
+        print(f"  3. Cloud LLM — use {clouds[0][1]}", file=sys.stderr)
         while True:
             answer = input("Select [1-3, default 1]: ").strip()
             if answer in {"", "1", "2", "3"}:
@@ -128,6 +129,19 @@ def choose_startup_provider() -> dict[str, Any]:
             print("Enter 1, 2, or 3.")
 
         if answer in {"", "1"}:
+            # Tier 1: SLI chunks ONLY — no LLM fallback (forces SLI strength)
+            os.environ["SOPHYANE_SESSION_MODE"] = "sli_chunks"
+            os.environ["SOPHYANE_SLI_ONLY"] = "1"
+            updated = dict(config)
+            # Keep config readable but mark session as SLI-owned
+            updated.update({"company": "SLI", "timeout": 60})
+            save_config(updated)
+            print("Mode: SLI chunks ONLY (no local/cloud LLM fallback)", file=sys.stderr)
+            return updated
+
+        if answer == "2":
+            # Tier 2: Local LLM
+            os.environ["SOPHYANE_SESSION_MODE"] = "local_llm"
             local_id, local_model = local
             rescue_id = clouds[0][0]
             updated = dict(config)
@@ -143,21 +157,27 @@ def choose_startup_provider() -> dict[str, Any]:
                     order.append(name)
             llm["fallback_order"] = order
             save_json(LLM_FILE, llm, private=False)
-            print(f"Mode: local-first; one-shot rescue: {rescue_id}", file=sys.stderr)
+            print(
+                f"Mode: Local LLM ({local_model}); rescue: {rescue_id}",
+                file=sys.stderr,
+            )
             return updated
 
-        if answer == "2":
+        if answer == "3":
+            # Tier 3: Cloud LLM
+            os.environ["SOPHYANE_SESSION_MODE"] = "cloud_llm"
             cloud_id, label = clouds[0]
             updated = dict(config)
-            updated.update({"provider": cloud_id, "model": _cloud_model(cloud_id, config, llm), "company": label, "timeout": 180})
+            updated.update({
+                "provider": cloud_id,
+                "model": _cloud_model(cloud_id, config, llm),
+                "company": label,
+                "timeout": 180,
+            })
             save_config(updated)
             llm["active_provider"] = cloud_id
             save_json(LLM_FILE, llm, private=False)
-            if _verbose_startup_enabled():
-                print(
-                    f"Mode: cloud; provider: {cloud_id}",
-                    file=sys.stderr,
-                )
+            print(f"Mode: Cloud LLM ({cloud_id})", file=sys.stderr)
             return updated
 
     elif local:
