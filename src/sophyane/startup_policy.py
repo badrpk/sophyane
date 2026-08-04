@@ -1,9 +1,8 @@
 """Startup provider policy and configured-provider summary."""
 from __future__ import annotations
 
-import os
-
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -77,52 +76,42 @@ def _verbose_startup_enabled() -> bool:
     ).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _install_topic_learning_mode() -> None:
+    """Patch the existing continuous entry point after startup selection."""
+    from sophyane.code_memory import continuous_sli_loop
+    from sophyane.code_memory.topic_learning import run_topic_learning_loop
+
+    continuous_sli_loop.run_continuous_sli_loop = run_topic_learning_loop
+
+
 def choose_startup_provider() -> dict[str, Any]:
     config = load_config()
     llm = _load_llm()
     local = _local_candidate(config, llm)
     clouds = _configured_clouds()
 
-    verbose_startup = str(
-        os.environ.get("SOPHYANE_VERBOSE_STARTUP")
-        or os.environ.get("SOPHYANE_VERBOSE")
-        or ""
-    ).strip().lower() in {"1", "true", "yes", "on"}
+    verbose_startup = _verbose_startup_enabled()
 
     if verbose_startup:
         print("\nConfigured AI providers", file=sys.stderr)
         print("───────────────────────", file=sys.stderr)
-        local_label = (
-            local[0] + " / " + local[1]
-            if local
-            else "not configured"
-        )
-        print(
-            f"  {'✓' if local else '✗'} Local: {local_label}",
-            file=sys.stderr,
-        )
+        local_label = local[0] + " / " + local[1] if local else "not configured"
+        print(f"  {'✓' if local else '✗'} Local: {local_label}", file=sys.stderr)
         if clouds:
             for provider_id, label in clouds:
-                print(
-                    f"  ✓ Cloud API: {label} ({provider_id})",
-                    file=sys.stderr,
-                )
+                print(f"  ✓ Cloud API: {label} ({provider_id})", file=sys.stderr)
         else:
-            print(
-                "  ✗ Cloud API: none configured",
-                file=sys.stderr,
-            )
+            print("  ✗ Cloud API: none configured", file=sys.stderr)
 
     if not sys.stdin.isatty():
         return config
-
 
     if local and clouds:
         print("\nStart this session with:", file=sys.stderr)
         print("  1. SLI Graph — memory + internet, no LLM", file=sys.stderr)
         print("  2. Local LLM — Ollama / on-device model", file=sys.stderr)
         print(f"  3. Cloud LLM — use {clouds[0][1]}", file=sys.stderr)
-        print("  4. Continuous SLI learning — repeat until Ctrl+C", file=sys.stderr)
+        print("  4. Continuous topic learning — acquire + embed until saturation/Ctrl+C", file=sys.stderr)
         while True:
             answer = input("Select [1-4, default 1]: ").strip()
             if answer in {"", "1", "2", "3", "4"}:
@@ -130,45 +119,34 @@ def choose_startup_provider() -> dict[str, Any]:
             print("Enter 1, 2, 3, or 4.")
 
         if answer in {"", "1"}:
-            # Tier 1: SLI chunks ONLY — no LLM fallback (forces SLI strength)
             os.environ["SOPHYANE_SESSION_MODE"] = "sli_graph"
             os.environ["SOPHYANE_SLI_GRAPH"] = "1"
             os.environ["SOPHYANE_SLI_ONLY"] = "1"
-            os.environ["SOPHYANE_SLI_ONLY"] = "1"
             updated = dict(config)
-            # Keep config readable but mark session as SLI-owned
             updated.update({"company": "SLI", "timeout": 60})
             save_config(updated)
             print("Mode: SLI Graph + internet (no local/cloud LLM)", file=sys.stderr)
             return updated
 
-
-        # SOPHYANE_CONTINUOUS_SLI_STARTUP_V1
         if answer == "4":
             os.environ["SOPHYANE_SESSION_MODE"] = "sli_graph"
             os.environ["SOPHYANE_SLI_GRAPH"] = "1"
             os.environ["SOPHYANE_SLI_ONLY"] = "1"
-            os.environ["SOPHYANE_SLI_ONLY"] = "1"
             os.environ["SOPHYANE_SLI_CONTINUOUS"] = "1"
+            os.environ["SOPHYANE_TOPIC_LEARNING"] = "1"
+            _install_topic_learning_mode()
 
             updated = dict(config)
-            updated.update({
-                "company": "SLI Continuous",
-                "timeout": 300,
-            })
-
+            updated.update({"company": "SLI Topic Learning", "timeout": 300})
             save_config(updated)
-
             print(
-                "Mode: Continuous SLI learning "
-                "(no local/cloud LLM fallback; Ctrl+C stops)",
+                "Mode: Continuous SLI topic learning "
+                "(multi-iteration acquisition + vector embedding; Ctrl+C stops)",
                 file=sys.stderr,
             )
-
             return updated
 
         if answer == "2":
-            # Tier 2: Local LLM
             os.environ["SOPHYANE_SESSION_MODE"] = "local_llm"
             local_id, local_model = local
             rescue_id = clouds[0][0]
@@ -185,14 +163,10 @@ def choose_startup_provider() -> dict[str, Any]:
                     order.append(name)
             llm["fallback_order"] = order
             save_json(LLM_FILE, llm, private=False)
-            print(
-                f"Mode: Local LLM ({local_model}); rescue: {rescue_id}",
-                file=sys.stderr,
-            )
+            print(f"Mode: Local LLM ({local_model}); rescue: {rescue_id}", file=sys.stderr)
             return updated
 
         if answer == "3":
-            # Tier 3: Cloud LLM
             os.environ["SOPHYANE_SESSION_MODE"] = "cloud_llm"
             cloud_id, label = clouds[0]
             updated = dict(config)
@@ -211,12 +185,8 @@ def choose_startup_provider() -> dict[str, Any]:
     elif local:
         print("Mode: local only; no cloud rescue API is configured.", file=sys.stderr)
     elif clouds:
-        if _verbose_startup_enabled():
-            print(
-                f"Mode: cloud ({clouds[0][0]}); "
-                "no local model is configured.",
-                file=sys.stderr,
-            )
+        if verbose_startup:
+            print(f"Mode: cloud ({clouds[0][0]}); no local model is configured.", file=sys.stderr)
     else:
         print("No usable provider is configured. Run `sophyane --setup`.", file=sys.stderr)
     return config
