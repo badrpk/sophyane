@@ -396,3 +396,42 @@ def try_sli_chunks(
         )
 
     return original
+
+# SOPHYANE_TOPIC_SITE_ROUTE_V1
+# Informational website requests use public topic retrieval rather than
+# searching for a pre-existing runnable website repository.
+
+_try_sli_before_topic_site = try_sli_chunks
+
+
+def try_sli_chunks(
+    message: str,
+    workspace=None,
+    progress=None,
+):
+    from pathlib import Path as _Path
+
+    from sophyane.code_memory.topic_site_compose import (
+        compose_topic_site,
+        is_topic_site_request,
+    )
+
+    target = (
+        _Path(workspace)
+        if workspace is not None
+        else _Path.cwd()
+        / ".sophyane-workspace"
+    )
+
+    if is_topic_site_request(message):
+        return compose_topic_site(
+            message,
+            target,
+            progress=progress,
+        )
+
+    return _try_sli_before_topic_site(
+        message,
+        workspace=target,
+        progress=progress,
+    )
