@@ -435,3 +435,99 @@ def try_sli_chunks(
         workspace=target,
         progress=progress,
     )
+
+# SOPHYANE_PYTHON_FIRST_ROUTE_V6
+def _sli_is_python_file_request(message: str) -> bool:
+    t = (message or "").lower()
+    keys = (
+        "exactly one python file",
+        "one python file",
+        "python file named",
+        "implementing a deterministic",
+        "feature-flag",
+        "feature flag",
+        "dependency scheduler",
+        "policy_engine",
+        "decide_route",
+        ".py",
+        "fastapi",
+        "flask app",
+    )
+    if any(k in t for k in keys):
+        return True
+    if "python" in t and any(k in t for k in ("implement", "create", "file", "module", "function")):
+        if "index.html" not in t and "canvas" not in t:
+            return True
+    return False
+
+_sli_try_before_python_first = try_sli_chunks
+
+def try_sli_chunks(message: str, workspace=None, progress=None):
+    progress = progress or (lambda _m: None)
+    if _sli_is_python_file_request(message):
+        try:
+            from sophyane.code_memory.python_harness_compose import (
+                compose_python_harness_request,
+                detect_python_harness_request,
+            )
+            if detect_python_harness_request(message) or _sli_is_python_file_request(message):
+                progress("SLI route: python harness (curriculum/python-first)")
+                return compose_python_harness_request(
+                    message, workspace=workspace, progress=progress
+                )
+        except Exception as e:
+            progress(f"SLI python-first route error: {e}")
+            return (
+                "SLI python harness failed.\n"
+                f"Error: {e}\n"
+                "No LLM fallback was used."
+            )
+    return _sli_try_before_python_first(message, workspace=workspace, progress=progress)
+
+
+# SOPHYANE_LANGUAGE_LINKER_FIRST_V8
+def _sli_is_language_exercise_request(message: str) -> bool:
+    t = (message or "").lower()
+    keys = (
+        "missing word", "missing letter", "cloze", "spelling",
+        "vocabulary", "quiz", "language exercise", "sentence game",
+        "word game", "fill in the blank", "fill-in-the-blank",
+    )
+    if any(k in t for k in keys):
+        return True
+    if "learning game" in t and any(k in t for k in ("word", "letter", "spell", "sentence")):
+        return True
+    return False
+
+_sli_try_before_language_v8 = try_sli_chunks
+
+def try_sli_chunks(message: str, workspace=None, progress=None):
+    progress = progress or (lambda _m: None)
+    if _sli_is_language_exercise_request(message):
+        progress("SLI route: language component-linker first")
+        try:
+            from sophyane.code_memory.intelligent_compose import compose_browser_request
+            from sophyane.code_memory.store import ChunkStore
+            from pathlib import Path as _P
+            ws = workspace if workspace is not None else _P.cwd() / ".sophyane-workspace"
+            ws = _P(ws)
+            ws.mkdir(parents=True, exist_ok=True)
+            store = ChunkStore()
+            report, used = compose_browser_request(
+                message, ws, store, progress=progress,
+            )
+            if report and used and "Success: True" in str(report):
+                return report
+            if report and (ws / "index.html").exists():
+                # accept if linker produced html with exercise markers
+                html = (ws / "index.html").read_text(encoding="utf-8", errors="ignore")
+                low = html.lower()
+                if any(x in low for x in ("startexerciseapp", "sli_exercise", "validateanswer", "missing")):
+                    return report
+            progress("SLI language linker miss; falling through to internet acquire")
+        except Exception as e:
+            progress(f"SLI language linker error: {e}; falling through")
+    return _sli_try_before_language_v8(message, workspace=workspace, progress=progress)
+
+# SOPHYANE_FLYWHEEL_ROUTER_V1
+# Note: cascade is handled in sli_cascade / TUI; router stays pure SLI.

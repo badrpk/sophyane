@@ -1059,3 +1059,1489 @@ __all__ = [
     "retrieve_topic",
     "validate_document",
 ]
+
+# SOPHYANE_SEMANTIC_TOPIC_RESOLVER_V2
+#
+# Resolve topic meaning from several candidates rather than selecting the
+# first title-overlap result. When no single encyclopedic article represents a
+# relational topic, compose a grounded source from its principal concepts.
+
+import math as _semantic_math
+import urllib.parse as _semantic_urlparse
+
+
+_SEMANTIC_TOPIC_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "about",
+    "for",
+    "from",
+    "in",
+    "of",
+    "on",
+    "the",
+    "to",
+    "with",
+}
+
+
+_SEMANTIC_ENTITY_PENALTIES = {
+    "animated television series": -500.0,
+    "animated series": -480.0,
+    "television series": -450.0,
+    "tv series": -450.0,
+    "children's television": -450.0,
+    "fictional": -400.0,
+    "film": -350.0,
+    "album": -350.0,
+    "song": -350.0,
+    "band": -300.0,
+    "video game": -280.0,
+    "comic": -250.0,
+    "manga": -250.0,
+    "anime": -250.0,
+    "episode": -250.0,
+    "character": -220.0,
+    "novel": -220.0,
+}
+
+
+_SEMANTIC_INFORMATION_BONUSES = {
+    "animal": 80.0,
+    "animals": 80.0,
+    "species": 70.0,
+    "fauna": 70.0,
+    "wildlife": 70.0,
+    "geography": 50.0,
+    "history": 40.0,
+    "culture": 35.0,
+    "country": 30.0,
+    "region": 30.0,
+    "domestic": 30.0,
+    "mammal": 50.0,
+    "mammals": 50.0,
+}
+
+
+def _semantic_tokens_v2(
+    value: str,
+) -> list[str]:
+    output = []
+
+    for token in re.findall(
+        r"[a-z0-9]+",
+        str(value or "").lower(),
+    ):
+        if (
+            len(token) > 1
+            and token not in _SEMANTIC_TOPIC_STOPWORDS
+            and token not in output
+        ):
+            output.append(token)
+
+    return output
+
+
+def _semantic_singular_v2(
+    token: str,
+) -> str:
+    value = str(token or "").lower()
+
+    if value.endswith("ies") and len(value) > 4:
+        return value[:-3] + "y"
+
+    if value.endswith("ses") and len(value) > 4:
+        return value[:-2]
+
+    if value.endswith("s") and not value.endswith("ss") and len(value) > 3:
+        return value[:-1]
+
+    return value
+
+
+def _semantic_forms_v2(
+    tokens: list[str],
+) -> set[str]:
+    forms = set()
+
+    for token in tokens:
+        forms.add(token)
+        forms.add(
+            _semantic_singular_v2(token)
+        )
+
+    return {
+        form
+        for form in forms
+        if form
+    }
+
+
+def _semantic_contains_v2(
+    text: str,
+    token: str,
+) -> bool:
+    low = str(text or "").lower()
+    forms = {
+        token,
+        _semantic_singular_v2(token),
+    }
+
+    return any(
+        re.search(
+            r"\b"
+            + re.escape(form)
+            + r"(?:s|es)?\b",
+            low,
+        )
+        for form in forms
+        if form
+    )
+
+
+def _semantic_candidate_details_v2(
+    titles: list[str],
+) -> dict[str, dict]:
+    if not titles:
+        return {}
+
+    payload = _api_json(
+        {
+            "action": "query",
+            "prop":
+                "extracts|pageimages|info|categories",
+
+            "titles":
+                "|".join(titles[:20]),
+
+            "explaintext":
+                "1",
+
+            "exintro":
+                "1",
+
+            "exsectionformat":
+                "plain",
+
+            "piprop":
+                "original|thumbnail",
+
+            "pithumbsize":
+                "1400",
+
+            "inprop":
+                "url",
+
+            "cllimit":
+                "50",
+
+            "redirects":
+                "1",
+        }
+    )
+
+    pages = (
+        payload.get("query", {})
+        .get("pages", [])
+    )
+
+    output = {}
+
+    for page in pages:
+        title = str(
+            page.get("title") or ""
+        )
+
+        if title:
+            output[
+                title.lower()
+            ] = page
+
+    return output
+
+
+def _semantic_candidate_score_v2(
+    *,
+    topic: str,
+    title: str,
+    snippet: str,
+    extract: str,
+    categories: list[str],
+) -> tuple[float, dict[str, object]]:
+    topic_tokens = _semantic_tokens_v2(
+        topic
+    )
+
+    title_low = title.lower()
+    snippet_low = re.sub(
+        r"<[^>]+>",
+        " ",
+        snippet,
+    ).lower()
+
+    category_text = " ".join(
+        categories
+    ).lower()
+
+    extract_low = extract.lower()
+
+    combined = " ".join(
+        (
+            title_low,
+            snippet_low,
+            extract_low[:5000],
+            category_text,
+        )
+    )
+
+    matched_title = [
+        token
+        for token in topic_tokens
+        if _semantic_contains_v2(
+            title_low,
+            token,
+        )
+    ]
+
+    matched_text = [
+        token
+        for token in topic_tokens
+        if _semantic_contains_v2(
+            combined,
+            token,
+        )
+    ]
+
+    score = 0.0
+
+    score += len(matched_title) * 90.0
+    score += len(matched_text) * 35.0
+
+    if topic_tokens:
+        score += (
+            len(set(matched_text))
+            / len(topic_tokens)
+        ) * 220.0
+
+    normalised_topic = " ".join(
+        topic_tokens
+    )
+
+    normalised_title = " ".join(
+        _semantic_tokens_v2(title)
+    )
+
+    if (
+        normalised_topic
+        and normalised_topic == normalised_title
+    ):
+        score += 300.0
+
+    if (
+        normalised_topic
+        and normalised_topic in normalised_title
+    ):
+        score += 120.0
+
+    for phrase, penalty in (
+        _SEMANTIC_ENTITY_PENALTIES.items()
+    ):
+        if phrase in combined:
+            score += penalty
+
+    for phrase, bonus in (
+        _SEMANTIC_INFORMATION_BONUSES.items()
+    ):
+        if phrase in combined:
+            score += bonus
+
+    # A candidate covering only one part of a multi-token relation should not
+    # beat a candidate covering the whole request.
+    if (
+        len(topic_tokens) >= 2
+        and len(set(matched_text)) < 2
+    ):
+        score -= 120.0
+
+    # Numeric/title entertainment brands are suspicious for natural-subject
+    # requests unless the number was explicitly requested.
+    if (
+        re.search(r"\d", title)
+        and not re.search(r"\d", topic)
+    ):
+        score -= 80.0
+
+    evidence = {
+        "title_matches":
+            matched_title,
+
+        "text_matches":
+            matched_text,
+
+        "categories":
+            categories[:10],
+
+        "score":
+            round(score, 2),
+    }
+
+    return score, evidence
+
+
+def _semantic_search_candidates_v2(
+    topic: str,
+) -> list[dict]:
+    topic_tokens = _semantic_tokens_v2(
+        topic
+    )
+
+    queries = [
+        topic,
+        " ".join(topic_tokens),
+    ]
+
+    if len(topic_tokens) >= 2:
+        queries.extend(
+            [
+                (
+                    topic_tokens[0]
+                    + " "
+                    + topic_tokens[-1]
+                    + " animal"
+                ),
+                (
+                    topic_tokens[0]
+                    + " in "
+                    + topic_tokens[-1]
+                ),
+            ]
+        )
+
+    candidates = {}
+
+    for query in dict.fromkeys(
+        query
+        for query in queries
+        if query.strip()
+    ):
+        payload = _api_json(
+            {
+                "action":
+                    "query",
+
+                "list":
+                    "search",
+
+                "srsearch":
+                    query,
+
+                "srnamespace":
+                    "0",
+
+                "srlimit":
+                    "20",
+            }
+        )
+
+        results = (
+            payload.get("query", {})
+            .get("search", [])
+        )
+
+        for result in results:
+            title = str(
+                result.get("title") or ""
+            )
+
+            if not title:
+                continue
+
+            key = title.lower()
+
+            current = candidates.get(
+                key
+            )
+
+            record = {
+                "title":
+                    title,
+
+                "snippet":
+                    str(
+                        result.get("snippet")
+                        or ""
+                    ),
+
+                "search_query":
+                    query,
+
+                "search_rank":
+                    int(
+                        result.get("size")
+                        or 0
+                    ),
+            }
+
+            if current is None:
+                candidates[key] = record
+
+    titles = [
+        item["title"]
+        for item in candidates.values()
+    ]
+
+    details = _semantic_candidate_details_v2(
+        titles
+    )
+
+    ranked = []
+
+    for key, candidate in candidates.items():
+        page = (
+            details.get(key)
+            or {}
+        )
+
+        categories = [
+            str(
+                category.get("title")
+                or ""
+            ).replace(
+                "Category:",
+                "",
+            )
+            for category in (
+                page.get("categories")
+                or []
+            )
+        ]
+
+        extract = _normalise_multiline(
+            str(
+                page.get("extract")
+                or ""
+            )
+        )
+
+        score, evidence = (
+            _semantic_candidate_score_v2(
+                topic=topic,
+                title=candidate["title"],
+                snippet=candidate["snippet"],
+                extract=extract,
+                categories=categories,
+            )
+        )
+
+        ranked.append(
+            {
+                **candidate,
+                "page":
+                    page,
+                "extract":
+                    extract,
+                "categories":
+                    categories,
+                "semantic_score":
+                    score,
+                "evidence":
+                    evidence,
+            }
+        )
+
+    ranked.sort(
+        key=lambda item: (
+            -item["semantic_score"],
+            item["title"].lower(),
+        )
+    )
+
+    return ranked
+
+
+def _semantic_page_to_source_v2(
+    topic: str,
+    page: dict,
+) -> TopicSource:
+    title = str(
+        page.get("title") or topic
+    )
+
+    extract = _normalise_multiline(
+        str(
+            page.get("extract")
+            or ""
+        )
+    )
+
+    original = page.get("original") or {}
+    thumbnail = page.get("thumbnail") or {}
+
+    image_url = (
+        original.get("source")
+        or thumbnail.get("source")
+    )
+
+    return TopicSource(
+        requested_topic=topic,
+        resolved_title=title,
+        extract=extract,
+        page_url=str(
+            page.get("fullurl")
+            or ""
+        ),
+        image_url=(
+            str(image_url)
+            if image_url
+            else None
+        ),
+        image_data_uri=(
+            _download_image_data_uri(
+                str(image_url)
+                if image_url
+                else None
+            )
+        ),
+    )
+
+
+def _semantic_fetch_concept_v2(
+    concept: str,
+) -> dict | None:
+    payload = _api_json(
+        {
+            "action":
+                "query",
+
+            "generator":
+                "search",
+
+            "gsrsearch":
+                concept,
+
+            "gsrnamespace":
+                "0",
+
+            "gsrlimit":
+                "5",
+
+            "prop":
+                "extracts|pageimages|info|categories",
+
+            "explaintext":
+                "1",
+
+            "exintro":
+                "1",
+
+            "piprop":
+                "original|thumbnail",
+
+            "pithumbsize":
+                "1400",
+
+            "inprop":
+                "url",
+
+            "cllimit":
+                "50",
+        }
+    )
+
+    pages = (
+        payload.get("query", {})
+        .get("pages", [])
+    )
+
+    if not pages:
+        return None
+
+    concept_tokens = _semantic_tokens_v2(
+        concept
+    )
+
+    def page_score(page: dict) -> float:
+        title = str(
+            page.get("title") or ""
+        )
+
+        extract = str(
+            page.get("extract") or ""
+        )
+
+        categories = [
+            str(
+                category.get("title")
+                or ""
+            )
+            for category in (
+                page.get("categories")
+                or []
+            )
+        ]
+
+        score, _evidence = (
+            _semantic_candidate_score_v2(
+                topic=concept,
+                title=title,
+                snippet="",
+                extract=extract,
+                categories=categories,
+            )
+        )
+
+        return score
+
+    return max(
+        pages,
+        key=page_score,
+    )
+
+
+def _semantic_composite_source_v2(
+    topic: str,
+    *,
+    progress: Progress,
+) -> TopicSource:
+    tokens = _semantic_tokens_v2(
+        topic
+    )
+
+    if not tokens:
+        raise RuntimeError(
+            "No meaningful topic concepts were found."
+        )
+
+    concepts = []
+
+    # Preserve the major subject and modifier. For "cats of italy", this
+    # becomes "cats" and "italy"; for longer topics, use the first and last
+    # high-information terms.
+    concepts.append(tokens[0])
+
+    if len(tokens) > 1:
+        concepts.append(tokens[-1])
+
+    pages = []
+
+    for concept in dict.fromkeys(
+        concepts
+    ):
+        progress(
+            "SLI semantic fallback concept: "
+            + concept
+        )
+
+        page = _semantic_fetch_concept_v2(
+            concept
+        )
+
+        if page is not None:
+            pages.append(page)
+
+    if not pages:
+        raise RuntimeError(
+            "No grounded concept sources were found."
+        )
+
+    extracts = []
+
+    source_urls = []
+    image_url = None
+
+    for page in pages:
+        title = str(
+            page.get("title") or ""
+        )
+
+        extract = _normalise_multiline(
+            str(
+                page.get("extract")
+                or ""
+            )
+        )
+
+        if extract:
+            extracts.append(
+                title
+                + "\n"
+                + extract
+            )
+
+        page_url = str(
+            page.get("fullurl")
+            or ""
+        )
+
+        if page_url:
+            source_urls.append(
+                page_url
+            )
+
+        if image_url is None:
+            original = (
+                page.get("original")
+                or {}
+            )
+
+            thumbnail = (
+                page.get("thumbnail")
+                or {}
+            )
+
+            image_url = (
+                original.get("source")
+                or thumbnail.get("source")
+            )
+
+    if not extracts:
+        raise RuntimeError(
+            "Grounded concept pages contained no usable text."
+        )
+
+    title = " ".join(
+        word.capitalize()
+        for word in topic.split()
+    )
+
+    # Add a deterministic relational introduction without inventing facts.
+    introduction = (
+        f"{title} is presented here through grounded reference material "
+        f"about {', '.join(concepts)}. The sections below combine the "
+        "retrieved encyclopedic background for these concepts rather than "
+        "treating a similarly named entertainment title as the requested "
+        "subject."
+    )
+
+    combined_extract = (
+        introduction
+        + "\n"
+        + "\n".join(extracts)
+    )
+
+    search_url = (
+        "https://en.wikipedia.org/w/index.php?"
+        + _semantic_urlparse.urlencode(
+            {
+                "search":
+                    topic,
+            }
+        )
+    )
+
+    return TopicSource(
+        requested_topic=topic,
+        resolved_title=title,
+        extract=combined_extract,
+        page_url=(
+            source_urls[0]
+            if source_urls
+            else search_url
+        ),
+        image_url=(
+            str(image_url)
+            if image_url
+            else None
+        ),
+        image_data_uri=(
+            _download_image_data_uri(
+                str(image_url)
+                if image_url
+                else None
+            )
+        ),
+    )
+
+
+def retrieve_topic(
+    topic: str,
+    *,
+    progress: Progress | None = None,
+) -> TopicSource:
+    """Resolve a topic semantically and reject misleading entity matches."""
+
+    progress = _progress(
+        progress
+    )
+
+    progress(
+        f"SLI semantic topic search: {topic}"
+    )
+
+    ranked = _semantic_search_candidates_v2(
+        topic
+    )
+
+    for candidate in ranked[:8]:
+        progress(
+            "SLI semantic candidate: "
+            f"{candidate['title']} "
+            f"score={candidate['semantic_score']:.1f} "
+            f"matches={candidate['evidence']['text_matches']}"
+        )
+
+    best = (
+        ranked[0]
+        if ranked
+        else None
+    )
+
+    topic_tokens = _semantic_tokens_v2(
+        topic
+    )
+
+    if best is not None:
+        matched = set(
+            best["evidence"][
+                "text_matches"
+            ]
+        )
+
+        required_matches = (
+            1
+            if len(topic_tokens) <= 1
+            else min(
+                2,
+                len(topic_tokens),
+            )
+        )
+
+        entertainment_text = " ".join(
+            (
+                best["title"],
+                best["snippet"],
+                best["extract"][:3000],
+                " ".join(
+                    best["categories"]
+                ),
+            )
+        ).lower()
+
+        entertainment_hit = any(
+            phrase in entertainment_text
+            for phrase in (
+                _SEMANTIC_ENTITY_PENALTIES
+            )
+        )
+
+        acceptable = (
+            best["semantic_score"] >= 180.0
+            and len(matched) >= required_matches
+            and not entertainment_hit
+            and len(
+                best["extract"]
+            ) >= 300
+        )
+
+        if acceptable:
+            progress(
+                "SLI semantic topic resolved: "
+                + best["title"]
+            )
+
+            return _semantic_page_to_source_v2(
+                topic,
+                best["page"],
+            )
+
+        progress(
+            "SLI semantic candidate rejected: "
+            f"{best['title']} "
+            "(insufficient conceptual fit or wrong entity type)"
+        )
+
+    progress(
+        "SLI semantic resolver: no single article represented "
+        "the full request; using grounded concept composition"
+    )
+
+    source = _semantic_composite_source_v2(
+        topic,
+        progress=progress,
+    )
+
+    progress(
+        "SLI semantic topic resolved as composite: "
+        + source.resolved_title
+    )
+
+    return source
+
+# SOPHYANE_MEDIAWIKI_CACHE_BACKOFF_V1
+#
+# Persistent MediaWiki caching and bounded retry. This prevents continuous SLI
+# and regression tests from repeating identical Wikipedia API traffic.
+
+import hashlib as _wiki_hashlib
+import os as _wiki_os
+import random as _wiki_random
+import threading as _wiki_threading
+import urllib.error as _wiki_urlerror
+
+
+_WIKI_CACHE_ROOT = (
+    MEMORY
+    / "topic_site_api_cache"
+)
+
+_WIKI_TOPIC_CACHE_ROOT = (
+    MEMORY
+    / "topic_site_resolution_cache"
+)
+
+_WIKI_CACHE_TTL_SECONDS = int(
+    _wiki_os.environ.get(
+        "SOPHYANE_WIKI_CACHE_TTL",
+        str(7 * 24 * 60 * 60),
+    )
+)
+
+_WIKI_STALE_TTL_SECONDS = int(
+    _wiki_os.environ.get(
+        "SOPHYANE_WIKI_STALE_TTL",
+        str(90 * 24 * 60 * 60),
+    )
+)
+
+_WIKI_MAX_ATTEMPTS = max(
+    1,
+    int(
+        _wiki_os.environ.get(
+            "SOPHYANE_WIKI_MAX_ATTEMPTS",
+            "4",
+        )
+    ),
+)
+
+_WIKI_CACHE_LOCK = _wiki_threading.RLock()
+
+_api_json_before_cache_backoff_v1 = _api_json
+_retrieve_topic_before_resolution_cache_v1 = retrieve_topic
+
+
+def _wiki_canonical_parameters_v1(
+    parameters: dict[str, str],
+) -> dict[str, str]:
+    return {
+        str(key):
+            str(value)
+
+        for key, value in sorted(
+            dict(parameters or {}).items(),
+            key=lambda item:
+                str(item[0]),
+        )
+    }
+
+
+def _wiki_cache_key_v1(
+    parameters: dict[str, str],
+) -> str:
+    canonical = json.dumps(
+        _wiki_canonical_parameters_v1(
+            parameters
+        ),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+    return _wiki_hashlib.sha256(
+        canonical.encode("utf-8")
+    ).hexdigest()
+
+
+def _wiki_cache_path_v1(
+    parameters: dict[str, str],
+) -> Path:
+    key = _wiki_cache_key_v1(
+        parameters
+    )
+
+    return (
+        _WIKI_CACHE_ROOT
+        / key[:2]
+        / f"{key}.json"
+    )
+
+
+def _wiki_read_cache_v1(
+    parameters: dict[str, str],
+    *,
+    maximum_age: int,
+) -> dict | None:
+    path = _wiki_cache_path_v1(
+        parameters
+    )
+
+    if not path.is_file():
+        return None
+
+    try:
+        record = json.loads(
+            path.read_text(
+                encoding="utf-8",
+            )
+        )
+
+        saved_at = float(
+            record.get("saved_at")
+            or 0.0
+        )
+
+        age = max(
+            0.0,
+            time.time() - saved_at,
+        )
+
+        payload = record.get(
+            "payload"
+        )
+
+        if (
+            age <= maximum_age
+            and isinstance(payload, dict)
+        ):
+            return payload
+
+    except Exception:
+        return None
+
+    return None
+
+
+def _wiki_write_cache_v1(
+    parameters: dict[str, str],
+    payload: dict,
+) -> None:
+    path = _wiki_cache_path_v1(
+        parameters
+    )
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    record = {
+        "saved_at":
+            time.time(),
+
+        "parameters":
+            _wiki_canonical_parameters_v1(
+                parameters
+            ),
+
+        "payload":
+            payload,
+    }
+
+    temporary = path.with_suffix(
+        ".json.tmp"
+    )
+
+    temporary.write_text(
+        json.dumps(
+            record,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+
+    _wiki_os.replace(
+        temporary,
+        path,
+    )
+
+
+def _wiki_retry_after_v1(
+    error,
+    attempt: int,
+) -> float:
+    header_value = None
+
+    try:
+        header_value = (
+            error.headers.get(
+                "Retry-After"
+            )
+        )
+    except Exception:
+        pass
+
+    if header_value:
+        try:
+            return min(
+                60.0,
+                max(
+                    0.5,
+                    float(header_value),
+                ),
+            )
+        except (TypeError, ValueError):
+            pass
+
+    base = min(
+        30.0,
+        1.5 * (2 ** attempt),
+    )
+
+    return base + _wiki_random.uniform(
+        0.1,
+        0.8,
+    )
+
+
+def _api_json(
+    parameters: dict[str, str],
+    *,
+    timeout: int = 25,
+) -> dict:
+    """Read-through cached MediaWiki request with bounded 429 backoff."""
+
+    parameters = _wiki_canonical_parameters_v1(
+        parameters
+    )
+
+    cached = _wiki_read_cache_v1(
+        parameters,
+        maximum_age=_WIKI_CACHE_TTL_SECONDS,
+    )
+
+    if cached is not None:
+        return cached
+
+    last_error = None
+
+    for attempt in range(
+        _WIKI_MAX_ATTEMPTS
+    ):
+        try:
+            payload = (
+                _api_json_before_cache_backoff_v1(
+                    parameters,
+                    timeout=timeout,
+                )
+            )
+
+            if not isinstance(
+                payload,
+                dict,
+            ):
+                raise RuntimeError(
+                    "MediaWiki returned a non-object payload."
+                )
+
+            with _WIKI_CACHE_LOCK:
+                _wiki_write_cache_v1(
+                    parameters,
+                    payload,
+                )
+
+            return payload
+
+        except _wiki_urlerror.HTTPError as error:
+            last_error = error
+
+            if error.code not in {
+                429,
+                500,
+                502,
+                503,
+                504,
+            }:
+                raise
+
+            stale = _wiki_read_cache_v1(
+                parameters,
+                maximum_age=_WIKI_STALE_TTL_SECONDS,
+            )
+
+            if stale is not None:
+                return stale
+
+            if (
+                attempt
+                >= _WIKI_MAX_ATTEMPTS - 1
+            ):
+                break
+
+            time.sleep(
+                _wiki_retry_after_v1(
+                    error,
+                    attempt,
+                )
+            )
+
+        except (
+            TimeoutError,
+            _wiki_urlerror.URLError,
+        ) as error:
+            last_error = error
+
+            stale = _wiki_read_cache_v1(
+                parameters,
+                maximum_age=_WIKI_STALE_TTL_SECONDS,
+            )
+
+            if stale is not None:
+                return stale
+
+            if (
+                attempt
+                >= _WIKI_MAX_ATTEMPTS - 1
+            ):
+                break
+
+            time.sleep(
+                min(
+                    20.0,
+                    1.0 * (2 ** attempt)
+                    + _wiki_random.uniform(
+                        0.1,
+                        0.6,
+                    ),
+                )
+            )
+
+    stale = _wiki_read_cache_v1(
+        parameters,
+        maximum_age=_WIKI_STALE_TTL_SECONDS,
+    )
+
+    if stale is not None:
+        return stale
+
+    if last_error is not None:
+        raise last_error
+
+    raise RuntimeError(
+        "MediaWiki request failed without an error response."
+    )
+
+
+def _wiki_topic_key_v1(
+    topic: str,
+) -> str:
+    normalised = _normalise(
+        topic
+    ).lower()
+
+    return _wiki_hashlib.sha256(
+        normalised.encode("utf-8")
+    ).hexdigest()
+
+
+def _wiki_topic_cache_path_v1(
+    topic: str,
+) -> Path:
+    key = _wiki_topic_key_v1(
+        topic
+    )
+
+    return (
+        _WIKI_TOPIC_CACHE_ROOT
+        / key[:2]
+        / f"{key}.json"
+    )
+
+
+def _wiki_read_topic_cache_v1(
+    topic: str,
+) -> TopicSource | None:
+    path = _wiki_topic_cache_path_v1(
+        topic
+    )
+
+    if not path.is_file():
+        return None
+
+    try:
+        record = json.loads(
+            path.read_text(
+                encoding="utf-8",
+            )
+        )
+
+        saved_at = float(
+            record.get("saved_at")
+            or 0.0
+        )
+
+        if (
+            time.time() - saved_at
+            > _WIKI_CACHE_TTL_SECONDS
+        ):
+            return None
+
+        source_data = dict(
+            record.get("source")
+            or {}
+        )
+
+        required = {
+            "requested_topic",
+            "resolved_title",
+            "extract",
+            "page_url",
+            "image_url",
+            "image_data_uri",
+        }
+
+        if not required.issubset(
+            source_data
+        ):
+            return None
+
+        return TopicSource(
+            requested_topic=str(
+                source_data[
+                    "requested_topic"
+                ]
+            ),
+
+            resolved_title=str(
+                source_data[
+                    "resolved_title"
+                ]
+            ),
+
+            extract=str(
+                source_data[
+                    "extract"
+                ]
+            ),
+
+            page_url=str(
+                source_data[
+                    "page_url"
+                ]
+            ),
+
+            image_url=(
+                str(
+                    source_data[
+                        "image_url"
+                    ]
+                )
+                if source_data[
+                    "image_url"
+                ]
+                else None
+            ),
+
+            image_data_uri=(
+                str(
+                    source_data[
+                        "image_data_uri"
+                    ]
+                )
+                if source_data[
+                    "image_data_uri"
+                ]
+                else None
+            ),
+        )
+
+    except Exception:
+        return None
+
+
+def _wiki_write_topic_cache_v1(
+    topic: str,
+    source: TopicSource,
+) -> None:
+    path = _wiki_topic_cache_path_v1(
+        topic
+    )
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    record = {
+        "saved_at":
+            time.time(),
+
+        "topic":
+            topic,
+
+        "source": {
+            "requested_topic":
+                source.requested_topic,
+
+            "resolved_title":
+                source.resolved_title,
+
+            "extract":
+                source.extract,
+
+            "page_url":
+                source.page_url,
+
+            "image_url":
+                source.image_url,
+
+            "image_data_uri":
+                source.image_data_uri,
+        },
+    }
+
+    temporary = path.with_suffix(
+        ".json.tmp"
+    )
+
+    temporary.write_text(
+        json.dumps(
+            record,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+
+    _wiki_os.replace(
+        temporary,
+        path,
+    )
+
+
+def retrieve_topic(
+    topic: str,
+    *,
+    progress: Progress | None = None,
+) -> TopicSource:
+    """Resolve once, cache the grounded result, and reuse it safely."""
+
+    progress = _progress(
+        progress
+    )
+
+    cached = _wiki_read_topic_cache_v1(
+        topic
+    )
+
+    if cached is not None:
+        progress(
+            "SLI semantic topic cache hit: "
+            + cached.resolved_title
+        )
+
+        return cached
+
+    source = (
+        _retrieve_topic_before_resolution_cache_v1(
+            topic,
+            progress=progress,
+        )
+    )
+
+    _wiki_write_topic_cache_v1(
+        topic,
+        source,
+    )
+
+    return source

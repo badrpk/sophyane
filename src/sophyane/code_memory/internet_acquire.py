@@ -8,6 +8,11 @@ Downloaded Python, shell and build scripts are never executed.
 No local or cloud LLM is used.
 """
 from __future__ import annotations
+try:
+    from sophyane.code_memory.search_queries import build_search_queries as _sli_build_search_queries_v6
+except Exception:
+    _sli_build_search_queries_v6 = None
+
 import os as _sli_os
 MAX_IDENTITY_QUERIES = 2 if not _sli_os.environ.get('GITHUB_TOKEN') else 6
 
@@ -3235,3 +3240,74 @@ def _sli_api_token_v5() -> str:
         return ""
 
     return result.stdout.strip()
+
+# SOPHYANE_ACQUISITION_INTELLIGENCE_V1
+from sophyane.code_memory.acquisition_intelligence import (
+    install as _install_acquisition_intelligence,
+)
+
+_install_acquisition_intelligence(
+    globals()
+)
+
+# SOPHYANE_ALL_FIXES_V8
+# SPDX-first ranking + soft-accept (small browser) + deeper detect
+try:
+    from sophyane.code_memory.licence_gate import (
+        decide as _sli_lic_decide_v8,
+        sort_repositories as _sli_sort_repos_v8,
+        detect_licence as _sli_detect_lic_v8,
+        PERMISSIVE as _SLI_PERMISSIVE_V8,
+    )
+except Exception as _sli_lic_imp_err:
+    _sli_lic_decide_v8 = None
+    _sli_sort_repos_v8 = None
+    _sli_detect_lic_v8 = None
+    _SLI_PERMISSIVE_V8 = set()
+
+def _detected_licence(root, api_licence=""):
+    if _sli_detect_lic_v8 is None:
+        return None
+    det = _sli_detect_lic_v8(root, api_licence)
+    if det and str(det).startswith("COPYLEFT:"):
+        return None
+    if det in _SLI_PERMISSIVE_V8:
+        return det
+    # soft path: encode as pseudo licence so existing `if licence is None` passes
+    ok, label, reason = _sli_lic_decide_v8(root, api_licence, allow_soft=True)
+    if ok:
+        return label
+    return None
+
+# Wrap search_repositories to SPDX-rank results
+if "search_repositories" in globals() and _sli_sort_repos_v8 is not None:
+    _sli_search_repos_before_v8 = search_repositories
+
+    def search_repositories(request, *args, progress=None, **kwargs):
+        repos = _sli_search_repos_before_v8(request, *args, progress=progress, **kwargs)
+        try:
+            ranked = _sli_sort_repos_v8(repos)
+            if progress:
+                progress("SLI clone ranking: SPDX-permissive first, then size/score")
+                for r in ranked[:8]:
+                    progress(
+                        f"  rank {getattr(r, 'full_name', r)} "
+                        f"licence={getattr(r, 'api_licence', '') or 'none'} "
+                        f"size={getattr(r, 'size_kb', '?')}KB "
+                        f"score={getattr(r, 'score', 0):.1f}"
+                    )
+            return ranked
+        except Exception as e:
+            if progress:
+                progress(f"SLI rank warning: {e}")
+            return repos
+
+# SOPHYANE_STRICT_ACQUISITION_GUARD_V1
+# This hook must remain after every earlier acquisition/licence patch.
+from sophyane.code_memory.strict_acquisition_guard import (
+    install as _install_strict_acquisition_guard,
+)
+
+_install_strict_acquisition_guard(
+    globals()
+)

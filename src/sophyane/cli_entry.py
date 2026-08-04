@@ -45,7 +45,7 @@ def _runtime_identity() -> str:
             "Continuous SLI learning · Ready"
             if os.environ.get("SOPHYANE_SLI_CONTINUOUS") == "1"
             else (
-                "SLI chunks · Ready"
+                "Cascade · Ready" if __import__("os").environ.get("SOPHYANE_SESSION_MODE")=="cascade" else ("SLI chunks · Ready" if __import__("os").environ.get("SOPHYANE_SLI_ONLY")=="1" else "SLI chunks · Ready")
                 if (
                     os.environ.get("SOPHYANE_SLI_ONLY") == "1"
                     or os.environ.get("SOPHYANE_SESSION_MODE") == "sli_chunks"
@@ -208,3 +208,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+# SOPHYANE_FLYWHEEL_BANNER

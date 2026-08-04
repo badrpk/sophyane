@@ -41,6 +41,7 @@ def _clean_message(message: str) -> str:
 
 
 def _simple_chat_reply(message: str) -> str | None:
+    # SOPHYANE_FLYWHEEL_TUI_V1
     # SOPHYANE_NATIVE_FAST_PATH_DISPATCH
     try:
         if _sophyane_try_fast_path is not None:
