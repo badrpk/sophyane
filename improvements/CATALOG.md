@@ -14,3 +14,4 @@ executable patches into `main`.
 - 2026-08-01: 1 proposals · merkle `7276169f6026e4d4…` · device `runnervmvrwv9-aae95289`
 - 2026-08-02: 6 proposals · merkle `b2a86b7bc1694d69…` · device `localhost-cd8f5f9f`
 - 2026-08-03: 1 proposals · merkle `a319923206181977…` · device `runnervmvrwv9-aae95289`
+- 2026-08-04: 1 proposals · merkle `eb20387c46582ac0…` · device `runnervmvrwv9-aae95289`
