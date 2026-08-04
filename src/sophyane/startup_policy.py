@@ -122,11 +122,12 @@ def choose_startup_provider() -> dict[str, Any]:
         print("  1. SLI chunks — code memory (no LLM if valid assembly)", file=sys.stderr)
         print("  2. Local LLM — Ollama / on-device model", file=sys.stderr)
         print(f"  3. Cloud LLM — use {clouds[0][1]}", file=sys.stderr)
+        print("  4. Continuous SLI learning — repeat until Ctrl+C", file=sys.stderr)
         while True:
-            answer = input("Select [1-3, default 1]: ").strip()
-            if answer in {"", "1", "2", "3"}:
+            answer = input("Select [1-4, default 1]: ").strip()
+            if answer in {"", "1", "2", "3", "4"}:
                 break
-            print("Enter 1, 2, or 3.")
+            print("Enter 1, 2, 3, or 4.")
 
         if answer in {"", "1"}:
             # Tier 1: SLI chunks ONLY — no LLM fallback (forces SLI strength)
@@ -137,6 +138,29 @@ def choose_startup_provider() -> dict[str, Any]:
             updated.update({"company": "SLI", "timeout": 60})
             save_config(updated)
             print("Mode: SLI chunks ONLY (no local/cloud LLM fallback)", file=sys.stderr)
+            return updated
+
+
+        # SOPHYANE_CONTINUOUS_SLI_STARTUP_V1
+        if answer == "4":
+            os.environ["SOPHYANE_SESSION_MODE"] = "sli_chunks"
+            os.environ["SOPHYANE_SLI_ONLY"] = "1"
+            os.environ["SOPHYANE_SLI_CONTINUOUS"] = "1"
+
+            updated = dict(config)
+            updated.update({
+                "company": "SLI Continuous",
+                "timeout": 300,
+            })
+
+            save_config(updated)
+
+            print(
+                "Mode: Continuous SLI learning "
+                "(no local/cloud LLM fallback; Ctrl+C stops)",
+                file=sys.stderr,
+            )
+
             return updated
 
         if answer == "2":

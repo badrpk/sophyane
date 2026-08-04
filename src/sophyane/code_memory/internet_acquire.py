@@ -3069,3 +3069,169 @@ def _detected_licence(
             return aliases[licence]
 
     return None
+
+# SOPHYANE_INVALID_TOKEN_FALLBACK_V1
+#
+# A configured token is not necessarily valid. On HTTP 401, retry the same
+# request once without Authorization and remember that the credential failed.
+
+_sli_github_json_before_invalid_token_fallback = _sli_github_json_v5
+_SLI_INVALID_TOKEN_FILE = MEMORY / "github_invalid_token.json"
+
+
+def _sli_mark_invalid_token_v1(error: str) -> None:
+    import json as _json
+    import time as _time
+
+    _SLI_INVALID_TOKEN_FILE.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    _SLI_INVALID_TOKEN_FILE.write_text(
+        _json.dumps(
+            {
+                "invalid": True,
+                "error": str(error),
+                "timestamp": _time.time(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _sli_token_marked_invalid_v1() -> bool:
+    if not _SLI_INVALID_TOKEN_FILE.is_file():
+        return False
+
+    try:
+        import json as _json
+
+        data = _json.loads(
+            _SLI_INVALID_TOKEN_FILE.read_text(
+                encoding="utf-8",
+            )
+        )
+
+        return bool(data.get("invalid"))
+
+    except Exception:
+        return False
+
+
+def _sli_api_headers_without_auth_v1() -> dict[str, str]:
+    return {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "Sophyane-SLI-Acquisition/5",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+def _sli_github_json_v5(url: str):
+    import json as _json
+    import urllib.error as _urlerror
+    import urllib.request as _urlrequest
+
+    # When a previous request proved the configured credential invalid,
+    # avoid repeatedly sending it.
+    if _sli_token_marked_invalid_v1():
+        cached = _sli_read_cache_v5(url)
+
+        if cached is not None:
+            return cached
+
+        request = _urlrequest.Request(
+            url,
+            headers=_sli_api_headers_without_auth_v1(),
+        )
+
+        with _urlrequest.urlopen(
+            request,
+            timeout=25,
+        ) as response:
+            payload = _json.loads(
+                response.read().decode(
+                    "utf-8",
+                    errors="replace",
+                )
+            )
+
+        _sli_write_cache_v5(url, payload)
+        return payload
+
+    try:
+        return _sli_github_json_before_invalid_token_fallback(url)
+
+    except _urlerror.HTTPError as error:
+        if error.code != 401:
+            raise
+
+        _sli_mark_invalid_token_v1(
+            "GitHub API returned HTTP 401"
+        )
+
+        # Retry once with no Authorization header.
+        cached = _sli_read_cache_v5(
+            url,
+            allow_stale=True,
+        )
+
+        if cached is not None:
+            return cached
+
+        request = _urlrequest.Request(
+            url,
+            headers=_sli_api_headers_without_auth_v1(),
+        )
+
+        with _urlrequest.urlopen(
+            request,
+            timeout=25,
+        ) as response:
+            payload = _json.loads(
+                response.read().decode(
+                    "utf-8",
+                    errors="replace",
+                )
+            )
+
+        _sli_write_cache_v5(url, payload)
+        return payload
+
+
+# Earlier search code resolves this global name at execution time.
+_sli_github_json_v4 = _sli_github_json_v5
+
+
+def _sli_api_token_v5() -> str:
+    """Return a token only when it has not already failed authentication."""
+
+    if _sli_token_marked_invalid_v1():
+        return ""
+
+    token = (
+        _sli_os.environ.get("GITHUB_TOKEN")
+        or _sli_os.environ.get("GH_TOKEN")
+    )
+
+    if token:
+        return token.strip()
+
+    if not shutil.which("gh"):
+        return ""
+
+    try:
+        result = _sli_subprocess.run(
+            ["gh", "auth", "token"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception:
+        return ""
+
+    if result.returncode != 0:
+        return ""
+
+    return result.stdout.strip()

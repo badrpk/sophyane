@@ -36,9 +36,23 @@ def _runtime_identity() -> str:
     if os.environ.get("SOPHYANE_SLI_ONLY") == "1" or os.environ.get("SOPHYANE_SESSION_MODE") == "sli_chunks":
         status = ["SLI chunks", "Ready"]
 
+    if os.environ.get("SOPHYANE_SLI_CONTINUOUS") == "1":
+        status = ["Continuous SLI learning", "Ready"]
+
     return (
         f"◆ Sophyane {__version__}\n"
-        + ("SLI chunks · Ready" if (os.environ.get("SOPHYANE_SLI_ONLY")=="1" or os.environ.get("SOPHYANE_SESSION_MODE")=="sli_chunks") else " · ".join(status))
+        + (
+            "Continuous SLI learning · Ready"
+            if os.environ.get("SOPHYANE_SLI_CONTINUOUS") == "1"
+            else (
+                "SLI chunks · Ready"
+                if (
+                    os.environ.get("SOPHYANE_SLI_ONLY") == "1"
+                    or os.environ.get("SOPHYANE_SESSION_MODE") == "sli_chunks"
+                )
+                else " · ".join(status)
+            )
+        )
     )
 
 
@@ -151,10 +165,39 @@ def main() -> int:
         except Exception as error:
             print(f"◆ Startup provider selection warning: {error}", file=sys.stderr)
 
+
+    # SOPHYANE_FRESH_PREVIEW_INSTALL_V1
+    # All explicit SLI previews use the exact-workspace, no-store server.
+    try:
+        import sophyane.sli_capability_engine as _sli_engine
+
+        from sophyane.code_memory.fresh_preview import (
+            preview_workspace as _fresh_preview_workspace,
+        )
+
+        _sli_engine.preview_sli_artifact = (
+            _fresh_preview_workspace
+        )
+
+    except Exception as error:
+        print(
+            f"◆ Fresh preview installation warning: {error}",
+            file=sys.stderr,
+            flush=True,
+        )
+
     print(_runtime_identity(), file=sys.stderr, flush=True)
     _start_local_server_if_needed()
     if len(sys.argv) <= 1:
         print(_user_start_tips(), file=sys.stderr, flush=True)
+    # SOPHYANE_CONTINUOUS_SLI_CLI_V1
+    if os.environ.get("SOPHYANE_SLI_CONTINUOUS") == "1":
+        from sophyane.code_memory.continuous_sli_loop import (
+            run_continuous_sli_loop,
+        )
+
+        return run_continuous_sli_loop()
+
     from sophyane.v13_cli import main as run_cli
     try:
         return run_cli()
