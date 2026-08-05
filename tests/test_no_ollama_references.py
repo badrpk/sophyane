@@ -7,6 +7,7 @@ EXCLUDED_PARTS = {
     ".git",
     ".venv",
     "__pycache__",
+    ".pytest_cache",
 }
 
 TEXT_SUFFIXES = {
@@ -28,6 +29,8 @@ def test_repository_contains_no_ollama_references() -> None:
         if not path.is_file():
             continue
         if any(part in EXCLUDED_PARTS for part in path.parts):
+            continue
+        if any(part.endswith(".egg-info") for part in path.parts):
             continue
         if path.suffix.casefold() not in TEXT_SUFFIXES:
             continue
