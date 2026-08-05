@@ -581,6 +581,135 @@ def _read_only_inspection(request: str) -> bool:
     t = request.lower()
     return any(x in t for x in _READ_ONLY_INSPECTION_HINTS)
 
+
+
+def _canonicalize_explicit_file_path(
+    original_request: str,
+    action: dict[str, Any],
+) -> dict[str, Any]:
+    """Keep explicitly named bare files at the workspace root."""
+    kind = str(action.get("type") or "").casefold()
+    if kind not in {"write_file", "append_file"}:
+        return action
+
+    requested = re.findall(
+        r"""(?:file\s+(?:named|called)?|create\s+(?:a|the)\s+file|write\s+(?:a|the)\s+file)
+            \s*["'`]?([A-Za-z0-9_.-]+\.[A-Za-z0-9_-]+)["'`]?""",
+        str(original_request or ""),
+        flags=re.I | re.X,
+    )
+
+    if not requested:
+        return action
+
+    # Only canonicalize an explicitly bare filename. Requests containing an
+    # intended directory such as tests/example.txt retain that directory.
+    requested_name = requested[0].strip()
+    if "/" in requested_name or "\\" in requested_name:
+        return action
+
+    current_path = str(
+        action.get("path")
+        or action.get("file")
+        or ""
+    ).strip()
+
+    if not current_path:
+        return action
+
+    if Path(current_path).name.casefold() != requested_name.casefold():
+        return action
+
+    corrected = dict(action)
+    corrected["path"] = requested_name
+    corrected.pop("file", None)
+    return corrected
+
+
+def _simple_file_write_request_completed(
+    original_request: str,
+    action: dict[str, Any],
+    ok: bool,
+    workspace: Path,
+) -> bool:
+    """Stop after a verified single-file write instead of requesting repeats."""
+    if not ok:
+        return False
+
+    kind = str(action.get("type") or "").casefold()
+    if kind not in {"write_file", "append_file"}:
+        return False
+
+    request = " ".join(str(original_request or "").casefold().split())
+
+    # Do not short-circuit compound build, test, judge, or shell workflows.
+    compound_markers = (
+        "run ",
+        "execute ",
+        "test ",
+        "pytest",
+        "judge.sh",
+        "compile",
+        "build ",
+        "copy ",
+        "then create",
+        "create directories",
+        "create these directories",
+        "multiple files",
+    )
+    if any(marker in request for marker in compound_markers):
+        return False
+
+    if not any(
+        phrase in request
+        for phrase in (
+            "create a file",
+            "create the file",
+            "write a file",
+            "write the file",
+        )
+    ):
+        return False
+
+    raw_path = str(action.get("path") or "").strip()
+    if not raw_path:
+        return False
+
+    target = Path(raw_path)
+    if not target.is_absolute():
+        target = workspace / target
+
+    try:
+        target = target.resolve()
+        target.relative_to(workspace.resolve())
+    except (OSError, ValueError):
+        return False
+
+    if not target.is_file():
+        return False
+
+    expected = action.get("content")
+    if expected is not None:
+        try:
+            if target.read_text(encoding="utf-8") != str(expected):
+                return False
+        except OSError:
+            return False
+
+    # When a filename is explicitly named, ensure the written basename matches.
+    names = re.findall(
+        r"""(?:named|called|file)\s+["'`]?([A-Za-z0-9_.-]+\.[A-Za-z0-9_-]+)""",
+        original_request,
+        flags=re.I,
+    )
+    if names and target.name.casefold() not in {
+        name.casefold() for name in names
+    }:
+        return False
+
+    return True
+
+
 def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable[[str], Any],
                       workspace: Path | None = None, max_steps: int = 12,
                       progress: Callable[[str], None] | None = None) -> str:
@@ -765,6 +894,10 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             )
             current = getattr(response, "text", str(response))
             continue
+        action = _canonicalize_explicit_file_path(
+            original_request,
+            action,
+        )
         kind = str(action.get("type") or "").lower()
 
         if (
@@ -884,6 +1017,17 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             )
             repairs = 0
             continue
+
+        if _simple_file_write_request_completed(
+            original_request,
+            action,
+            ok,
+            workspace,
+        ):
+            return (
+                "DONE\n\nExecution evidence:\n"
+                + "\n".join(evidence)
+            )
 
         if _discovery_request_completed(
             original_request,

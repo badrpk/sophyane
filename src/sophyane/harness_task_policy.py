@@ -127,6 +127,43 @@ def is_execution_request(message: str) -> bool:
     )
     explicit_source_file = bool(_SOURCE_FILE.search(text))
 
+    # Explicit local filesystem mutations must enter the execution runtime,
+    # including non-source files such as .txt, .md, .log, and extensionless
+    # paths. Requiring a software-language extension incorrectly routes these
+    # requests to direct chat.
+    filesystem_action = any(
+        phrase in text
+        for phrase in (
+            "create a file",
+            "create the file",
+            "write a file",
+            "write the file",
+            "copy the file",
+            "copy file",
+            "move the file",
+            "rename the file",
+            "delete the file",
+            "remove the file",
+            "read the file",
+            "read it back",
+            "make it executable",
+            "create directory",
+            "create directories",
+            "create folder",
+            "create folders",
+        )
+    )
+
+    explicit_path = bool(
+        re.search(
+            r"(?:^|[\\s'\"`])(?:\.?\.?/|~/)?"
+            r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*"
+            r"(?:\.[A-Za-z0-9_-]+)\b",
+            text,
+            re.I,
+        )
+    )
+
     long_loop = any(
         phrase in text
         for phrase in (
@@ -141,7 +178,12 @@ def is_execution_request(message: str) -> bool:
         )
     )
 
-    return (verb_hit and (domain_hit or explicit_source_file)) or long_loop
+    return (
+        (verb_hit and (domain_hit or explicit_source_file))
+        or filesystem_action
+        or (verb_hit and explicit_path)
+        or long_loop
+    )
 
 
 def is_compound_request(message: str) -> bool:
@@ -296,3 +338,53 @@ __all__ = [
     "normalize",
     "protected_context",
 ]
+
+# SOPHYANE_GAME_BUILD_POLICY_V1
+# Explicit game-building requests are executable software tasks.
+_original_classify_before_game_policy = classify
+
+
+def classify(message: str):
+    policy = _original_classify_before_game_policy(message)
+
+    text = " ".join(str(message or "").casefold().split())
+    build_request = any(
+        text.startswith(prefix)
+        for prefix in (
+            "make ",
+            "create ",
+            "build ",
+            "develop ",
+            "implement ",
+            "write ",
+        )
+    )
+    game_request = any(
+        term in text
+        for term in (
+            "game",
+            "snake",
+            "pong",
+            "tetris",
+            "tic tac",
+            "canvas",
+        )
+    )
+
+    if not (build_request and game_request):
+        return policy
+
+    # Preserve the policy object's concrete type and existing fields.
+    values = dict(vars(policy))
+    values["execution"] = True
+    values["filesystem_only"] = False
+    values["compound"] = True
+
+    try:
+        return type(policy)(**values)
+    except TypeError:
+        # Fallback for mutable dataclass-like policy objects.
+        policy.execution = True
+        policy.filesystem_only = False
+        policy.compound = True
+        return policy
