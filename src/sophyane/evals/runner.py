@@ -7,6 +7,8 @@ import re
 import shutil
 import subprocess
 import time
+
+import pexpect
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -151,6 +153,8 @@ def _failure_class(
         return "SAFETY"
 
     if outcome_ok and not path_ok:
+        if not _routes(output):
+            return "EVALUATOR_OBSERVABILITY"
         return "AGENT_ROUTING"
 
     if not outcome_ok and path_ok:
@@ -160,6 +164,105 @@ def _failure_class(
         return "AGENT_ROUTING"
 
     return "NONE"
+
+
+def _run_interactive_session(
+    executable: str,
+    *,
+    mode: str,
+    prompt: str,
+    workspace: Path,
+    environment: dict[str, str],
+    timeout_seconds: int,
+) -> tuple[str, int]:
+    """Drive Sophyane without accidentally submitting the mode as a prompt."""
+    child = pexpect.spawn(
+        executable,
+        cwd=str(workspace),
+        env=environment,
+        encoding="utf-8",
+        codec_errors="replace",
+        timeout=timeout_seconds,
+    )
+
+    chunks: list[str] = []
+
+    try:
+        while True:
+            index = child.expect(
+                [
+                    r"Select \[1-4,\s*default 1\]:",
+                    r"Select \[1-4[^\]]*\]:",
+                    r"❯",
+                    r"\n>\s*",
+                    pexpect.EOF,
+                    pexpect.TIMEOUT,
+                ]
+            )
+
+            chunks.append(child.before or "")
+
+            if index in {0, 1}:
+                # A startup menu is actually present, so select the case mode.
+                chunks.append(child.after or "")
+                child.sendline(str(mode))
+                continue
+
+            if index in {2, 3}:
+                # Sophyane is ready for the real user request.
+                chunks.append(child.after or "")
+                child.sendline(prompt)
+                break
+
+            if index == 4:
+                return "".join(chunks), int(child.exitstatus or 0)
+
+            raise TimeoutError(
+                "Sophyane did not reach the startup menu or prompt."
+            )
+
+        # Wait until the response completes and Sophyane returns to its prompt.
+        while True:
+            index = child.expect(
+                [
+                    r"❯",
+                    r"\n>\s*",
+                    pexpect.EOF,
+                    pexpect.TIMEOUT,
+                ]
+            )
+
+            chunks.append(child.before or "")
+
+            if index in {0, 1}:
+                chunks.append(child.after or "")
+                child.sendline("exit")
+                break
+
+            if index == 2:
+                return "".join(chunks), int(child.exitstatus or 0)
+
+            raise TimeoutError(
+                "Sophyane timed out before completing the evaluation request."
+            )
+
+        child.expect(pexpect.EOF)
+        chunks.append(child.before or "")
+
+        child.close()
+
+        exit_code = child.exitstatus
+        if exit_code is None:
+            exit_code = child.signalstatus or 0
+
+        return "".join(chunks), int(exit_code)
+
+    except Exception:
+        try:
+            child.close(force=True)
+        except Exception:
+            pass
+        raise
 
 
 class EvalRunner:
@@ -198,21 +301,16 @@ class EvalRunner:
         started = time.monotonic()
 
         try:
-            process = subprocess.run(
-                [self.executable],
-                cwd=workspace,
-                env=environment,
-                input=f"{case.mode}\n{case.prompt}\nexit\n",
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                timeout=case.timeout_seconds,
-                check=False,
+            output, exit_code = _run_interactive_session(
+                self.executable,
+                mode=case.mode,
+                prompt=case.prompt,
+                workspace=workspace,
+                environment=environment,
+                timeout_seconds=case.timeout_seconds,
             )
-            output = process.stdout or ""
-            exit_code = process.returncode
-        except subprocess.TimeoutExpired as error:
-            output = str(error.stdout or "") + "\nEVAL_TIMEOUT\n"
+        except (pexpect.TIMEOUT, TimeoutError) as error:
+            output = f"{error}\nEVAL_TIMEOUT\n"
             exit_code = 124
 
         duration = time.monotonic() - started

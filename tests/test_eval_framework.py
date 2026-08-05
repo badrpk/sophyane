@@ -53,3 +53,12 @@ def test_case_schema() -> None:
     )
 
     assert case.id == "a"
+
+
+def test_unobservable_path_is_not_agent_routing_failure() -> None:
+    assert _failure_class(
+        "VERIFIED",
+        True,
+        False,
+        True,
+    ) == "EVALUATOR_OBSERVABILITY"
