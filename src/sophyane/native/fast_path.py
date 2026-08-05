@@ -78,11 +78,44 @@ def handle_sli_status(_: str) -> str:
 
 
 _ROUTES: list[tuple[re.Pattern[str], Callable[[str], str]]] = [
-    (re.compile(r"system\s+config|uname|os\s+info|kernel", re.I), handle_system_config),
-    (re.compile(r"\bversion\b|sophyane\s+--version", re.I), handle_version),
-    (re.compile(r"(how many|list).*(model|llm)|ollama\s+list|local\s+llm", re.I), handle_list_models),
-    (re.compile(r"(what|which|current|using).*(model|llm)|why.*llama", re.I), handle_current_model),
-    (re.compile(r"\bsli\b.*(status|state|ontology|action)", re.I), handle_sli_status),
+    (
+        re.compile(
+            r"^(?:show|display|print|give|tell me|what is|what are)?\s*"
+            r"(?:my|the)?\s*"
+            r"(?:system config(?:uration)?|system info(?:rmation)?|"
+            r"os info(?:rmation)?|kernel version|uname)\??$",
+            re.I,
+        ),
+        handle_system_config,
+    ),
+    (
+        re.compile(
+            r"^(?:sophyane\s+)?(?:--version|-v|version)\??$",
+            re.I,
+        ),
+        handle_version,
+    ),
+    (
+        re.compile(
+            r"(how many|list).*(model|llm)|ollama\s+list|local\s+llm",
+            re.I,
+        ),
+        handle_list_models,
+    ),
+    (
+        re.compile(
+            r"(what|which|current|using).*(model|llm)|why.*llama",
+            re.I,
+        ),
+        handle_current_model,
+    ),
+    (
+        re.compile(
+            r"\bsli\b.*(status|state|ontology|action)",
+            re.I,
+        ),
+        handle_sli_status,
+    ),
 ]
 
 
