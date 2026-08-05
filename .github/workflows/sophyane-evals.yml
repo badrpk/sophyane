@@ -1,0 +1,39 @@
+name: Sophyane eval validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest
+
+      - name: Tests
+        run: python -m pytest -q
+
+      - name: Validate eval cases
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from sophyane.evals.runner import load_cases
+
+          cases = load_cases(Path("evals/cases.jsonl"))
+          assert cases
+          assert len({case.id for case in cases}) == len(cases)
+          print(f"Validated {len(cases)} evaluation cases")
+          PY
