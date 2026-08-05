@@ -10,7 +10,7 @@ from typing import Any
 from sophyane.config import CONFIG_DIR, get_secret, load_config, save_config, save_json
 from sophyane.plugin_loader import PluginLoader
 
-LOCAL_IDS = {"local_gguf", "ollama"}
+LOCAL_IDS = {"local_gguf"}
 LLM_FILE = CONFIG_DIR / "llm.json"
 
 
@@ -29,7 +29,7 @@ def _local_candidate(config: dict[str, Any], llm: dict[str, Any]) -> tuple[str, 
         return provider, model
     providers = llm.get("providers") or {}
     if isinstance(providers, dict):
-        for name in ("local_gguf", "ollama"):
+        for name in ("local_gguf",):
             item = providers.get(name) or {}
             if isinstance(item, dict) and item.get("enabled") is not False and item.get("model"):
                 return name, str(item["model"])
@@ -109,7 +109,7 @@ def choose_startup_provider() -> dict[str, Any]:
     if local and clouds:
         print("\nStart this session with:", file=sys.stderr)
         print("  1. SLI Graph — memory + internet, no LLM", file=sys.stderr)
-        print("  2. Local LLM — Ollama / on-device model", file=sys.stderr)
+        print("  2. Local LLM — llama.cpp / GGUF on-device model", file=sys.stderr)
         print(f"  3. Cloud LLM — use {clouds[0][1]}", file=sys.stderr)
         print("  4. Continuous topic learning — acquire + embed until saturation/Ctrl+C", file=sys.stderr)
         while True:
