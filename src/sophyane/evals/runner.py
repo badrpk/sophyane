@@ -265,6 +265,41 @@ def _run_interactive_session(
         raise
 
 
+def _find_artifact(
+    workspace: Path,
+    relative: str,
+) -> Path | None:
+    """Find an artifact in any supported Sophyane workspace layout."""
+    requested = Path(relative)
+
+    if requested.is_absolute():
+        return requested if requested.is_file() else None
+
+    candidates = (
+        workspace / requested,
+        workspace / ".sophyane-workspace" / requested,
+        workspace / "workspace" / requested,
+    )
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+
+    # Some runtime paths create a nested workspace at a deeper level.
+    matches = [
+        candidate
+        for candidate in workspace.rglob(requested.name)
+        if candidate.is_file()
+        and candidate.relative_to(workspace).parts[-len(requested.parts):]
+        == requested.parts
+    ]
+
+    if len(matches) == 1:
+        return matches[0]
+
+    return None
+
+
 class EvalRunner:
     def __init__(
         self,
@@ -331,17 +366,18 @@ class EvalRunner:
             )
 
         for relative in case.expected_files:
-            exists = (workspace / relative).is_file()
+            artifact = _find_artifact(workspace, relative)
+            exists = artifact is not None
             outcome_checks.append(exists)
 
             if not exists:
                 reasons.append(f"Missing file: {relative}")
 
         for relative, expected in case.exact_files.items():
-            target = workspace / relative
+            target = _find_artifact(workspace, relative)
             actual = (
                 target.read_text(encoding="utf-8")
-                if target.is_file()
+                if target is not None
                 else None
             )
             matched = actual == expected

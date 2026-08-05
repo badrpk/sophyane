@@ -62,3 +62,44 @@ def test_unobservable_path_is_not_agent_routing_failure() -> None:
         False,
         True,
     ) == "EVALUATOR_OBSERVABILITY"
+
+
+def test_find_artifact_in_case_root(tmp_path: Path) -> None:
+    from sophyane.evals.runner import _find_artifact
+
+    target = tmp_path / "result.txt"
+    target.write_text("ok", encoding="utf-8")
+
+    assert _find_artifact(tmp_path, "result.txt") == target
+
+
+def test_find_artifact_in_nested_sophyane_workspace(
+    tmp_path: Path,
+) -> None:
+    from sophyane.evals.runner import _find_artifact
+
+    target = tmp_path / ".sophyane-workspace" / "index.html"
+    target.parent.mkdir()
+    target.write_text("<html></html>", encoding="utf-8")
+
+    assert _find_artifact(tmp_path, "index.html") == target
+
+
+def test_find_artifact_preserves_relative_subdirectory(
+    tmp_path: Path,
+) -> None:
+    from sophyane.evals.runner import _find_artifact
+
+    target = (
+        tmp_path
+        / ".sophyane-workspace"
+        / "config"
+        / "settings.json"
+    )
+    target.parent.mkdir(parents=True)
+    target.write_text("{}", encoding="utf-8")
+
+    assert (
+        _find_artifact(tmp_path, "config/settings.json")
+        == target
+    )
