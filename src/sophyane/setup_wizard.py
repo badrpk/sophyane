@@ -193,7 +193,7 @@ def run_setup_wizard() -> dict[str, Any]:
         if action in {1, 4}:
             new_config = _choose_cloud(providers)
         elif action == 2:
-            new_config = _choose_local(providers)
+            new_config = _configure_local_gguf()
         elif action == 3:
             _show_current()
         elif action == 5:

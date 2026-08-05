@@ -63,6 +63,143 @@ def _looks_like_folder_listing(message: str) -> bool:
     return bool(_LIST_CUE_RE.search(text) or _COUNT_CUE_RE.search(text))
 
 
+_EXACT_FILE_WRITE_RE = re.compile(
+    r"""
+    \b(?:create|write|make)\s+
+    (?:a\s+|the\s+)?
+    (?:file\s+)?
+    (?P<filename>[A-Za-z0-9_.-]+\.[A-Za-z0-9_-]+)
+    .*?
+    \b(?:containing|with)\s+
+    (?:exactly\s+)?
+    (?P<content>[A-Za-z0-9_.:-]+)
+    """,
+    re.I | re.S | re.X,
+)
+
+
+def _parse_exact_file_write(
+    message: str,
+) -> tuple[str, str] | None:
+    """Extract a plain workspace filename and exact one-token content."""
+    text = _normalise(message)
+    match = _EXACT_FILE_WRITE_RE.search(text)
+
+    if not match:
+        return None
+
+    filename = match.group("filename").strip()
+    content = match.group("content").strip()
+
+    if (
+        not filename
+        or not content
+        or "/" in filename
+        or "\\" in filename
+        or filename in {".", ".."}
+    ):
+        return None
+
+    exactness = any(
+        phrase in text.casefold()
+        for phrase in (
+            "exactly",
+            "byte-for-byte",
+            "byte for byte",
+            "with no newline",
+            "without a newline",
+            "read the file back",
+            "read it back",
+            "verify it",
+        )
+    )
+
+    return (filename, content) if exactness else None
+
+
+def _exact_file_write(
+    message: str,
+    workspace: Path,
+) -> CapabilityExecution | None:
+    parsed = _parse_exact_file_write(message)
+    if parsed is None:
+        return None
+
+    filename, content = parsed
+
+    try:
+        root = workspace.expanduser().resolve()
+        root.mkdir(parents=True, exist_ok=True)
+
+        target = (root / filename).resolve()
+
+        if target.parent != root:
+            raise ValueError("Target must remain in the active workspace.")
+
+        # write_text() does not add a newline.
+        target.write_text(content, encoding="utf-8")
+
+        actual = target.read_bytes()
+        expected = content.encode("utf-8")
+
+        verified = actual == expected
+
+        payload = {
+            "ok": verified,
+            "capability": "filesystem.write_exact_verified",
+            "path": str(target),
+            "relative_path": filename,
+            "expected_bytes": len(expected),
+            "actual_bytes": len(actual),
+            "byte_for_byte_verified": verified,
+            "newline_added": actual.endswith(b"\n"),
+            "runtime_executed_action": True,
+            "provider_selected_action": False,
+            "provider_bypassed": True,
+            "deterministic": True,
+            "sli_grounded": True,
+        }
+
+        response_only_verified = bool(
+            re.search(
+                r"\brespond\s+only\s+(?:with\s+)?VERIFIED\b",
+                message,
+                re.I,
+            )
+        )
+
+        output = (
+            "VERIFIED"
+            if verified and response_only_verified
+            else json.dumps(payload, indent=2, ensure_ascii=False)
+        )
+
+        return CapabilityExecution(
+            ok=verified,
+            capability_id="filesystem.write_exact_verified",
+            text=output,
+            data=payload,
+        )
+
+    except Exception as error:
+        payload = {
+            "ok": False,
+            "capability": "filesystem.write_exact_verified",
+            "error": f"{type(error).__name__}: {error}",
+            "runtime_executed_action": True,
+            "provider_bypassed": True,
+            "deterministic": True,
+            "sli_grounded": True,
+        }
+
+        return CapabilityExecution(
+            ok=False,
+            capability_id="filesystem.write_exact_verified",
+            text=json.dumps(payload, indent=2, ensure_ascii=False),
+            data=payload,
+        )
+
+
 def _requested_root(message: str, workspace: Path) -> tuple[Path, str]:
     text = _normalise(message).lower()
 
@@ -222,6 +359,13 @@ def execute_deterministic_capability(
         return None
 
     base = Path(workspace or Path.cwd()).expanduser()
+
+    # Exact workspace file writes are stronger than broad filesystem
+    # classification. Handle them before classifiers such as list_folders can
+    # misinterpret words like "current workspace".
+    exact_write = _exact_file_write(request, base)
+    if exact_write is not None:
+        return exact_write
 
     # Keep the existing V20 classifier as the semantic authority when present.
     try:
