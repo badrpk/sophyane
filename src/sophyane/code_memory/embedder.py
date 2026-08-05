@@ -154,24 +154,33 @@ def _ollama_embedding_model() -> str | None:
 
 @lru_cache(maxsize=1)
 def get_embedder():
-    """Prefer a real transformer and preserve deterministic offline operation."""
-    backend = str(os.environ.get("SOPHYANE_EMBED_BACKEND") or "auto").strip().lower()
+    """Prefer an in-process transformer and retain deterministic offline fallback."""
+    backend = str(
+        __import__("os").environ.get("SOPHYANE_EMBED_BACKEND")
+        or "auto"
+    ).strip().lower()
 
-    sentence_model = str(os.environ.get("SOPHYANE_SENTENCE_TRANSFORMER_MODEL") or "").strip()
-    if backend in {"auto", "sentence-transformers", "sentence_transformers"} and sentence_model:
+    sentence_model = str(
+        __import__("os").environ.get(
+            "SOPHYANE_SENTENCE_TRANSFORMER_MODEL"
+        )
+        or ""
+    ).strip()
+
+    if (
+        backend
+        in {
+            "auto",
+            "sentence-transformers",
+            "sentence_transformers",
+        }
+        and sentence_model
+    ):
         try:
             return SentenceTransformerEmbedder(sentence_model)
         except Exception:
             if backend != "auto":
                 raise
 
-    if backend in {"auto", "ollama"}:
-        model = _ollama_embedding_model()
-        if model:
-            try:
-                return OllamaEmbedder(model)
-            except Exception:
-                if backend == "ollama":
-                    raise
-
     return HashingEmbedder(TARGET_DIM)
+

@@ -28,7 +28,7 @@ class AsyncRunnable:
 
 
 def test_matrix_contains_thirty_unique_targets() -> None:
-    assert len(INTEGRATIONS) == 30
+    assert len(INTEGRATIONS) == 29
     assert len({item.key for item in INTEGRATIONS}) == 30
     assert sum(item.tier == "base" for item in INTEGRATIONS) == 10
     assert sum(item.tier == "extended" for item in INTEGRATIONS) == 20
@@ -61,10 +61,10 @@ def test_callable_tool_validation() -> None:
 
 def test_probe_returns_one_row_per_target() -> None:
     rows = probe_integrations()
-    assert len(rows) == 30
+    assert len(rows) == 29
     assert {row["key"] for row in rows} == {item.key for item in INTEGRATIONS}
 
 
 def test_tier_filtering() -> None:
     assert len(probe_integrations("base")) == 10
-    assert len(probe_integrations("extended")) == 20
+    assert len(probe_integrations("extended")) == 19

@@ -29,9 +29,9 @@ LOCAL_OPENAI_URL = os.environ.get(
     "SOPHYANE_CHESS_LOCAL_URL",
     "http://127.0.0.1:8766/v1/chat/completions",
 )
-OLLAMA_URL = os.environ.get(
-    "SOPHYANE_CHESS_OLLAMA_URL",
-    "http://127.0.0.1:11434/api/chat",
+LLAMA_SERVER_URL = os.environ.get(
+    "SOPHYANE_CHESS_LLAMA_SERVER_URL",
+    "http://127.0.0.1:8766/api/chat",
 )
 LOCAL_MODEL = os.environ.get(
     "SOPHYANE_CHESS_LOCAL_MODEL",
