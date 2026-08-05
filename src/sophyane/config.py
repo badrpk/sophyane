@@ -53,7 +53,7 @@ DEFAULT_PROVIDER = "gemini"
 DEFAULT_MODEL = "gemini-2.5-flash"
 DEFAULT_FALLBACK_ORDER = (
     "gemini", "xai", "openai", "anthropic", "groq", "openrouter",
-    "deepseek", "ollama", "local_gguf",
+    "deepseek", "local_gguf",
 )
 
 

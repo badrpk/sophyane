@@ -114,7 +114,7 @@ def install_provider_context_patch() -> None:
             or ""
         ).lower()
 
-        if primary in {"local_gguf", "ollama"}:
+        if primary in {"local_gguf"}:
             timeout = max(timeout, 180)
 
         original_message = message
@@ -481,11 +481,9 @@ def install_provider_context_patch() -> None:
                                 if (
                                     active not in {
                                         "local_gguf",
-                                        "ollama",
                                     }
                                     and primary in {
                                         "local_gguf",
-                                        "ollama",
                                     }
                                 )
                                 else "active"

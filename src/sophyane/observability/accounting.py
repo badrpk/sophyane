@@ -25,7 +25,7 @@ class UsageRecord:
     run_id: str = ""
 
 def estimate_cost(provider: str, model: str, prompt_tokens: int, completion_tokens: int) -> float:
-    key = "local" if provider in {"local", "ollama", "gguf"} else (
+    key = "local" if provider in {"local", "local_gguf", "gguf"} else (
         "gemini-default" if "gemini" in (provider + model).lower() else "openai-default"
     )
     rates = DEFAULT_RATES[key]

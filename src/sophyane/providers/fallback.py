@@ -14,7 +14,7 @@ from sophyane.runtime_cancel import cancelled
 
 LOGGER = logging.getLogger("sophyane")
 LLM_CONFIG_FILE = CONFIG_DIR / "llm.json"
-LOCAL_PROVIDER_IDS = {"local_gguf", "ollama"}
+LOCAL_PROVIDER_IDS = {"local_gguf"}
 
 # Canonical default order when llm.json is missing or incomplete.
 DEFAULT_FALLBACK_ORDER = (
@@ -25,7 +25,6 @@ DEFAULT_FALLBACK_ORDER = (
     "groq",
     "openrouter",
     "deepseek",
-    "ollama",
     "local_gguf",
 )
 
@@ -129,7 +128,7 @@ class FallbackProvider(Provider):
             return text
 
         # A configured local provider has already attempted the local runtime.
-        # Never recurse into Ollama/bootstrap logic after that failure; return
+        # Never recurse into local-runtime bootstrap logic after that failure; return
         # control promptly so Termux remains responsive.
         if self.primary in LOCAL_PROVIDER_IDS:
             self.last_errors = errors

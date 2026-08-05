@@ -756,7 +756,6 @@ def _latest_user_file_report() -> str:
         ".cargo",
         ".rustup",
         ".local",
-        ".ollama",
         "node_modules",
         ".venv",
         "venv",
@@ -883,7 +882,6 @@ def _sophyane_latest_file_result() -> str:
         ".npm",
         ".cargo",
         ".rustup",
-        ".ollama",
         "__pycache__",
         "node_modules",
         ".pytest_cache",
@@ -987,7 +985,7 @@ class ObservableTUI:
 
     @property
     def small_local(self) -> bool:
-        return str(self.config.get("provider") or "").lower() in {"local_gguf", "ollama"}
+        return str(self.config.get("provider") or "").lower() in {"local_gguf"}
 
     def emit(self, role: str, text: str) -> None:
         print(f"\n{role}\n  " + text.replace("\n", "\n  ") + "\n", flush=True)

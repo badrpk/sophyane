@@ -50,7 +50,7 @@ Operating rules:
 15. For multi-step work, report: assumptions, acceptance criteria, executed steps, evidence, verification, and remaining limitations.
 """
 
-# Compact system prompt for tiny local models (GGUF / Ollama on low-RAM hosts).
+# Compact system prompt for tiny local models (llama.cpp GGUF on low-RAM hosts).
 LOCAL_CHAT_SYSTEM_PROMPT = (
     "You are Sophyane, a helpful local AI assistant. "
     "Answer clearly and briefly. Do not invent tool runs or file edits. "
@@ -269,7 +269,7 @@ class SophyaneAgent:
             or provider_id(getattr(self.provider, "primary", ""))
             or provider_id(self.provider)
         )
-        local_mode = active_provider in {"local_gguf", "ollama"}
+        local_mode = active_provider == "local_gguf"
 
         if local_mode:
             # Skip bulky memory dumps — they drown 0.5B–1B models.
@@ -334,8 +334,8 @@ class SophyaneAgent:
             return AgentResponse(
                 "Sophyane could not reach any working LLM provider.\n"
                 f"{error}{chain_note}\n"
-                "Fix: top up OpenAI/Gemini/xAI credits, or install+start Ollama "
-                "(`ollama serve` + `ollama pull llama3.2`), then run /doctor."
+                "Fix: configure a llama.cpp GGUF runtime and start llama-server, "
+                "then run /doctor."
             )
         return AgentResponse(text)
 

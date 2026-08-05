@@ -30,7 +30,7 @@ class Capability:
 CAPABILITIES: list[Capability] = [
     # Core cognition
     Capability("multi_provider", "Multi-provider LLM + fallback", "ready", "providers", "--providers /llm.json"),
-    Capability("local_models", "Local open models (Ollama/GGUF)", "ready", "local_runtime", "/local"),
+    Capability("local_models", "Local open models (llama.cpp/GGUF)", "ready", "local_runtime", "/local"),
     Capability("harness_loop", "Plan→act→observe→verify harness", "ready", "harness", "default agent loop"),
     Capability("structured_output", "Strict JSON / structured protocols", "ready", "structured_output", "--protocol-attempts"),
     Capability("expert_pack", "Expert knowledge for hard eng Qs", "ready", "expert", "--ask / --exam-tough100"),

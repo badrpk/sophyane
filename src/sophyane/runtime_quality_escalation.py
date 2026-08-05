@@ -10,7 +10,7 @@ from sophyane.provider_state import publish
 from sophyane.sli_provider_controller import get_sli_provider_controller
 
 LOGGER = logging.getLogger("sophyane")
-LOCAL_PROVIDER_IDS = {"local_gguf", "ollama"}
+LOCAL_PROVIDER_IDS = {"local_gguf"}
 
 
 def _is_repair_prompt(prompt: str) -> bool:

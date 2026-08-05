@@ -980,7 +980,7 @@ def main() -> int:
             print(response.text)
         return 0
 
-    # Small local models (GGUF / tiny Ollama) cannot run the full repository coding
+    # Small local models (small llama.cpp GGUF models) cannot run the full repository coding
     # planner prompt (often 5k–20k tokens). Route conversational prompts through
     # the lightweight chat agent instead of the strict coding doer.
     provider_id = str(config.get("provider") or "").lower()
@@ -1025,7 +1025,7 @@ def main() -> int:
     looks_like_coding = bool(execution_intent) or any(
         token in lower_prompt for token in coding_markers
     )
-    force_chat = provider_id in {"local_gguf", "ollama"} and not looks_like_coding
+    force_chat = provider_id == "local_gguf" and not looks_like_coding
     if not force_chat and len(original_prompt) < 240:
         stripped = lower_prompt.strip()
         if stripped.endswith("?") or stripped.startswith(

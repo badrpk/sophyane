@@ -177,7 +177,7 @@ def probe_platform() -> PlatformReport:
     equipment = _equipment_class(ram, surface, cpus)
     notes: list[str] = []
     if termux:
-        notes.append("Termux Android detected — use mobile profile and Ollama/GGUF carefully")
+        notes.append("Termux Android detected — use mobile profile and llama.cpp/GGUF carefully")
     if equipment in {"nano_edge", "edge"}:
         notes.append(
             "Edge profile: prefer local_gguf tiny models or cloud API; skip heavy coding planner"
@@ -185,7 +185,7 @@ def probe_platform() -> PlatformReport:
     if os_family == "windows":
         notes.append("Windows: use install.ps1; paths under %USERPROFILE%\\.local")
     if os_family == "macos":
-        notes.append("macOS: Homebrew python3 recommended; Apple Silicon uses arm64 Ollama/GGUF")
+        notes.append("macOS: Homebrew python3 recommended; Apple Silicon uses arm64 llama.cpp/GGUF")
     if os_family == "ios":
         notes.append("iOS constrained runtime — edge/nano profile only; no full coding agent")
 

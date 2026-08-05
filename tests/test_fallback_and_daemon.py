@@ -45,7 +45,7 @@ def test_fallback_provider_uses_second_backend() -> None:
     assert provider.last_provider == "secondary"
 
 
-def test_resolve_provider_order_dedupes_and_includes_ollama() -> None:
+def test_resolve_provider_order_dedupes_and_includes_local_gguf() -> None:
     order = resolve_provider_order(
         "openai",
         llm_config={
@@ -56,7 +56,7 @@ def test_resolve_provider_order_dedupes_and_includes_ollama() -> None:
     assert order[0] == "openai"
     assert order.count("openai") == 1
     assert "gemini" in order
-    assert "ollama" in order
+    assert "local_gguf" in order
 
 
 def test_router_maps_daemon_tick() -> None:

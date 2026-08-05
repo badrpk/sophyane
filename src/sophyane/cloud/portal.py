@@ -1109,7 +1109,7 @@ class PortalApp:
 
                 cfg = load_config()
                 provider_id = str(cfg.get("provider") or "gemini").strip().lower()
-                local_tier = provider_id in {"local_gguf", "ollama", ""}
+                local_tier = provider_id in {"local_gguf", ""}
 
                 # Prefer live research whenever we have a grounded extract —
                 # tiny local models invent wrong biographies (e.g. "actor" for Imran Khan).
@@ -1308,7 +1308,7 @@ class PortalApp:
                                     "I could not reach a live language model just now "
                                     f"({error}). Open **Models** to add an API key "
                                     "(OpenAI / Claude / Gemini / Grok), keep **Web search** on for facts, "
-                                    "or use **Local free** GGUF/Ollama."
+                                    "or use **Local free** llama.cpp/GGUF."
                                 )
                                 model_used = "error-fallback"
                         except Exception:

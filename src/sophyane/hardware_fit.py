@@ -200,7 +200,7 @@ def set_mode(*, prefer_api_only: bool | None = None, local_enabled: bool | None 
     if prefs.get("prefer_api_only"):
         cfg = load_config()
         # Don't force switch if already on cloud; if on local, try xai/openai/gemini via catalog
-        if str(cfg.get("provider") or "") in {"local_gguf", "ollama", ""}:
+        if str(cfg.get("provider") or "") in {"local_gguf", ""}:
             from sophyane.config import get_secret
 
             for pid, env in (

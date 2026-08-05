@@ -31,6 +31,8 @@ def test_repository_contains_no_ollama_references() -> None:
             continue
         if path.suffix.casefold() not in TEXT_SUFFIXES:
             continue
+        if path == Path(__file__).resolve():
+            continue
 
         try:
             text = path.read_text(encoding="utf-8")

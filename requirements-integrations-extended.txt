@@ -4,7 +4,6 @@ langchain-aws
 langchain-cohere
 langchain-mistralai
 langchain-groq
-langchain-ollama
 langchain-huggingface
 langchain-pinecone
 langchain-qdrant

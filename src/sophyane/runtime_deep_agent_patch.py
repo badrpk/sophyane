@@ -50,7 +50,7 @@ def install_deep_agent_runtime() -> None:
     def call_provider(self: Any, message: str, *, timeout: int = 60) -> Any:
         provider = str(getattr(self, "config", {}).get("provider") or "").strip().lower()
         effective = timeout
-        if provider in {"local_gguf", "ollama"}:
+        if provider == "local_gguf":
             configured = int(getattr(self, "config", {}).get("timeout") or 0)
             effective = max(timeout, configured, 180)
             if effective != timeout:

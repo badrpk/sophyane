@@ -11,7 +11,7 @@ class PluginTests(unittest.TestCase):
 
         self.assertIn("gemini", providers)
         self.assertIn("openai", providers)
-        self.assertIn("ollama", providers)
+        self.assertIn("local_gguf", providers)
 
     def test_all_plugins_support_timeout(self):
         loader = PluginLoader()

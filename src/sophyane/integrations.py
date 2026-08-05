@@ -33,7 +33,6 @@ INTEGRATIONS: tuple[IntegrationSpec, ...] = (
     IntegrationSpec("cohere", "langchain-cohere", "langchain_cohere", "model", "COHERE_API_KEY", "extended"),
     IntegrationSpec("mistral", "langchain-mistralai", "langchain_mistralai", "model", "MISTRAL_API_KEY", "extended"),
     IntegrationSpec("groq", "langchain-groq", "langchain_groq", "model", "GROQ_API_KEY", "extended"),
-    IntegrationSpec("ollama", "langchain-ollama", "langchain_ollama", "model", "OLLAMA_BASE_URL", "extended"),
     IntegrationSpec("huggingface", "langchain-huggingface", "langchain_huggingface", "model", "HUGGINGFACEHUB_API_TOKEN", "extended"),
     IntegrationSpec("pinecone", "langchain-pinecone", "langchain_pinecone", "vector_store", "PINECONE_API_KEY", "extended"),
     IntegrationSpec("qdrant", "langchain-qdrant", "langchain_qdrant", "vector_store", "QDRANT_URL", "extended"),

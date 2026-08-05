@@ -107,7 +107,7 @@ class SLIProviderController:
             x_repeat = 1.0 if repeated else 0.0
             x_repair = 1.0 if repair_prompt else 0.0
             x_latency = min(1.0, max(0.0, latency_seconds) / 45.0)
-            local = str(provider or "").lower() in {"local_gguf", "ollama"}
+            local = str(provider or "").lower() in {"local_gguf"}
             x_local = 1.0 if local else 0.0
 
             forget = _sigmoid(1.6 - 0.7 * x_defect - 0.5 * x_repeat)
