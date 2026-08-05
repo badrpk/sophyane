@@ -103,3 +103,26 @@ def test_find_artifact_preserves_relative_subdirectory(
         _find_artifact(tmp_path, "config/settings.json")
         == target
     )
+
+
+def test_evidence_corpus_reads_nested_json(
+    tmp_path: Path,
+) -> None:
+    from sophyane.evals.runner import _evidence_corpus
+
+    evidence = (
+        tmp_path
+        / ".sophyane-workspace"
+        / ".sophyane-harness-report.json"
+    )
+    evidence.parent.mkdir()
+    evidence.write_text(
+        '{"exit_code": 7, "stdout": "STDOUT_OK"}',
+        encoding="utf-8",
+    )
+
+    corpus = _evidence_corpus(tmp_path, "chat output")
+
+    assert "chat output" in corpus
+    assert '"exit_code": 7' in corpus
+    assert "STDOUT_OK" in corpus

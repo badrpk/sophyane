@@ -147,13 +147,62 @@ def resolve_tier(
     progress: Progress | None = None,
     **_ignored,
 ) -> tuple[str, str | None]:
+    target = (
+        Path(workspace)
+        if workspace is not None
+        else Path.cwd() / ".sophyane-workspace"
+    )
+    reporter = progress or (lambda _message: None)
+
+    # Informational/browser website construction is already a deterministic
+    # SLI capability. Run it before local/cloud generation in every mode.
+    if (
+        selected_mode in {
+            "sli_chunks",
+            "local_llm",
+            "cloud_llm",
+        }
+        and _is_build(message)
+        and _is_browser_build(message)
+    ):
+        reporter(
+            "SLI deterministic preflight: website build bypasses "
+            "the selected LLM provider"
+        )
+
+        try:
+            report = try_sli_chunks(
+                message,
+                workspace=target,
+                progress=reporter,
+            )
+        except Exception as error:
+            reporter(
+                "SLI website preflight failed safely: "
+                f"{type(error).__name__}: {error}"
+            )
+        else:
+            artifact = target / "index.html"
+            report_text = str(report or "")
+
+            if (
+                artifact.is_file()
+                and "success: true" in report_text.casefold()
+            ):
+                return "sli_topic_site", report_text
+
+            reporter(
+                "SLI website preflight did not produce a validated "
+                "index.html; continuing to the selected provider"
+            )
+
     if selected_mode == "sli_chunks":
         return (
             "sli_chunks",
             try_sli_chunks(
                 message,
-                workspace=workspace,
-                progress=progress,
+                workspace=target,
+                progress=reporter,
             ),
         )
 

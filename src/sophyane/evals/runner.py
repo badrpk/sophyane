@@ -265,6 +265,56 @@ def _run_interactive_session(
         raise
 
 
+def _evidence_corpus(
+    workspace: Path,
+    transcript: str,
+) -> str:
+    """Combine the transcript with bounded structured runtime evidence."""
+    chunks = [str(transcript or "")]
+    allowed_suffixes = {
+        ".json",
+        ".jsonl",
+        ".txt",
+        ".log",
+        ".md",
+    }
+
+    for target in sorted(workspace.rglob("*")):
+        if not target.is_file():
+            continue
+
+        if target.name == "transcript.log":
+            continue
+
+        if target.suffix.casefold() not in allowed_suffixes:
+            continue
+
+        try:
+            size = target.stat().st_size
+        except OSError:
+            continue
+
+        # Evals need evidence, not arbitrary large generated content.
+        if size > 1_000_000:
+            continue
+
+        try:
+            content = target.read_text(
+                encoding="utf-8",
+                errors="replace",
+            )
+        except OSError:
+            continue
+
+        chunks.append(
+            f"\n--- EVIDENCE FILE: "
+            f"{target.relative_to(workspace)} ---\n"
+            f"{content}"
+        )
+
+    return "\n".join(chunks)
+
+
 def _find_artifact(
     workspace: Path,
     relative: str,
@@ -349,10 +399,15 @@ class EvalRunner:
             exit_code = 124
 
         duration = time.monotonic() - started
-        lowered = output.casefold()
 
         transcript = workspace / "transcript.log"
         transcript.write_text(output, encoding="utf-8")
+
+        evidence_corpus = _evidence_corpus(
+            workspace,
+            output,
+        )
+        lowered = evidence_corpus.casefold()
 
         reasons: list[str] = []
         outcome_checks = [
