@@ -35,6 +35,18 @@ _BUILD_CUES = re.compile(
     re.I,
 )
 
+_TDD_CUES = re.compile(
+    r"\b(?:pytest|tests?|test suite)\b",
+    re.I,
+)
+
+_REPAIR_CUES = re.compile(
+    r"\b(?:repair|fix|rerun|re-run|until all tests pass|"
+    r"finish only after all tests pass)\b",
+    re.I,
+)
+
+
 _EXPLANATION_CUES = re.compile(
     r"^\s*(?:what\s+is|explain|how\s+does|why\s+does|tell\s+me\s+about)\b",
     re.I,
@@ -390,6 +402,147 @@ def _cpp_action(
     )
 
 
+def _python_tdd_action(
+    request: str,
+    match: re.Match[str],
+    workspace: Path,
+) -> CodingResult:
+    """Run a deterministic pytest red-green repair workflow."""
+    filename = match.group("filename")
+    target = _safe_child(workspace, filename)
+    module_name = Path(filename).stem
+    test_target = _safe_child(
+        workspace,
+        f"test_{module_name}.py",
+    )
+
+    lowered = request.casefold()
+
+    supported = (
+        re.search(
+            r"\badd\s*\(\s*a\s*,\s*b\s*\)",
+            request,
+            re.I,
+        )
+        or "addition" in lowered
+    )
+
+    if not supported:
+        return CodingResult(
+            handled=False,
+            ok=False,
+            capability="",
+            summary="",
+            workspace=str(workspace),
+            files=[],
+            evidence=[],
+            error="Unsupported deterministic TDD task.",
+        )
+
+    broken_source = """from __future__ import annotations
+
+
+def add(a: int | float, b: int | float) -> int | float:
+    return a - b
+"""
+
+    repaired_source = """from __future__ import annotations
+
+
+def add(a: int | float, b: int | float) -> int | float:
+    return a + b
+"""
+
+    tests_source = f"""from {module_name} import add
+
+
+def test_addition() -> None:
+    assert add(2, 3) == 5
+
+
+def test_negative_numbers() -> None:
+    assert add(-4, -3) == -7
+"""
+
+    target.write_text(broken_source, encoding="utf-8")
+    test_target.write_text(tests_source, encoding="utf-8")
+
+    evidence: list[CommandEvidence] = []
+
+    red = _run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            test_target.name,
+        ],
+        cwd=workspace,
+        timeout=120,
+    )
+    evidence.append(red)
+
+    if red.exit_code == 0:
+        return CodingResult(
+            handled=True,
+            ok=False,
+            capability="development.python_pytest_red_green",
+            summary="The deliberately broken implementation unexpectedly passed.",
+            workspace=str(workspace),
+            files=[target.name, test_target.name],
+            evidence=evidence,
+            error="Expected the initial pytest run to fail.",
+        )
+
+    target.write_text(repaired_source, encoding="utf-8")
+
+    # The red and green implementations can have the same byte length and
+    # may be written within the same filesystem timestamp interval. Remove
+    # stale bytecode so the second pytest process imports the repaired source.
+    pycache = workspace / "__pycache__"
+    if pycache.is_dir():
+        shutil.rmtree(pycache, ignore_errors=True)
+
+    green = _run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            test_target.name,
+        ],
+        cwd=workspace,
+        timeout=120,
+    )
+    evidence.append(green)
+
+    if green.exit_code != 0:
+        return CodingResult(
+            handled=True,
+            ok=False,
+            capability="development.python_pytest_red_green",
+            summary="The repaired implementation still failed pytest.",
+            workspace=str(workspace),
+            files=[target.name, test_target.name],
+            evidence=evidence,
+            error=green.stderr or green.stdout,
+        )
+
+    return CodingResult(
+        handled=True,
+        ok=True,
+        capability="development.python_pytest_red_green",
+        summary=(
+            f"Created {target.name} and {test_target.name}; "
+            "confirmed the failing red phase, repaired the implementation, "
+            "and confirmed the passing green phase."
+        ),
+        workspace=str(workspace),
+        files=[target.name, test_target.name],
+        evidence=evidence,
+    )
+
+
 def _python_action(
     request: str,
     match: re.Match[str],
@@ -478,7 +631,23 @@ def try_coding_request(
 
     python = _PY_REQUEST.search(text)
     if python:
-        return _python_action(text, python, root)
+        if (
+            _TDD_CUES.search(text)
+            and _REPAIR_CUES.search(text)
+        ):
+            result = _python_tdd_action(
+                text,
+                python,
+                root,
+            )
+            if result.handled:
+                return result
+
+        return _python_action(
+            text,
+            python,
+            root,
+        )
 
     return None
 

@@ -976,6 +976,34 @@ def ensure_hf_gguf_runtime(
                 except OSError:
                     pass
         gguf_path = download_hf_gguf(spec, progress=progress)
+
+        if gguf_path is None:
+            return LocalBootstrapResult(
+                ok=False,
+                provider="local_gguf",
+                model=spec.key,
+                hardware_tier=profile.tier,
+                message=(
+                    "GGUF download or discovery returned no model path. "
+                    "No local runtime was started."
+                ),
+                actions=actions + ["gguf_path_missing"],
+                runtime_url=LLAMA_SERVER_HOST,
+            )
+
+        gguf_path = Path(gguf_path).expanduser().resolve()
+
+        if not gguf_path.is_file():
+            return LocalBootstrapResult(
+                ok=False,
+                provider="local_gguf",
+                model=spec.key,
+                hardware_tier=profile.tier,
+                message=f"GGUF model file is missing: {gguf_path}",
+                actions=actions + ["gguf_file_missing"],
+                runtime_url=LLAMA_SERVER_HOST,
+            )
+
         actions.append(f"downloaded:{gguf_path.name}")
 
         binaries = install_llama_cpp(progress)

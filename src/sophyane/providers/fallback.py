@@ -149,9 +149,18 @@ class FallbackProvider(Provider):
             )
             from sophyane.providers.local_gguf import load_gguf_runtime_state
 
-            if is_credit_or_auth_failure(joined):
+            cfg = load_llm_config()
+            allow_cloud_local_rescue = bool(
+                cfg.get("allow_cloud_local_rescue", False)
+            )
+
+            if (
+                is_credit_or_auth_failure(joined)
+                and allow_cloud_local_rescue
+            ):
                 LOGGER.warning(
-                    "All configured cloud providers failed; bootstrapping local open model"
+                    "Configured cloud providers failed; explicit local rescue "
+                    "is enabled, bootstrapping llama.cpp/GGUF"
                 )
                 result = ensure_local_open_model()
                 if result.ok:
@@ -204,10 +213,32 @@ class FallbackProvider(Provider):
             errors.append(f"local_bootstrap: {bootstrap_error}")
 
         self.last_errors = errors
+        rate_limited = any(
+            marker in joined.casefold()
+            for marker in (
+                "resource_exhausted",
+                "quota exceeded",
+                "retrydelay",
+                "retry in ",
+                "requestsperminute",
+                "requests per minute",
+            )
+        )
+
+        if rate_limited:
+            message = (
+                "Cloud provider rate limit reached. Retry after the delay "
+                "reported by the provider. Automatic local bootstrap is "
+                "disabled unless allow_cloud_local_rescue=true.\n- "
+            )
+        else:
+            message = (
+                "All configured LLM providers failed. Configure the selected "
+                "provider, or explicitly choose local llama.cpp/GGUF mode.\n- "
+            )
+
         raise ProviderError(
-            "All LLM providers failed. Top up API credits, or run "
-            "`sophyane /local` to install a local model.\n- "
-            + "\n- ".join(errors)
+            message + "\n- ".join(errors)
         )
 
 
