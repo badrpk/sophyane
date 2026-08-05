@@ -59,7 +59,7 @@ sophyane --hardware-api      # serve multi-language API
 
 ## Open-source / freeware stacks
 
-llama.cpp · ONNX Runtime · PyTorch · TensorFlow/TFLite · Ollama · OpenVINO ·
+llama.cpp · ONNX Runtime · PyTorch · TensorFlow/TFLite · llama.cpp · OpenVINO ·
 pymodbus · Paho MQTT · asyncua/open62541 · Node.js · g++/clang/cmake
 
 ## Proprietary vendor stacks (integration surfaces)

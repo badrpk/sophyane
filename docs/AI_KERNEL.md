@@ -49,7 +49,7 @@ Detects / catalogs:
 - **OpenVINO / oneAPI** (Intel)
 - **Metal / CoreML / MLX** (Apple)
 - **QNN / TFLite** (Qualcomm / mobile)
-- **llama.cpp, ONNX Runtime, PyTorch, Ollama**, MQTT, Modbus, OPC-UA, …
+- **llama.cpp, ONNX Runtime, PyTorch, llama.cpp**, MQTT, Modbus, OPC-UA, …
 
 ## ERP connectivity
 

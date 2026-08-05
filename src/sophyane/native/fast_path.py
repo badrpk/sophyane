@@ -43,16 +43,36 @@ def handle_version(_: str) -> str:
         return "Sophyane (version unknown)"
 
 
-def handle_list_models(_: str) -> str:
-    out = _run(["ollama", "list"])
-    if not out:
-        return "No local Ollama models found (or ollama not running)."
-    lines = [ln for ln in out.splitlines() if ln.strip()]
-    models = lines[1:] if len(lines) > 1 else []
-    if not models:
-        return "No local models installed."
-    names = [ln.split()[0] for ln in models if ln.split()]
-    return f"{len(names)} local model(s):\n" + "\n".join(f"  - {n}" for n in names)
+def _local_models() -> str:
+    """Report the configured llama.cpp/GGUF model."""
+    import json
+    from pathlib import Path
+
+    state = (
+        Path.home()
+        / ".local"
+        / "state"
+        / "sophyane"
+        / "gguf_runtime.json"
+    )
+
+    if not state.exists():
+        return "No local GGUF model is configured."
+
+    try:
+        data = json.loads(state.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "Local GGUF runtime state is unreadable."
+
+    model = str(
+        data.get("model")
+        or data.get("gguf_path")
+        or "unknown"
+    )
+
+    return f"Local llama.cpp/GGUF model: {model}"
+
+
 
 
 def handle_current_model(_: str) -> str:
@@ -97,7 +117,7 @@ _ROUTES: list[tuple[re.Pattern[str], Callable[[str], str]]] = [
     ),
     (
         re.compile(
-            r"(how many|list).*(model|llm)|ollama\s+list|local\s+llm",
+            r"(how many|list).*(model|llm)|local\s+llm|gguf\s+model",
             re.I,
         ),
         handle_list_models,

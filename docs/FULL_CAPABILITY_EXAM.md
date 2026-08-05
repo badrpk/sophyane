@@ -34,8 +34,8 @@
 | Slash | `/daemon-tick`, `/memory`, `/tools`, `/status` | PASS |
 | TUI palette | `/help`, `/local`, `/model`, `/status`, `/doctor`, `/quit`, `/new` | PASS present |
 | Local open model | HF GGUF + GitHub llama.cpp server | PASS |
-| Provider plugins | 9 (anthropic, deepseek, gemini, groq, local_gguf, ollama, openai, openrouter, xai) | PASS discovery |
-| Fallback chain | `local_gguf → gemini → xai → openai → ollama` | PASS |
+| Provider plugins | 9 (anthropic, deepseek, gemini, groq, local_gguf, llama.cpp, openai, openrouter, xai) | PASS discovery |
+| Fallback chain | `local_gguf → gemini → xai → openai → llama.cpp` | PASS |
 | Harness | tools, model fallback, guardrails, sandbox, repair loop | PASS |
 | Multi-agent | single + acceptance multi with supervisor/workers | PASS |
 | Daemon | queue tick idle SUCCESS | PASS |

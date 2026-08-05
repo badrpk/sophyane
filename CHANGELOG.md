@@ -160,7 +160,7 @@
 
 ### Added
 
-- Hugging Face GGUF open-model path when Ollama cannot install or run
+- Hugging Face GGUF open-model path when llama.cpp cannot install or run
 - GitHub `llama.cpp` runtime install with shared libraries + PATH wrappers
 - `local_gguf` provider (llama-server on `:8766`, llama-cli fallback)
 - Hardware-tier GGUF catalog (SmolLM2 / Qwen2.5 0.5B / TinyLlama / larger tiers)
@@ -169,11 +169,11 @@
 
 - Port clash with `sophyane-web` on 8765 — model server defaults to **8766**
 - Thin binary-only llama install missing `libllama-*-impl.so`
-- Disk reclaim of failed Ollama extracts before HF bootstrap
+- Disk reclaim of failed legacy local-runtime extracts before HF bootstrap
 
 ### Verified
 
-- Freeing `ollama-extract` recovered ~1.6GB on constrained Crostini
+- Freeing `legacy-runtime-extract` recovered ~1.6GB on constrained Crostini
 - Qwen2.5-0.5B GGUF served via llama-server; smoke generate succeeded
 
 ## 16.1.0 — 2026-07-15
@@ -181,7 +181,7 @@
 ### Added
 
 - Grok-style interactive CLI (`tui.py`): banner, slash palette, spinner, scrollback, `/model`, `/local`, `/session-info`, `/export`, multiline drafts
-- Hardware-aware local open-model bootstrap (`local_runtime.py`): profile RAM/disk, install Ollama, pull tier-fit model, warm-up, auto-switch config
+- Hardware-aware local open-model bootstrap (`local_runtime.py`): profile RAM/disk, install llama.cpp, pull tier-fit model, warm-up, auto-switch config
 - Automatic rescue inside `FallbackProvider` when frontier APIs fail with quota/credit/auth errors
 - Sandboxed harness runner, expanded guardrails, `/daemon-tick` local queue processor (from 16.0.8 line)
 
@@ -189,7 +189,7 @@
 
 - Interactive entry now uses the Grok-style TUI instead of a bare `sophyane>` REPL
 - Runtime identity banner aligned with Grok CLI conventions
-- `llm.json` fallback order prefers recovered Ollama after auto-promotion
+- `llm.json` fallback order prefers recovered llama.cpp runtime after auto-promotion
 
 ### Verified
 

@@ -25,7 +25,7 @@ Sophyane maintains a 30-technology compatibility matrix split into a lightweight
 | `langchain-cohere` | Model | Cohere generation and embeddings |
 | `langchain-mistralai` | Model | Mistral models |
 | `langchain-groq` | Model | Groq-hosted inference |
-| `langchain-ollama` | Model/local | Local Ollama models |
+| `local llama.cpp integration` | Model/local | Local llama.cpp/GGUF models |
 | `langchain-huggingface` | Model/local | Hugging Face models and embeddings |
 | `langchain-pinecone` | Vector store | Pinecone retrieval |
 | `langchain-qdrant` | Vector store | Qdrant retrieval |

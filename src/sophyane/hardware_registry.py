@@ -233,12 +233,7 @@ OPEN_SOFTWARE: dict[str, dict[str, Any]] = {
         "role": "inference / mobile",
         "detect": ["python:tensorflow", "python:tflite"],
     },
-    "ollama": {
-        "name": "Ollama",
-        "langs": ["Go", "HTTP API"],
-        "role": "local model server",
-        "detect": ["ollama"],
-    },
+
     "openvino": {
         "name": "OpenVINO (open core)",
         "langs": ["C++", "Python"],

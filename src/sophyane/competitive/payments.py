@@ -113,7 +113,7 @@ PRICING_CATALOG = {
         ],
     },
     "huobz": {
-        "competitor": "OpenAI API / Ollama cloud",
+        "competitor": "OpenAI API and hosted model services",
         "currency": "USD",
         "items": [
             {"sku": "edge_node", "name": "Edge node license", "competitor_price": 25, "our_price": 7.99, "unit": "month"},

@@ -7,7 +7,7 @@ Sophyane now distinguishes between two provider failure modes:
 1. transport/API failure, handled by the normal fallback chain; and
 2. responsive but repeatedly validator-rejected local output.
 
-When a local GGUF or Ollama model receives repeated repair prompts, Sophyane can make one bounded request to a configured cloud provider, use that provider's corrected artifact or action, and automatically return to the local provider on the next call.
+When a local GGUF or llama.cpp model receives repeated repair prompts, Sophyane can make one bounded request to a configured cloud provider, use that provider's corrected artifact or action, and automatically return to the local provider on the next call.
 
 ## Default behavior
 

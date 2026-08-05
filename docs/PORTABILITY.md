@@ -15,7 +15,7 @@ industrial gateways**.
 | **Linux** | `curl -fsSL …/install.sh \| sh` | Primary; Debian/Ubuntu/Fedora/Arch/Crostini |
 | **macOS** | same install.sh | Intel + Apple Silicon; Homebrew Python 3 |
 | **Windows** | `install.ps1` | PowerShell; user-local venv under profile |
-| **Android** | Termux + install.sh | Mobile profile; prefer small GGUF/Ollama |
+| **Android** | Termux + install.sh | Mobile profile; prefer small llama.cpp/GGUF |
 | **iOS** | Companion | Use web UI or SSH to a paired Linux/Mac host; on-device Python is constrained |
 | **Cloud** | Docker / systemd / install.sh | Server profile; full coding agent |
 | **Edge / IoT gateway** | Linux ARM install | Edge/nano profile; short chat + tools |
@@ -69,8 +69,8 @@ sophyane --edge-health
 | Class | Recommendation |
 |-------|----------------|
 | nano_edge | Cloud API only, or SmolLM2-class GGUF if ≥400 MB free |
-| edge / mobile | Qwen2.5-0.5B / TinyLlama GGUF or Ollama |
-| workstation | Ollama 1B–8B or frontier APIs with fallback |
+| edge / mobile | Qwen2.5-0.5B / TinyLlama GGUF or llama.cpp |
+| workstation | llama.cpp GGUF models or frontier APIs with fallback |
 | server/cloud | Larger open models or multi-provider routing |
 
 Auto-rescue when cloud credits fail:

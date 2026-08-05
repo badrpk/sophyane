@@ -4,7 +4,7 @@
 
 Sophyane combines a persistent engineering agent, semantic intent routing, durable graph execution, repository intelligence, coded sandboxes, validator-driven recovery, browser verification, multi-provider orchestration, MCP interoperability, and native COI sub-agents.
 
-It runs on Linux, macOS, Windows, ChromeOS Linux, Android Termux, UserLAnd, VPS hosts, and lightweight edge systems. It can use local GGUF or Ollama models, cloud providers such as Gemini, OpenAI, Anthropic, xAI, Groq, OpenRouter and DeepSeek, or a local-first chain in which a cloud model rescues repeated validator failures.
+It runs on Linux, macOS, Windows, ChromeOS Linux, Android Termux, UserLAnd, VPS hosts, and lightweight edge systems. It can use local GGUF models served by llama.cpp, cloud providers such as Gemini, OpenAI, Anthropic, xAI, Groq, OpenRouter and DeepSeek, or a local-first chain in which a cloud model rescues repeated validator failures.
 
 ## Current verified status
 

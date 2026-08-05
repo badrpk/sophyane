@@ -1,7 +1,7 @@
 """Top LLM providers + public models catalog for Sophyane browser/agent UI.
 
 Cloud API providers deliver top agentic performance. Local open-source
-(ollama / local_gguf) is always available as a free fallback when the user
+local_gguf is always available as a free fallback when the user
 has no API credits or prefers offline.
 """
 
@@ -154,25 +154,6 @@ TOP_PROVIDERS: list[dict[str, Any]] = [
         "default_model": "mistralai/mistral-large",
     },
     {
-        "id": "ollama",
-        "name": "Ollama (local free)",
-        "rank": 9,
-        "tier": "local_free",
-        "env": "",
-        "requires_api_key": False,
-        "docs": "https://ollama.com/",
-        "note": "Free on your machine. Install models with `ollama pull …`.",
-        "models": [
-            {"id": "llama3.2", "label": "Llama 3.2"},
-            {"id": "llama3.1", "label": "Llama 3.1"},
-            {"id": "qwen2.5", "label": "Qwen 2.5"},
-            {"id": "mistral", "label": "Mistral"},
-            {"id": "deepseek-r1", "label": "DeepSeek R1"},
-            {"id": "codellama", "label": "Code Llama"},
-        ],
-        "default_model": "llama3.2",
-    },
-    {
         "id": "local_gguf",
         "name": "Local GGUF (free fallback)",
         "rank": 10,
@@ -275,7 +256,7 @@ def catalog_status() -> dict[str, Any]:
         "fallback_order": order,
         "note": (
             "Cloud API keys unlock top agentic performance. "
-            "Local GGUF/Ollama remain free fallbacks when keys are missing or unpaid."
+            "Local llama.cpp/GGUF remain free fallbacks when keys are missing or unpaid."
         ),
         "providers": out_providers,
     }
@@ -304,7 +285,7 @@ def apply_llm_selection(
 
     # Validate model is in catalog list (allow custom if user pastes openrouter id)
     known = {m["id"] for m in entry.get("models") or []}
-    if known and model and model not in known and provider not in {"openrouter", "mistral", "ollama"}:
+    if known and model and model not in known and provider not in {"openrouter", "mistral"}:
         # still allow but warn
         pass
 
@@ -329,7 +310,7 @@ def apply_llm_selection(
                 "ok": False,
                 "error": (
                     f"API key required for {entry['name']}. "
-                    f"Paste a key (env {entry.get('env')}) or pick Ollama / Local GGUF for free use."
+                    f"Paste a key (env {entry.get('env')}) or pick Local llama.cpp/GGUF for free use."
                 ),
                 "docs": entry.get("docs"),
             }
@@ -366,7 +347,6 @@ def apply_llm_selection(
         add(cfg["provider"])
         for pid in DEFAULT_FALLBACK_ORDER:
             add(pid)
-        add("ollama")
         add("local_gguf")
         llm["fallback_order"] = order
 

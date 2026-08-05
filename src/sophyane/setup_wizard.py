@@ -59,7 +59,7 @@ def _hardware() -> dict[str, Any]:
         "machine": platform.machine(),
         "ram_gb": _memory_gb(),
         "free_gb": round(disk.free / (1024 ** 3), 1),
-        "ollama": bool(shutil.which("ollama")),
+        "llama_server": bool(shutil.which("llama-server")),
         "nvidia": bool(shutil.which("nvidia-smi")),
         "termux": termux,
     }
@@ -143,156 +143,26 @@ def _choose_cloud(providers: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def _install_ollama(hw: dict[str, Any]) -> bool:
-    if hw["ollama"]:
-        return True
-    print("Ollama is not installed.")
-    if not _yes("Install the recommended local runtime now?"):
-        return False
-    if hw["termux"] and shutil.which("pkg"):
-        command = ["pkg", "install", "ollama", "-y"]
-    elif platform.system() == "Linux" and shutil.which("curl"):
-        command = ["sh", "-c", "curl -fsSL https://ollama.com/install.sh | sh"]
-    else:
-        print("Automatic installation is unavailable on this platform.")
-        print("Install Ollama, then run `sophyane --setup` again.")
-        return False
-    print("Installing Ollama...")
-    result = _run(command)
-    if result.returncode != 0:
-        print(result.stderr.strip() or result.stdout.strip() or "Ollama installation failed.")
-        return False
-    return bool(shutil.which("ollama"))
+def _configure_local_gguf() -> dict[str, Any] | None:
+    """Bootstrap Sophyane's llama.cpp/GGUF runtime."""
+    from sophyane.local_runtime import ensure_local_open_model
 
+    print("Preparing llama.cpp and a hardware-fit GGUF model...")
 
-def _installed_ollama_models() -> list[str]:
-    if not shutil.which("ollama"):
-        return []
-    result = _run(["ollama", "list"])
-    if result.returncode != 0:
-        return []
-    lines = result.stdout.splitlines()[1:]
-    return [line.split()[0] for line in lines if line.split()]
+    result = ensure_local_open_model(
+        progress=lambda message: print(f"  {message}"),
+    )
 
-
-def _manage_local_models() -> None:
-    installed = _installed_ollama_models()
-    if not installed:
-        print("No Ollama models are installed.")
-        return
-    print()
-    print("Installed local models")
-    for index, model in enumerate(installed, 1):
-        print(f"  {index}. {model}")
-    print("  0. Back")
-    selected = _ask_number(f"Delete model [0-{len(installed)}]: ", 0, len(installed))
-    if selected == 0:
-        return
-    model = installed[selected - 1]
-    if _yes(f"Delete local model {model} and recover disk space?"):
-        result = _run(["ollama", "rm", model])
-        print(result.stdout.strip() or result.stderr.strip() or "Done.")
-
-
-def _choose_local(providers: dict[str, Any]) -> dict[str, Any] | None:
-    if "ollama" not in providers:
-        print("The Ollama provider plugin is unavailable.")
+    if not result.ok:
+        print(f"Local runtime setup failed: {result.message}")
         return None
-    hw = _hardware()
-    print()
-    print("Detected hardware")
-    print("─────────────────")
-    print(f" System:       {hw['system']}")
-    print(f" Architecture: {hw['machine']}")
-    print(f" RAM:          approximately {hw['ram_gb']} GB")
-    print(f" Free storage: {hw['free_gb']} GB")
-    print(f" NVIDIA GPU:   {'yes' if hw['nvidia'] else 'not detected'}")
-    print(f" Ollama:       {'installed' if hw['ollama'] else 'not installed'}")
 
-    recommended = [model for model in LOCAL_MODELS if model["min_ram_gb"] <= hw["ram_gb"]]
-    if not recommended:
-        recommended = list(LOCAL_MODELS[:2])
-    print()
-    print("Hardware-compatible local models")
-    print("────────────────────────────────")
-    for index, model in enumerate(recommended, 1):
-        print(
-            f"  {index}. {model['label']} — {model['note']} "
-            f"(recommended RAM {model['min_ram_gb']}+ GB)"
-        )
-    custom_number = len(recommended) + 1
-    print(f"  {custom_number}. Enter another Ollama model")
-    print(f"  {custom_number + 1}. Delete an installed local model")
-    print("  0. Back")
-    selected = _ask_number(f"Select [0-{custom_number + 1}]: ", 0, custom_number + 1)
-    if selected == 0:
-        return None
-    if selected == custom_number + 1:
-        _manage_local_models()
-        return None
-    if selected == custom_number:
-        model_id = input("Ollama model name: ").strip()
-        if not model_id:
-            return None
-    else:
-        model_id = recommended[selected - 1]["model"]
-
-    if not _install_ollama(hw):
-        return None
-    installed = _installed_ollama_models()
-    if model_id not in installed:
-        estimated_need = next(
-            (item["min_ram_gb"] for item in LOCAL_MODELS if item["model"] == model_id),
-            4,
-        )
-        if hw["free_gb"] < max(2, estimated_need / 2):
-            print("Warning: available storage may be insufficient for this model.")
-        if _yes(f"Download and configure {model_id} now?", default=True):
-            result = subprocess.run(["ollama", "pull", model_id], check=False)
-            if result.returncode != 0:
-                print("Model download failed; configuration was not changed.")
-                return None
-        else:
-            print("Model was not downloaded; configuration was not changed.")
-            return None
     return {
-        "provider": "ollama",
-        "model": model_id,
-        "company": "Local/Ollama",
-        "runtime_profile": "local",
-        "timeout": 300,
-        "temperature": 0.3,
-        "max_tokens": 2048 if hw["ram_gb"] < 8 else 4096,
+        "provider": "local_gguf",
+        "model": result.model,
+        "company": "Local/llama.cpp",
+        "base_url": result.runtime_url,
     }
-
-
-def _show_current() -> None:
-    config = load_config()
-    print()
-    print("Current Sophyane model")
-    print("──────────────────────")
-    print(f" Company:  {config.get('company', 'not recorded')}")
-    print(f" Provider: {config.get('provider', 'not configured')}")
-    print(f" Model:    {config.get('model', 'not configured')}")
-
-
-def _forget_key(providers: dict[str, Any]) -> None:
-    keyed = [
-        (provider_id, plugin.metadata)
-        for provider_id, plugin in sorted(providers.items())
-        if plugin.metadata.requires_api_key
-    ]
-    print()
-    for index, (_, metadata) in enumerate(keyed, 1):
-        print(f"  {index}. {metadata.display_name}")
-    print("  0. Back")
-    selected = _ask_number(f"Forget provider key [0-{len(keyed)}]: ", 0, len(keyed))
-    if selected == 0:
-        return
-    provider_id, metadata = keyed[selected - 1]
-    if _yes(f"Forget the stored {metadata.display_name} API key?"):
-        removed = delete_secret(provider_id)
-        print("API key forgotten." if removed else "No stored key was found.")
 
 
 def run_setup_wizard() -> dict[str, Any]:

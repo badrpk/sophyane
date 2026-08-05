@@ -10,7 +10,7 @@
 6. `VerificationResult` — explicit pass/fail feedback recorded in the execution trace.
 7. `SandboxRunner` — timed shell/python execution with output caps and soft resource limits.
 8. `FallbackProvider` — multi-provider LLM chain + automatic open-model rescue.
-9. `local_runtime` — hardware profiling, Ollama install/serve, tier-fit model pull.
+9. `local_runtime` — hardware profiling, llama.cpp install/serve, tier-fit model pull.
 10. Grok-style TUI — slash commands, spinner, session scrollback, `/local` bootstrap.
 11. `/daemon-tick` — processes the local SQLite task queue without requiring cloud LLM when idle.
 

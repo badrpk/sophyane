@@ -139,16 +139,6 @@ CLOUD_COMPANIES: tuple[CompanyChoice, ...] = (
 
 
 LOCAL_MODELS: tuple[ModelChoice, ...] = (
-    _m("ollama", "smollm2:1.7b", "SmolLM2 1.7B", "very low memory", 3),
-    _m("ollama", "deepseek-r1:1.5b", "DeepSeek R1 1.5B", "small reasoning", 3),
-    _m("ollama", "qwen2.5:3b", "Qwen 2.5 3B", "multilingual and light", 5),
-    _m("ollama", "llama3.2:3b", "Llama 3.2 3B", "general small model", 5),
-    _m("ollama", "qwen2.5-coder:3b", "Qwen 2.5 Coder 3B", "coding on constrained devices", 5),
-    _m("ollama", "gemma3:4b", "Gemma 3 4B", "small multimodal", 7),
-    _m("ollama", "phi4-mini", "Phi-4 Mini", "compact reasoning", 7),
-    _m("ollama", "mistral:7b", "Mistral 7B", "strong general local", 10),
-    _m("ollama", "llama3.1:8b", "Llama 3.1 8B", "strong local generalist", 12),
-    _m("ollama", "deepseek-r1:8b", "DeepSeek R1 8B", "strong local reasoning", 12),
 )
 
 # Backward compatibility for code importing the previous flat list.

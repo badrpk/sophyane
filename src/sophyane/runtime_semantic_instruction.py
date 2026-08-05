@@ -184,7 +184,6 @@ def _reorder_provider_list(
             for marker in (
                 "local",
                 "gguf",
-                "ollama",
                 "llama",
             )
         )
