@@ -1,14 +1,14 @@
 {
   "day": "2026-08-06",
-  "exported_at": 1785961569.0405426,
+  "exported_at": 1785962142.922344,
   "device": "localhost-cd8f5f9f",
   "sophyane_version": "21.1.1",
   "chain_verify": {
     "ok": true,
-    "length": 296,
-    "tip": "755d5fb51ef752bf3d872581ad65630b563cc42a959cf9dde3311de5a2b422a9"
+    "length": 305,
+    "tip": "abe0ba2a49bdedffe52c9038f14105e913bed9cedff6342120ed50a5b324bc6b"
   },
-  "count": 6,
+  "count": 15,
   "blocks": [
     {
       "index": 290,
@@ -135,7 +135,196 @@
       "hash": "755d5fb51ef752bf3d872581ad65630b563cc42a959cf9dde3311de5a2b422a9",
       "device": "localhost-cd8f5f9f",
       "version": "21.1.1"
+    },
+    {
+      "index": 296,
+      "timestamp": 1785961569.8132198,
+      "proposal": {
+        "proposal_id": "1846fa3d-34e7-4bcd-b18d-de2271f2ffa3",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496100 loss=0.015624558 samples=83",
+        "source_device": "localhost-cd8f5f9f",
+        "evidence": {
+          "base_hash": "fe2a5b4865ba530271fefad77fc1c1e5",
+          "weights": "d7ef71663b2c94d1672e3c8fc4161b80"
+        },
+        "score": 0.15,
+        "created_at": 1785961569.8132176
+      },
+      "prev_hash": "755d5fb51ef752bf3d872581ad65630b563cc42a959cf9dde3311de5a2b422a9",
+      "hash": "578385a9f5f0e2609b8f4a3a47e3f67fc6979425b35e90f5d9d60c8e3cd5f8f9",
+      "device": "localhost-cd8f5f9f",
+      "version": "21.1.1"
+    },
+    {
+      "index": 297,
+      "timestamp": 1785961569.8430328,
+      "proposal": {
+        "proposal_id": "4295dbf6-2b4e-456c-b0d6-69ba09882e2c",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496100 loss=0.015624558 samples=83",
+        "source_device": "localhost-cd8f5f9f",
+        "evidence": {
+          "base_hash": "fe2a5b4865ba530271fefad77fc1c1e5",
+          "weights": "d7ef71663b2c94d1672e3c8fc4161b80"
+        },
+        "score": 0.15,
+        "created_at": 1785961569.8430293
+      },
+      "prev_hash": "578385a9f5f0e2609b8f4a3a47e3f67fc6979425b35e90f5d9d60c8e3cd5f8f9",
+      "hash": "51bf1951d904893ec03570f079f5f55de5b25fbca38d9d2fcc51693db02e520b",
+      "device": "localhost-cd8f5f9f",
+      "version": "21.1.1"
+    },
+    {
+      "index": 298,
+      "timestamp": 1785961569.9108863,
+      "proposal": {
+        "proposal_id": "7e184013-2e75-4281-a3f8-44eb53c24948",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496100 loss=0.015624552 samples=84",
+        "source_device": "localhost-cd8f5f9f",
+        "evidence": {
+          "base_hash": "fe2a5b4865ba530271fefad77fc1c1e5",
+          "weights": "254c10faa341f6466a716723ead8ae96"
+        },
+        "score": 0.15,
+        "created_at": 1785961569.9108846
+      },
+      "prev_hash": "51bf1951d904893ec03570f079f5f55de5b25fbca38d9d2fcc51693db02e520b",
+      "hash": "6f1ddcdfb1f2651a09318c7172df41cfa9949f091e9de65948d0a9012feaa6b0",
+      "device": "localhost-cd8f5f9f",
+      "version": "21.1.1"
+    },
+    {
+      "index": 299,
+      "timestamp": 1785962138.5601342,
+      "proposal": {
+        "proposal_id": "512df3fa-2bcc-4136-9354-210adb314d31",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.1.1 on android/aarch64",
+        "source_device": "localhost-cd8f5f9f",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": false,
+          "wifi": true
+        },
+        "score": 0.1,
+        "created_at": 1785962138.560125
+      },
+      "prev_hash": "6f1ddcdfb1f2651a09318c7172df41cfa9949f091e9de65948d0a9012feaa6b0",
+      "hash": "b00b83268d98a6a855366dfbfb6ae3e2f8a38a4125d78f7c59998253fe18fc1c",
+      "device": "localhost-cd8f5f9f",
+      "version": "21.1.1"
+    },
+    {
+      "index": 300,
+      "timestamp": 1785962138.9735916,
+      "proposal": {
+        "proposal_id": "f0bba0ec-2c2d-4df7-8449-ec71bec91ecb",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.1.1 on android/aarch64",
+        "source_device": "localhost-cd8f5f9f",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": false,
+          "wifi": true
+        },
+        "score": 0.1,
+        "created_at": 1785962138.9735851
+      },
+      "prev_hash": "b00b83268d98a6a855366dfbfb6ae3e2f8a38a4125d78f7c59998253fe18fc1c",
+      "hash": "7655754c65320c9d3c0c3fdafb562b358a7454254dddc748b20265d7f775a721",
+      "device": "localhost-cd8f5f9f",
+      "version": "21.1.1"
+    },
+    {
+      "index": 301,
+      "timestamp": 1785962140.5053265,
+      "proposal": {
+        "proposal_id": "1ccaeea0-9f54-41e4-943c-c820b5d25d65",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "localhost-cd8f5f9f",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1785962140.5053234
+      },
+      "prev_hash": "7655754c65320c9d3c0c3fdafb562b358a7454254dddc748b20265d7f775a721",
+      "hash": "05bbfc633c96de67d891469258430d9782eadfcd689d2a49e373dc80015552ad",
+      "device": "localhost-cd8f5f9f",
+      "version": "21.1.1"
+    },
+    {
+      "index": 302,
+      "timestamp": 1785962140.8636844,
+      "proposal": {
+        "proposal_id": "c0a1872d-a85b-47c8-83ac-6574cee80bc7",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.1.1 on android/aarch64",
+        "source_device": "localhost-cd8f5f9f",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": false,
+          "wifi": true
+        },
+        "score": 0.1,
+        "created_at": 1785962140.863681
+      },
+      "prev_hash": "05bbfc633c96de67d891469258430d9782eadfcd689d2a49e373dc80015552ad",
+      "hash": "1dbf69ce451e7cb5a894b1f018daa03307da49cb4d2a334de5808e966d4c5649",
+      "device": "localhost-cd8f5f9f",
+      "version": "21.1.1"
+    },
+    {
+      "index": 303,
+      "timestamp": 1785962140.933454,
+      "proposal": {
+        "proposal_id": "5b11f30a-9d1e-4b6b-a493-f6cc09133b4d",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496100 loss=0.015624547 samples=85",
+        "source_device": "localhost-cd8f5f9f",
+        "evidence": {
+          "base_hash": "fe2a5b4865ba530271fefad77fc1c1e5",
+          "weights": "90e01355e53390393ee6d2b8bc62ad16"
+        },
+        "score": 0.15,
+        "created_at": 1785962140.9334512
+      },
+      "prev_hash": "1dbf69ce451e7cb5a894b1f018daa03307da49cb4d2a334de5808e966d4c5649",
+      "hash": "730ad24c107b25a452cffa0dd375b2df3402837f9d76c407f53d3263335c5bb1",
+      "device": "localhost-cd8f5f9f",
+      "version": "21.1.1"
+    },
+    {
+      "index": 304,
+      "timestamp": 1785962142.9055269,
+      "proposal": {
+        "proposal_id": "160dfcfc-ca4a-4d21-9090-efe4551c84fe",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "localhost-cd8f5f9f",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1785962142.9055226
+      },
+      "prev_hash": "730ad24c107b25a452cffa0dd375b2df3402837f9d76c407f53d3263335c5bb1",
+      "hash": "abe0ba2a49bdedffe52c9038f14105e913bed9cedff6342120ed50a5b324bc6b",
+      "device": "localhost-cd8f5f9f",
+      "version": "21.1.1"
     }
   ],
-  "merkle_root": "e8e359762c129eaa5e90e1399a9dbb595db028bb8a910a7de53a4d647f105d4d"
+  "merkle_root": "6f05e5fc2a27da380e40e920bf85af0b9e6356b7ad98dae1d7892a251c93e469"
 }
