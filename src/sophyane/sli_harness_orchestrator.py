@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from sophyane.harness_task_policy import classify
 from sophyane.unified_execution_kernel import execute_request
+from sophyane.sli_harness_dashboard import build_and_open_dashboard
 
 Progress = Callable[[str], None]
 REPORT_NAME = ".sophyane-harness-report.json"
@@ -152,6 +153,20 @@ def run_harness_execution(
     }
     _write_report(root, payload)
 
+    try:
+        dashboard_url = build_and_open_dashboard(
+            root,
+            payload,
+        )
+        progress(
+            f"SLI harness: dashboard={dashboard_url}"
+        )
+    except Exception as error:
+        dashboard_url = ""
+        progress(
+            f"SLI harness dashboard unavailable: {error}"
+        )
+
     progress(f"SLI harness: capability={result.capability}")
     progress(
         f"SLI harness: evidence commands={len(commands)} failed={len(failed)}"
@@ -168,6 +183,11 @@ def run_harness_execution(
         f"Failed commands: {len(failed)}",
         f"Evidence file: {REPORT_NAME}",
     ]
+
+    if dashboard_url:
+        lines.append(
+            f"Visual dashboard: {dashboard_url}"
+        )
 
     if policy.protected_context:
         lines.append("Protected context: preserved")

@@ -38,6 +38,22 @@ def classify(state: SLIState, progress: Progress) -> SLIState:
     q = (state.request or "").lower()
     progress(f"SLI-graph: classify «{state.request[:80]}»")
 
+    # Private-account operations must never fall through to public
+    # repository acquisition or reusable SLI memory.
+    try:
+        from sophyane.sli_personal_connector import (
+            is_personal_connector_request,
+        )
+
+        if is_personal_connector_request(state.request):
+            state.route = "personal_connector"
+            state.meta["private"] = True
+            state.log("route=personal_connector")
+            progress("SLI-graph: private-data boundary activated")
+            return state
+    except Exception as error:
+        state.errors.append(f"classify-personal:{error}")
+
     if any(
         key in q
         for key in (
@@ -98,6 +114,57 @@ def _ok(state: SLIState) -> None:
         state.files = [str(path) for path in workspace.rglob("*") if path.is_file()]
 
 
+
+def try_personal_connector(
+    state: SLIState,
+    progress: Progress,
+) -> SLIState:
+    """Execute a private connector request without public fallback."""
+
+    progress("SLI-graph: fail-closed personal connector")
+
+    try:
+        from sophyane.sli_personal_connector import (
+            run_personal_connector,
+        )
+
+        state.report = str(
+            run_personal_connector(
+                state.request,
+                Path(state.workspace),
+                progress=progress,
+            )
+            or ""
+        )
+
+        _ok(state)
+        state.meta["terminal"] = True
+        state.meta["promotion_blocked"] = True
+        state.log(
+            f"personal-connector success={state.success}"
+        )
+
+    except Exception as error:
+        state.errors.append(
+            f"personal-connector:{error}"
+        )
+        state.meta["terminal"] = True
+        state.meta["promotion_blocked"] = True
+        state.report = (
+            "Sophyane private connector\n"
+            "Connector available: False\n"
+            f"Reason: {error}\n"
+            "Internet fallback: blocked\n"
+            "Memory promotion: blocked\n"
+            "Success: False"
+        )
+        progress(
+            f"SLI-graph private connector error: {error}"
+        )
+
+    return state
+
+
 def try_harness_execution(state: SLIState, progress: Progress) -> SLIState:
     if state.success:
         return state
@@ -123,7 +190,7 @@ def try_harness_execution(state: SLIState, progress: Progress) -> SLIState:
 
 
 def try_memory_router(state: SLIState, progress: Progress) -> SLIState:
-    if state.success:
+    if state.success or state.meta.get("terminal"):
         return state
 
     progress("SLI-graph: memory/router (no re-entry)")
@@ -154,7 +221,7 @@ def try_memory_router(state: SLIState, progress: Progress) -> SLIState:
 
 
 def try_topic(state: SLIState, progress: Progress) -> SLIState:
-    if state.success:
+    if state.success or state.meta.get("terminal"):
         return state
 
     progress("SLI-graph: rich topic-site orchestration")
@@ -197,7 +264,7 @@ def try_topic(state: SLIState, progress: Progress) -> SLIState:
 
 
 def try_python_harness(state: SLIState, progress: Progress) -> SLIState:
-    if state.success:
+    if state.success or state.meta.get("terminal"):
         return state
 
     progress("SLI-graph: python harness")
@@ -228,7 +295,16 @@ def try_python_harness(state: SLIState, progress: Progress) -> SLIState:
 
 
 def try_internet(state: SLIState, progress: Progress) -> SLIState:
-    if state.success:
+    if (
+        state.success
+        or state.meta.get("terminal")
+        or state.meta.get("private")
+    ):
+        if state.meta.get("private"):
+            progress(
+                "SLI-graph: public acquisition blocked "
+                "by private-data boundary"
+            )
         return state
 
     progress("SLI-graph: internet acquire")
@@ -253,6 +329,18 @@ def try_internet(state: SLIState, progress: Progress) -> SLIState:
 
 
 def validate_and_promote(state: SLIState, progress: Progress) -> SLIState:
+    if (
+        state.meta.get("private")
+        or state.meta.get("promotion_blocked")
+    ):
+        progress(
+            "SLI-graph: promotion blocked for "
+            "private connector route"
+        )
+        state.promoted = False
+        state.chunks_added = 0
+        return state
+
     if not state.success:
         return state
 
@@ -310,6 +398,7 @@ def run_sli_graph(
         state = classify(state, progress)
 
         pipelines = {
+            "personal_connector": [try_personal_connector],
             "topic_site": [try_topic, try_memory_router, try_internet],
             "harness_execution": [
                 try_harness_execution,
@@ -322,15 +411,36 @@ def run_sli_graph(
             "action_or_internet": [try_memory_router, try_internet],
             "memory_then_internet": [try_memory_router, try_internet],
         }
-        steps = pipelines.get(state.route, [try_memory_router, try_internet])
+        steps = pipelines.get(
+            state.route,
+            [try_memory_router, try_internet],
+        )
 
-        for attempt in range(max(1, max_retries)):
-            progress(f"SLI-graph: attempt {attempt + 1}/{max_retries}")
+        attempts = (
+            1
+            if state.route == "personal_connector"
+            else max(1, max_retries)
+        )
+
+        for attempt in range(attempts):
+            progress(
+                f"SLI-graph: attempt "
+                f"{attempt + 1}/{attempts}"
+            )
+
             for step in steps:
                 state = step(state, progress)
-                if state.success:
+
+                if (
+                    state.success
+                    or state.meta.get("terminal")
+                ):
                     break
-            if state.success:
+
+            if (
+                state.success
+                or state.meta.get("terminal")
+            ):
                 break
 
         state = validate_and_promote(state, progress)

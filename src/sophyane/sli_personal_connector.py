@@ -76,14 +76,351 @@ def _safe_payload(result: dict[str, Any], request: str, operation: str) -> dict[
 
 
 def _render(payload: dict[str, Any]) -> str:
-    data = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
-    title = "Email verified" if payload.get("ok") else "Email unavailable"
-    return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)} — Sophyane</title>
+    """Render a privacy-safe connector report without Python f-string braces."""
+
+    title = (
+        "Email verified"
+        if payload.get("ok")
+        else "Email unavailable"
+    )
+
+    data = json.dumps(
+        payload,
+        ensure_ascii=False,
+    ).replace("</", "<\\/")
+
+    document = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__ — Sophyane</title>
 <style>
-:root{{--bg:#080b12;--panel:#121725;--panel2:#1a2132;--text:#f4f7fb;--muted:#9ca8ba;--line:rgba(255,255,255,.1);--accent:#78a7ff;--good:#3bd58b;--bad:#ff687f}}*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;background:radial-gradient(circle at 85% 0%,rgba(120,167,255,.18),transparent 32%),var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif}}.shell{{width:min(1080px,calc(100% - 28px));margin:auto;padding:28px 0 70px}}nav{{position:sticky;top:12px;z-index:3;display:flex;justify-content:space-between;align-items:center;padding:13px 16px;border:1px solid var(--line);border-radius:17px;background:rgba(8,11,18,.8);backdrop-filter:blur(18px)}}.brand{{font-weight:850}}.badge{{padding:8px 12px;border-radius:999px;color:var(--good);border:1px solid color-mix(in srgb,var(--good) 45%,transparent)}}.badge.fail{{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,transparent)}}header{{padding:80px 0 45px}}.eyebrow{{color:var(--accent);text-transform:uppercase;letter-spacing:.16em;font-size:.75rem;font-weight:850}}h1{{font:clamp(3.2rem,8vw,7rem)/.92 Georgia,serif;letter-spacing:-.06em;margin:18px 0}}.sub{{color:var(--muted);font-size:1.1rem;line-height:1.7;max-width:760px}}.metrics{{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin:25px 0 70px}}.metric,.card{{border:1px solid var(--line);background:var(--panel);border-radius:20px}}.metric{{padding:20px}}.metric span{{display:block;color:var(--muted);font-size:.74rem;text-transform:uppercase;letter-spacing:.1em}}.metric strong{{display:block;margin-top:10px;font:1.7rem Georgia,serif}}.flow{{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:25px 0 70px}}.node{{padding:18px;border:1px solid var(--line);border-radius:17px;background:var(--panel);opacity:.25;transform:translateY(12px);transition:.45s ease}}.node.on{{opacity:1;transform:none;border-color:rgba(120,167,255,.45)}}.node:not(:last-child):after{{content:'→';float:right;color:var(--accent)}}.node b{{display:block;margin-bottom:7px}}.node small{{color:var(--muted)}}.card{{padding:clamp(22px,4vw,42px);margin-bottom:18px}}.label{{color:var(--muted);text-transform:uppercase;letter-spacing:.1em;font-size:.72rem}}.value{{font-size:1.15rem;margin:8px 0 22px;overflow-wrap:anywhere}}.preview{{white-space:pre-wrap;line-height:1.75;color:#d5dce8;background:#090d15;border:1px solid var(--line);border-radius:15px;padding:18px;max-height:360px;overflow:auto}}.privacy{{display:flex;gap:10px;flex-wrap:wrap}}.chip{{padding:9px 12px;border-radius:999px;background:var(--panel2);color:var(--muted)}}footer{{color:var(--muted);border-top:1px solid var(--line);padding-top:25px;margin-top:55px}}@media(max-width:760px){{.metrics{{grid-template-columns:1fr 1fr}}.flow{{grid-template-columns:1fr}}.node:not(:last-child):after{{content:'↓'}}}}
-@media(prefers-reduced-motion:reduce){{*{{transition:none!important}}}}</style></head><body><div class="shell"><nav><span class="brand">Sophyane Private Connector</span><span id="badge" class="badge"></span></nav><header><div class="eyebrow">Private-data boundary</div><h1 id="title"></h1><p class="sub" id="request"></p></header><section class="metrics" id="metrics"></section><section class="flow" id="flow"></section><section class="card" id="message"></section><section class="card"><div class="label">Privacy controls</div><div class="privacy"><span class="chip">Public internet blocked</span><span class="chip">SLI promotion blocked</span><span class="chip">Credentials excluded</span><span class="chip">Local report only</span></div></section><footer id="footer"></footer></div><script id="data" type="application/json">{data}</script><script>
-const d=JSON.parse(document.getElementById('data').textContent);const e=s=>String(s??'').replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));const badge=document.getElementById('badge');badge.textContent=d.ok?'✓ Connector verified':'✕ Connector unavailable';if(!d.ok)badge.classList.add('fail');document.getElementById('title').textContent=d.ok?'Latest email retrieved.':'Email access is not configured.';document.getElementById('request').textContent=d.request;const metrics=[['Connector',d.connector],['Capability',d.capability],['Words',d.word_count||0],['Status',d.ok?'Verified':'Blocked']];document.getElementById('metrics').innerHTML=metrics.map(x=>`<article class="metric"><span>${e(x[0])}</span><strong>${e(x[1])}</strong></article>`).join('');const steps=[['Intent','Private email request'],['Boundary','Public acquisition blocked'],['Connector','Gmail IMAP selected'],['Verification',d.ok?'Response verified':'Configuration missing'],['Privacy','Promotion blocked']];const flow=document.getElementById('flow');flow.innerHTML=steps.map(x=>`<article class="node"><b>${e(x[0])}</b><small>${e(x[1])}</small></article>`).join('');[...flow.children].forEach((n,i)=>setTimeout(()=>n.classList.add('on'),i*220));const body=d.ok?`<div class="label">From</div><div class="value">${e(d.from||'(unknown)')}</div><div class="label">Subject</div><div class="value">${e(d.subject||'(no subject)')}</div><div class="label">Message preview</div><div class="preview">${e(d.preview||'(no plain-text preview)')}</div>`:`<div class="label">Connector status</div><div class="value">${e(d.message||d.error||'IMAP credentials missing.')}</div><div class="preview">Configure SOPHYANE_IMAP_USER and SOPHYANE_IMAP_APP_PASSWORD, or save imap_user and imap_app_password in Sophyane's secret vault. No public internet search was attempted.</div>`;document.getElementById('message').innerHTML=body;document.getElementById('footer').textContent=`Verified locally at ${d.verified_at} · ${d.internet_fallback} internet fallback · ${d.memory_promotion} memory promotion`;
-</script></body></html>'''
+:root {
+  --bg: #080b12;
+  --panel: #121725;
+  --text: #f4f7fb;
+  --muted: #9ca8ba;
+  --line: rgba(255,255,255,.11);
+  --accent: #78a7ff;
+  --good: #3bd58b;
+  --bad: #ff687f;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 85% 0%, rgba(120,167,255,.18), transparent 34%),
+    var(--bg);
+  font-family: system-ui, sans-serif;
+}
+main {
+  width: min(960px, calc(100% - 28px));
+  margin: auto;
+  padding: 28px 0 70px;
+}
+nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 17px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(8,11,18,.82);
+}
+.badge {
+  color: var(--good);
+  font-weight: 700;
+}
+.badge.fail { color: var(--bad); }
+header { padding: 72px 0 38px; }
+.eyebrow {
+  color: var(--accent);
+  font-size: .75rem;
+  font-weight: 800;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+h1 {
+  margin: 16px 0;
+  font: clamp(3rem, 8vw, 6rem)/.95 Georgia, serif;
+  letter-spacing: -.055em;
+}
+.request {
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1.7;
+}
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin: 20px 0 55px;
+}
+.metric,
+.card {
+  border: 1px solid var(--line);
+  border-radius: 19px;
+  background: var(--panel);
+}
+.metric { padding: 18px; }
+.metric span {
+  display: block;
+  color: var(--muted);
+  font-size: .72rem;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+.metric strong {
+  display: block;
+  margin-top: 9px;
+  font: 1.45rem Georgia, serif;
+}
+.flow {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+  margin-bottom: 55px;
+}
+.node {
+  padding: 17px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  opacity: .25;
+  transform: translateY(12px);
+  transition: .45s ease;
+}
+.node.visible {
+  opacity: 1;
+  transform: none;
+  border-color: rgba(120,167,255,.5);
+}
+.node b { display: block; margin-bottom: 7px; }
+.node small { color: var(--muted); }
+.card {
+  padding: clamp(22px, 4vw, 40px);
+  margin-bottom: 18px;
+}
+.label {
+  color: var(--muted);
+  font-size: .72rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.value {
+  margin: 8px 0 22px;
+  overflow-wrap: anywhere;
+}
+.preview {
+  max-height: 360px;
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #090d15;
+  color: #d7dfeb;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+.privacy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+.chip {
+  padding: 9px 12px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.06);
+  color: var(--muted);
+}
+footer {
+  margin-top: 50px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+@media (max-width: 720px) {
+  .metrics { grid-template-columns: 1fr 1fr; }
+  .flow { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+<main>
+<nav>
+  <strong>Sophyane Private Connector</strong>
+  <span id="badge" class="badge"></span>
+</nav>
+
+<header>
+  <div class="eyebrow">Private-data boundary</div>
+  <h1 id="title"></h1>
+  <p id="request" class="request"></p>
+</header>
+
+<section id="metrics" class="metrics"></section>
+<section id="flow" class="flow"></section>
+<section id="message" class="card"></section>
+
+<section class="card">
+  <div class="label">Privacy controls</div>
+  <div class="privacy">
+    <span class="chip">Public internet blocked</span>
+    <span class="chip">SLI promotion blocked</span>
+    <span class="chip">Credentials excluded</span>
+    <span class="chip">Local report only</span>
+  </div>
+</section>
+
+<footer id="footer"></footer>
+</main>
+
+<script id="report-data" type="application/json">__DATA__</script>
+<script>
+"use strict";
+
+const report = JSON.parse(
+  document.getElementById("report-data").textContent
+);
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(
+    /[&<>"']/g,
+    function(character) {
+      return {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      }[character];
+    }
+  );
+}
+
+const badge = document.getElementById("badge");
+badge.textContent = report.ok
+  ? "✓ Connector verified"
+  : "✕ Connector unavailable";
+
+if (!report.ok) {
+  badge.classList.add("fail");
+}
+
+document.getElementById("title").textContent = report.ok
+  ? "Latest email retrieved."
+  : "Email access is not configured.";
+
+document.getElementById("request").textContent = report.request;
+
+const metrics = [
+  ["Connector", report.connector],
+  ["Capability", report.capability],
+  ["Words", report.word_count || 0],
+  ["Status", report.ok ? "Verified" : "Blocked"]
+];
+
+document.getElementById("metrics").innerHTML = metrics.map(
+  function(item) {
+    return (
+      '<article class="metric">' +
+      "<span>" + escapeHtml(item[0]) + "</span>" +
+      "<strong>" + escapeHtml(item[1]) + "</strong>" +
+      "</article>"
+    );
+  }
+).join("");
+
+const steps = [
+  ["Intent", "Private email request"],
+  ["Boundary", "Public acquisition blocked"],
+  ["Connector", "Gmail IMAP selected"],
+  [
+    "Verification",
+    report.ok ? "Response verified" : "Configuration missing"
+  ],
+  ["Privacy", "Memory promotion blocked"]
+];
+
+const flow = document.getElementById("flow");
+
+flow.innerHTML = steps.map(
+  function(step) {
+    return (
+      '<article class="node">' +
+      "<b>" + escapeHtml(step[0]) + "</b>" +
+      "<small>" + escapeHtml(step[1]) + "</small>" +
+      "</article>"
+    );
+  }
+).join("");
+
+Array.from(flow.children).forEach(
+  function(node, index) {
+    setTimeout(
+      function() {
+        node.classList.add("visible");
+      },
+      index * 200
+    );
+  }
+);
+
+let messageHtml = "";
+
+if (report.ok) {
+  messageHtml =
+    '<div class="label">From</div>' +
+    '<div class="value">' +
+    escapeHtml(report.from || "(unknown)") +
+    "</div>" +
+    '<div class="label">Subject</div>' +
+    '<div class="value">' +
+    escapeHtml(report.subject || "(no subject)") +
+    "</div>" +
+    '<div class="label">Message preview</div>' +
+    '<div class="preview">' +
+    escapeHtml(report.preview || "(no plain-text preview)") +
+    "</div>";
+} else {
+  messageHtml =
+    '<div class="label">Connector status</div>' +
+    '<div class="value">' +
+    escapeHtml(
+      report.message ||
+      report.error ||
+      "IMAP credentials missing."
+    ) +
+    "</div>" +
+    '<div class="preview">' +
+    "Configure SOPHYANE_IMAP_USER and " +
+    "SOPHYANE_IMAP_APP_PASSWORD. " +
+    "No public internet search was attempted." +
+    "</div>";
+}
+
+document.getElementById("message").innerHTML = messageHtml;
+
+document.getElementById("footer").textContent =
+  "Verified locally at " + report.verified_at +
+  " · internet fallback " + report.internet_fallback +
+  " · memory promotion " + report.memory_promotion;
+</script>
+</body>
+</html>
+"""
+
+    return (
+        document
+        .replace("__TITLE__", html.escape(title))
+        .replace("__DATA__", data)
+    )
 
 
 def _open_dashboard(workspace: Path, payload: dict[str, Any]) -> str:
