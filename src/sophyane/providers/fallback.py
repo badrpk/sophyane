@@ -172,7 +172,7 @@ class FallbackProvider(Provider):
                             {
                                 "endpoint": str(
                                     state.get("endpoint")
-                                    or result.ollama_url
+                                    or result.runtime_url
                                     or "http://127.0.0.1:8766"
                                 ),
                                 "gguf_path": str(state.get("gguf_path") or ""),

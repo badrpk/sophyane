@@ -1,12 +1,11 @@
-"""Hardware-aware open-model bootstrap when frontier API credits fail.
+"""Hardware-aware llama.cpp and GGUF runtime bootstrap.
 
 Sophyane automatically:
-1. Profiles CPU/RAM/disk
-2. Chooses a small open model that fits the machine
-3. Tries Ollama install/serve/pull
-4. If Ollama fails → downloads a hardware-fit GGUF from Hugging Face
-   (or GitHub release mirrors) and llama.cpp binaries from GitHub
-5. Starts llama-server and switches config to local_gguf / ollama
+1. Profiles CPU, RAM, disk and platform.
+2. Selects a hardware-fit GGUF model.
+3. Downloads or locates llama.cpp.
+4. Starts llama-server on the local OpenAI-compatible endpoint.
+5. Persists local_gguf as the selected local provider.
 """
 
 from __future__ import annotations
@@ -35,7 +34,6 @@ LOGGER = logging.getLogger("sophyane")
 STATE_DIR = Path.home() / ".local" / "state" / "sophyane"
 LOCAL_STATE_FILE = STATE_DIR / "local_runtime.json"
 GGUF_STATE_FILE = STATE_DIR / "gguf_runtime.json"
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 # 8766 avoids clash with sophyane-web which often binds 8765.
 LLAMA_SERVER_HOST = os.environ.get("SOPHYANE_LLAMA_SERVER", "http://127.0.0.1:8766").rstrip("/")
 BIN_DIR = Path.home() / ".local" / "bin"
@@ -276,7 +274,7 @@ class LocalBootstrapResult:
     hardware_tier: str
     message: str
     actions: list[str]
-    ollama_url: str = OLLAMA_HOST
+    runtime_url: str = LLAMA_SERVER_HOST
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -347,39 +345,6 @@ def _http_json(url: str, payload: dict[str, Any] | None = None, timeout: float =
     return json.loads(body) if body else {}
 
 
-def ollama_reachable(timeout: float = 2.0) -> bool:
-    try:
-        with urllib.request.urlopen(f"{OLLAMA_HOST}/api/tags", timeout=timeout) as response:
-            return 200 <= response.status < 300
-    except (urllib.error.URLError, TimeoutError, OSError):
-        return False
-
-
-def list_local_models() -> list[str]:
-    if not ollama_reachable():
-        return []
-    try:
-        payload = _http_json(f"{OLLAMA_HOST}/api/tags", timeout=10)
-    except Exception:  # noqa: BLE001
-        return []
-    models = payload.get("models") or []
-    names: list[str] = []
-    for item in models:
-        if isinstance(item, dict) and item.get("name"):
-            names.append(str(item["name"]))
-    return names
-
-
-def find_ollama_binary() -> str | None:
-    path = shutil.which("ollama")
-    if path:
-        return path
-    candidate = BIN_DIR / "ollama"
-    if candidate.exists() and os.access(candidate, os.X_OK):
-        return str(candidate)
-    return None
-
-
 def _run(cmd: list[str], *, timeout: float | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     merged = os.environ.copy()
     if env:
@@ -448,216 +413,10 @@ def _ensure_zstd(progress: ProgressFn | None = None) -> str | None:
         return None
 
 
-def install_ollama(progress: ProgressFn | None = None) -> str:
-    """Install Ollama into ~/.local/bin when missing. Raises RuntimeError on failure."""
-    existing = find_ollama_binary()
-    if existing:
-        return existing
+def persist_local_provider(model: str) -> None:
+    """Persist llama.cpp/GGUF as Sophyane's only local inference provider."""
+    provider = "local_gguf"
 
-    profile = profile_hardware()
-    # Full package is large; require headroom.
-    if profile.disk_free_mb < 1200:
-        raise RuntimeError(
-            f"Not enough free disk to install Ollama "
-            f"({profile.disk_free_mb}MB free; need ~1200MB free). "
-            "Free space or install Ollama manually: https://ollama.com/download"
-        )
-
-    if profile.os_name != "linux":
-        raise RuntimeError(
-            f"Automatic Ollama install is supported on Linux only "
-            f"(detected {profile.os_name}). Install from https://ollama.com/download"
-        )
-
-    BIN_DIR.mkdir(parents=True, exist_ok=True)
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    arch = _arch_slug(profile.arch)
-    filename = f"ollama-linux-{arch}"
-
-    # Prefer official CDN, then GitHub release assets (.tar.zst primary).
-    candidates = [
-        f"https://ollama.com/download/{filename}.tar.zst",
-        f"https://github.com/ollama/ollama/releases/latest/download/{filename}.tar.zst",
-        f"https://ollama.com/download/{filename}.tgz",
-        f"https://github.com/ollama/ollama/releases/latest/download/{filename}.tgz",
-    ]
-
-    archive: Path | None = None
-    used_url = ""
-    last_error: Exception | None = None
-    for url in candidates:
-        suffix = ".tar.zst" if url.endswith(".tar.zst") else ".tgz"
-        dest = MODELS_DIR / f"{filename}{suffix}"
-        _progress(progress, f"Downloading Ollama from {url} …")
-        try:
-            urllib.request.urlretrieve(url, dest)
-            archive = dest
-            used_url = url
-            break
-        except Exception as error:  # noqa: BLE001
-            last_error = error
-            LOGGER.warning("Download failed for %s: %s", url, error)
-            continue
-    if archive is None:
-        raise RuntimeError(f"Failed to download Ollama: {last_error}")
-
-    _progress(progress, f"Extracting Ollama ({used_url}) …")
-    extract_dir = MODELS_DIR / "ollama-extract"
-    if extract_dir.exists():
-        shutil.rmtree(extract_dir, ignore_errors=True)
-    extract_dir.mkdir(parents=True, exist_ok=True)
-
-    if str(archive).endswith(".tar.zst"):
-        zstd = _ensure_zstd(progress)
-        if not zstd:
-            raise RuntimeError(
-                "Ollama package is .tar.zst but zstd is not available. "
-                "Install zstd (apt install zstd) and re-run /local."
-            )
-        # zstd -d -c archive | tar -xf - -C extract_dir
-        try:
-            decompress = subprocess.Popen(
-                [zstd, "-d", "-c", str(archive)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            extract = subprocess.run(
-                ["tar", "-xf", "-", "-C", str(extract_dir)],
-                stdin=decompress.stdout,
-                capture_output=True,
-                text=True,
-                timeout=600,
-                check=False,
-            )
-            if decompress.stdout:
-                decompress.stdout.close()
-            decompress.wait(timeout=30)
-        except Exception as error:  # noqa: BLE001
-            raise RuntimeError(f"Failed to extract Ollama zst archive: {error}") from error
-        if extract.returncode != 0:
-            raise RuntimeError(
-                f"Failed to extract Ollama: {extract.stderr or extract.stdout}"
-            )
-    else:
-        result = _run(["tar", "-xzf", str(archive), "-C", str(extract_dir)], timeout=600)
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to extract Ollama: {result.stderr or result.stdout}")
-
-    binary = None
-    for path in extract_dir.rglob("ollama"):
-        if path.is_file() and os.access(path, os.X_OK):
-            binary = path
-            break
-        if path.is_file() and path.name == "ollama":
-            binary = path
-            break
-    if binary is None:
-        # Some archives nest bin/ollama
-        for path in extract_dir.rglob("*"):
-            if path.is_file() and path.name == "ollama":
-                binary = path
-                break
-    if binary is None:
-        raise RuntimeError("Ollama binary not found inside downloaded archive")
-
-    target = BIN_DIR / "ollama"
-    shutil.copy2(binary, target)
-    target.chmod(0o755)
-    try:
-        archive.unlink(missing_ok=True)
-        shutil.rmtree(extract_dir, ignore_errors=True)
-    except OSError:
-        pass
-
-    # Ensure ~/.local/bin is on PATH for this process.
-    path = os.environ.get("PATH", "")
-    if str(BIN_DIR) not in path.split(":"):
-        os.environ["PATH"] = f"{BIN_DIR}:{path}"
-
-    _progress(progress, f"Ollama installed at {target}")
-    return str(target)
-
-
-def start_ollama_server(progress: ProgressFn | None = None) -> None:
-    if ollama_reachable():
-        _progress(progress, "Ollama server already running")
-        return
-
-    binary = find_ollama_binary() or install_ollama(progress)
-    log_path = STATE_DIR / "ollama.log"
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    _progress(progress, "Starting Ollama server …")
-    host_env = OLLAMA_HOST
-    for prefix in ("https://", "http://"):
-        if host_env.startswith(prefix):
-            host_env = host_env[len(prefix) :]
-            break
-    with log_path.open("a", encoding="utf-8") as log:
-        subprocess.Popen(
-            [binary, "serve"],
-            stdout=log,
-            stderr=log,
-            start_new_session=True,
-            env={**os.environ, "OLLAMA_HOST": host_env or "127.0.0.1:11434"},
-        )
-
-    deadline = time.time() + 60
-    while time.time() < deadline:
-        if ollama_reachable():
-            _progress(progress, "Ollama server is ready")
-            return
-        time.sleep(0.5)
-    raise RuntimeError(
-        f"Ollama did not become ready at {OLLAMA_HOST}. See {log_path}"
-    )
-
-
-def pull_model(model: str, progress: ProgressFn | None = None, timeout: float = 1800.0) -> None:
-    binary = find_ollama_binary()
-    if not binary:
-        raise RuntimeError("Ollama binary missing; cannot pull model")
-    _progress(progress, f"Pulling open model `{model}` (this may take several minutes) …")
-    # Stream progress via ollama CLI.
-    process = subprocess.Popen(
-        [binary, "pull", model],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    started = time.time()
-    assert process.stdout is not None
-    last_emit = 0.0
-    for line in process.stdout:
-        now = time.time()
-        if now - last_emit > 5:
-            snippet = line.strip()[:160]
-            if snippet:
-                _progress(progress, f"pull: {snippet}")
-            last_emit = now
-        if now - started > timeout:
-            process.kill()
-            raise RuntimeError(f"Timed out pulling model {model}")
-    code = process.wait(timeout=30)
-    if code != 0:
-        raise RuntimeError(f"ollama pull {model} failed with exit {code}")
-    _progress(progress, f"Model ready: {model}")
-
-
-def choose_installable_model(profile: HardwareProfile | None = None) -> str:
-    profile = profile or profile_hardware()
-    existing = list_local_models()
-    for name, size_mb, min_ram, _note in recommend_models(profile):
-        # Prefer already-local models first.
-        for local in existing:
-            if local == name or local.startswith(name + ":") or name.startswith(local.split(":")[0]):
-                return local
-        if profile.ram_mb >= min_ram and profile.disk_free_mb >= size_mb + 200:
-            return name
-    # Last resort: smallest catalog entry even if tight on disk (user may have model cached).
-    return recommend_models(profile)[0][0]
-
-
-def persist_local_provider(model: str, *, provider: str = "ollama") -> None:
     config = load_config()
     config["provider"] = provider
     config["model"] = model
@@ -666,42 +425,43 @@ def persist_local_provider(model: str, *, provider: str = "ollama") -> None:
 
     llm_path = CONFIG_DIR / "llm.json"
     llm: dict[str, Any] = {}
+
     if llm_path.exists():
         try:
             llm = json.loads(llm_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             llm = {}
+
     if not isinstance(llm, dict):
         llm = {}
+
     llm["active_provider"] = provider
+
     order = llm.get("fallback_order") or []
     if not isinstance(order, list):
         order = []
-    # Local first when auto-promoted after cloud credit failure.
-    new_order = [provider] + [x for x in order if x != provider]
-    if provider != "ollama":
-        new_order = [provider] + [x for x in new_order if x != "ollama"]
-        if "ollama" not in new_order:
-            new_order.append("ollama")
-    llm["fallback_order"] = new_order
+
+    llm["fallback_order"] = [
+        provider,
+        *[
+            item
+            for item in order
+            if str(item).casefold() != provider
+        ],
+    ]
+
     providers = llm.setdefault("providers", {})
     if not isinstance(providers, dict):
         providers = {}
         llm["providers"] = providers
-    if provider == "ollama":
-        providers["ollama"] = {
-            "enabled": True,
-            "api_key_env": [],
-            "model": model,
-            "base_url": OLLAMA_HOST,
-        }
-    else:
-        providers["local_gguf"] = {
-            "enabled": True,
-            "api_key_env": [],
-            "model": model,
-            "base_url": LLAMA_SERVER_HOST,
-        }
+
+    providers["local_gguf"] = {
+        "enabled": True,
+        "api_key_env": [],
+        "model": model,
+        "base_url": LLAMA_SERVER_HOST,
+    }
+
     save_json(llm_path, llm, private=False)
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -710,6 +470,7 @@ def persist_local_provider(model: str, *, provider: str = "ollama") -> None:
             {
                 "provider": provider,
                 "model": model,
+                "runtime_url": LLAMA_SERVER_HOST,
                 "updated": time.time(),
                 "hardware": asdict(profile_hardware()),
             },
@@ -854,29 +615,6 @@ def download_hf_gguf(
     if dest.exists() and dest.stat().st_size > 1024 * 1024:
         _progress(progress, f"GGUF already present: {dest}")
         return dest
-
-    # Free incomplete Ollama archives if we need space for a small HF model.
-    if profile.disk_free_mb < spec.size_mb + 200:
-        for junk in MODELS_DIR.glob("ollama-linux-*.tar.zst"):
-            try:
-                _progress(progress, f"Freeing incomplete Ollama archive {junk.name} for HF model")
-                junk.unlink()
-            except OSError:
-                pass
-        for junk in MODELS_DIR.glob("ollama-linux-*.tgz"):
-            try:
-                junk.unlink()
-            except OSError:
-                pass
-
-    urls = spec.hf_urls() + spec.github_urls()
-    _progress(
-        progress,
-        f"Pulling open GGUF `{spec.key}` from Hugging Face/GitHub "
-        f"(~{spec.size_mb}MB, min RAM {spec.min_ram_mb}MB) — {spec.notes}",
-    )
-    return download_file(urls, dest, progress=progress, min_bytes=1024 * 1024)
-
 
 def _latest_llama_cpp_tag() -> str:
     try:
@@ -1263,7 +1001,7 @@ def ensure_hf_gguf_runtime(
             server=binaries.get("server", ""),
             cli=binaries.get("cli", ""),
         )
-        persist_local_provider(spec.key, provider="local_gguf")
+        persist_local_provider(spec.key)
         actions.append("config_switched_to_local_gguf")
 
         # Warm-up
@@ -1292,13 +1030,13 @@ def ensure_hf_gguf_runtime(
                 f"Local open model ready via Hugging Face GGUF: {spec.key} "
                 f"({gguf_path.name}), tier={profile.tier}, "
                 f"backend={'llama-server' if server_mode else 'llama-cli'}. "
-                "Ollama was unavailable; Sophyane will serve from this model."
+                "Sophyane will serve this model through llama.cpp."
             ),
             actions=actions,
-            ollama_url=LLAMA_SERVER_HOST,
+            runtime_url=LLAMA_SERVER_HOST,
         )
     except Exception as error:  # noqa: BLE001
-        LOGGER.exception("Hugging Face / GitHub GGUF bootstrap failed")
+        LOGGER.exception("llama.cpp/GGUF bootstrap failed")
         return LocalBootstrapResult(
             ok=False,
             provider="local_gguf",
@@ -1306,91 +1044,8 @@ def ensure_hf_gguf_runtime(
             hardware_tier=profile.tier,
             message=str(error),
             actions=actions + [f"error:{error}"],
-            ollama_url=LLAMA_SERVER_HOST,
+            runtime_url=LLAMA_SERVER_HOST,
         )
-
-
-def ensure_ollama_runtime(
-    *,
-    progress: ProgressFn | None = None,
-    force_pull: bool = False,
-) -> LocalBootstrapResult:
-    """Ollama-only bootstrap path."""
-    actions: list[str] = []
-    profile = profile_hardware()
-    actions.append(f"profiled:{profile.tier}")
-
-    if not find_ollama_binary():
-        install_ollama(progress)
-        actions.append("installed_ollama")
-    else:
-        actions.append("ollama_present")
-
-    start_ollama_server(progress)
-    actions.append("server_ready")
-
-    model = choose_installable_model(profile)
-    local = list_local_models()
-    model_present = any(
-        item == model or item.startswith(model.split(":")[0])
-        for item in local
-    )
-    if force_pull or not model_present:
-        pull_model(model, progress=progress)
-        actions.append(f"pulled:{model}")
-    else:
-        for item in local:
-            if item == model or item.startswith(model.split(":")[0]):
-                model = item
-                break
-        actions.append(f"model_cached:{model}")
-
-    _progress(progress, f"Warming up `{model}` …")
-    try:
-        _http_json(
-            f"{OLLAMA_HOST}/api/generate",
-            {
-                "model": model,
-                "prompt": "Reply with OK",
-                "stream": False,
-                "options": {"num_predict": 8},
-            },
-            timeout=180,
-        )
-        actions.append("warmup_ok")
-    except Exception as error:  # noqa: BLE001
-        _progress(progress, f"Warm-up failed ({error}); trying smaller model …")
-        alts = [m for m, *_ in recommend_models(profile) if m != model]
-        if not alts:
-            raise
-        model = alts[-1] if profile.tier == "nano" else alts[0]
-        pull_model(model, progress=progress)
-        _http_json(
-            f"{OLLAMA_HOST}/api/generate",
-            {
-                "model": model,
-                "prompt": "Reply with OK",
-                "stream": False,
-                "options": {"num_predict": 8},
-            },
-            timeout=180,
-        )
-        actions.append(f"warmup_fallback:{model}")
-
-    persist_local_provider(model, provider="ollama")
-    actions.append("config_switched_to_ollama")
-    return LocalBootstrapResult(
-        ok=True,
-        provider="ollama",
-        model=model,
-        hardware_tier=profile.tier,
-        message=(
-            f"Local open model ready: ollama/{model} "
-            f"(hardware tier {profile.tier}). Cloud credits were unavailable; "
-            "Sophyane will serve from this local model."
-        ),
-        actions=actions,
-    )
 
 
 def ensure_local_open_model(
@@ -1398,70 +1053,31 @@ def ensure_local_open_model(
     progress: ProgressFn | None = None,
     force_pull: bool = False,
 ) -> LocalBootstrapResult:
-    """Ensure a local open model is installed, running, and selected.
-
-    Order:
-    1. Ollama (if already installed or installable)
-    2. Hugging Face GGUF + GitHub llama.cpp (always tried when Ollama fails)
-    """
-    actions: list[str] = []
+    """Ensure Sophyane's llama.cpp/GGUF runtime is ready and selected."""
     profile = profile_hardware()
+
     _progress(
         progress,
         (
-            f"Hardware profile: {profile.cpus} CPUs, {profile.ram_mb}MB RAM, "
-            f"{profile.disk_free_mb}MB free disk, tier={profile.tier}, "
-            f"arch={profile.arch}, virt={profile.virtualization}"
+            f"Hardware profile: {profile.cpus} CPUs, "
+            f"{profile.ram_mb}MB RAM, "
+            f"{profile.disk_free_mb}MB free disk, "
+            f"tier={profile.tier}, arch={profile.arch}, "
+            f"virt={profile.virtualization}"
         ),
     )
-    actions.append(f"profiled:{profile.tier}")
 
-    ollama_error: str | None = None
-    # Prefer Ollama only when binary already exists OR there is comfortable free disk.
-    try_ollama = bool(find_ollama_binary()) or profile.disk_free_mb >= 2500
-    if try_ollama:
-        try:
-            _progress(progress, "Trying Ollama path …")
-            result = ensure_ollama_runtime(progress=progress, force_pull=force_pull)
-            result.actions = actions + result.actions
-            STATE_DIR.mkdir(parents=True, exist_ok=True)
-            LOCAL_STATE_FILE.write_text(
-                json.dumps(result.to_dict(), indent=2) + "\n",
-                encoding="utf-8",
-            )
-            return result
-        except Exception as error:  # noqa: BLE001
-            ollama_error = str(error)
-            LOGGER.warning("Ollama path failed: %s", error)
-            _progress(
-                progress,
-                f"Ollama unavailable ({error}). "
-                "Falling back to Hugging Face GGUF + GitHub llama.cpp …",
-            )
-            actions.append(f"ollama_failed:{error}")
-    else:
-        _progress(
-            progress,
-            "Skipping Ollama install (tight disk / not installed); "
-            "using Hugging Face GGUF + GitHub llama.cpp …",
-        )
-        actions.append("ollama_skipped_low_disk")
-
-    result = ensure_hf_gguf_runtime(progress=progress, force_pull=force_pull)
-    result.actions = actions + result.actions
-    if not result.ok and ollama_error:
-        result.message = (
-            f"{result.message}\n(Ollama earlier error: {ollama_error})"
-        )
+    result = ensure_hf_gguf_runtime(
+        progress=progress,
+        force_pull=force_pull,
+    )
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        LOCAL_STATE_FILE.write_text(
-            json.dumps(result.to_dict(), indent=2) + "\n",
-            encoding="utf-8",
-        )
-    except OSError:
-        pass
+    LOCAL_STATE_FILE.write_text(
+        json.dumps(result.to_dict(), indent=2) + "\n",
+        encoding="utf-8",
+    )
+
     return result
 
 
