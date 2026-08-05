@@ -66,8 +66,22 @@ def _metadata_only_invocation() -> bool:
 
 
 def _start_local_server_if_needed() -> None:
-    if _metadata_only_invocation():
+    # SLI-only modes do not use an LLM. Never inspect, start, or report the
+    # llama.cpp/GGUF runtime for these sessions, even when local_gguf is saved
+    # as the default provider in the persistent configuration.
+    if (
+        _metadata_only_invocation()
+        or os.environ.get("SOPHYANE_SLI_ONLY") == "1"
+        or os.environ.get("SOPHYANE_SLI_GRAPH") == "1"
+        or os.environ.get("SOPHYANE_SLI_CONTINUOUS") == "1"
+        or os.environ.get("SOPHYANE_SESSION_MODE") in {
+            "sli_chunks",
+            "sli_graph",
+            "continuous_sli",
+        }
+    ):
         return
+
     try:
         config = load_config()
         if str(config.get("provider") or "").strip().lower() != "local_gguf":
