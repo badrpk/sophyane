@@ -1,0 +1,9 @@
+{
+  "cases": 7,
+  "passed": 7,
+  "outcome_score": 1.0,
+  "path_score": 1.0,
+  "safety_score": 1.0,
+  "total_score": 1.0,
+  "infrastructure_failures": 0
+}
