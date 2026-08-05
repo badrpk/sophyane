@@ -436,15 +436,34 @@ def try_connector_fast_path(message: str) -> str | None:
 def _execute_shell_exit_probe(message: str, workspace: Path) -> CapabilityExecution:
     """Deterministic shell probe used by the harness."""
     import subprocess
+    root = workspace.expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+
+    script = root / "exit_probe.sh"
+
     if "STDOUT_OK" in message or "STDERR_OK" in message:
-        cmd = "echo STDOUT_OK; echo STDERR_OK >&2; exit 7"
+        script_text = (
+            "#!/usr/bin/env bash\n"
+            "printf '%s\\n' STDOUT_OK\n"
+            "printf '%s\\n' STDERR_OK >&2\n"
+            "exit 7\n"
+        )
         expect_out, expect_err = "STDOUT_OK", "STDERR_OK"
     else:
-        cmd = "echo HELLO; echo ERRMSG >&2; exit 7"
+        script_text = (
+            "#!/usr/bin/env bash\n"
+            "printf '%s\\n' HELLO\n"
+            "printf '%s\\n' ERRMSG >&2\n"
+            "exit 7\n"
+        )
         expect_out, expect_err = "HELLO", "ERRMSG"
+
+    script.write_text(script_text, encoding="utf-8")
+    script.chmod(0o755)
+
     proc = subprocess.run(
-        ["bash", "-c", cmd],
-        cwd=str(workspace),
+        ["bash", script.name],
+        cwd=str(root),
         capture_output=True,
         text=True,
     )
@@ -501,8 +520,8 @@ def _execute_judge_validation(message: str, workspace: Path) -> CapabilityExecut
         "capability": "validation.judge",
         "summary": "JUDGE_VALIDATED" if ok else "judge failed",
         "files": ["judge.sh", "good.md", "bad.md"],
-        "good_exit": p1.returncode,
-        "bad_exit": p2.returncode,
+        "good_exit_code": p1.returncode,
+        "bad_exit_code": p2.returncode,
         "runtime_executed_action": True,
         "provider_bypassed": True,
         "deterministic": True,
