@@ -1,0 +1,16 @@
+{
+  "name": "Sophyane-100",
+  "version": 1,
+  "total_cases": 100,
+  "categories": {
+    "data": 8,
+    "documentation": 8,
+    "filesystem": 20,
+    "python": 12,
+    "security": 10,
+    "shell": 10,
+    "validation": 8,
+    "website": 16,
+    "workflow": 8
+  }
+}
