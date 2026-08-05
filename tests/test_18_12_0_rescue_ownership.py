@@ -3,9 +3,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-def test_cloud_rescue_owns_repair_sequence_until_nonrepair():
+def test_cloud_rescue_owns_repair_sequence_until_nonrepair(monkeypatch):
     from sophyane.providers import fallback
     from sophyane.runtime_quality_escalation import install_quality_escalation
+
+    monkeypatch.setattr(
+        fallback,
+        "load_llm_config",
+        lambda: {
+            "active_provider": "local_gguf",
+            "fallback_order": ["local_gguf", "gemini"],
+            "allow_quality_escalation": True,
+            "quality_rescue_provider": "gemini",
+            "providers": {
+                "local_gguf": {"enabled": True},
+                "gemini": {"enabled": True},
+            },
+        },
+    )
 
     @dataclass
     class FakeProvider:

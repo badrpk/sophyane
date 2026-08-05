@@ -3,9 +3,24 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
-def test_repeated_validator_repair_escalates_once():
+def test_repeated_validator_repair_escalates_once(monkeypatch):
     from sophyane.providers import fallback
     from sophyane.runtime_quality_escalation import install_quality_escalation
+
+    monkeypatch.setattr(
+        fallback,
+        "load_llm_config",
+        lambda: {
+            "active_provider": "local_gguf",
+            "fallback_order": ["local_gguf", "gemini"],
+            "allow_quality_escalation": True,
+            "quality_rescue_provider": "gemini",
+            "providers": {
+                "local_gguf": {"enabled": True},
+                "gemini": {"enabled": True},
+            },
+        },
+    )
 
     @dataclass
     class FakeProvider:
