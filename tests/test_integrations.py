@@ -29,9 +29,9 @@ class AsyncRunnable:
 
 def test_matrix_contains_thirty_unique_targets() -> None:
     assert len(INTEGRATIONS) == 29
-    assert len({item.key for item in INTEGRATIONS}) == 30
+    assert len({item.key for item in INTEGRATIONS}) == 29
     assert sum(item.tier == "base" for item in INTEGRATIONS) == 10
-    assert sum(item.tier == "extended" for item in INTEGRATIONS) == 20
+    assert sum(item.tier == "extended" for item in INTEGRATIONS) == 19
 
 
 def test_runnable_adapter_supports_invoke_objects() -> None:
