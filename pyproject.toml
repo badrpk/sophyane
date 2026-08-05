@@ -30,6 +30,7 @@ classifiers = [
 ]
 dependencies = [
   "numpy>=1.26",
+  "pexpect>=4.9",
 ]
 
 [project.optional-dependencies]

@@ -101,3 +101,5 @@ src/sophyane/code_memory/internet_acquire.py.broken-*
 src/sophyane/code_memory/*.damaged-*
 
 # Sophyane transient repair backups
+
+evals/runs/
