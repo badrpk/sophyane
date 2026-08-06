@@ -817,7 +817,7 @@ def test_indexed_edit_rejects_schema_placeholder() -> None:
         )
 
 
-def test_worktree_cleanliness_detects_generated_file(
+def test_worktree_cleanliness_ignores_generated_epoch_file(
     tmp_path: Path,
 ) -> None:
     import subprocess
@@ -918,10 +918,8 @@ def test_worktree_cleanliness_detects_generated_file(
         )
     )
 
-    assert clean is False
-    assert unexpected == [
-        "improvements/epoch-test.json"
-    ]
+    assert clean is True
+    assert unexpected == []
     assert missing == []
 
 
@@ -1564,3 +1562,198 @@ def test_patch_serialization_preserves_blank_context_line(
         "+value = 2\n \n"
     )
 
+
+
+def test_failed_check_anchors_include_python_artifact_routes() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _failed_check_anchors,
+    )
+
+    anchors = _failed_check_anchors(
+        [
+            (
+                Path("record.json"),
+                {
+                    "validation": {
+                        "checks": {
+                            "python_file_exists": False,
+                            "syntax_valid": True,
+                            "pytest_passed": False,
+                        }
+                    }
+                },
+            )
+        ]
+    )
+
+    assert "target.write_text" in anchors
+    assert "test_target.write_text" in anchors
+    assert "pytest" in anchors
+    assert "py_compile" not in anchors
+
+
+def test_indexed_edit_relevance_rejects_timeout_change() -> None:
+    import pytest
+
+    from sophyane.evolution.candidate_evolution import (
+        _validate_indexed_edit_relevance,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="unrelated to the objectively failed checks",
+    ):
+        _validate_indexed_edit_relevance(
+            window={
+                "lines": [
+                    "        timeout=120,\n",
+                ]
+            },
+            payload={
+                "op": "replace",
+                "start": 1,
+                "end": 1,
+                "code": "timeout=60,",
+            },
+            required_anchors={
+                "target.write_text",
+                "test_target.write_text",
+                "pytest",
+            },
+        )
+
+
+def test_indexed_edit_relevance_accepts_test_target_change() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _validate_indexed_edit_relevance,
+    )
+
+    _validate_indexed_edit_relevance(
+        window={
+            "lines": [
+                '    test_target.write_text(tests_source, encoding="utf-8")\n',
+            ]
+        },
+        payload={
+            "op": "replace",
+            "start": 1,
+            "end": 1,
+            "code": (
+                'test_target.write_text('
+                'tests_source, encoding="utf-8")'
+            ),
+        },
+        required_anchors={
+            "test_target.write_text",
+            "pytest",
+        },
+    )
+
+
+def test_worktree_paths_ignore_generated_epoch_export(
+    tmp_path: Path,
+) -> None:
+    import subprocess
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    subprocess.run(
+        ["git", "init"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    source = tmp_path / "src/example.py"
+    source.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    source.write_text(
+        "value = 1\n",
+        encoding="utf-8",
+    )
+
+    epoch = (
+        tmp_path
+        / "improvements/epoch-2099-01-01.json"
+    )
+    epoch.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    epoch.write_text(
+        "{}\n",
+        encoding="utf-8",
+    )
+
+    subprocess.run(
+        ["git", "add", "."],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    source.write_text(
+        "value = 2\n",
+        encoding="utf-8",
+    )
+    epoch.write_text(
+        '{"generated": true}\n',
+        encoding="utf-8",
+    )
+
+    assert CandidateEvolver._worktree_changed_paths(
+        tmp_path
+    ) == {
+        "src/example.py",
+    }
+
+
+def test_generation_prompt_includes_failed_check_anchors() -> None:
+    import inspect
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    source = inspect.getsource(
+        CandidateEvolver.generate_proposal
+    )
+
+    assert "Objectively failed checks" in source
+    assert "Required source anchors" in source
+    assert "Do not edit timeout" in source
+
+
+def test_single_line_response_rejects_no_relevant_edit() -> None:
+    import pytest
+
+    from sophyane.evolution.candidate_evolution import (
+        _single_line_edit_response,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="no relevant edit",
+    ):
+        _single_line_edit_response(
+            "NO_RELEVANT_EDIT"
+        )

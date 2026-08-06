@@ -95,6 +95,30 @@ MAX_SOURCE_FILES = 1
 MAX_TEST_FILES = 1
 MAX_CHANGED_LINES = 20
 
+FAILURE_CHECK_SOURCE_ANCHORS: dict[str, tuple[str, ...]] = {
+    "python_file_exists": (
+        "target.write_text",
+        "test_target.write_text",
+        "files=",
+        "target.name",
+        "test_target.name",
+    ),
+    "syntax_valid": (
+        "py_compile",
+        "compile(",
+        "syntax",
+        "syntax_result",
+    ),
+    "pytest_passed": (
+        "\"pytest\"",
+        "pytest",
+        "test_target",
+        "evidence.append",
+        "exit_code",
+    ),
+}
+
+
 INDEXED_EDIT_PLACEHOLDERS = {
     "maximum five source lines",
     "maximum five replacement lines",
@@ -238,6 +262,11 @@ def _single_line_edit_response(
             "Single-line repair returned no source text"
         )
 
+    if line.strip() == "NO_RELEVANT_EDIT":
+        raise ValueError(
+            "Single-line repair found no relevant edit"
+        )
+
     if line.lstrip().startswith(
         (
             "{",
@@ -338,6 +367,91 @@ def _indexed_edit_payload(
     }
 
 
+def _failed_check_anchors(
+    records: list[tuple[Path, dict[str, Any]]],
+) -> set[str]:
+    """Return source anchors corresponding to objectively failed checks."""
+    anchors: set[str] = set()
+
+    for _, record in records:
+        checks = (
+            record.get(
+                "validation",
+                {},
+            ).get(
+                "checks",
+                {},
+            )
+            or {}
+        )
+
+        for check_name, passed in checks.items():
+            if passed is False:
+                anchors.update(
+                    FAILURE_CHECK_SOURCE_ANCHORS.get(
+                        str(check_name),
+                        (),
+                    )
+                )
+
+    return {
+        item.casefold()
+        for item in anchors
+        if str(item).strip()
+    }
+
+
+def _validate_indexed_edit_relevance(
+    *,
+    window: dict[str, Any],
+    payload: dict[str, Any],
+    required_anchors: set[str],
+) -> None:
+    """Reject edits unrelated to the checks the candidate must improve."""
+    if not required_anchors:
+        return
+
+    start = int(payload["start"])
+    end = int(payload["end"])
+
+    lines = list(
+        window.get("lines")
+        or []
+    )
+
+    if (
+        start < 1
+        or end < start
+        or end > len(lines)
+    ):
+        raise ValueError(
+            "Indexed edit relevance range is outside the selected window"
+        )
+
+    selected = "".join(
+        lines[start - 1:end]
+    ).casefold()
+
+    replacement = str(
+        payload.get("code")
+        or ""
+    ).casefold()
+
+    material = (
+        selected
+        + "\n"
+        + replacement
+    )
+
+    if not any(
+        anchor in material
+        for anchor in required_anchors
+    ):
+        raise ValueError(
+            "Indexed edit is unrelated to the objectively failed checks"
+        )
+
+
 def _window_keywords(
     value: str,
 ) -> set[str]:
@@ -408,6 +522,12 @@ def _select_indexed_window(
 
     keywords = _window_keywords(
         "\n".join(evidence_parts)
+    )
+
+    required_anchors = (
+        _failed_check_anchors(
+            records
+        )
     )
 
     candidates: list[
@@ -481,6 +601,19 @@ def _select_indexed_window(
                     )
                 )
 
+                # Failed-check anchors are stronger than generic keyword
+                # similarity. This prevents neutral edits such as changing a
+                # timeout when the failure is missing source or missing tests.
+                anchor_hits = sum(
+                    anchor in chunk_text
+                    for anchor in required_anchors
+                )
+
+                score += (
+                    25
+                    * anchor_hits
+                )
+
                 candidates.append(
                     (
                         score,
@@ -518,6 +651,7 @@ def _select_indexed_window(
         "lines": lines,
         "numbered": numbered,
         "score": score,
+        "required_anchors": required_anchors,
     }
 
 
@@ -2249,8 +2383,27 @@ Representative failure:
 Selected production file:
 {indexed_window["file"]}
 
+Objectively failed checks:
+{sorted(
+    _failed_check_anchors(
+        records
+    )
+)}
+
+Required source anchors:
+{sorted(
+    indexed_window.get(
+        "required_anchors"
+    )
+    or []
+)}
+
 Numbered source window:
 {indexed_window["numbered"]}
+
+Choose a line whose existing text or replacement contains at least one
+required source anchor. Do not edit timeout, retry, logging, comments, or
+unrelated control-flow lines unless one of those is itself a required anchor.
 
 Return compact JSON only:
 {{
@@ -2292,6 +2445,17 @@ Rules for the indexed operation:
 
             original_indexed_payload = dict(
                 parsed
+            )
+
+            _validate_indexed_edit_relevance(
+                window=indexed_window,
+                payload=parsed,
+                required_anchors=set(
+                    indexed_window.get(
+                        "required_anchors"
+                    )
+                    or set()
+                ),
             )
 
             parsed["file"] = (
@@ -2337,7 +2501,19 @@ Selected source line:
 
 {original_start:02d}|{selected_line}
 
+Required source anchors:
+{sorted(
+    indexed_window.get(
+        "required_anchors"
+    )
+    or []
+)}
+
 Return only the replacement source text for this same line.
+
+If the selected line does not contain or directly implement a required
+source anchor, return exactly:
+NO_RELEVANT_EDIT
 
 Rules:
 - exactly one source line;
@@ -2418,6 +2594,17 @@ Validation error:
                     original_payload=original_indexed_payload,
                     repaired_payload=parsed,
                     window=indexed_window,
+                )
+
+                _validate_indexed_edit_relevance(
+                    window=indexed_window,
+                    payload=parsed,
+                    required_anchors=set(
+                        indexed_window.get(
+                            "required_anchors"
+                        )
+                        or set()
+                    ),
                 )
 
                 if (
@@ -3345,6 +3532,18 @@ Original patch:
 
                 if changed_path == (
                     ".sophyane-candidate.patch"
+                ):
+                    continue
+
+                # Replay execution refreshes the daily evidence export.
+                # It is generated runtime state, not candidate source.
+                if (
+                    changed_path.startswith(
+                        "improvements/epoch-"
+                    )
+                    and changed_path.endswith(
+                        ".json"
+                    )
                 ):
                     continue
 
