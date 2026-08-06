@@ -449,6 +449,91 @@ def _select_indexed_window(
     }
 
 
+def _leading_whitespace(value: str) -> str:
+    """Return the leading spaces or tabs from one source line."""
+    match = re.match(
+        r"^[ \t]*",
+        str(value or ""),
+    )
+
+    return (
+        match.group(0)
+        if match
+        else ""
+    )
+
+
+def _normalize_indexed_code_indentation(
+    *,
+    operation: str,
+    selected_lines: list[str],
+    code: str,
+) -> str:
+    """Apply the selected source indentation to compact model output.
+
+    The model supplies relative indentation only. Sophyane supplies the
+    absolute indentation from the selected source block.
+    """
+    raw_lines = str(code or "").splitlines()
+
+    if not raw_lines:
+        return ""
+
+    non_empty = [
+        line
+        for line in raw_lines
+        if line.strip()
+    ]
+
+    if not non_empty:
+        return ""
+
+    # Remove the model's common leading indentation first.
+    common_indent = min(
+        len(line) - len(line.lstrip(" \t"))
+        for line in non_empty
+    )
+
+    relative_lines = [
+        (
+            line[common_indent:]
+            if line.strip()
+            else ""
+        )
+        for line in raw_lines
+    ]
+
+    if operation in {
+        "replace",
+        "insert_before",
+        "insert_after",
+    }:
+        reference = (
+            selected_lines[0]
+            if selected_lines
+            else ""
+        )
+
+        absolute_indent = (
+            _leading_whitespace(
+                reference
+            )
+        )
+    else:
+        absolute_indent = ""
+
+    normalized = "\n".join(
+        (
+            absolute_indent + line
+            if line
+            else ""
+        )
+        for line in relative_lines
+    )
+
+    return normalized
+
+
 def _indexed_edit_to_patch(
     *,
     repo: Path,
@@ -517,9 +602,22 @@ def _indexed_edit_to_patch(
         payload["op"]
     )
 
-    code = str(
-        payload.get("code")
-        or ""
+    selected_window_lines = (
+        window_lines[
+            start - 1:
+            end
+        ]
+    )
+
+    code = (
+        _normalize_indexed_code_indentation(
+            operation=operation,
+            selected_lines=selected_window_lines,
+            code=str(
+                payload.get("code")
+                or ""
+            ),
+        )
     )
 
     code_lines = (
@@ -589,6 +687,44 @@ def _indexed_edit_to_patch(
         raise ValueError(
             "Indexed edit produced no source change"
         )
+
+    # Reject adjacent duplicated non-empty statements created by a bounded
+    # edit. This catches repeated closing calls and repeated evidence lines.
+    normalized_updated_lines = [
+        line.strip()
+        for line in updated_lines
+        if line.strip()
+    ]
+
+    for previous, current in zip(
+        normalized_updated_lines,
+        normalized_updated_lines[1:],
+    ):
+        if (
+            previous == current
+            and previous not in {
+                ")",
+                "]",
+                "}",
+            }
+        ):
+            raise ValueError(
+                "Indexed edit created duplicate adjacent source lines"
+            )
+
+    # Python candidates must remain parseable before a Git worktree is made.
+    if relative.endswith(".py"):
+        try:
+            compile(
+                updated,
+                relative,
+                "exec",
+            )
+        except SyntaxError as error:
+            raise ValueError(
+                "Indexed edit produced invalid Python syntax: "
+                f"{error.msg} at line {error.lineno}"
+            ) from error
 
     selected_text = "".join(
         original_lines[
