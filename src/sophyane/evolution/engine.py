@@ -24,7 +24,8 @@ from pathlib import Path
 from typing import Any
 
 from .curriculum import (
-    generate_task,
+    focused_capability,
+    generate_focused_task,
     update_score,
 )
 from .models import (
@@ -37,6 +38,7 @@ from .models import (
     TaskSpec,
     new_run_id,
 )
+from .principles import PrincipleStore
 from .validators import validate
 
 
@@ -78,6 +80,11 @@ class EvolutionEngine:
         self.records = (
             config.resolved_records_dir()
         )
+        self.principles = PrincipleStore(
+            self.repo
+        )
+        self._focus_capability = ""
+        self._focus_remaining = 0
 
     def _run_sli(
         self,
@@ -147,32 +154,173 @@ class EvolutionEngine:
             files=files,
         )
 
+    def _local_llm(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        max_tokens: int = 1200,
+    ) -> str:
+        """Use only the configured local llama.cpp endpoint."""
+        body = json.dumps(
+            {
+                "model": "local",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": system,
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    },
+                ],
+                "temperature": 0.1,
+                "max_tokens": max_tokens,
+            }
+        ).encode("utf-8")
+
+        request = urllib.request.Request(
+            "http://127.0.0.1:8766/v1/chat/completions",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        with urllib.request.urlopen(
+            request,
+            timeout=120,
+        ) as response:
+            payload = json.loads(
+                response.read().decode(
+                    "utf-8"
+                )
+            )
+
+        return str(
+            payload["choices"][0]
+            ["message"]["content"]
+        )
+
     def _blind_report(
         self,
         task: TaskSpec,
         trace: ExecutionTrace,
     ) -> FeedbackReport:
-        output = (
+        """First-person report created before revealing validator results."""
+        execution_excerpt = (
             trace.stdout
             + "\n"
             + trace.stderr
-        )
+        )[-5000:]
 
-        return FeedbackReport(
-            kind="blind",
-            author="local_execution_observer",
-            summary=(
-                "First-person report generated without "
-                "validator verdict."
-            ),
-            evidence=[
-                f"task={task.prompt}",
-                f"exit={trace.exit_code}",
-                f"files={trace.files}",
-                output[-2500:],
-            ],
-            confidence=0.55,
-        )
+        prompt = f"""
+You are the agent that just attempted a harness task.
+
+You may inspect only:
+- the task;
+- the execution trace;
+- files created.
+
+You must not see or infer the validator verdict.
+
+Report in first person:
+1. the plan you believe you followed;
+2. what you believe succeeded;
+3. where you felt friction or uncertainty;
+4. the single harness component most likely to need improvement;
+5. one reusable principle, not a task-specific fix.
+
+Return JSON only:
+{{
+  "summary": "...",
+  "suspected_component": "...",
+  "confidence": 0.0,
+  "evidence": ["..."],
+  "general_principle": "..."
+}}
+
+Task:
+{task.prompt}
+
+Capability:
+{task.capability}
+
+Exit code:
+{trace.exit_code}
+
+Files:
+{json.dumps(trace.files)}
+
+Trace:
+{execution_excerpt}
+"""
+
+        try:
+            parsed = self._json_object(
+                self._local_llm(
+                    system=(
+                        "Produce a blind first-person execution report. "
+                        "Do not claim to know validator results."
+                    ),
+                    prompt=prompt,
+                )
+            )
+
+            return FeedbackReport(
+                kind="blind",
+                author="local_gguf",
+                summary=str(
+                    parsed.get("summary")
+                    or ""
+                ),
+                evidence=[
+                    str(item)
+                    for item in (
+                        parsed.get("evidence")
+                        or []
+                    )
+                ][:8],
+                suspected_component=str(
+                    parsed.get(
+                        "suspected_component"
+                    )
+                    or ""
+                ),
+                confidence=float(
+                    parsed.get("confidence")
+                    or 0.0
+                ),
+                general_principle=str(
+                    parsed.get(
+                        "general_principle"
+                    )
+                    or ""
+                ),
+            )
+
+        except Exception as error:
+            return FeedbackReport(
+                kind="blind",
+                author="deterministic_observer",
+                summary=(
+                    "Local blind report unavailable; "
+                    "recorded deterministic first-person evidence."
+                ),
+                evidence=[
+                    f"task={task.prompt}",
+                    f"exit={trace.exit_code}",
+                    f"files={trace.files}",
+                    execution_excerpt,
+                    (
+                        "local_report_error="
+                        f"{type(error).__name__}: {error}"
+                    ),
+                ],
+                confidence=0.40,
+            )
 
     def _gemini_key(self) -> str:
         key = (
@@ -337,12 +485,22 @@ Validator checks:
 Validator errors:
 {json.dumps(record.validation.errors)}
 
+Compare the blind report with the objective validator result.
+
+Identify:
+- what the acting system believed;
+- what the validator proved;
+- the specific mismatch;
+- one task-agnostic reusable design principle.
+
 Return JSON only:
 {{
   "summary": "...",
   "suspected_component": "one allowed component",
   "confidence": 0.0,
-  "evidence": ["..."]
+  "evidence": ["..."],
+  "mismatch": "...",
+  "general_principle": "..."
 }}
 """
 
@@ -390,6 +548,16 @@ Return JSON only:
                 parsed.get("confidence")
                 or 0.0
             ),
+            mismatch=str(
+                parsed.get("mismatch")
+                or ""
+            ),
+            general_principle=str(
+                parsed.get(
+                    "general_principle"
+                )
+                or ""
+            ),
         )
 
     def _proposal(
@@ -403,6 +571,11 @@ Return JSON only:
             or report is None
             or not report.suspected_component
             or report.confidence < 0.65
+            or not report.general_principle
+            or not self.principles.patch_eligible(
+                component=report.suspected_component,
+                principle=report.general_principle,
+            )
         ):
             return None
 
@@ -427,6 +600,12 @@ Rules:
 
 Failure:
 {report.summary}
+
+Blind-versus-verdict mismatch:
+{report.mismatch}
+
+Recurrent general principle:
+{report.general_principle}
 
 Evidence:
 {json.dumps(report.evidence)}
@@ -596,6 +775,51 @@ Return:
             )
         ]
 
+    def _score_generalization_tasks(
+        self,
+        *,
+        repo: Path,
+        tasks: list[TaskSpec],
+    ) -> tuple[float, list[dict[str, Any]]]:
+        if not tasks:
+            return 1.0, []
+
+        previous_repo = self.repo
+        results: list[dict[str, Any]] = []
+
+        try:
+            self.repo = repo
+
+            for task in tasks:
+                trace = self._run_sli(task)
+                result = validate(
+                    task,
+                    trace,
+                )
+
+                results.append(
+                    {
+                        "task_id": task.task_id,
+                        "passed": result.passed,
+                        "checks": result.checks,
+                        "errors": result.errors,
+                    }
+                )
+
+        finally:
+            self.repo = previous_repo
+
+        passes = sum(
+            1
+            for item in results
+            if item["passed"]
+        )
+
+        return (
+            passes / max(1, len(results)),
+            results,
+        )
+
     def _gate(
         self,
         record: EvolutionRecord,
@@ -604,6 +828,20 @@ Return:
 
         if proposal is None:
             return None
+
+        generalization_tasks = (
+            self._generalization_tasks(
+                record.task.capability
+            )
+        )
+
+        (
+            baseline_score,
+            baseline_details,
+        ) = self._score_generalization_tasks(
+            repo=self.repo,
+            tasks=generalization_tasks,
+        )
 
         root = (
             self.repo
@@ -739,32 +977,19 @@ Return:
                 check=False,
             )
 
-            held_out_results = []
-
-            for task in self._generalization_tasks(
-                record.task.capability
-            ):
-                original_repo = self.repo
-
-                try:
-                    self.repo = worktree
-                    trace = self._run_sli(
-                        task
-                    )
-                    result = validate(
-                        task,
-                        trace,
-                    )
-                    held_out_results.append(
-                        result.passed
-                    )
-                finally:
-                    self.repo = original_repo
+            (
+                candidate_generalization_score,
+                candidate_generalization_details,
+            ) = self._score_generalization_tasks(
+                repo=worktree,
+                tasks=generalization_tasks,
+            )
 
             held_out_passed = (
-                all(held_out_results)
-                if held_out_results
-                else True
+                candidate_generalization_score
+                >= baseline_score
+                and candidate_generalization_score
+                >= 0.75
             )
 
             security_passed = (
@@ -774,17 +999,17 @@ Return:
             )
 
             candidate_score = (
-                1.0
-                if targeted.returncode == 0
-                else 0.0
-            ) + (
-                1.0
-                if regression.returncode == 0
-                else 0.0
-            ) + (
-                1.0
-                if held_out_passed
-                else 0.0
+                (
+                    1.0
+                    if targeted.returncode == 0
+                    else 0.0
+                )
+                + (
+                    1.0
+                    if regression.returncode == 0
+                    else 0.0
+                )
+                + candidate_generalization_score
             )
 
             promotable = all(
@@ -834,7 +1059,7 @@ Return:
                     == 0
                 ),
                 held_out_passed=held_out_passed,
-                baseline_score=0.0,
+                baseline_score=baseline_score,
                 candidate_score=candidate_score,
                 security_passed=security_passed,
                 promotable=promotable,
@@ -850,6 +1075,18 @@ Return:
                     "regression_output": (
                         regression.stdout[-3000:]
                         + regression.stderr[-3000:]
+                    ),
+                    "baseline_generalization": (
+                        baseline_details
+                    ),
+                    "candidate_generalization": (
+                        candidate_generalization_details
+                    ),
+                    "baseline_generalization_score": (
+                        baseline_score
+                    ),
+                    "candidate_generalization_score": (
+                        candidate_generalization_score
                     ),
                     "promotion_committed": (
                         promotable
@@ -868,10 +1105,33 @@ Return:
         number: int,
     ) -> EvolutionRecord:
         run_id = new_run_id()
-        task = generate_task(
+
+        if (
+            not self._focus_capability
+            or self._focus_remaining <= 0
+        ):
+            self._focus_capability = (
+                focused_capability(
+                    self.repo,
+                    threshold=(
+                        self.config.mastery_threshold
+                    ),
+                    minimum_samples=(
+                        self.config.minimum_mastery_samples
+                    ),
+                )
+            )
+            self._focus_remaining = max(
+                1,
+                self.config.focus_window,
+            )
+
+        task = generate_focused_task(
             self.repo,
             number,
+            self._focus_capability,
         )
+        self._focus_remaining -= 1
         trace = self._run_sli(task)
         validation = validate(
             task,
@@ -895,10 +1155,17 @@ Return:
 
         if validation.passed:
             record.status = "reinforced"
+
             update_score(
                 self.repo,
                 task.capability,
                 True,
+            )
+
+            self.principles.record_success(
+                capability=task.capability,
+                task_id=task.task_id,
+                checks=validation.checks,
             )
         else:
             update_score(
@@ -910,6 +1177,48 @@ Return:
             record.hindsight_report = (
                 self._hindsight(record)
             )
+
+            if (
+                record.hindsight_report
+                and record.hindsight_report.general_principle
+                and record.hindsight_report.suspected_component
+            ):
+                learned = (
+                    self.principles.record_failure_principle(
+                        component=(
+                            record.hindsight_report
+                            .suspected_component
+                        ),
+                        capability=task.capability,
+                        principle=(
+                            record.hindsight_report
+                            .general_principle
+                        ),
+                        task_id=task.task_id,
+                        confidence=(
+                            record.hindsight_report
+                            .confidence
+                        ),
+                        evidence=(
+                            record.hindsight_report
+                            .evidence
+                            + [
+                                record.hindsight_report
+                                .mismatch
+                            ]
+                        ),
+                    )
+                )
+
+                if learned:
+                    record.hindsight_report.evidence.append(
+                        "principle_status="
+                        + str(
+                            learned.get("status")
+                            or "candidate"
+                        )
+                    )
+
             record.proposal = (
                 self._proposal(record)
             )

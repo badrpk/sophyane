@@ -283,3 +283,134 @@ def generate_task(
         expected=expected,
         held_out=False,
     )
+
+
+def capability_mastered(
+    repo: Path,
+    capability: str,
+    *,
+    threshold: float = 0.90,
+    minimum_samples: int = 20,
+) -> bool:
+    """A capability advances only after enough evidence and a high pass rate."""
+    item = load_scores(repo)[capability]
+
+    return (
+        int(item["attempts"])
+        >= minimum_samples
+        and float(item["rate"])
+        >= threshold
+    )
+
+
+def focused_capability(
+    repo: Path,
+    *,
+    threshold: float = 0.90,
+    minimum_samples: int = 20,
+) -> str:
+    """Keep training one weak capability until it reaches mastery.
+
+    This replaces round-robin randomness. Unseen capabilities are still
+    considered, but the selected capability remains stable through the
+    engine's focus window.
+    """
+    scores = load_scores(repo)
+
+    unmastered = [
+        name
+        for name in CAPABILITIES
+        if not capability_mastered(
+            repo,
+            name,
+            threshold=threshold,
+            minimum_samples=minimum_samples,
+        )
+    ]
+
+    if not unmastered:
+        return min(
+            CAPABILITIES,
+            key=lambda name: (
+                float(scores[name]["rate"]),
+                int(scores[name]["attempts"]),
+                name,
+            ),
+        )
+
+    return min(
+        unmastered,
+        key=lambda name: (
+            float(scores[name]["rate"]),
+            int(scores[name]["attempts"]),
+            name,
+        ),
+    )
+
+
+def generate_focused_task(
+    repo: Path,
+    cycle: int,
+    capability: str,
+) -> TaskSpec:
+    """Generate a task for an explicitly selected curriculum capability."""
+    prompt = (
+        "Create one novel, difficult but safe harness benchmark for "
+        f"capability {capability}. It must have objective success criteria, "
+        "must not require credentials, must not depend on current time, "
+        "and must test a reusable behavior rather than one exact phrase. "
+        "Return JSON only with prompt, validator and expected."
+    )
+
+    try:
+        raw = _local_generate(prompt)
+        parsed = _json_object(raw)
+
+        task_prompt = str(
+            parsed.get("prompt") or ""
+        ).strip()
+
+        validator = str(
+            parsed.get("validator")
+            or capability
+        ).strip()
+
+        expected = parsed.get(
+            "expected"
+        )
+
+        if (
+            not task_prompt
+            or not isinstance(
+                expected,
+                dict,
+            )
+        ):
+            raise ValueError(
+                "Incomplete local task"
+            )
+
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        json.JSONDecodeError,
+        urllib.error.URLError,
+    ):
+        task_prompt = FALLBACK_TASKS[
+            capability
+        ]
+        validator = capability
+        expected = {}
+
+    return TaskSpec(
+        task_id=(
+            f"{capability}-focused-"
+            f"{cycle:05d}"
+        ),
+        prompt=task_prompt,
+        capability=capability,
+        validator=validator,
+        expected=expected,
+        held_out=False,
+    )

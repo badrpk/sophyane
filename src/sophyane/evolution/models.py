@@ -56,6 +56,8 @@ class FeedbackReport:
     )
     suspected_component: str = ""
     confidence: float = 0.0
+    mismatch: str = ""
+    general_principle: str = ""
 
 
 @dataclass
@@ -129,6 +131,10 @@ class EvolutionConfig:
     allow_promotion: bool = False
     max_patch_files: int = 1
     max_patch_lines: int = 250
+    mastery_threshold: float = 0.90
+    minimum_mastery_samples: int = 20
+    focus_window: int = 25
+    principle_recurrence_required: int = 2
     full_test_command: tuple[str, ...] = (
         "python",
         "-m",
