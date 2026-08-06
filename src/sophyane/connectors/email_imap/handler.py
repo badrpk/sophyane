@@ -118,6 +118,7 @@ def _op_latest(
         "from": frm,
         "subject": subj,
         "word_count": len(words),
+        "body": body.strip(),
         "formatted": formatted,
     }
 
@@ -269,6 +270,7 @@ def _op_sent(
         "to": to,
         "subject": subj,
         "word_count": len(words),
+        "body": body.strip(),
         "formatted": formatted,
     }
 

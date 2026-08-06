@@ -239,7 +239,16 @@ def _safe_payload(result: dict[str, Any], request: str, operation: str) -> dict[
         "word_count": int(result.get("word_count") or 0),
         "matches": int(result.get("matches") or 0),
         "empty": bool(result.get("empty")),
-        "preview": _preview_from_formatted(str(result.get("formatted") or "")),
+        "preview": _preview_from_formatted(
+            str(result.get("formatted") or "")
+        ),
+        "body": str(
+            result.get("body")
+            or _preview_from_formatted(
+                str(result.get("formatted") or "")
+            )
+            or ""
+        )[:8000],
         "verified_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "internet_fallback": "blocked",
         "memory_promotion": "blocked",
@@ -710,7 +719,44 @@ def run_personal_connector(request: str, workspace: Path | str, *, progress: Pro
         request,
         operation,
     )
-    (root / REPORT_NAME).write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    goal_completion = {
+        "asked": False,
+        "resolved": False,
+        "action": "not_started",
+        "summary": "",
+    }
+
+    if payload.get("ok"):
+        from sophyane.goal_completion_dialogue import (
+            continue_private_goal,
+        )
+
+        def _search_related(
+            query: str,
+        ) -> dict[str, Any]:
+            return execute(
+                op="search",
+                args={"query": query},
+                profile=profile,
+                manifest={},
+            )
+
+        goal_completion = continue_private_goal(
+            payload,
+            search_callback=_search_related,
+        )
+
+    payload["goal_completion"] = goal_completion
+
+    (root / REPORT_NAME).write_text(
+        json.dumps(
+            payload,
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     try:
         dashboard = _open_dashboard(root, payload)
     except Exception as error:
@@ -744,7 +790,34 @@ def run_personal_connector(request: str, workspace: Path | str, *, progress: Pro
             ]
         )
         if dashboard:
-            lines.append(f"Visual dashboard: {dashboard}")
+            lines.append(
+                f"Visual dashboard: {dashboard}"
+            )
+
+        lines.extend(
+            [
+                "",
+                "Goal completion:",
+                (
+                    "Resolved"
+                    if goal_completion.get("resolved")
+                    else "Still unresolved"
+                ),
+                (
+                    "Action: "
+                    + str(
+                        goal_completion.get("action")
+                        or "none"
+                    )
+                ),
+            ]
+        )
+
+        if goal_completion.get("summary"):
+            lines.append(
+                str(goal_completion["summary"])
+            )
+
         lines.append("Success: True")
         return "\n".join(lines)
     lines = [
