@@ -1311,6 +1311,291 @@ Original response:
             if item.passed
         ) / len(results)
 
+    def _git_apply_check(
+        self,
+        patch: str,
+    ) -> tuple[bool, str]:
+        """Validate patch syntax and context without modifying the repository."""
+        staging = (
+            self.root
+            / "staging"
+        )
+        staging.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        patch_path = (
+            staging
+            / (
+                "candidate-"
+                + time.strftime(
+                    "%Y%m%d-%H%M%S"
+                )
+                + "-"
+                + str(
+                    time.time_ns()
+                )
+                + ".patch"
+            )
+        )
+
+        patch_path.write_text(
+            str(patch or "").rstrip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        try:
+            result = subprocess.run(
+                [
+                    "git",
+                    "apply",
+                    "--check",
+                    "--verbose",
+                    str(patch_path),
+                ],
+                cwd=self.repo,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            output = (
+                result.stdout
+                + result.stderr
+            ).strip()
+
+            return (
+                result.returncode == 0,
+                output,
+            )
+        finally:
+            patch_path.unlink(
+                missing_ok=True
+            )
+
+    def _preserve_failed_patch(
+        self,
+        *,
+        component: str,
+        stage: str,
+        patch: str,
+        error: str,
+    ) -> Path:
+        """Preserve rejected patch material for diagnosis."""
+        root = (
+            self.root
+            / "failed-proposals"
+        )
+        root.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        stem = (
+            component
+            + "-"
+            + time.strftime(
+                "%Y%m%d-%H%M%S"
+            )
+            + "-"
+            + stage
+        )
+
+        patch_path = (
+            root
+            / f"{stem}.patch"
+        )
+        error_path = (
+            root
+            / f"{stem}.error.txt"
+        )
+
+        patch_path.write_text(
+            str(patch or "").rstrip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        error_path.write_text(
+            str(error or "").rstrip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        return patch_path
+
+    def _repair_unapplicable_patch(
+        self,
+        proposal: PatchProposal,
+        *,
+        apply_error: str,
+    ) -> PatchProposal:
+        """Request exactly one syntax/context repair for a malformed diff."""
+        if not self.cloud_available():
+            raise RuntimeError(
+                "Candidate patch is invalid and Gemini "
+                "is unavailable for one repair attempt."
+            )
+
+        repair_prompt = f"""
+Repair this unified Git diff so that `git apply --check` succeeds against the
+current Sophyane repository.
+
+Objective component:
+{proposal.component}
+
+Exact Git error:
+{apply_error}
+
+Rules:
+- Preserve the intended behavior.
+- Correct malformed hunk headers and line counts.
+- Preserve valid context from the existing source.
+- Do not broaden the change.
+- Modify at most one production source file.
+- Optionally modify one test file.
+- Do not weaken security or validators.
+- Do not hardcode benchmark prompts, filenames, or expected answers.
+- Return either valid JSON containing the complete patch or one fenced
+  ```diff block.
+- Return no second alternative patch.
+
+Original patch:
+{proposal.patch}
+"""
+
+        response = self.engine._gemini(
+            repair_prompt
+        )
+
+        self._save_raw_candidate_response(
+            component=proposal.component,
+            stage="apply-repair",
+            response=response,
+        )
+
+        parsed = _candidate_payload(
+            response,
+            component=proposal.component,
+        )
+
+        repaired = PatchProposal(
+            component=proposal.component,
+            rationale=(
+                str(
+                    parsed.get(
+                        "rationale"
+                    )
+                    or ""
+                )
+                or proposal.rationale
+            ),
+            patch=str(
+                parsed.get("patch")
+                or ""
+            ),
+            tests=[
+                str(item)
+                for item in (
+                    parsed.get("tests")
+                    or []
+                )
+                if str(item).strip()
+            ],
+            confidence=min(
+                float(
+                    parsed.get(
+                        "confidence"
+                    )
+                    or proposal.confidence
+                ),
+                proposal.confidence,
+            ),
+            allowed_paths=list(
+                proposal.allowed_paths
+            ),
+        )
+
+        self.validate_proposal(
+            repaired
+        )
+
+        return repaired
+
+    def _ensure_applicable_patch(
+        self,
+        proposal: PatchProposal,
+    ) -> tuple[PatchProposal, dict[str, Any]]:
+        """Require a valid patch before creating a branch or worktree."""
+        valid, first_error = (
+            self._git_apply_check(
+                proposal.patch
+            )
+        )
+
+        diagnostics: dict[str, Any] = {
+            "initial_apply_check": valid,
+            "initial_error": first_error,
+            "repair_attempted": False,
+            "repair_apply_check": False,
+            "repair_error": "",
+        }
+
+        if valid:
+            return proposal, diagnostics
+
+        self._preserve_failed_patch(
+            component=proposal.component,
+            stage="initial",
+            patch=proposal.patch,
+            error=first_error,
+        )
+
+        diagnostics[
+            "repair_attempted"
+        ] = True
+
+        repaired = (
+            self._repair_unapplicable_patch(
+                proposal,
+                apply_error=first_error,
+            )
+        )
+
+        repaired_valid, repaired_error = (
+            self._git_apply_check(
+                repaired.patch
+            )
+        )
+
+        diagnostics[
+            "repair_apply_check"
+        ] = repaired_valid
+        diagnostics[
+            "repair_error"
+        ] = repaired_error
+
+        if not repaired_valid:
+            preserved = (
+                self._preserve_failed_patch(
+                    component=proposal.component,
+                    stage="repair",
+                    patch=repaired.patch,
+                    error=repaired_error,
+                )
+            )
+
+            raise RuntimeError(
+                "Candidate patch remained invalid after one "
+                "Gemini repair attempt. "
+                f"Preserved patch: {preserved}. "
+                f"Git error: {repaired_error}"
+            )
+
+        return repaired, diagnostics
+
     def _create_worktree(
         self,
         candidate_id: str,
@@ -1575,6 +1860,13 @@ Original response:
                 )
             )
 
+        # A malformed candidate must never create a branch or worktree.
+        proposal, patch_diagnostics = (
+            self._ensure_applicable_patch(
+                proposal
+            )
+        )
+
         candidate_id = (
             component
             + "-"
@@ -1803,6 +2095,9 @@ Original response:
                 ],
                 "local_patch_critique": (
                     local_critique
+                ),
+                "patch_diagnostics": (
+                    patch_diagnostics
                 ),
                 "targeted_output": (
                     targeted_output

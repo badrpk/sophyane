@@ -230,3 +230,113 @@ def test_candidate_payload_rejects_explanation_only() -> None:
             component="python",
         )
 
+
+
+def test_valid_patch_passes_pre_worktree_check(
+    tmp_path: Path,
+) -> None:
+    import subprocess
+
+    subprocess.run(
+        ["git", "init"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    source = (
+        tmp_path
+        / "src/sophyane/capability_executors.py"
+    )
+    source.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    source.write_text(
+        "value = 1\n",
+        encoding="utf-8",
+    )
+
+    subprocess.run(
+        ["git", "add", "."],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    evolver = CandidateEvolver(tmp_path)
+
+    patch = """diff --git a/src/sophyane/capability_executors.py b/src/sophyane/capability_executors.py
+--- a/src/sophyane/capability_executors.py
++++ b/src/sophyane/capability_executors.py
+@@ -1 +1 @@
+-value = 1
++value = 2
+"""
+
+    valid, error = evolver._git_apply_check(patch)
+
+    assert valid is True
+    assert (
+        error == ""
+        or "checking patch" in error.casefold()
+    )
+
+
+def test_corrupt_patch_fails_before_worktree_creation(
+    tmp_path: Path,
+) -> None:
+    import subprocess
+
+    subprocess.run(
+        ["git", "init"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    source = (
+        tmp_path
+        / "src/sophyane/capability_executors.py"
+    )
+    source.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    source.write_text(
+        "value = 1\n",
+        encoding="utf-8",
+    )
+
+    evolver = CandidateEvolver(tmp_path)
+
+    corrupt = """diff --git a/src/sophyane/capability_executors.py b/src/sophyane/capability_executors.py
+--- a/src/sophyane/capability_executors.py
++++ b/src/sophyane/capability_executors.py
+@@ -1,5 +1,7 @@
+-value = 1
++value = 2
+"""
+
+    valid, error = evolver._git_apply_check(corrupt)
+
+    assert valid is False
+    assert "corrupt patch" in error.casefold()
+    assert not any(
+        evolver.worktrees.iterdir()
+    )
