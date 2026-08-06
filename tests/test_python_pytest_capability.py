@@ -153,3 +153,196 @@ def test_python_validator_uses_nested_harness_workspace(
         "pytest_passed": True,
     }
     assert errors == []
+
+
+def test_adaptive_tdd_qwen_worker_red_green(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import json
+
+    import sophyane.local_coding_capability as coding
+
+    responses = iter(
+        [
+            json.dumps(
+                {
+                    "broken_source": (
+                        "def mean(values):\n"
+                        "    return sum(values)\n"
+                    ),
+                    "test_source": (
+                        "from stats import mean\n"
+                        "\n"
+                        "def test_mean_typical():\n"
+                        "    assert mean([2, 4, 6]) == 4\n"
+                        "\n"
+                        "def test_mean_single():\n"
+                        "    assert mean([9]) == 9\n"
+                    ),
+                }
+            ),
+            json.dumps(
+                {
+                    "diagnosis": (
+                        "The implementation returns the sum "
+                        "instead of the arithmetic mean."
+                    ),
+                    "source": (
+                        "def mean(values):\n"
+                        "    return sum(values) / len(values)\n"
+                    ),
+                }
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        coding,
+        "_ask_local_coding_model",
+        lambda _prompt: next(
+            responses
+        ),
+    )
+
+    result = coding.try_coding_request(
+        (
+            "Create stats.py with mean(values), intentionally introduce "
+            "a defect, create meaningful pytest tests including an edge "
+            "case, run them, diagnose the failure from test evidence, "
+            "repair the implementation without changing the tests, "
+            "rerun pytest, and only report success when all tests pass."
+        ),
+        workspace=tmp_path,
+    )
+
+    assert result is not None
+    assert result.handled is True
+    assert result.ok is True
+
+    assert result.capability == (
+        "development."
+        "python_adaptive_pytest_red_green"
+    )
+
+    assert [
+        item.exit_code
+        for item in result.evidence
+    ] == [
+        1,
+        0,
+    ]
+
+
+def test_adaptive_source_field_normalizes_weak_model_lists() -> None:
+    from sophyane.local_coding_capability import (
+        _adaptive_source_field,
+    )
+
+    payload = {
+        "test_source": [
+            {
+                "test_code": (
+                    "def test_one():\n"
+                    "    assert True\n"
+                ),
+            },
+            {
+                "test_code": (
+                    "def test_two():\n"
+                    "    assert True\n"
+                ),
+            },
+        ],
+    }
+
+    source = _adaptive_source_field(
+        payload,
+        "test_source",
+    )
+
+    assert "def test_one" in source
+    assert "def test_two" in source
+
+
+def test_sli_only_prefers_local_kernel_before_acquisition(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import sophyane.tui_v2 as tui
+    import sophyane.sli_chunk_router as router
+    import sophyane.unified_execution_kernel as kernel
+
+    prompt = (
+        "Create stats.py with mean(values), intentionally introduce "
+        "a defect, create pytest tests, diagnose the failure, repair "
+        "it, rerun pytest, and only report success when tests pass."
+    )
+
+    calls: list[str] = []
+
+    def fake_kernel(
+        message,
+        *,
+        workspace=None,
+    ):
+        calls.append(
+            "kernel"
+        )
+
+        assert message == prompt
+        assert workspace == tmp_path
+
+        return (
+            "LOCAL_KERNEL_HANDLED"
+        )
+
+    def forbidden_sli(
+        *_args,
+        **_kwargs,
+    ):
+        calls.append(
+            "sli"
+        )
+
+        raise AssertionError(
+            "SLI must not steal a locally handled coding request"
+        )
+
+    monkeypatch.chdir(
+        tmp_path
+    )
+
+    monkeypatch.setenv(
+        "SOPHYANE_SLI_ONLY",
+        "1",
+    )
+
+    monkeypatch.setenv(
+        "SOPHYANE_SESSION_MODE",
+        "sli_chunks",
+    )
+
+    monkeypatch.setattr(
+        kernel,
+        "execute_text",
+        fake_kernel,
+    )
+
+    monkeypatch.setattr(
+        router,
+        "try_sli_chunks",
+        forbidden_sli,
+    )
+
+    result = tui._simple_chat_reply(
+        prompt
+    )
+
+    assert result == (
+        "LOCAL_KERNEL_HANDLED"
+    )
+
+    assert calls == [
+        "kernel"
+    ]

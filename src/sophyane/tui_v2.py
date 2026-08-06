@@ -154,6 +154,30 @@ def _simple_chat_reply(message: str) -> str | None:
                 f"{_topic_site_error}"
             )
 
+    # SOPHYANE_TUI_UNIFIED_EXECUTION_KERNEL_V1
+    # The interactive TUI has its own routing path and does not necessarily
+    # call SophyaneAgent.ask(). Execute grounded local capabilities here before
+    # SLI classification or any provider request.
+    try:
+        from sophyane.unified_execution_kernel import execute_text
+
+        kernel_reply = execute_text(
+            message,
+            workspace=Path.cwd(),
+        )
+        if kernel_reply is not None:
+            return kernel_reply
+    except Exception as error:
+        # Keep chat/provider fallback available, but expose diagnostics when
+        # explicitly requested through the environment.
+        import os
+
+        if os.environ.get("SOPHYANE_DEBUG_KERNEL") == "1":
+            return (
+                "Unified execution-kernel error: "
+                f"{type(error).__name__}: {error}"
+            )
+
     # SOPHYANE_SLI_CHUNK_TIER
     import os as _sophyane_os
 
@@ -286,30 +310,6 @@ def _simple_chat_reply(message: str) -> str | None:
         if os.environ.get("SOPHYANE_DEBUG_FILESYSTEM") == "1":
             return (
                 "Filesystem capability error: "
-                f"{type(error).__name__}: {error}"
-            )
-
-    # SOPHYANE_TUI_UNIFIED_EXECUTION_KERNEL_V1
-    # The interactive TUI has its own routing path and does not necessarily
-    # call SophyaneAgent.ask(). Execute grounded local capabilities here before
-    # SLI classification or any provider request.
-    try:
-        from sophyane.unified_execution_kernel import execute_text
-
-        kernel_reply = execute_text(
-            message,
-            workspace=Path.cwd(),
-        )
-        if kernel_reply is not None:
-            return kernel_reply
-    except Exception as error:
-        # Keep chat/provider fallback available, but expose diagnostics when
-        # explicitly requested through the environment.
-        import os
-
-        if os.environ.get("SOPHYANE_DEBUG_KERNEL") == "1":
-            return (
-                "Unified execution-kernel error: "
                 f"{type(error).__name__}: {error}"
             )
 
