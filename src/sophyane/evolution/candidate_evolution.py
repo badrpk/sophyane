@@ -117,6 +117,87 @@ def _json_object(value: str) -> dict[str, Any]:
     return json.loads(text[start : end + 1])
 
 
+def _candidate_payload(
+    value: str,
+    *,
+    component: str,
+) -> dict[str, Any]:
+    """Recover a candidate from JSON or a model-produced diff block.
+
+    Unified diffs contain many quotes and literal newlines, so models
+    frequently return a valid diff inside Markdown while failing to encode
+    it as a valid JSON string. The diff remains subject to all normal path,
+    size, security, application and regression gates.
+    """
+    raw = str(value or "").strip()
+
+    if not raw:
+        raise ValueError(
+            "Gemini returned an empty candidate response"
+        )
+
+    try:
+        payload = _json_object(raw)
+
+        if str(payload.get("patch") or "").strip():
+            return payload
+    except (
+        ValueError,
+        json.JSONDecodeError,
+    ):
+        pass
+
+    fenced = re.search(
+        r"```diff\s*"
+        r"(diff --git\s+.+?)"
+        r"(?:```|\Z)",
+        raw,
+        flags=re.I | re.S,
+    )
+
+    if fenced:
+        patch = fenced.group(1).strip()
+    else:
+        start = raw.find("diff --git ")
+
+        if start < 0:
+            raise ValueError(
+                "Gemini response contained neither valid JSON "
+                "nor a unified Git diff"
+            )
+
+        patch = raw[start:].strip()
+
+    tests = [
+        item
+        for item in _diff_paths(patch)
+        if item.startswith("tests/")
+    ]
+
+    rationale_text = re.sub(
+        r"```diff.*",
+        "",
+        raw,
+        flags=re.I | re.S,
+    )
+
+    rationale = " ".join(
+        rationale_text.split()
+    )[:1200]
+
+    return {
+        "component": component,
+        "rationale": (
+            rationale
+            or "Recovered unified diff from Gemini response."
+        ),
+        "patch": patch,
+        "tests": tests,
+        "confidence": 0.70,
+        "response_format_recovered": True,
+    }
+
+
 def _diff_paths(patch: str) -> list[str]:
     paths = re.findall(
         r"^\+\+\+\s+b/(.+)$",
@@ -625,6 +706,44 @@ Patch:
                 ),
             }
 
+    def _save_raw_candidate_response(
+        self,
+        *,
+        component: str,
+        stage: str,
+        response: str,
+    ) -> Path:
+        """Preserve model output without exposing credentials."""
+        root = (
+            self.root
+            / "raw-proposals"
+        )
+        root.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        path = (
+            root
+            / (
+                component
+                + "-"
+                + time.strftime(
+                    "%Y%m%d-%H%M%S"
+                )
+                + "-"
+                + stage
+                + ".txt"
+            )
+        )
+
+        path.write_text(
+            str(response or ""),
+            encoding="utf-8",
+        )
+
+        return path
+
     def generate_proposal(
         self,
         *,
@@ -702,9 +821,74 @@ Return JSON only:
 }}
 """
 
-        parsed = _json_object(
-            self.engine._gemini(prompt)
+        raw_response = self.engine._gemini(
+            prompt
         )
+
+        raw_path = (
+            self._save_raw_candidate_response(
+                component=component,
+                stage="initial",
+                response=raw_response,
+            )
+        )
+
+        try:
+            parsed = _candidate_payload(
+                raw_response,
+                component=component,
+            )
+        except ValueError as first_error:
+            repair_prompt = f"""
+Reformat the candidate below without changing its intended code change.
+
+Return either:
+
+1. Valid JSON with keys component, rationale, patch, tests and confidence;
+   the patch value must contain the complete unified Git diff.
+
+or, if valid JSON escaping is difficult:
+
+2. A short rationale followed by exactly one fenced ```diff block.
+
+Do not add a second patch. Do not broaden the change. Do not omit diff
+headers.
+
+Required component:
+{component}
+
+Original response:
+{raw_response[-16000:]}
+"""
+
+            repaired_response = (
+                self.engine._gemini(
+                    repair_prompt
+                )
+            )
+
+            repaired_path = (
+                self._save_raw_candidate_response(
+                    component=component,
+                    stage="repair",
+                    response=repaired_response,
+                )
+            )
+
+            try:
+                parsed = _candidate_payload(
+                    repaired_response,
+                    component=component,
+                )
+            except ValueError as repair_error:
+                raise ValueError(
+                    "Gemini candidate formatting failed after one "
+                    "repair attempt. "
+                    f"Initial response: {raw_path}. "
+                    f"Repair response: {repaired_path}. "
+                    f"Initial error: {first_error}. "
+                    f"Repair error: {repair_error}."
+                ) from repair_error
 
         proposal = PatchProposal(
             component=component,

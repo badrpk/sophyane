@@ -96,16 +96,31 @@ def main() -> int:
         )
         return 2
 
-    result = evolver.evolve(
-        component=args.component,
-        representative_limit=max(
-            1,
-            args.representatives,
-        ),
-        commit_candidate=(
-            args.commit_candidate
-        ),
-    )
+    try:
+        result = evolver.evolve(
+            component=args.component,
+            representative_limit=max(
+                1,
+                args.representatives,
+            ),
+            commit_candidate=(
+                args.commit_candidate
+            ),
+        )
+    except Exception as error:
+        print()
+        print("=" * 72)
+        print("CANDIDATE GENERATION OR EVALUATION FAILED")
+        print("=" * 72)
+        print(
+            f"{type(error).__name__}: {error}"
+        )
+        print("Candidate objectively evaluated: False")
+        print("Candidate rejected by gates: False")
+        print("Main modified: False")
+        print("Main merged: False")
+        print("Remote pushed: False")
+        return 2
 
     print()
     print("=" * 72)

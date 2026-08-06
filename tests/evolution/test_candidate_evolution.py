@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -159,3 +160,73 @@ new file mode 100644
         evolver.validate_proposal(
             proposal
         )
+
+
+def test_candidate_payload_accepts_valid_json() -> None:
+    from sophyane.evolution.candidate_evolution import _candidate_payload
+
+    patch = (
+        "diff --git a/src/sophyane/capability_executors.py "
+        "b/src/sophyane/capability_executors.py\n"
+        "--- a/src/sophyane/capability_executors.py\n"
+        "+++ b/src/sophyane/capability_executors.py\n"
+        "@@ -1 +1 @@\n-old\n+new"
+    )
+
+    value = json.dumps(
+        {
+            "component": "python",
+            "rationale": "Reusable execution fix",
+            "patch": patch,
+            "tests": [],
+            "confidence": 0.9,
+        }
+    )
+
+    payload = _candidate_payload(value, component="python")
+
+    assert payload["component"] == "python"
+    assert payload["patch"].startswith("diff --git ")
+
+
+def test_candidate_payload_recovers_fenced_diff() -> None:
+    from sophyane.evolution.candidate_evolution import _candidate_payload
+
+    value = (
+        "Reusable patch follows.\n\n"
+        "```diff\n"
+        "diff --git a/src/sophyane/capability_executors.py "
+        "b/src/sophyane/capability_executors.py\n"
+        "--- a/src/sophyane/capability_executors.py\n"
+        "+++ b/src/sophyane/capability_executors.py\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+        "diff --git a/tests/test_python_execution_regression.py "
+        "b/tests/test_python_execution_regression.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/tests/test_python_execution_regression.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+def test_regression(): assert True\n"
+        "```\n"
+    )
+
+    payload = _candidate_payload(value, component="python")
+
+    assert payload["patch"].startswith("diff --git ")
+    assert payload["tests"] == [
+        "tests/test_python_execution_regression.py"
+    ]
+    assert payload["response_format_recovered"] is True
+
+
+def test_candidate_payload_rejects_explanation_only() -> None:
+    from sophyane.evolution.candidate_evolution import _candidate_payload
+
+    with pytest.raises(ValueError, match="neither valid JSON"):
+        _candidate_payload(
+            "I recommend improving the executor.",
+            component="python",
+        )
+
