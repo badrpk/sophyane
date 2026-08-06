@@ -534,6 +534,146 @@ def _normalize_indexed_code_indentation(
     return normalized
 
 
+def _indexed_edit_terms(
+    value: str,
+) -> set[str]:
+    """Extract meaningful identifiers used to anchor a repair to source."""
+    ignored = {
+        "and",
+        "as",
+        "assert",
+        "class",
+        "def",
+        "else",
+        "false",
+        "for",
+        "from",
+        "if",
+        "import",
+        "in",
+        "is",
+        "none",
+        "not",
+        "or",
+        "pass",
+        "raise",
+        "return",
+        "true",
+        "try",
+        "while",
+        "with",
+    }
+
+    return {
+        token
+        for token in re.findall(
+            r"[A-Za-z_][A-Za-z0-9_]{2,}",
+            str(value or ""),
+        )
+        if token.casefold() not in ignored
+    }
+
+
+def _validate_indexed_repair_anchor(
+    *,
+    original_payload: dict[str, Any],
+    repaired_payload: dict[str, Any],
+    window: dict[str, Any],
+) -> None:
+    """Require a repair to remain on the failed range and source topic."""
+    original_start = int(
+        original_payload["start"]
+    )
+    original_end = int(
+        original_payload["end"]
+    )
+
+    repaired_start = int(
+        repaired_payload["start"]
+    )
+    repaired_end = int(
+        repaired_payload["end"]
+    )
+
+    if (
+        repaired_start != original_start
+        or repaired_end != original_end
+    ):
+        raise ValueError(
+            "Indexed repair changed the original source range: "
+            f"{original_start}-{original_end} became "
+            f"{repaired_start}-{repaired_end}"
+        )
+
+    window_lines = list(
+        window.get("lines")
+        or []
+    )
+
+    if (
+        repaired_start < 1
+        or repaired_end > len(window_lines)
+    ):
+        raise ValueError(
+            "Indexed repair range is outside the selected window"
+        )
+
+    selected_text = "".join(
+        window_lines[
+            repaired_start - 1:
+            repaired_end
+        ]
+    )
+
+    nearby_start = max(
+        0,
+        repaired_start - 4,
+    )
+    nearby_end = min(
+        len(window_lines),
+        repaired_end + 3,
+    )
+
+    nearby_text = "".join(
+        window_lines[
+            nearby_start:
+            nearby_end
+        ]
+    )
+
+    repair_code = str(
+        repaired_payload.get("code")
+        or ""
+    )
+
+    source_terms = (
+        _indexed_edit_terms(selected_text)
+        | _indexed_edit_terms(nearby_text)
+        | _indexed_edit_terms(
+            original_payload.get("code")
+            or ""
+        )
+    )
+
+    repair_terms = _indexed_edit_terms(
+        repair_code
+    )
+
+    # Punctuation-only and literal-only edits can legitimately have no
+    # identifiers, so require overlap only when both sides contain terms.
+    if (
+        source_terms
+        and repair_terms
+        and not (
+            source_terms
+            & repair_terms
+        )
+    ):
+        raise ValueError(
+            "Indexed repair is unrelated to the selected source window"
+        )
+
+
 def _indexed_edit_to_patch(
     *,
     repo: Path,
@@ -1984,9 +2124,15 @@ Rules for the indexed operation:
             )
         )
 
+        original_indexed_payload: dict[str, Any] | None = None
+
         try:
             parsed = _indexed_edit_payload(
                 raw_response
+            )
+
+            original_indexed_payload = dict(
+                parsed
             )
 
             parsed["file"] = (
@@ -2025,12 +2171,26 @@ Repair one indexed edit.
 Window:
 {indexed_window["numbered"]}
 
-Return one minified JSON object only:
-{{"op":"replace","start":1,"end":1,"code":"ACTUAL_CODE"}}
+The original failed operation used:
+start={(
+    original_indexed_payload or {}
+).get("start")}
+end={(
+    original_indexed_payload or {}
+).get("end")}
+
+Return one minified JSON object only using those exact start/end values:
+{{"op":"replace","start":{(
+    original_indexed_payload or {}
+).get("start")},"end":{(
+    original_indexed_payload or {}
+).get("end")},"code":"ACTUAL_CODE"}}
 
 Rules:
 - no Markdown or explanation;
 - no file path or Git diff;
+- do not change start or end;
+- remain semantically related to the selected source lines;
 - choose the smallest valid edit;
 - {repair_shape}
 - ACTUAL_CODE is a label; replace it with real source;
@@ -2059,6 +2219,18 @@ Error:
             try:
                 parsed = _indexed_edit_payload(
                     repaired_response
+                )
+
+                if original_indexed_payload is None:
+                    raise ValueError(
+                        "Original indexed edit could not be parsed, "
+                        "so its repair cannot be safely anchored"
+                    )
+
+                _validate_indexed_repair_anchor(
+                    original_payload=original_indexed_payload,
+                    repaired_payload=parsed,
+                    window=indexed_window,
                 )
 
                 parsed["file"] = (

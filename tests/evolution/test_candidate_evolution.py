@@ -1257,3 +1257,108 @@ def test_indexed_repair_prompt_has_single_line_mode() -> None:
     assert "exactly one source line" in source
     assert "total response below 80 tokens" in source
     assert "max_tokens=80" in source
+
+
+def test_indexed_repair_must_preserve_original_range() -> None:
+    import pytest
+
+    from sophyane.evolution.candidate_evolution import (
+        _validate_indexed_repair_anchor,
+    )
+
+    window = {
+        "lines": [
+            "    red = _run(\n",
+            "        [sys.executable],\n",
+            "        timeout=120,\n",
+            "    )\n",
+        ]
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="changed the original source range",
+    ):
+        _validate_indexed_repair_anchor(
+            original_payload={
+                "op": "replace",
+                "start": 3,
+                "end": 3,
+                "code": "timeout=120,",
+            },
+            repaired_payload={
+                "op": "replace",
+                "start": 1,
+                "end": 1,
+                "code": "def test_addition():",
+            },
+            window=window,
+        )
+
+
+def test_indexed_repair_rejects_unrelated_source() -> None:
+    import pytest
+
+    from sophyane.evolution.candidate_evolution import (
+        _validate_indexed_repair_anchor,
+    )
+
+    window = {
+        "lines": [
+            "    red = _run(\n",
+            "        [sys.executable],\n",
+            "        timeout=120,\n",
+            "    )\n",
+        ]
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="unrelated to the selected source window",
+    ):
+        _validate_indexed_repair_anchor(
+            original_payload={
+                "op": "replace",
+                "start": 3,
+                "end": 3,
+                "code": "timeout=120,",
+            },
+            repaired_payload={
+                "op": "replace",
+                "start": 3,
+                "end": 3,
+                "code": "def test_addition():",
+            },
+            window=window,
+        )
+
+
+def test_indexed_repair_accepts_related_same_range() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _validate_indexed_repair_anchor,
+    )
+
+    window = {
+        "lines": [
+            "    red = _run(\n",
+            "        [sys.executable],\n",
+            "        timeout=120,\n",
+            "    )\n",
+        ]
+    }
+
+    _validate_indexed_repair_anchor(
+        original_payload={
+            "op": "replace",
+            "start": 3,
+            "end": 3,
+            "code": "timeout=120,",
+        },
+        repaired_payload={
+            "op": "replace",
+            "start": 3,
+            "end": 3,
+            "code": "timeout=90,",
+        },
+        window=window,
+    )
