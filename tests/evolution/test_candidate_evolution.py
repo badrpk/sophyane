@@ -1240,3 +1240,20 @@ def test_single_statement_accepts_single_line_replacement(
 
     assert "-    value = 1" in patch
     assert "+    value = 2" in patch
+
+
+def test_indexed_repair_prompt_has_single_line_mode() -> None:
+    import inspect
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    source = inspect.getsource(
+        CandidateEvolver.generate_proposal
+    )
+
+    assert "single_line_repair" in source
+    assert "exactly one source line" in source
+    assert "total response below 80 tokens" in source
+    assert "max_tokens=80" in source

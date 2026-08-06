@@ -2003,42 +2003,48 @@ Rules for the indexed operation:
             )
 
         except ValueError as first_error:
-            repair_prompt = f"""
-Repair one compact indexed source edit.
+            single_line_repair = (
+                "single non-block source line"
+                in str(first_error).casefold()
+            )
 
-Numbered source window:
+            repair_shape = (
+                "The code value must contain exactly one source line. "
+                "Do not add parentheses, blocks, return objects, or "
+                "neighbouring statements."
+                if single_line_repair
+                else (
+                    "The code value may contain at most five short "
+                    "source lines."
+                )
+            )
+
+            repair_prompt = f"""
+Repair one indexed edit.
+
+Window:
 {indexed_window["numbered"]}
 
-Return JSON only:
-{{
-  "op": "replace",
-  "start": 1,
-  "end": 1,
-  "code": "ACTUAL_CODE"
-}}
+Return one minified JSON object only:
+{{"op":"replace","start":1,"end":1,"code":"ACTUAL_CODE"}}
 
 Rules:
-- no Markdown;
-- no file path;
-- no original source copy;
-- no Git diff;
-- start/end must be within this window;
-- code may contain at most five lines;
-- ACTUAL_CODE is a schema label and must never be returned literally;
-- preserve indentation;
-- stay below 100 tokens.
+- no Markdown or explanation;
+- no file path or Git diff;
+- choose the smallest valid edit;
+- {repair_shape}
+- ACTUAL_CODE is a label; replace it with real source;
+- preserve relative indentation;
+- total response below 80 tokens.
 
-Invalid response:
-{raw_response[-1200:]}
-
-Validation error:
+Error:
 {first_error}
 """
 
             repaired_response = (
                 self.engine._analyst_llm(
                     repair_prompt,
-                    max_tokens=100,
+                    max_tokens=80,
                 )
             )
 
