@@ -374,6 +374,61 @@ Trace:
             "local-evolution",
         )
 
+        # Candidate prompts may contain large source excerpts. Keep the local
+        # request within the dedicated server's context window while preserving
+        # both the governing constraints at the beginning and source context at
+        # the end.
+        raw_prompt = str(prompt or "")
+
+        prompt_character_limit = max(
+            4000,
+            int(
+                os.environ.get(
+                    "SOPHYANE_EVOLUTION_LOCAL_MAX_PROMPT_CHARS",
+                    "18000",
+                )
+            ),
+        )
+
+        if len(raw_prompt) > prompt_character_limit:
+            head_size = int(
+                prompt_character_limit * 0.40
+            )
+            tail_size = (
+                prompt_character_limit
+                - head_size
+            )
+
+            prompt = (
+                raw_prompt[:head_size]
+                + "\n\n"
+                + "[LOCAL ANALYST PROMPT COMPACTED: "
+                + str(
+                    len(raw_prompt)
+                    - prompt_character_limit
+                )
+                + " CHARACTERS OMITTED]"
+                + "\n\n"
+                + raw_prompt[-tail_size:]
+            )
+        else:
+            prompt = raw_prompt
+
+        local_output_limit = max(
+            256,
+            int(
+                os.environ.get(
+                    "SOPHYANE_EVOLUTION_LOCAL_MAX_OUTPUT_TOKENS",
+                    "2048",
+                )
+            ),
+        )
+
+        effective_max_tokens = min(
+            max(64, int(max_tokens)),
+            local_output_limit,
+        )
+
         body = json.dumps(
             {
                 "model": model,
@@ -394,9 +449,20 @@ Trace:
                     },
                 ],
                 "temperature": 0.05,
-                "max_tokens": max_tokens,
+                "max_tokens": effective_max_tokens,
             }
         ).encode("utf-8")
+
+        if len(raw_prompt) != len(prompt):
+            print(
+                "Local evolution prompt compacted: "
+                f"{len(raw_prompt)} → {len(prompt)} characters"
+            )
+
+        print(
+            "Local evolution generation budget: "
+            f"{effective_max_tokens} tokens"
+        )
 
         request = urllib.request.Request(
             endpoint + "/v1/chat/completions",
@@ -424,6 +490,27 @@ Trace:
                         "utf-8"
                     )
                 )
+
+        except urllib.error.HTTPError as error:
+            try:
+                error_body = (
+                    error.read()
+                    .decode(
+                        "utf-8",
+                        errors="replace",
+                    )
+                )
+            except Exception:
+                error_body = ""
+
+            raise RuntimeError(
+                "Larger local evolution analyst rejected the request. "
+                f"status={error.code}; "
+                f"prompt_characters={len(prompt)}; "
+                f"max_output_tokens={effective_max_tokens}; "
+                f"body={error_body[:3000]}"
+            ) from error
+
         except Exception as error:
             raise RuntimeError(
                 "Larger local evolution analyst failed: "

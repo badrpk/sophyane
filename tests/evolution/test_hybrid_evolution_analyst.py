@@ -120,3 +120,42 @@ def test_candidate_repair_has_no_gemini_only_gate() -> None:
         not in source
     )
     assert "_analyst_llm" in source
+
+
+def test_local_analyst_bounds_prompt_and_output() -> None:
+    import inspect
+
+    from sophyane.evolution.engine import (
+        EvolutionEngine,
+    )
+
+    source = inspect.getsource(
+        EvolutionEngine._evolution_local_llm
+    )
+
+    assert (
+        "SOPHYANE_EVOLUTION_LOCAL_MAX_PROMPT_CHARS"
+        in source
+    )
+    assert (
+        "SOPHYANE_EVOLUTION_LOCAL_MAX_OUTPUT_TOKENS"
+        in source
+    )
+    assert "effective_max_tokens" in source
+    assert "PROMPT COMPACTED" in source
+
+
+def test_local_http_error_includes_response_body() -> None:
+    import inspect
+
+    from sophyane.evolution.engine import (
+        EvolutionEngine,
+    )
+
+    source = inspect.getsource(
+        EvolutionEngine._evolution_local_llm
+    )
+
+    assert "urllib.error.HTTPError" in source
+    assert "error.read()" in source
+    assert "prompt_characters" in source
