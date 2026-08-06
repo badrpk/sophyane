@@ -289,6 +289,158 @@ def _diff_paths(patch: str) -> list[str]:
     ]
 
 
+_PLACEHOLDER_INDEX_RE = re.compile(
+    r"^index\s+"
+    r"(?:1234567|abcdef0|deadbee|0000000)"
+    r"\.\."
+    r"(?:89abcdef|7654321|abcdef0|deadbee)"
+    r"(?:\s+\d+)?$",
+    re.I | re.M,
+)
+
+_EXACT_BENCHMARK_LITERAL_RE = re.compile(
+    r"""
+    (?:
+        add\s*\(\s*20\s*,\s*22\s*\)\s*==\s*42
+        |
+        HARNESS_OK
+        |
+        STDERR_OK
+        |
+        STDOUT_OK
+        |
+        harness_probe\.txt
+        |
+        exit_probe\.sh
+    )
+    """,
+    re.I | re.X,
+)
+
+_HUNK_HEADER_RE = re.compile(
+    r"^@@\s+"
+    r"-(\d+)(?:,(\d+))?\s+"
+    r"\+(\d+)(?:,(\d+))?\s+@@",
+    re.M,
+)
+
+
+def _validate_unified_diff_structure(
+    patch: str,
+) -> list[str]:
+    """Return structural or benchmark-specific patch violations."""
+    value = str(patch or "")
+    errors: list[str] = []
+
+    if not value.startswith("diff --git "):
+        errors.append(
+            "missing Git diff header"
+        )
+
+    if _PLACEHOLDER_INDEX_RE.search(value):
+        errors.append(
+            "fabricated placeholder Git index hashes"
+        )
+
+    if _EXACT_BENCHMARK_LITERAL_RE.search(value):
+        errors.append(
+            "exact benchmark literal hardcoded into candidate patch"
+        )
+
+    paths = _diff_paths(value)
+
+    if not paths:
+        errors.append(
+            "no modified file paths detected"
+        )
+
+    hunks = list(
+        _HUNK_HEADER_RE.finditer(value)
+    )
+
+    if not hunks:
+        errors.append(
+            "no valid unified-diff hunk header"
+        )
+
+    lines = value.splitlines()
+
+    for index, match in enumerate(hunks):
+        start = (
+            value[:match.end()]
+            .count("\n")
+            + 1
+        )
+
+        next_match = (
+            hunks[index + 1]
+            if index + 1 < len(hunks)
+            else None
+        )
+
+        end = (
+            value[:next_match.start()]
+            .count("\n")
+            if next_match
+            else len(lines)
+        )
+
+        body = lines[start:end]
+
+        old_expected = int(
+            match.group(2)
+            or "1"
+        )
+        new_expected = int(
+            match.group(4)
+            or "1"
+        )
+
+        old_actual = sum(
+            1
+            for line in body
+            if (
+                line.startswith((" ", "-"))
+                and not line.startswith("---")
+            )
+        )
+
+        new_actual = sum(
+            1
+            for line in body
+            if (
+                line.startswith((" ", "+"))
+                and not line.startswith("+++")
+            )
+        )
+
+        if old_actual != old_expected:
+            errors.append(
+                "hunk old-line count mismatch: "
+                f"expected {old_expected}, observed {old_actual}"
+            )
+
+        if new_actual != new_expected:
+            errors.append(
+                "hunk new-line count mismatch: "
+                f"expected {new_expected}, observed {new_actual}"
+            )
+
+        if (
+            old_expected > 0
+            and not any(
+                line.startswith((" ", "-"))
+                and not line.startswith("---")
+                for line in body
+            )
+        ):
+            errors.append(
+                "existing-file hunk contains no source context or removals"
+            )
+
+    return list(dict.fromkeys(errors))
+
+
 def _changed_lines(patch: str) -> int:
     return sum(
         1
@@ -1010,6 +1162,18 @@ Original response:
                 "Proposal did not contain a unified Git diff"
             )
 
+        structural_errors = (
+            _validate_unified_diff_structure(
+                proposal.patch
+            )
+        )
+
+        if structural_errors:
+            raise ValueError(
+                "Candidate patch failed structural policy: "
+                + "; ".join(structural_errors)
+            )
+
         paths = _diff_paths(
             proposal.patch
         )
@@ -1503,7 +1667,7 @@ Original response:
         *,
         apply_error: str,
     ) -> PatchProposal:
-        """Request exactly one syntax/context repair for a malformed diff."""
+        """Request exactly one syntax/context repair from the active analyst."""
         repair_prompt = f"""
 Repair this unified Git diff so that `git apply --check` succeeds against the
 current Sophyane repository.

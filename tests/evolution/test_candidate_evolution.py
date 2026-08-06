@@ -436,3 +436,63 @@ def test_normalized_patch_uses_physical_newlines() -> None:
         "src/sophyane/local_coding_capability.py"
     ]
 
+
+
+def test_rejects_placeholder_index_and_benchmark_hardcoding() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _validate_unified_diff_structure,
+    )
+
+    patch = """diff --git a/src/sophyane/local_coding_capability.py b/src/sophyane/local_coding_capability.py
+index 1234567..89abcdef 100644
+--- a/src/sophyane/local_coding_capability.py
++++ b/src/sophyane/local_coding_capability.py
+@@ -1,3 +1,10 @@
++def add(a, b):
++    return a + b
++
++def test_add():
++    assert add(20, 22) == 42
++
++if __name__ == '__main__':
++    test_add()
+"""
+
+    errors = _validate_unified_diff_structure(
+        patch
+    )
+
+    assert any(
+        "placeholder Git index" in item
+        for item in errors
+    )
+    assert any(
+        "benchmark literal" in item
+        for item in errors
+    )
+    assert any(
+        "old-line count mismatch" in item
+        for item in errors
+    )
+
+
+def test_accepts_structurally_valid_general_patch() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _validate_unified_diff_structure,
+    )
+
+    patch = """diff --git a/src/sophyane/example.py b/src/sophyane/example.py
+--- a/src/sophyane/example.py
++++ b/src/sophyane/example.py
+@@ -1,2 +1,3 @@
+ def execute(request):
++    verify_effects(request)
+     return True
+"""
+
+    assert (
+        _validate_unified_diff_structure(
+            patch
+        )
+        == []
+    )
