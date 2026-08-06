@@ -496,3 +496,22 @@ def test_accepts_structurally_valid_general_patch() -> None:
         )
         == []
     )
+
+
+def test_local_candidate_policy_is_micro_patch_sized() -> None:
+    import inspect
+
+    import sophyane.evolution.candidate_evolution as module
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    assert module.MAX_CHANGED_LINES == 20
+
+    source = inspect.getsource(
+        CandidateEvolver.generate_proposal
+    )
+
+    assert "Produce one micro-patch only" in source
+    assert "no more than 20 total added/removed lines" in source
+    assert "one function or one adjacent code block" in source

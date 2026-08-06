@@ -381,7 +381,7 @@ Trace:
         raw_prompt = str(prompt or "")
 
         prompt_character_limit = max(
-            4000,
+            512,
             int(
                 os.environ.get(
                     "SOPHYANE_EVOLUTION_LOCAL_MAX_PROMPT_CHARS",
@@ -415,7 +415,7 @@ Trace:
             prompt = raw_prompt
 
         local_output_limit = max(
-            256,
+            32,
             int(
                 os.environ.get(
                     "SOPHYANE_EVOLUTION_LOCAL_MAX_OUTPUT_TOKENS",
@@ -425,7 +425,7 @@ Trace:
         )
 
         effective_max_tokens = min(
-            max(64, int(max_tokens)),
+            max(16, int(max_tokens)),
             local_output_limit,
         )
 

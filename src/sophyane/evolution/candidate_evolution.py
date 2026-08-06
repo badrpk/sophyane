@@ -92,7 +92,7 @@ COMPONENT_CAPABILITY = {
 
 MAX_SOURCE_FILES = 1
 MAX_TEST_FILES = 1
-MAX_CHANGED_LINES = 300
+MAX_CHANGED_LINES = 20
 
 
 def _now() -> str:
@@ -1015,8 +1015,15 @@ Allowed production paths:
 {json.dumps(allowed)}
 
 Patch constraints:
+- Produce one micro-patch only.
 - Modify at most one production source file.
-- Optionally modify or create one regression test under tests/.
+- Change no more than 20 total added/removed lines.
+- Touch one function or one adjacent code block only.
+- Do not perform architectural rewrites.
+- Do not include explanations inside the diff.
+- Omit the optional regression test when it cannot fit safely; existing
+  objective replay and regression gates will still evaluate the patch.
+- Optionally modify or create one very small regression test under tests/.
 - Do not change any other file.
 - Do not weaken security or validators.
 - Do not alter tests merely to hide failure.

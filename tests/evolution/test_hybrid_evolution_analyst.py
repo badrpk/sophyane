@@ -159,3 +159,19 @@ def test_local_http_error_includes_response_body() -> None:
     assert "urllib.error.HTTPError" in source
     assert "error.read()" in source
     assert "prompt_characters" in source
+
+
+def test_local_analyst_accepts_true_micro_budgets() -> None:
+    import inspect
+
+    from sophyane.evolution.engine import (
+        EvolutionEngine,
+    )
+
+    source = inspect.getsource(
+        EvolutionEngine._evolution_local_llm
+    )
+
+    assert "prompt_character_limit = max(\n            512," in source
+    assert "local_output_limit = max(\n            32," in source
+    assert "max(16, int(max_tokens))" in source
