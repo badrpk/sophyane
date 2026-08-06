@@ -75,3 +75,12 @@ def test_general_email_topics_do_not_cross_private_boundary(
     query: str,
 ) -> None:
     assert is_personal_connector_request(query) is False
+
+
+def test_generic_latest_message_is_private_but_ambiguous() -> None:
+    assert (
+        is_personal_connector_request(
+            "show my latest message"
+        )
+        is True
+    )

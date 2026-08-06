@@ -58,6 +58,124 @@ def is_personal_connector_request(message: str) -> bool:
     return any(re.search(pattern, text) for pattern in _EMAIL_PATTERNS)
 
 
+_MESSAGE_SOURCES = (
+    ("email", "Email / Gmail"),
+    ("whatsapp", "WhatsApp"),
+    ("sms", "SMS / phone messages"),
+    ("snapchat", "Snapchat"),
+    ("wechat", "WeChat"),
+)
+
+
+def _explicit_message_source(message: str) -> str:
+    """Return the explicitly named private-message source, if any."""
+    text = " ".join(str(message or "").casefold().split())
+
+    if any(term in text for term in ("email", "e-mail", "mail", "inbox")):
+        return "email"
+    if "whatsapp" in text or "whats app" in text:
+        return "whatsapp"
+    if any(term in text for term in ("sms", "text message", "phone message")):
+        return "sms"
+    if "snapchat" in text or "snap chat" in text:
+        return "snapchat"
+    if "wechat" in text or "we chat" in text:
+        return "wechat"
+
+    return ""
+
+
+def _is_generic_message_request(message: str) -> bool:
+    """True when the user asks for a message without naming its source."""
+    text = " ".join(str(message or "").casefold().split())
+
+    if _explicit_message_source(text):
+        return False
+
+    return bool(
+        re.search(
+            r"\b(?:last|latest|newest|recent|unread|sent|outgoing)?\s*"
+            r"(?:message|messages)\b",
+            text,
+        )
+    )
+
+
+def _choose_message_source() -> str:
+    """Ask which private messaging source the user means."""
+    if not sys.stdin.isatty():
+        return ""
+
+    print()
+    print("Which type of message do you mean?")
+    print()
+
+    for number, (_source, label) in enumerate(
+        _MESSAGE_SOURCES,
+        start=1,
+    ):
+        availability = (
+            "connected"
+            if _source == "email"
+            else "connector not installed"
+        )
+        print(f"  {number}. {label} — {availability}")
+
+    print("  0. Cancel")
+    print()
+
+    try:
+        answer = input(
+            "Select message source [0-5]: "
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return ""
+
+    try:
+        index = int(answer)
+    except ValueError:
+        return ""
+
+    if index == 0:
+        return ""
+
+    if 1 <= index <= len(_MESSAGE_SOURCES):
+        return _MESSAGE_SOURCES[index - 1][0]
+
+    return ""
+
+
+def _unsupported_source_report(
+    source: str,
+    request: str,
+) -> str:
+    labels = {
+        "whatsapp": "WhatsApp",
+        "sms": "SMS / phone messages",
+        "snapchat": "Snapchat",
+        "wechat": "WeChat",
+    }
+
+    label = labels.get(source, source or "that source")
+
+    return "\n".join(
+        [
+            "Sophyane private connector",
+            f"Request: {request}",
+            f"Selected source: {label}",
+            "Connector available: False",
+            (
+                f"{label} access is not connected yet. "
+                "Sophyane will not substitute email or invent a result."
+            ),
+            "Internet fallback: blocked",
+            "Memory promotion: blocked",
+            "Success: False",
+        ]
+    )
+
+
 def _operation(message: str) -> tuple[str, dict[str, Any]]:
     text = " ".join(str(message or "").casefold().split())
 
@@ -503,6 +621,34 @@ def run_personal_connector(request: str, workspace: Path | str, *, progress: Pro
     progress = progress or (lambda _message: None)
     root = Path(workspace).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
+    source = _explicit_message_source(request)
+
+    if not source and _is_generic_message_request(request):
+        source = _choose_message_source()
+
+        if not source:
+            return "\n".join(
+                [
+                    "Sophyane private connector",
+                    "Message source was not selected.",
+                    "No connector was queried.",
+                    "Internet fallback: blocked",
+                    "Memory promotion: blocked",
+                    "Success: False",
+                ]
+            )
+
+    # Existing private email phrases that do not contain the literal word
+    # "email" still remain email operations when already classified as such.
+    if not source:
+        source = "email"
+
+    if source != "email":
+        return _unsupported_source_report(
+            source,
+            request,
+        )
+
     operation, args = _operation(request)
     progress(f"SLI private connector: email operation={operation}")
     try:
@@ -577,12 +723,26 @@ def run_personal_connector(request: str, workspace: Path | str, *, progress: Pro
             "Connector: gmail_imap",
             "Connector verified: True",
             f"From: {payload['from'] or '(unknown)'}",
-            f"Subject: {payload['subject'] or '(no subject)'}",
-            f"Words: {payload['word_count']}",
-            "Internet fallback: blocked",
-            "Memory promotion: blocked",
-            f"Private report: {REPORT_NAME}",
         ]
+
+        if payload.get("to"):
+            lines.append(
+                f"To: {payload['to']}"
+            )
+
+        lines.extend(
+            [
+                f"Subject: {payload['subject'] or '(no subject)'}",
+                f"Words: {payload['word_count']}",
+                "",
+                "Message:",
+                payload.get("preview") or "(no plain-text message preview)",
+                "",
+                "Internet fallback: blocked",
+                "Memory promotion: blocked",
+                f"Private report: {REPORT_NAME}",
+            ]
+        )
         if dashboard:
             lines.append(f"Visual dashboard: {dashboard}")
         lines.append("Success: True")
