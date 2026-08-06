@@ -67,6 +67,34 @@ def _simple_chat_reply(message: str) -> str | None:
                 f"{type(error).__name__}: {error}"
             )
 
+    # SOPHYANE_SEMANTIC_DOMAIN_ROUTER_V1
+    # Decide whether this is personal/private before any public-memory or
+    # internet-acquisition route can see the request.
+    try:
+        from sophyane.personal_fact_resolver import (
+            try_personal_semantic_reply,
+        )
+
+        personal_semantic_reply = (
+            try_personal_semantic_reply(
+                message
+            )
+        )
+
+        if personal_semantic_reply is not None:
+            return personal_semantic_reply
+    except Exception as error:
+        import os as _semantic_router_os
+
+        if _semantic_router_os.environ.get(
+            "SOPHYANE_DEBUG_SEMANTIC_ROUTER",
+            "",
+        ) == "1":
+            return (
+                "Semantic domain router failed safely: "
+                f"{type(error).__name__}: {error}"
+            )
+
     # SOPHYANE_FLYWHEEL_TUI_V1
     # SOPHYANE_NATIVE_FAST_PATH_DISPATCH
     try:
