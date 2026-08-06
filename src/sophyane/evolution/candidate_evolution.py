@@ -2916,20 +2916,21 @@ Choose a DIFFERENT editable source choice:
 
 {alternative_catalogue}
 
-Return compact JSON only:
-{{
-  "choice": 2,
-  "code": "ACTUAL_CODE"
-}}
+Return one minified JSON object with exactly two keys:
+- "choice": an integer from the alternative catalogue;
+- "code": the actual executable replacement source line.
+
+Do not include a sample JSON object. Generate the real source directly.
 
 Rules:
 - do not select choice {original_choice};
 - choice must appear in the alternative catalogue;
 - code must make a real behavioral Python change;
+- code must not be empty;
 - no start, end, op, path, diff, Markdown or explanation;
 - do not rewrite only quotes, whitespace or formatting;
 - do not copy benchmark inputs, filenames or expected answers;
-- ACTUAL_CODE is a schema label and must not be copied;
+- never return ACTUAL_CODE, CODE, REPLACEMENT, SOURCE, TODO, or PLACEHOLDER;
 - stay below 100 output tokens.
 """
 

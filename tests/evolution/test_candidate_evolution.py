@@ -2405,3 +2405,33 @@ def test_semantic_rechoice_can_map_to_different_choice() -> None:
     assert repaired["selected_choice"] == 3
     assert repaired["start"] == 3
     assert repaired["end"] == 3
+
+
+def test_semantic_rechoice_prompt_has_no_copyable_code_example() -> None:
+    import inspect
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    source = inspect.getsource(
+        CandidateEvolver.generate_proposal
+    )
+
+    marker = "Choose a DIFFERENT editable source choice"
+    start = source.index(marker)
+    section = source[
+        start:
+        source.index(
+            'repair_max_tokens = 100',
+            start,
+        )
+    ]
+
+    assert '"code": "ACTUAL_CODE"' not in section
+    assert "Do not include a sample JSON object" in section
+    assert (
+        "never return ACTUAL_CODE, CODE, REPLACEMENT, "
+        "SOURCE, TODO, or PLACEHOLDER"
+        in section
+    )
