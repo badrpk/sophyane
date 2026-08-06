@@ -343,6 +343,155 @@ def _bounded_source_edit_response(
     return "\n".join(lines)
 
 
+def _indexed_edit_choices(
+    window: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Build a compact ordinal catalogue of directly editable source lines."""
+    lines = list(
+        window.get("lines")
+        or []
+    )
+
+    allowed = sorted(
+        int(item)
+        for item in (
+            window.get(
+                "allowed_edit_lines"
+            )
+            or []
+        )
+    )
+
+    choices: list[
+        dict[str, Any]
+    ] = []
+
+    for ordinal, line_number in enumerate(
+        allowed,
+        start=1,
+    ):
+        if (
+            line_number < 1
+            or line_number > len(lines)
+        ):
+            continue
+
+        choices.append(
+            {
+                "choice": ordinal,
+                "line": line_number,
+                "source": lines[
+                    line_number - 1
+                ].rstrip("\n"),
+            }
+        )
+
+    return choices
+
+
+def _format_indexed_edit_choices(
+    window: dict[str, Any],
+) -> str:
+    """Render editable choices without exposing arbitrary line selection."""
+    choices = _indexed_edit_choices(
+        window
+    )
+
+    if not choices:
+        return "(no editable choices)"
+
+    return "\n".join(
+        (
+            f'{item["choice"]} => '
+            f'window line {item["line"]:02d}: '
+            f'{item["source"]}'
+        )
+        for item in choices
+    )
+
+
+def _indexed_choice_payload(
+    value: str,
+    *,
+    window: dict[str, Any],
+) -> dict[str, Any]:
+    """Map one model-selected ordinal to an immutable source line."""
+    raw = _json_object(
+        value
+    )
+
+    try:
+        choice = int(
+            raw.get(
+                "choice"
+            )
+        )
+    except (
+        TypeError,
+        ValueError,
+    ) as error:
+        raise ValueError(
+            "Indexed choice response requires an integer choice"
+        ) from error
+
+    choices = _indexed_edit_choices(
+        window
+    )
+
+    selected = next(
+        (
+            item
+            for item in choices
+            if int(
+                item["choice"]
+            )
+            == choice
+        ),
+        None,
+    )
+
+    if selected is None:
+        raise ValueError(
+            "Indexed choice is outside the editable source catalogue"
+        )
+
+    code = str(
+        raw.get("code")
+        or ""
+    )
+
+    synthetic = json.dumps(
+        {
+            "op": "replace",
+            "start": int(
+                selected["line"]
+            ),
+            "end": int(
+                selected["line"]
+            ),
+            "code": code,
+            "reason": (
+                raw.get("reason")
+                or "Apply one direct-anchor source replacement."
+            ),
+            "confidence": (
+                raw.get("confidence")
+                or 0.70
+            ),
+        }
+    )
+
+    parsed = _indexed_edit_payload(
+        synthetic
+    )
+
+    parsed[
+        "selected_choice"
+    ] = choice
+
+    return parsed
+
+
 def _indexed_edit_payload(
     value: str,
 ) -> dict[str, Any]:
@@ -2555,38 +2704,30 @@ Required source anchors:
     or []
 )}
 
-Allowed edit line numbers:
-{sorted(
-    indexed_window.get(
-        "allowed_edit_lines"
-    )
-    or []
-)}
-
 Numbered source window:
 {indexed_window["numbered"]}
 
-Choose a line whose existing text or replacement contains at least one
-required source anchor. Do not edit timeout, retry, logging, comments, or
-unrelated control-flow lines unless one of those is itself a required anchor.
+Editable source choices:
+{_format_indexed_edit_choices(
+    indexed_window
+)}
+
+Choose exactly one editable source choice. The harness maps the choice to
+its immutable window line. Do not return start, end, op or a file path.
 
 Return compact JSON only:
 {{
-  "op": "replace",
-  "start": 1,
-  "end": 1,
+  "choice": 1,
   "code": "ACTUAL_CODE"
 }}
 
-Rules for the indexed operation:
-- start and end refer only to the numbered window above;
-- start and end must intersect the allowed edit line numbers;
-- use replace, insert_before, insert_after or delete;
-- output no file path, find text, diff, Markdown or explanation;
-- modify the smallest possible range;
-- code may contain at most five lines;
+Rules:
+- choice must be one of the editable source choices above;
+- code must replace only that one source line;
+- output no start, end, op, path, diff, Markdown or explanation;
+- do not edit timeout, summaries, comments or unrelated result messages;
 - ACTUAL_CODE is a schema label and must never be returned literally;
-- preserve indentation exactly;
+- preserve the selected line's relative indentation;
 - stay below 100 output tokens.
 """
 
@@ -2605,8 +2746,9 @@ Rules for the indexed operation:
         original_indexed_payload: dict[str, Any] | None = None
 
         try:
-            parsed = _indexed_edit_payload(
-                raw_response
+            parsed = _indexed_choice_payload(
+                raw_response,
+                window=indexed_window,
             )
 
             original_indexed_payload = dict(
@@ -2648,9 +2790,18 @@ Rules for the indexed operation:
             )
 
         except ValueError as first_error:
-            single_line_repair = (
-                "single non-block source line"
-                in str(first_error).casefold()
+            single_line_repair = bool(
+                original_indexed_payload
+                and int(
+                    original_indexed_payload[
+                        "start"
+                    ]
+                )
+                == int(
+                    original_indexed_payload[
+                        "end"
+                    ]
+                )
             )
 
             if single_line_repair:

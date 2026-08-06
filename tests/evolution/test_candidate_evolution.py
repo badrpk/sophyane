@@ -1741,7 +1741,11 @@ def test_generation_prompt_includes_failed_check_anchors() -> None:
 
     assert "Objectively failed checks" in source
     assert "Required source anchors" in source
-    assert "Do not edit timeout" in source
+    assert (
+        "do not edit timeout, summaries, comments "
+        "or unrelated result messages"
+        in source
+    )
 
 
 def test_single_line_response_rejects_no_relevant_edit() -> None:
@@ -2125,3 +2129,105 @@ def test_direct_anchor_lines_exclude_adjacent_keyword_argument() -> None:
     assert allowed == {1}
     assert 2 not in allowed
     assert 3 not in allowed
+
+
+def test_indexed_choices_include_only_allowed_lines() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _indexed_edit_choices,
+    )
+
+    choices = _indexed_edit_choices(
+        {
+            "lines": [
+                "timeout=120,\n",
+                '"pytest",\n',
+                "summary='done',\n",
+                "test_target.name,\n",
+            ],
+            "allowed_edit_lines": {
+                2,
+                4,
+            },
+        }
+    )
+
+    assert choices == [
+        {
+            "choice": 1,
+            "line": 2,
+            "source": '"pytest",',
+        },
+        {
+            "choice": 2,
+            "line": 4,
+            "source": "test_target.name,",
+        },
+    ]
+
+
+def test_indexed_choice_maps_to_immutable_line() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _indexed_choice_payload,
+    )
+
+    parsed = _indexed_choice_payload(
+        '{"choice":2,"code":"test_target.name,"}',
+        window={
+            "lines": [
+                "timeout=120,\n",
+                '"pytest",\n',
+                "summary='done',\n",
+                "test_target.name,\n",
+            ],
+            "allowed_edit_lines": {
+                2,
+                4,
+            },
+        },
+    )
+
+    assert parsed["op"] == "replace"
+    assert parsed["start"] == 4
+    assert parsed["end"] == 4
+    assert parsed["selected_choice"] == 2
+
+
+def test_indexed_choice_rejects_outside_catalogue() -> None:
+    import pytest
+
+    from sophyane.evolution.candidate_evolution import (
+        _indexed_choice_payload,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="outside the editable source catalogue",
+    ):
+        _indexed_choice_payload(
+            '{"choice":37,"code":"value"}',
+            window={
+                "lines": [
+                    '"pytest",\n',
+                ],
+                "allowed_edit_lines": {
+                    1,
+                },
+            },
+        )
+
+
+def test_generation_prompt_does_not_request_start_or_end() -> None:
+    import inspect
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    source = inspect.getsource(
+        CandidateEvolver.generate_proposal
+    )
+
+    assert "Editable source choices" in source
+    assert '"choice": 1' in source
+    assert "Do not return start, end, op" in source
+    assert "_indexed_choice_payload" in source
