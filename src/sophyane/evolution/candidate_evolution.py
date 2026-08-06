@@ -640,6 +640,45 @@ def _indexed_edit_to_patch(
             "Indexed edit may emit at most five code lines"
         )
 
+    selected_nonempty = [
+        line
+        for line in selected_window_lines
+        if line.strip()
+    ]
+
+    selected_opens_block = bool(
+        selected_nonempty
+        and selected_nonempty[-1].rstrip().endswith(":")
+    )
+
+    replaced_line_count = (
+        end - start + 1
+    )
+
+    if (
+        operation == "replace"
+        and replaced_line_count == 1
+        and len(code_lines) > 1
+        and not selected_opens_block
+    ):
+        raise ValueError(
+            "A single non-block source line may only be "
+            "replaced by one source line"
+        )
+
+    if (
+        operation in {
+            "insert_before",
+            "insert_after",
+        }
+        and len(code_lines) > 1
+        and not selected_opens_block
+    ):
+        raise ValueError(
+            "A multi-line insertion requires a selected "
+            "block-opening source line"
+        )
+
     absolute_start = (
         int(window["offset"])
         + start
