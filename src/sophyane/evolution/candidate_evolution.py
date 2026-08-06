@@ -674,6 +674,93 @@ def _validate_indexed_repair_anchor(
         )
 
 
+def _recover_single_line_indexed_edit(
+    *,
+    repo: Path,
+    component: str,
+    window: dict[str, Any],
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Recover one uniquely valid line from an oversized repair response."""
+    if (
+        str(payload.get("op")) != "replace"
+        or int(payload.get("start")) != int(payload.get("end"))
+    ):
+        raise ValueError(
+            "Single-line recovery requires a one-line replacement"
+        )
+
+    raw_lines = [
+        line
+        for line in str(
+            payload.get("code")
+            or ""
+        ).splitlines()
+        if line.strip()
+    ]
+
+    if len(raw_lines) <= 1:
+        return payload
+
+    valid: list[
+        tuple[dict[str, Any], str]
+    ] = []
+
+    for line in raw_lines:
+        candidate = dict(payload)
+        candidate["code"] = line
+
+        try:
+            patch = _indexed_edit_to_patch(
+                repo=repo,
+                component=component,
+                window=window,
+                payload=candidate,
+            )
+        except ValueError:
+            continue
+
+        valid.append(
+            (
+                candidate,
+                patch,
+            )
+        )
+
+    if not valid:
+        raise ValueError(
+            "Oversized repair contained no valid single-line edit"
+        )
+
+    # Deduplicate candidates that normalize to the same patch.
+    unique: dict[
+        str,
+        dict[str, Any],
+    ] = {}
+
+    for candidate, patch in valid:
+        unique.setdefault(
+            patch,
+            candidate,
+        )
+
+    if len(unique) != 1:
+        raise ValueError(
+            "Oversized repair contained multiple valid "
+            "single-line edits"
+        )
+
+    recovered = next(
+        iter(unique.values())
+    )
+
+    recovered[
+        "single_line_recovered"
+    ] = True
+
+    return recovered
+
+
 def _indexed_edit_to_patch(
     *,
     repo: Path,
@@ -2232,6 +2319,26 @@ Error:
                     repaired_payload=parsed,
                     window=indexed_window,
                 )
+
+                if (
+                    int(parsed["start"])
+                    == int(parsed["end"])
+                    and len(
+                        str(
+                            parsed.get("code")
+                            or ""
+                        ).splitlines()
+                    )
+                    > 1
+                ):
+                    parsed = (
+                        _recover_single_line_indexed_edit(
+                            repo=self.repo,
+                            component=component,
+                            window=indexed_window,
+                            payload=parsed,
+                        )
+                    )
 
                 parsed["file"] = (
                     indexed_window["file"]

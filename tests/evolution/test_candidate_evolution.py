@@ -1362,3 +1362,64 @@ def test_indexed_repair_accepts_related_same_range() -> None:
         },
         window=window,
     )
+
+
+def test_oversized_repair_recovers_unique_valid_line(
+    tmp_path: Path,
+) -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _recover_single_line_indexed_edit,
+    )
+
+    target = (
+        tmp_path
+        / "src/sophyane/local_coding_capability.py"
+    )
+    target.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    target.write_text(
+        "def run():\n"
+        "    red = _run(\n"
+        "        [sys.executable],\n"
+        "        cwd=workspace,\n"
+        "        timeout=60,\n"
+        "    )\n",
+        encoding="utf-8",
+    )
+
+    lines = target.read_text(
+        encoding="utf-8"
+    ).splitlines(
+        keepends=True,
+    )
+
+    recovered = _recover_single_line_indexed_edit(
+        repo=tmp_path,
+        component="python",
+        window={
+            "file": (
+                "src/sophyane/"
+                "local_coding_capability.py"
+            ),
+            "offset": 0,
+            "lines": lines,
+        },
+        payload={
+            "op": "replace",
+            "start": 5,
+            "end": 5,
+            "code": (
+                "red = _run(\n"
+                "    [sys.executable],\n"
+                "    cwd=workspace,\n"
+                "    timeout=120,\n"
+                ")"
+            ),
+        },
+    )
+
+    assert recovered["code"].strip() == "timeout=120,"
+    assert recovered["single_line_recovered"] is True
