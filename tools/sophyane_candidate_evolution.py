@@ -10,6 +10,7 @@ from pathlib import Path
 
 from sophyane.evolution.candidate_evolution import (
     CandidateEvolver,
+    NoUnresolvedRepresentativeFailures,
 )
 
 
@@ -100,6 +101,19 @@ def main() -> int:
                 args.commit_candidate
             ),
         )
+    except NoUnresolvedRepresentativeFailures as outcome:
+        print()
+        print("=" * 72)
+        print("CANDIDATE EVOLUTION NOT REQUIRED")
+        print("=" * 72)
+        print(str(outcome))
+        print("Status: no_unresolved_failures")
+        print("Candidate generated: False")
+        print("Main modified: False")
+        print("Main merged: False")
+        print("Remote pushed: False")
+        return 0
+
     except Exception as error:
         print()
         print("=" * 72)

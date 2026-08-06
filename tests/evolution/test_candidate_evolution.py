@@ -2744,3 +2744,80 @@ def test_duplicate_adjacent_edit_gate_remains_enabled() -> None:
         "Indexed edit created duplicate adjacent source lines"
         in source
     )
+
+
+def test_unresolved_representative_records_filters_passing_replays(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    evolver = CandidateEvolver(tmp_path)
+
+    records = [
+        (
+            tmp_path / "resolved.json",
+            {
+                "task": {
+                    "task_id": "resolved",
+                    "prompt": "resolved task",
+                    "capability": "development.python_create_validate_pytest",
+                }
+            },
+        ),
+        (
+            tmp_path / "unresolved.json",
+            {
+                "task": {
+                    "task_id": "unresolved",
+                    "prompt": "unresolved task",
+                    "capability": "development.python_create_validate_pytest",
+                }
+            },
+        ),
+    ]
+
+    monkeypatch.setattr(
+        evolver,
+        "representative_records",
+        lambda **_kwargs: records,
+    )
+
+    def fake_replay(*, source_repo, task):
+        assert source_repo == tmp_path
+        return SimpleNamespace(
+            passed=task.task_id == "resolved"
+        )
+
+    monkeypatch.setattr(
+        evolver,
+        "replay_task",
+        fake_replay,
+    )
+
+    unresolved = evolver.unresolved_representative_records(
+        component="python",
+        limit=2,
+    )
+
+    assert [
+        path.name
+        for path, _data in unresolved
+    ] == ["unresolved.json"]
+
+
+def test_no_unresolved_failure_is_distinct_from_candidate_failure() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        NoUnresolvedRepresentativeFailures,
+    )
+
+    outcome = NoUnresolvedRepresentativeFailures(
+        "all pass"
+    )
+
+    assert isinstance(outcome, RuntimeError)
+    assert str(outcome) == "all pass"

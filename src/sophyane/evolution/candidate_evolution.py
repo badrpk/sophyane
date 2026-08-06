@@ -2370,6 +2370,10 @@ class CandidateEvaluation:
         return path
 
 
+class NoUnresolvedRepresentativeFailures(RuntimeError):
+    """Historical representative failures all pass on current main."""
+
+
 class CandidateEvolver:
     def __init__(
         self,
@@ -2542,6 +2546,36 @@ class CandidateEvolver:
                     break
 
         return unique
+
+    def unresolved_representative_records(
+        self,
+        *,
+        component: str,
+        limit: int = 3,
+    ) -> list[tuple[Path, dict[str, Any]]]:
+        """Return historical failures that still fail on current main."""
+        records = self.representative_records(
+            component=component,
+            limit=limit,
+        )
+
+        unresolved: list[
+            tuple[Path, dict[str, Any]]
+        ] = []
+
+        for item in records:
+            _path, data = item
+            replay = self.replay_task(
+                source_repo=self.repo,
+                task=self._task_from_record(
+                    data
+                ),
+            )
+
+            if not replay.passed:
+                unresolved.append(item)
+
+        return unresolved
 
     def _source_context(
         self,
@@ -4425,17 +4459,34 @@ Original patch:
             component
         ]
 
-        records = (
+        historical_records = (
             self.representative_records(
                 component=component,
                 limit=representative_limit,
             )
         )
 
-        if not records:
+        if not historical_records:
             raise RuntimeError(
                 "No representative failed records "
                 f"exist for {component}."
+            )
+
+        records = [
+            item
+            for item in historical_records
+            if not self.replay_task(
+                source_repo=self.repo,
+                task=self._task_from_record(
+                    item[1]
+                ),
+            ).passed
+        ]
+
+        if not records:
+            raise NoUnresolvedRepresentativeFailures(
+                "Historical representative failures "
+                f"for {component} all pass on current main."
             )
 
         proposal = self.generate_proposal(
