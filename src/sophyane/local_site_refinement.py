@@ -321,6 +321,32 @@ def _validate(document: str) -> list[str]:
     return errors
 
 
+def _local_runtime_failure_report(
+    *,
+    request: str,
+    output: Path,
+    error: Exception,
+) -> str:
+    """Stop safely when strict local GGUF review cannot run."""
+    return "\n".join(
+        [
+            "Sophyane hybrid SLI + local GGUF website pipeline",
+            f"Request: {request}",
+            "Initial artifact: deterministic SLI completed",
+            f"Initial artifact path: {output}",
+            "Local GGUF critique attempted: True",
+            "Local GGUF critique completed: False",
+            f"Local runtime error: {type(error).__name__}: {error}",
+            "Final validation: not run after local-runtime failure",
+            "Browser opened: False",
+            "Cloud LLM used: False",
+            "Provider fallback used: False",
+            "Success: False",
+            "Action required: configure llama-server or llama-cli, then retry.",
+        ]
+    )
+
+
 def compose_refined_local_topic_site(
     request: str,
     workspace: Path,
@@ -378,12 +404,25 @@ def compose_refined_local_topic_site(
             f"Website route: local GGUF critique round {round_number}",
         )
 
-        critique = _critique(
-            provider,
-            request,
-            document,
-            round_number,
-        )
+        try:
+            critique = _critique(
+                provider,
+                request,
+                document,
+                round_number,
+            )
+        except Exception as error:
+            _progress(
+                progress,
+                "Strict local GGUF critique failed; "
+                "preserving the deterministic artifact and stopping.",
+            )
+            return _local_runtime_failure_report(
+                request=request,
+                output=output,
+                error=error,
+            )
+
         critiques.append(critique)
 
         verdict = str(
@@ -402,13 +441,25 @@ def compose_refined_local_topic_site(
             f"Website route: local GGUF improvement round {round_number}",
         )
 
-        patch = _generate_patch(
-            provider,
-            request,
-            document,
-            critique,
-            round_number,
-        )
+        try:
+            patch = _generate_patch(
+                provider,
+                request,
+                document,
+                critique,
+                round_number,
+            )
+        except Exception as error:
+            _progress(
+                progress,
+                "Strict local GGUF improvement failed; "
+                "preserving the deterministic artifact and stopping.",
+            )
+            return _local_runtime_failure_report(
+                request=request,
+                output=output,
+                error=error,
+            )
 
         if not patch:
             raise RuntimeError(

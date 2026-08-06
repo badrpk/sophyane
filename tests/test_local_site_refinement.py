@@ -102,3 +102,84 @@ def test_local_refinement_occurs_before_browser(
     assert "Cloud LLM used: False" in report
     assert "Final validation: passed" in report
     assert (tmp_path / "local-gguf-critique.json").is_file()
+
+
+class FailingLocalProvider:
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str,
+    ) -> str:
+        del prompt, system_prompt
+        raise RuntimeError(
+            "llama-server is not running on 8766"
+        )
+
+
+def test_local_runtime_failure_stops_without_browser_or_provider_fallback(
+    tmp_path: Path,
+) -> None:
+    browser_calls: list[Path] = []
+
+    def initial_compose(
+        request: str,
+        workspace: Path,
+        progress=None,
+    ) -> str:
+        del request, progress
+
+        workspace.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        (workspace / "index.html").write_text(
+            "<!doctype html><html><head>"
+            "<title>Fruit</title></head><body>"
+            "<main><h1>Fruit</h1>"
+            + ("<p>Grounded content.</p>" * 100)
+            + "</main></body></html>",
+            encoding="utf-8",
+        )
+
+        return "Success: True"
+
+    def browser(
+        target: Path,
+        progress,
+    ) -> tuple[bool, str]:
+        del progress
+        browser_calls.append(target)
+        return True, target.as_uri()
+
+    with (
+        patch(
+            "sophyane.local_site_refinement."
+            "rich.compose_rich_topic_site",
+            side_effect=initial_compose,
+        ),
+        patch(
+            "sophyane.local_site_refinement._provider",
+            return_value=FailingLocalProvider(),
+        ),
+        patch(
+            "sophyane.local_site_refinement."
+            "rich._open_generated_site",
+            side_effect=browser,
+        ),
+    ):
+        report = compose_refined_local_topic_site(
+            "make fruits website",
+            tmp_path,
+        )
+
+    assert (tmp_path / "index.html").is_file()
+    assert browser_calls == []
+
+    assert "Initial artifact: deterministic SLI completed" in report
+    assert "Local GGUF critique attempted: True" in report
+    assert "Local GGUF critique completed: False" in report
+    assert "Browser opened: False" in report
+    assert "Cloud LLM used: False" in report
+    assert "Provider fallback used: False" in report
+    assert "Success: False" in report
