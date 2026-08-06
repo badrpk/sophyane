@@ -2517,3 +2517,51 @@ def test_semantic_rechoice_prompt_uses_plain_text_protocol() -> None:
     assert "CODE=<actual executable replacement source>" in source
     assert "CODE may contain Python quotes without escaping" in source
     assert "_semantic_rechoice_response" in source
+
+
+def test_semantic_rechoice_strips_catalogue_line_prefix() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _semantic_rechoice_response,
+    )
+
+    parsed = _semantic_rechoice_response(
+        (
+            "CHOICE=2\n"
+            'CODE=window line 22: test_target.name + "_test",'
+        ),
+        window={
+            "lines": [
+                '            "pytest",\n',
+                "            test_target.name,\n",
+            ],
+            "allowed_edit_lines": {
+                1,
+                2,
+            },
+        },
+    )
+
+    assert parsed["selected_choice"] == 2
+    assert parsed["start"] == 2
+    assert parsed["end"] == 2
+    assert (
+        parsed["code"]
+        == 'test_target.name + "_test",'
+    )
+
+
+def test_semantic_rechoice_prompt_forbids_catalogue_prefix() -> None:
+    import inspect
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    source = inspect.getsource(
+        CandidateEvolver.generate_proposal
+    )
+
+    assert (
+        'never copy "window line NN:" or catalogue text'
+        in source
+    )

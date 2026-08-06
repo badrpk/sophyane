@@ -495,6 +495,17 @@ def _semantic_rechoice_response(
         ]
     ).strip()
 
+    # Small local models sometimes copy the catalogue label before the
+    # replacement. CHOICE already determines the immutable source line,
+    # so remove exactly one leading "window line NN:" presentation label.
+    code = re.sub(
+        r"^window\s+line\s+\d+\s*:\s*",
+        "",
+        code,
+        count=1,
+        flags=re.I,
+    ).strip()
+
     if not code:
         raise ValueError(
             "Semantic re-choice CODE is empty"
@@ -3041,6 +3052,7 @@ Rules:
 - do not select choice {original_choice};
 - choice must appear in the alternative catalogue;
 - CODE may contain Python quotes without escaping them for JSON;
+- CODE must contain source only; never copy "window line NN:" or catalogue text;
 - CODE must make a real behavioral Python change;
 - CODE must not be empty;
 - do not rewrite only quotes, whitespace or formatting;
