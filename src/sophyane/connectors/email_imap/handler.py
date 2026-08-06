@@ -19,14 +19,37 @@ STOP = {
 # keep: company, usa, own, name, llc, inc, corp, etc.
 
 
-def _creds(profile: str) -> tuple[str | None, str | None]:
-    user = os.environ.get("SOPHYANE_IMAP_USER") or get_secret(profile, "imap_user")
-    pw = os.environ.get("SOPHYANE_IMAP_APP_PASSWORD") or get_secret(
-        profile, "imap_app_password"
+def _creds(
+    profile: str,
+) -> tuple[str | None, str | None, str, int]:
+    user = (
+        os.environ.get("SOPHYANE_IMAP_USER")
+        or get_secret(profile, "imap_user")
     )
+    pw = (
+        os.environ.get("SOPHYANE_IMAP_APP_PASSWORD")
+        or get_secret(profile, "imap_app_password")
+    )
+    host = (
+        os.environ.get("SOPHYANE_IMAP_HOST")
+        or get_secret(profile, "imap_host")
+        or "imap.gmail.com"
+    )
+    port_raw = (
+        os.environ.get("SOPHYANE_IMAP_PORT")
+        or get_secret(profile, "imap_port")
+        or "993"
+    )
+
     if pw:
         pw = pw.replace(" ", "")
-    return user, pw
+
+    try:
+        port = int(port_raw)
+    except (TypeError, ValueError):
+        port = 993
+
+    return user, pw, str(host), port
 
 
 def _dec(value: str | None) -> str:
@@ -59,8 +82,13 @@ def _terms(query: str) -> list[str]:
     return [t for t in tokens if t not in STOP][:16]
 
 
-def _op_latest(user: str, pw: str) -> dict[str, Any]:
-    M = imaplib.IMAP4_SSL("imap.gmail.com")
+def _op_latest(
+    user: str,
+    pw: str,
+    host: str,
+    port: int,
+) -> dict[str, Any]:
+    M = imaplib.IMAP4_SSL(host, port)
     M.login(user, pw)
     M.select("INBOX")
     typ, data = M.search(None, "ALL")
@@ -94,7 +122,14 @@ def _op_latest(user: str, pw: str) -> dict[str, Any]:
     }
 
 
-def _op_search(user: str, pw: str, query: str, limit: int = 40) -> dict[str, Any]:
+def _op_search(
+    user: str,
+    pw: str,
+    query: str,
+    host: str,
+    port: int,
+    limit: int = 40,
+) -> dict[str, Any]:
     terms = _terms(query)
     if not terms:
         return {
@@ -107,7 +142,7 @@ def _op_search(user: str, pw: str, query: str, limit: int = 40) -> dict[str, Any
                 "└─"
             ),
         }
-    M = imaplib.IMAP4_SSL("imap.gmail.com")
+    M = imaplib.IMAP4_SSL(host, port)
     M.login(user, pw)
     M.select("INBOX")
     typ, data = M.search(None, "ALL")
@@ -173,9 +208,14 @@ def _op_search(user: str, pw: str, query: str, limit: int = 40) -> dict[str, Any
 
 
 
-def _op_sent(user: str, pw: str) -> dict[str, Any]:
+def _op_sent(
+    user: str,
+    pw: str,
+    host: str,
+    port: int,
+) -> dict[str, Any]:
     """Latest message from Gmail Sent Mail (or common Sent folder names)."""
-    M = imaplib.IMAP4_SSL("imap.gmail.com")
+    M = imaplib.IMAP4_SSL(host, port)
     M.login(user, pw)
     candidates = (
         '"[Gmail]/Sent Mail"',
@@ -240,7 +280,7 @@ def execute(
     profile: str,
     manifest: dict[str, Any],
 ) -> dict[str, Any]:
-    user, pw = _creds(profile)
+    user, pw, host, port = _creds(profile)
     if not user or not pw:
         return {
             "ok": False,
@@ -249,12 +289,12 @@ def execute(
         }
     try:
         if op == "latest":
-            return _op_latest(user, pw)
+            return _op_latest(user, pw, host, port)
         if op in ("sent", "latest_sent"):
-            return _op_sent(user, pw)
+            return _op_sent(user, pw, host, port)
         if op == "search":
             query = str(args.get("query") or args.get("message") or "").strip()
-            return _op_search(user, pw, query)
+            return _op_search(user, pw, query, host, port)
         return {
             "ok": False,
             "error": "unknown_op",

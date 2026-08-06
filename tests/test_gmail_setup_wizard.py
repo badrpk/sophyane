@@ -1,10 +1,8 @@
 from pathlib import Path
-from unittest.mock import patch
 
-from sophyane.gmail_setup_wizard import (
-    _normalise_app_password,
-    _valid_app_password,
-    configure_gmail_interactively,
+from sophyane.email_setup_wizard import (
+    _normalise_password,
+    configure_email_interactively,
 )
 from sophyane.sli_personal_connector import (
     run_personal_connector,
@@ -13,34 +11,20 @@ from sophyane.sli_personal_connector import (
 
 def test_app_password_normalisation() -> None:
     assert (
-        _normalise_app_password(
+        _normalise_password(
             "abcd efgh ijkl mnop"
         )
         == "abcdefghijklmnop"
     )
 
-    assert _valid_app_password(
-        "abcd efgh ijkl mnop"
-    )
 
-
-def test_invalid_app_password_is_rejected() -> None:
-    assert not _valid_app_password(
-        "my-normal-password"
-    )
-    assert not _valid_app_password(
-        "1234 5678 9012 3456"
-    )
-
-
-def test_interactive_setup_verifies_and_saves(
+def test_interactive_gmail_setup_verifies_and_saves(
     monkeypatch,
 ) -> None:
     answers = iter([
-        "",                 # Configure now: default yes
         "owner@gmail.com",
-        "n",                # Do not open browser
-        "",                 # Ready
+        "n",   # Do not open browser
+        "",    # App password has been created
     ])
 
     saved: dict[str, str] = {}
@@ -54,32 +38,37 @@ def test_interactive_setup_verifies_and_saves(
         lambda _prompt="": "abcd efgh ijkl mnop",
     )
     monkeypatch.setattr(
-        "sophyane.gmail_setup_wizard.sys.stdin.isatty",
+        "sophyane.email_setup_wizard.sys.stdin.isatty",
         lambda: True,
     )
     monkeypatch.setattr(
-        "sophyane.gmail_setup_wizard._verify",
-        lambda _user, _password: (
+        "sophyane.email_setup_wizard._verify",
+        lambda **_kwargs: (
             True,
-            "Gmail connection verified.",
+            "Email connection verified.",
         ),
     )
     monkeypatch.setattr(
-        "sophyane.gmail_setup_wizard.set_secret",
+        "sophyane.email_setup_wizard.set_secret",
         lambda _profile, name, value: saved.__setitem__(
             name,
             value,
         ),
     )
 
-    result = configure_gmail_interactively()
+    result = configure_email_interactively()
 
     assert result["ok"] is True
+    assert result["provider"] == "gmail"
+
     assert saved["imap_user"] == "owner@gmail.com"
     assert (
         saved["imap_app_password"]
         == "abcdefghijklmnop"
     )
+    assert saved["imap_host"] == "imap.gmail.com"
+    assert saved["imap_port"] == "993"
+    assert saved["imap_provider"] == "gmail"
 
 
 def test_connector_retries_original_request_after_setup(
@@ -123,6 +112,7 @@ def test_connector_retries_original_request_after_setup(
         lambda **_kwargs: {
             "ok": True,
             "configured": True,
+            "provider": "gmail",
         },
     )
     monkeypatch.setattr(
@@ -145,14 +135,37 @@ def test_noninteractive_setup_remains_fail_closed(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "sophyane.gmail_setup_wizard.sys.stdin.isatty",
+        "sophyane.email_setup_wizard.sys.stdin.isatty",
         lambda: False,
     )
 
-    result = configure_gmail_interactively()
+    result = configure_email_interactively()
 
     assert result["ok"] is False
     assert (
         result["error"]
         == "interactive_terminal_required"
     )
+
+
+def test_outlook_setup_stops_for_oauth(
+    monkeypatch,
+) -> None:
+    answers = iter([
+        "owner@outlook.com",
+    ])
+
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda _prompt="": next(answers),
+    )
+    monkeypatch.setattr(
+        "sophyane.email_setup_wizard.sys.stdin.isatty",
+        lambda: True,
+    )
+
+    result = configure_email_interactively()
+
+    assert result["ok"] is False
+    assert result["provider"] == "outlook"
+    assert result["error"] == "oauth_required"
