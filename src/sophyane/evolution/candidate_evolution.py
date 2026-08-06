@@ -186,6 +186,78 @@ def _normalise_patch_text(
     return patch
 
 
+def _single_line_edit_response(
+    value: str,
+) -> str:
+    """Parse exactly one raw replacement line from a local analyst."""
+    raw = str(value or "").strip()
+
+    if not raw:
+        raise ValueError(
+            "Single-line repair returned an empty response"
+        )
+
+    fenced = re.fullmatch(
+        r"```(?:python)?\s*(.*?)\s*```",
+        raw,
+        flags=re.I | re.S,
+    )
+
+    if fenced:
+        raw = fenced.group(1).strip()
+
+    lines = [
+        line
+        for line in raw.splitlines()
+        if line.strip()
+    ]
+
+    if len(lines) != 1:
+        raise ValueError(
+            "Single-line repair must return exactly one source line"
+        )
+
+    line = lines[0]
+
+    # Remove harmless matching quotation marks, but never parse JSON here.
+    if (
+        len(line) >= 2
+        and line[0] == line[-1]
+        and line[0] in {
+            '"',
+            "'",
+            "`",
+        }
+    ):
+        line = line[1:-1]
+
+    line = line.rstrip()
+
+    if not line.strip():
+        raise ValueError(
+            "Single-line repair returned no source text"
+        )
+
+    if line.lstrip().startswith(
+        (
+            "{",
+            "[",
+            "```",
+        )
+    ):
+        raise ValueError(
+            "Single-line repair returned structured output "
+            "instead of source text"
+        )
+
+    if "\n" in line or "\r" in line:
+        raise ValueError(
+            "Single-line repair contains an embedded newline"
+        )
+
+    return line
+
+
 def _indexed_edit_payload(
     value: str,
 ) -> dict[str, Any]:
@@ -2241,57 +2313,72 @@ Rules for the indexed operation:
                 in str(first_error).casefold()
             )
 
-            repair_shape = (
-                "The code value must contain exactly one source line. "
-                "Do not add parentheses, blocks, return objects, or "
-                "neighbouring statements."
-                if single_line_repair
-                else (
-                    "The code value may contain at most five short "
-                    "source lines."
+            if single_line_repair:
+                if original_indexed_payload is None:
+                    raise ValueError(
+                        "Original indexed edit could not be parsed, "
+                        "so a single-line repair cannot be anchored"
+                    )
+
+                original_start = int(
+                    original_indexed_payload[
+                        "start"
+                    ]
                 )
-            )
 
-            repair_prompt = f"""
-Repair one indexed edit.
+                selected_line = str(
+                    indexed_window["lines"][
+                        original_start - 1
+                    ]
+                ).rstrip("\n")
 
-Window:
+                repair_prompt = f"""
+Selected source line:
+
+{original_start:02d}|{selected_line}
+
+Return only the replacement source text for this same line.
+
+Rules:
+- exactly one source line;
+- no JSON, quotes, Markdown or explanation;
+- no surrounding function call or neighbouring statements;
+- preserve the meaning of the requested reusable improvement;
+- do not copy benchmark inputs, filenames or expected answers.
+"""
+
+                repair_max_tokens = 32
+
+            else:
+                repair_prompt = f"""
+Repair one compact indexed edit.
+
+Numbered source window:
 {indexed_window["numbered"]}
 
-The original failed operation used:
-start={(
-    original_indexed_payload or {}
-).get("start")}
-end={(
-    original_indexed_payload or {}
-).get("end")}
-
-Return one minified JSON object only using those exact start/end values:
-{{"op":"replace","start":{(
-    original_indexed_payload or {}
-).get("start")},"end":{(
-    original_indexed_payload or {}
-).get("end")},"code":"ACTUAL_CODE"}}
+Return one minified JSON object only:
+{{"op":"replace","start":1,"end":1,"code":"ACTUAL_CODE"}}
 
 Rules:
 - no Markdown or explanation;
 - no file path or Git diff;
-- do not change start or end;
-- remain semantically related to the selected source lines;
-- choose the smallest valid edit;
-- {repair_shape}
-- ACTUAL_CODE is a label; replace it with real source;
+- start/end must be within the numbered window;
+- code may contain at most five short source lines;
+- ACTUAL_CODE is a schema label and must not be copied;
 - preserve relative indentation;
-- total response below 80 tokens.
+- remain related to the selected source;
+- stay below 80 tokens.
 
-Error:
+Validation error:
 {first_error}
 """
+
+                repair_max_tokens = 80
 
             repaired_response = (
                 self.engine._analyst_llm(
                     repair_prompt,
-                    max_tokens=80,
+                    max_tokens=repair_max_tokens,
                 )
             )
 
@@ -2304,14 +2391,27 @@ Error:
             )
 
             try:
-                parsed = _indexed_edit_payload(
-                    repaired_response
-                )
-
                 if original_indexed_payload is None:
                     raise ValueError(
                         "Original indexed edit could not be parsed, "
                         "so its repair cannot be safely anchored"
+                    )
+
+                if single_line_repair:
+                    parsed = dict(
+                        original_indexed_payload
+                    )
+                    parsed["code"] = (
+                        _single_line_edit_response(
+                            repaired_response
+                        )
+                    )
+                    parsed[
+                        "raw_single_line_repair"
+                    ] = True
+                else:
+                    parsed = _indexed_edit_payload(
+                        repaired_response
                     )
 
                 _validate_indexed_repair_anchor(

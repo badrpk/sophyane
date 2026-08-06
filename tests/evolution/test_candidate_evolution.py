@@ -1423,3 +1423,81 @@ def test_oversized_repair_recovers_unique_valid_line(
 
     assert recovered["code"].strip() == "timeout=120,"
     assert recovered["single_line_recovered"] is True
+
+
+def test_single_line_response_accepts_raw_source() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _single_line_edit_response,
+    )
+
+    assert (
+        _single_line_edit_response(
+            "timeout=90,"
+        )
+        == "timeout=90,"
+    )
+
+
+def test_single_line_response_unwraps_fence() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _single_line_edit_response,
+    )
+
+    assert (
+        _single_line_edit_response(
+            "```python\n"
+            "timeout=90,\n"
+            "```"
+        )
+        == "timeout=90,"
+    )
+
+
+def test_single_line_response_rejects_multiple_lines() -> None:
+    import pytest
+
+    from sophyane.evolution.candidate_evolution import (
+        _single_line_edit_response,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="exactly one source line",
+    ):
+        _single_line_edit_response(
+            "timeout=90,\n"
+            "evidence.append(red)"
+        )
+
+
+def test_single_line_response_rejects_json() -> None:
+    import pytest
+
+    from sophyane.evolution.candidate_evolution import (
+        _single_line_edit_response,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="structured output",
+    ):
+        _single_line_edit_response(
+            '{"code":"timeout=90,"}'
+        )
+
+
+def test_generate_proposal_uses_raw_single_line_repair() -> None:
+    import inspect
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    source = inspect.getsource(
+        CandidateEvolver.generate_proposal
+    )
+
+    assert "Return only the replacement source text" in source
+    assert "repair_max_tokens = 32" in source
+    assert "_single_line_edit_response" in source
+    assert "raw_single_line_repair" in source
