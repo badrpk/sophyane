@@ -1997,3 +1997,76 @@ def test_indexed_window_stride_scans_small_files(
         or "test_target.write_text" in numbered
         or "pytest" in numbered
     )
+
+
+def test_allowed_anchor_lines_exclude_summary_line() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _allowed_anchor_line_numbers,
+    )
+
+    lines = [
+        '    test_target.write_text(tests_source, encoding="utf-8")\n',
+        "    evidence: list[CommandEvidence] = []\n",
+        '    summary="not relevant",\n',
+        '    error="pytest failed",\n',
+    ]
+
+    allowed = _allowed_anchor_line_numbers(
+        lines=lines,
+        required_anchors={
+            "test_target",
+            "pytest",
+        },
+        adjacency=0,
+    )
+
+    assert 1 in allowed
+    assert 4 in allowed
+    assert 3 not in allowed
+
+
+def test_indexed_line_selection_rejects_summary_line() -> None:
+    import pytest
+
+    from sophyane.evolution.candidate_evolution import (
+        _validate_indexed_line_selection,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="outside the failed-check anchor region",
+    ):
+        _validate_indexed_line_selection(
+            payload={
+                "start": 34,
+                "end": 34,
+            },
+            allowed_lines={
+                20,
+                22,
+                27,
+                29,
+                36,
+                37,
+                38,
+                41,
+            },
+        )
+
+
+def test_indexed_line_selection_accepts_pytest_line() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _validate_indexed_line_selection,
+    )
+
+    _validate_indexed_line_selection(
+        payload={
+            "start": 20,
+            "end": 20,
+        },
+        allowed_lines={
+            20,
+            22,
+            27,
+        },
+    )

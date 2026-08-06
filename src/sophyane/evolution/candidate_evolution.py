@@ -535,6 +535,82 @@ def _window_keywords(
     }
 
 
+def _allowed_anchor_line_numbers(
+    *,
+    lines: list[str],
+    required_anchors: set[str],
+    adjacency: int = 1,
+) -> set[int]:
+    """Return one-based editable lines near failed-check source anchors."""
+    if not required_anchors:
+        return set(
+            range(
+                1,
+                len(lines) + 1,
+            )
+        )
+
+    direct: set[int] = set()
+
+    for index, line in enumerate(
+        lines,
+        start=1,
+    ):
+        lowered = line.casefold()
+
+        if any(
+            anchor in lowered
+            for anchor in required_anchors
+        ):
+            direct.add(index)
+
+    allowed: set[int] = set()
+
+    for index in direct:
+        for candidate in range(
+            max(1, index - adjacency),
+            min(
+                len(lines),
+                index + adjacency,
+            )
+            + 1,
+        ):
+            allowed.add(candidate)
+
+    return allowed
+
+
+def _validate_indexed_line_selection(
+    *,
+    payload: dict[str, Any],
+    allowed_lines: set[int],
+) -> None:
+    """Require the model-selected range to intersect anchor-relevant lines."""
+    if not allowed_lines:
+        raise ValueError(
+            "Selected source window contains no editable anchor lines"
+        )
+
+    start = int(payload["start"])
+    end = int(payload["end"])
+
+    selected = set(
+        range(
+            start,
+            end + 1,
+        )
+    )
+
+    if not (
+        selected
+        & allowed_lines
+    ):
+        raise ValueError(
+            "Indexed edit selected a line outside the "
+            "failed-check anchor region"
+        )
+
+
 def _select_indexed_window(
     *,
     repo: Path,
@@ -718,6 +794,14 @@ def _select_indexed_window(
         )
     )
 
+    allowed_edit_lines = (
+        _allowed_anchor_line_numbers(
+            lines=lines,
+            required_anchors=required_anchors,
+            adjacency=1,
+        )
+    )
+
     return {
         "file": relative,
         "offset": offset,
@@ -725,6 +809,7 @@ def _select_indexed_window(
         "numbered": numbered,
         "score": score,
         "required_anchors": required_anchors,
+        "allowed_edit_lines": allowed_edit_lines,
     }
 
 
@@ -2471,6 +2556,14 @@ Required source anchors:
     or []
 )}
 
+Allowed edit line numbers:
+{sorted(
+    indexed_window.get(
+        "allowed_edit_lines"
+    )
+    or []
+)}
+
 Numbered source window:
 {indexed_window["numbered"]}
 
@@ -2488,6 +2581,7 @@ Return compact JSON only:
 
 Rules for the indexed operation:
 - start and end refer only to the numbered window above;
+- start and end must intersect the allowed edit line numbers;
 - use replace, insert_before, insert_after or delete;
 - output no file path, find text, diff, Markdown or explanation;
 - modify the smallest possible range;
@@ -2518,6 +2612,16 @@ Rules for the indexed operation:
 
             original_indexed_payload = dict(
                 parsed
+            )
+
+            _validate_indexed_line_selection(
+                payload=parsed,
+                allowed_lines=set(
+                    indexed_window.get(
+                        "allowed_edit_lines"
+                    )
+                    or set()
+                ),
             )
 
             _validate_indexed_edit_relevance(
@@ -2701,6 +2805,16 @@ Rules:
                     original_payload=original_indexed_payload,
                     repaired_payload=parsed,
                     window=indexed_window,
+                )
+
+                _validate_indexed_line_selection(
+                    payload=parsed,
+                    allowed_lines=set(
+                        indexed_window.get(
+                            "allowed_edit_lines"
+                        )
+                        or set()
+                    ),
                 )
 
                 _validate_indexed_edit_relevance(
