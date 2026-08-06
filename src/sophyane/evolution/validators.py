@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 from .models import (
@@ -73,9 +75,73 @@ def _html(
     return checks, errors
 
 
+def _artifact_workspace(
+    workspace: Path,
+) -> Path:
+    """Resolve the bounded artifact directory created by the live harness."""
+    outer = workspace.resolve()
+
+    report_candidates = (
+        outer
+        / ".sophyane-harness-report.json",
+        outer
+        / ".sophyane-workspace"
+        / ".sophyane-harness-report.json",
+    )
+
+    for report_path in report_candidates:
+        if not report_path.is_file():
+            continue
+
+        try:
+            payload = json.loads(
+                report_path.read_text(
+                    encoding="utf-8",
+                )
+            )
+
+            candidate = Path(
+                str(
+                    payload.get(
+                        "workspace"
+                    )
+                    or ""
+                )
+            ).expanduser().resolve()
+
+            candidate.relative_to(
+                outer
+            )
+
+            if candidate.is_dir():
+                return candidate
+
+        except (
+            OSError,
+            ValueError,
+            TypeError,
+            json.JSONDecodeError,
+        ):
+            continue
+
+    nested = (
+        outer
+        / ".sophyane-workspace"
+    )
+
+    if nested.is_dir():
+        return nested
+
+    return outer
+
+
 def _python(
     workspace: Path,
 ) -> tuple[dict[str, bool], list[str]]:
+    workspace = _artifact_workspace(
+        workspace
+    )
+
     files = list(
         workspace.rglob("*.py")
     )
@@ -104,7 +170,7 @@ def _python(
 
     result = subprocess.run(
         [
-            "python",
+            sys.executable,
             "-m",
             "pytest",
             "-q",

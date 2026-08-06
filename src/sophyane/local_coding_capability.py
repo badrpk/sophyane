@@ -543,6 +543,107 @@ def test_negative_numbers() -> None:
     )
 
 
+def _python_function_pytest_spec(
+    *,
+    filename: str,
+    request: str,
+) -> dict[str, str] | None:
+    """Extract one bounded arithmetic function plus its requested pytest."""
+    function_match = re.search(
+        r"\bwith\s+"
+        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+        r"\s*\(\s*"
+        r"(?P<first>[A-Za-z_][A-Za-z0-9_]*)"
+        r"\s*,\s*"
+        r"(?P<second>[A-Za-z_][A-Za-z0-9_]*)"
+        r"\s*\)",
+        request,
+        flags=re.I,
+    )
+
+    if not function_match:
+        return None
+
+    function_name = function_match.group("name")
+    first_parameter = function_match.group("first")
+    second_parameter = function_match.group("second")
+
+    escaped_name = re.escape(
+        function_name
+    )
+
+    assertion_match = re.search(
+        rf"\b{escaped_name}\s*\(\s*"
+        r"(?P<first>-?\d+(?:\.\d+)?)"
+        r"\s*,\s*"
+        r"(?P<second>-?\d+(?:\.\d+)?)"
+        r"\s*\)\s*"
+        r"(?:equals|equal\s+to|==)\s*"
+        r"(?P<expected>-?\d+(?:\.\d+)?)",
+        request,
+        flags=re.I,
+    )
+
+    if not assertion_match:
+        return None
+
+    operators = {
+        "add": "+",
+        "sum": "+",
+        "multiply": "*",
+        "product": "*",
+        "subtract": "-",
+        "difference": "-",
+        "divide": "/",
+        "quotient": "/",
+    }
+
+    operation = operators.get(
+        function_name.casefold()
+    )
+
+    if operation is None:
+        return None
+
+    module_name = Path(
+        filename
+    ).stem
+
+    test_filename = (
+        f"test_{module_name}.py"
+    )
+
+    implementation = (
+        "from __future__ import annotations\n"
+        "\n"
+        "\n"
+        f"def {function_name}("
+        f"{first_parameter}: int | float, "
+        f"{second_parameter}: int | float"
+        ") -> int | float:\n"
+        f"    return {first_parameter} "
+        f"{operation} {second_parameter}\n"
+    )
+
+    test_source = (
+        f"from {module_name} import {function_name}\n"
+        "\n"
+        "\n"
+        f"def test_{function_name}() -> None:\n"
+        f"    assert {function_name}("
+        f"{assertion_match.group('first')}, "
+        f"{assertion_match.group('second')}"
+        f") == {assertion_match.group('expected')}\n"
+    )
+
+    return {
+        "function_name": function_name,
+        "implementation": implementation,
+        "test_filename": test_filename,
+        "test_source": test_source,
+    }
+
+
 def _python_action(
     request: str,
     match: re.Match[str],
@@ -550,10 +651,44 @@ def _python_action(
 ) -> CodingResult:
     filename = match.group("filename")
     target = _safe_child(workspace, filename)
-    target.write_text(
-        _default_python(filename, request),
-        encoding="utf-8",
+
+    pytest_spec = (
+        _python_function_pytest_spec(
+            filename=filename,
+            request=request,
+        )
+        if _TDD_CUES.search(request)
+        else None
     )
+
+    test_target: Path | None = None
+
+    if pytest_spec is not None:
+        target.write_text(
+            pytest_spec["implementation"],
+            encoding="utf-8",
+        )
+
+        test_target = _safe_child(
+            workspace,
+            pytest_spec[
+                "test_filename"
+            ],
+        )
+
+        test_target.write_text(
+            pytest_spec["test_source"],
+            encoding="utf-8",
+        )
+
+    else:
+        target.write_text(
+            _default_python(
+                filename,
+                request,
+            ),
+            encoding="utf-8",
+        )
 
     evidence: list[CommandEvidence] = []
 
@@ -576,31 +711,120 @@ def _python_action(
             error=syntax_result.stderr or syntax_result.stdout,
         )
 
-    if re.search(r"\b(?:run|execute)\b", request, re.I):
+    if test_target is not None:
+        pytest_result = _run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                test_target.name,
+            ],
+            cwd=workspace,
+            timeout=120,
+        )
+        evidence.append(
+            pytest_result
+        )
+
+        files = [
+            target.name,
+            test_target.name,
+        ]
+
+        if pytest_result.exit_code != 0:
+            return CodingResult(
+                handled=True,
+                ok=False,
+                capability=(
+                    "development."
+                    "python_create_validate_pytest"
+                ),
+                summary=(
+                    f"Created {target.name} and "
+                    f"{test_target.name}, but pytest failed."
+                ),
+                workspace=str(workspace),
+                files=files,
+                evidence=evidence,
+                error=(
+                    pytest_result.stderr
+                    or pytest_result.stdout
+                ),
+            )
+
+        return CodingResult(
+            handled=True,
+            ok=True,
+            capability=(
+                "development."
+                "python_create_validate_pytest"
+            ),
+            summary=(
+                f"Created {target.name} and "
+                f"{test_target.name}; pytest passed."
+            ),
+            workspace=str(workspace),
+            files=files,
+            evidence=evidence,
+        )
+
+    if re.search(
+        r"\b(?:run|execute)\b",
+        request,
+        re.I,
+    ):
         run_result = _run(
-            [sys.executable, target.name],
+            [
+                sys.executable,
+                target.name,
+            ],
             cwd=workspace,
             timeout=60,
         )
-        evidence.append(run_result)
+        evidence.append(
+            run_result
+        )
 
         if run_result.exit_code != 0:
             return CodingResult(
                 handled=True,
                 ok=False,
-                capability="development.python_create_validate_run",
-                summary=f"Validated {target.name}, but execution failed.",
+                capability=(
+                    "development."
+                    "python_create_validate_run"
+                ),
+                summary=(
+                    f"Validated {target.name}, "
+                    "but execution failed."
+                ),
                 workspace=str(workspace),
                 files=[target.name],
                 evidence=evidence,
-                error=run_result.stderr or run_result.stdout,
+                error=(
+                    run_result.stderr
+                    or run_result.stdout
+                ),
             )
 
-        capability = "development.python_create_validate_run"
-        summary = f"Created, validated and executed {target.name}."
+        capability = (
+            "development."
+            "python_create_validate_run"
+        )
+        summary = (
+            f"Created, validated and executed "
+            f"{target.name}."
+        )
+
     else:
-        capability = "development.python_create_validate"
-        summary = f"Created and syntax-validated {target.name}."
+        capability = (
+            "development."
+            "python_create_validate"
+        )
+        summary = (
+            f"Created and syntax-validated "
+            f"{target.name}."
+        )
 
     return CodingResult(
         handled=True,
