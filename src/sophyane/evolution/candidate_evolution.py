@@ -623,8 +623,8 @@ def _select_indexed_window(
                 continue
 
             step = max(
-                12,
-                window_size // 2,
+                1,
+                window_size // 4,
             )
 
             for offset in range(
@@ -684,6 +684,22 @@ def _select_indexed_window(
         raise RuntimeError(
             f"No indexed-edit source window found for {component}"
         )
+
+    if required_anchors:
+        anchored_candidates = [
+            item
+            for item in candidates
+            if any(
+                anchor
+                in "".join(
+                    item[3]
+                ).casefold()
+                for anchor in required_anchors
+            )
+        ]
+
+        if anchored_candidates:
+            candidates = anchored_candidates
 
     score, relative, offset, lines = max(
         candidates,

@@ -1801,3 +1801,199 @@ def test_generate_proposal_preserves_original_repair_range() -> None:
     assert "parsed = dict(" in source
     assert "_bounded_source_edit_response" in source
     assert "raw_bounded_source_repair" in source
+
+
+def test_indexed_window_hard_filters_to_failed_check_anchor(
+    tmp_path: Path,
+) -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _select_indexed_window,
+    )
+
+    target = (
+        tmp_path
+        / "src/sophyane/local_coding_capability.py"
+    )
+
+    target.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    target.write_text(
+        "\n".join(
+            [
+                "def unrelated():",
+                "    timeout = 120",
+                "    summary = 'done'",
+                "",
+                "def relevant(workspace, target, test_target):",
+                '    target.write_text("value", encoding="utf-8")',
+                '    test_target.write_text("test", encoding="utf-8")',
+                '    return ["pytest", target.name, test_target.name]',
+                "",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    window = _select_indexed_window(
+        repo=tmp_path,
+        component="python",
+        principle=(
+            "Python coding tasks must create source and tests, "
+            "then run pytest."
+        ),
+        records=[
+            (
+                Path("record.json"),
+                {
+                    "task": {
+                        "prompt": "Create a Python file and tests."
+                    },
+                    "validation": {
+                        "checks": {
+                            "python_file_exists": False,
+                            "syntax_valid": True,
+                            "pytest_passed": False,
+                        },
+                        "errors": [
+                            "no tests ran",
+                        ],
+                    },
+                },
+            )
+        ],
+        window_size=4,
+    )
+
+    numbered = str(
+        window["numbered"]
+    )
+
+    assert (
+        "target.write_text" in numbered
+        or "test_target.write_text" in numbered
+        or "pytest" in numbered
+    )
+
+    assert "summary = 'done'" not in numbered
+
+
+def test_indexed_window_falls_back_when_no_anchor_exists(
+    tmp_path: Path,
+) -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _select_indexed_window,
+    )
+
+    target = (
+        tmp_path
+        / "src/sophyane/local_coding_capability.py"
+    )
+
+    target.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    target.write_text(
+        "def execute():\n"
+        "    return True\n",
+        encoding="utf-8",
+    )
+
+    window = _select_indexed_window(
+        repo=tmp_path,
+        component="python",
+        principle="Improve Python execution.",
+        records=[
+            (
+                Path("record.json"),
+                {
+                    "task": {
+                        "prompt": "Run Python."
+                    },
+                    "validation": {
+                        "checks": {
+                            "unknown_check": False,
+                        },
+                        "errors": [],
+                    },
+                },
+            )
+        ],
+        window_size=8,
+    )
+
+    assert window["file"].endswith(
+        "local_coding_capability.py"
+    )
+    assert "def execute" in window["numbered"]
+
+
+def test_indexed_window_stride_scans_small_files(
+    tmp_path: Path,
+) -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _select_indexed_window,
+    )
+
+    target = (
+        tmp_path
+        / "src/sophyane/local_coding_capability.py"
+    )
+
+    target.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    target.write_text(
+        "def unrelated():\n"
+        "    timeout = 120\n"
+        "    summary = 'done'\n"
+        "\n"
+        "def relevant(target, test_target):\n"
+        '    target.write_text("x", encoding="utf-8")\n'
+        '    test_target.write_text("y", encoding="utf-8")\n'
+        '    return ["pytest"]\n',
+        encoding="utf-8",
+    )
+
+    window = _select_indexed_window(
+        repo=tmp_path,
+        component="python",
+        principle="Create source and tests, then run pytest.",
+        records=[
+            (
+                Path("record.json"),
+                {
+                    "task": {
+                        "prompt": "Create a Python file and tests."
+                    },
+                    "validation": {
+                        "checks": {
+                            "python_file_exists": False,
+                            "pytest_passed": False,
+                        },
+                        "errors": [
+                            "no tests ran",
+                        ],
+                    },
+                },
+            )
+        ],
+        window_size=4,
+    )
+
+    numbered = str(
+        window["numbered"]
+    )
+
+    assert (
+        "target.write_text" in numbered
+        or "test_target.write_text" in numbered
+        or "pytest" in numbered
+    )
