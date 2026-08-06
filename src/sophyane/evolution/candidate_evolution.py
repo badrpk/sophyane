@@ -2839,8 +2839,23 @@ Rules:
             )
 
         except ValueError as first_error:
-            single_line_repair = bool(
+            semantic_rechoice = bool(
                 original_indexed_payload
+                and any(
+                    marker
+                    in str(
+                        first_error
+                    ).casefold()
+                    for marker in (
+                        "no semantic python change",
+                        "no source change",
+                    )
+                )
+            )
+
+            single_line_repair = bool(
+                not semantic_rechoice
+                and original_indexed_payload
                 and int(
                     original_indexed_payload[
                         "start"
@@ -2853,7 +2868,74 @@ Rules:
                 )
             )
 
-            if single_line_repair:
+            if semantic_rechoice:
+                if original_indexed_payload is None:
+                    raise ValueError(
+                        "Original indexed edit could not be parsed, "
+                        "so a semantic re-choice cannot be bounded"
+                    )
+
+                original_choice = int(
+                    original_indexed_payload.get(
+                        "selected_choice"
+                    )
+                    or 0
+                )
+
+                alternative_choices = [
+                    item
+                    for item in _indexed_edit_choices(
+                        indexed_window
+                    )
+                    if int(
+                        item["choice"]
+                    )
+                    != original_choice
+                ]
+
+                if not alternative_choices:
+                    raise ValueError(
+                        "No alternative editable source choice "
+                        "is available after the semantic no-op"
+                    )
+
+                alternative_catalogue = "\n".join(
+                    (
+                        f'{item["choice"]} => '
+                        f'window line {item["line"]:02d}: '
+                        f'{item["source"]}'
+                    )
+                    for item in alternative_choices
+                )
+
+                repair_prompt = f"""
+The first candidate selected choice {original_choice}, but its replacement
+made no semantic Python change.
+
+Choose a DIFFERENT editable source choice:
+
+{alternative_catalogue}
+
+Return compact JSON only:
+{{
+  "choice": 2,
+  "code": "ACTUAL_CODE"
+}}
+
+Rules:
+- do not select choice {original_choice};
+- choice must appear in the alternative catalogue;
+- code must make a real behavioral Python change;
+- no start, end, op, path, diff, Markdown or explanation;
+- do not rewrite only quotes, whitespace or formatting;
+- do not copy benchmark inputs, filenames or expected answers;
+- ACTUAL_CODE is a schema label and must not be copied;
+- stay below 100 output tokens.
+"""
+
+                repair_max_tokens = 100
+
+            elif single_line_repair:
                 if original_indexed_payload is None:
                     raise ValueError(
                         "Original indexed edit could not be parsed, "
@@ -2977,34 +3059,69 @@ Rules:
                         "so its repair cannot be safely anchored"
                     )
 
-                # The analyst may replace source text only. The original
-                # operation and range are immutable.
-                parsed = dict(
-                    original_indexed_payload
-                )
-
-                if single_line_repair:
-                    parsed["code"] = (
-                        _single_line_edit_response(
-                            repaired_response
-                        )
+                if semantic_rechoice:
+                    parsed = _indexed_choice_payload(
+                        repaired_response,
+                        window=indexed_window,
                     )
-                    parsed["raw_single_line_repair"] = True
+
+                    original_choice = int(
+                        original_indexed_payload.get(
+                            "selected_choice"
+                        )
+                        or 0
+                    )
+
+                    repaired_choice = int(
+                        parsed.get(
+                            "selected_choice"
+                        )
+                        or 0
+                    )
+
+                    if repaired_choice == original_choice:
+                        raise ValueError(
+                            "Semantic re-choice repeated the original "
+                            "no-op source choice"
+                        )
+
+                    parsed[
+                        "semantic_rechoice_repair"
+                    ] = True
 
                 else:
-                    parsed["code"] = (
-                        _bounded_source_edit_response(
-                            repaired_response,
-                            max_lines=5,
-                        )
+                    # Syntax and source-shape repairs may change source text
+                    # only. Their original operation and range stay immutable.
+                    parsed = dict(
+                        original_indexed_payload
                     )
-                    parsed["raw_bounded_source_repair"] = True
 
-                _validate_indexed_repair_anchor(
-                    original_payload=original_indexed_payload,
-                    repaired_payload=parsed,
-                    window=indexed_window,
-                )
+                    if single_line_repair:
+                        parsed["code"] = (
+                            _single_line_edit_response(
+                                repaired_response
+                            )
+                        )
+                        parsed[
+                            "raw_single_line_repair"
+                        ] = True
+
+                    else:
+                        parsed["code"] = (
+                            _bounded_source_edit_response(
+                                repaired_response,
+                                max_lines=5,
+                            )
+                        )
+                        parsed[
+                            "raw_bounded_source_repair"
+                        ] = True
+
+                    _validate_indexed_repair_anchor(
+                        original_payload=original_indexed_payload,
+                        repaired_payload=parsed,
+                        window=indexed_window,
+                    )
 
                 _validate_indexed_line_selection(
                     payload=parsed,

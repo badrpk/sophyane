@@ -2338,3 +2338,70 @@ def test_worktree_paths_ignore_generated_catalogue(
     ) == {
         "src/example.py",
     }
+
+
+def test_generate_proposal_supports_semantic_rechoice() -> None:
+    import inspect
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    source = inspect.getsource(
+        CandidateEvolver.generate_proposal
+    )
+
+    assert "semantic_rechoice" in source
+    assert "no semantic python change" in source
+    assert "Choose a DIFFERENT editable source choice" in source
+    assert "Semantic re-choice repeated the original" in source
+    assert "semantic_rechoice_repair" in source
+
+
+def test_semantic_rechoice_can_map_to_different_choice() -> None:
+    import json
+
+    from sophyane.evolution.candidate_evolution import (
+        _indexed_choice_payload,
+    )
+
+    window = {
+        "lines": [
+            '    test_target.write_text(tests_source, encoding="utf-8")\n',
+            '            "pytest",\n',
+            "            test_target.name,\n",
+        ],
+        "allowed_edit_lines": {
+            1,
+            2,
+            3,
+        },
+    }
+
+    original = _indexed_choice_payload(
+        json.dumps(
+            {
+                "choice": 1,
+                "code": (
+                    "test_target.write_text("
+                    "tests_source, encoding='utf-8')"
+                ),
+            }
+        ),
+        window=window,
+    )
+
+    repaired = _indexed_choice_payload(
+        json.dumps(
+            {
+                "choice": 3,
+                "code": "test_target.resolve().name,",
+            }
+        ),
+        window=window,
+    )
+
+    assert original["selected_choice"] == 1
+    assert repaired["selected_choice"] == 3
+    assert repaired["start"] == 3
+    assert repaired["end"] == 3
