@@ -3075,6 +3075,14 @@ Rules:
                     for item in alternative_choices
                 )
 
+                unchanged_catalogue = "\n".join(
+                    (
+                        f'choice {item["choice"]}: '
+                        f'{item["source"].strip()}'
+                    )
+                    for item in alternative_choices
+                )
+
                 repair_prompt = f"""
 The first candidate selected choice {original_choice}, but its replacement
 made no semantic Python change.
@@ -3082,6 +3090,12 @@ made no semantic Python change.
 Choose a DIFFERENT editable source choice:
 
 {alternative_catalogue}
+
+The following are the CURRENT source values. Returning the same
+expression or statement is invalid, even if whitespace, quotes,
+indentation or trailing commas differ:
+
+{unchanged_catalogue}
 
 Return exactly this two-field plain-text format:
 
@@ -3098,6 +3112,9 @@ Rules:
 - expression_element means return an expression/list element, never an assignment;
 - if_statement means return one complete valid if ...: line;
 - statement means return one complete valid Python statement;
+- CODE must differ semantically from the CURRENT source for that choice;
+- deleting or adding only a trailing comma does not count as a change;
+- changing only quotes, whitespace, formatting or parentheses does not count;
 - CODE must make a real behavioral Python change;
 - CODE must not be empty;
 - do not rewrite only quotes, whitespace or formatting;

@@ -2634,3 +2634,44 @@ def test_semantic_prompt_explains_expression_role() -> None:
         "expression/list element, never an assignment"
         in source
     )
+
+
+def test_semantic_rechoice_prompt_exposes_unchanged_sources() -> None:
+    import inspect
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    source = inspect.getsource(
+        CandidateEvolver.generate_proposal
+    )
+
+    assert "unchanged_catalogue" in source
+    assert "CURRENT source values" in source
+    assert (
+        "Returning the same"
+        in source
+    )
+    assert (
+        "trailing comma does not count as a change"
+        in source
+    )
+    assert (
+        "must differ semantically from the CURRENT source"
+        in source
+    )
+
+
+def test_semantic_rechoice_still_uses_ast_gate() -> None:
+    import inspect
+
+    from sophyane.evolution.candidate_evolution import (
+        _indexed_edit_to_patch,
+    )
+
+    source = inspect.getsource(
+        _indexed_edit_to_patch
+    )
+
+    assert "_validate_python_semantic_change" in source
