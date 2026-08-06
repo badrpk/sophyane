@@ -343,6 +343,38 @@ def _bounded_source_edit_response(
     return "\n".join(lines)
 
 
+def _indexed_line_syntax_role(
+    source: str,
+) -> str:
+    """Classify the syntactic shape expected for one editable Python line."""
+    stripped = str(
+        source or ""
+    ).strip()
+
+    if stripped.startswith("if ") and stripped.endswith(":"):
+        return "if_statement"
+
+    if stripped.startswith(
+        (
+            "elif ",
+            "while ",
+            "for ",
+            "with ",
+        )
+    ) and stripped.endswith(":"):
+        return "compound_statement"
+
+    if stripped.endswith(","):
+        if "=" in stripped:
+            return "keyword_or_collection_element"
+        return "expression_element"
+
+    if stripped.startswith("return "):
+        return "return_statement"
+
+    return "statement"
+
+
 def _indexed_edit_choices(
     window: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -376,13 +408,20 @@ def _indexed_edit_choices(
         ):
             continue
 
+        source = lines[
+            line_number - 1
+        ].rstrip("\n")
+
         choices.append(
             {
                 "choice": ordinal,
                 "line": line_number,
-                "source": lines[
-                    line_number - 1
-                ].rstrip("\n"),
+                "source": source,
+                "syntax_role": (
+                    _indexed_line_syntax_role(
+                        source
+                    )
+                ),
             }
         )
 
@@ -403,7 +442,8 @@ def _format_indexed_edit_choices(
     return "\n".join(
         (
             f'{item["choice"]} => '
-            f'window line {item["line"]:02d}: '
+            f'window line {item["line"]:02d} '
+            f'[{item["syntax_role"]}]: '
             f'{item["source"]}'
         )
         for item in choices
@@ -3028,7 +3068,8 @@ Rules:
                 alternative_catalogue = "\n".join(
                     (
                         f'{item["choice"]} => '
-                        f'window line {item["line"]:02d}: '
+                        f'window line {item["line"]:02d} '
+                        f'[{item["syntax_role"]}]: '
                         f'{item["source"]}'
                     )
                     for item in alternative_choices
@@ -3052,7 +3093,11 @@ Rules:
 - do not select choice {original_choice};
 - choice must appear in the alternative catalogue;
 - CODE may contain Python quotes without escaping them for JSON;
-- CODE must contain source only; never copy "window line NN:" or catalogue text;
+- CODE must contain source only; never copy the window-line label or catalogue text;
+- preserve the selected choice's syntax role;
+- expression_element means return an expression/list element, never an assignment;
+- if_statement means return one complete valid if ...: line;
+- statement means return one complete valid Python statement;
 - CODE must make a real behavioral Python change;
 - CODE must not be empty;
 - do not rewrite only quotes, whitespace or formatting;

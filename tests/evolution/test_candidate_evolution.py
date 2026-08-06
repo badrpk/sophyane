@@ -2156,11 +2156,13 @@ def test_indexed_choices_include_only_allowed_lines() -> None:
             "choice": 1,
             "line": 2,
             "source": '"pytest",',
+            "syntax_role": "expression_element",
         },
         {
             "choice": 2,
             "line": 4,
             "source": "test_target.name,",
+            "syntax_role": "expression_element",
         },
     ]
 
@@ -2562,6 +2564,73 @@ def test_semantic_rechoice_prompt_forbids_catalogue_prefix() -> None:
     )
 
     assert (
-        'never copy "window line NN:" or catalogue text'
+        "never copy the window-line label or catalogue text"
+        in source
+    )
+    assert (
+        "preserve the selected choice's syntax role"
+        in source
+    )
+
+
+def test_indexed_line_syntax_role_classifies_expression_element() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _indexed_line_syntax_role,
+    )
+
+    assert (
+        _indexed_line_syntax_role(
+            "            test_target.name,"
+        )
+        == "expression_element"
+    )
+
+
+def test_indexed_line_syntax_role_classifies_if_statement() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _indexed_line_syntax_role,
+    )
+
+    assert (
+        _indexed_line_syntax_role(
+            "    if red.exit_code == 0:"
+        )
+        == "if_statement"
+    )
+
+
+def test_indexed_choices_expose_syntax_role() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _indexed_edit_choices,
+    )
+
+    choices = _indexed_edit_choices(
+        {
+            "lines": [
+                "            test_target.name,\n",
+            ],
+            "allowed_edit_lines": {
+                1,
+            },
+        }
+    )
+
+    assert choices[0]["syntax_role"] == "expression_element"
+
+
+def test_semantic_prompt_explains_expression_role() -> None:
+    import inspect
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    source = inspect.getsource(
+        CandidateEvolver.generate_proposal
+    )
+
+    assert "preserve the selected choice's syntax role" in source
+    assert (
+        "expression/list element, never an assignment"
         in source
     )
