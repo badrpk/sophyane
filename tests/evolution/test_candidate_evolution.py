@@ -1255,8 +1255,10 @@ def test_indexed_repair_prompt_has_single_line_mode() -> None:
 
     assert "single_line_repair" in source
     assert "exactly one source line" in source
-    assert "total response below 80 tokens" in source
-    assert "max_tokens=80" in source
+    assert "Return only the replacement source text" in source
+    assert "repair_max_tokens = 32" in source
+    assert "repair_max_tokens = 32" in source
+    assert "max_tokens=repair_max_tokens" in source
 
 
 def test_indexed_repair_must_preserve_original_range() -> None:
@@ -1501,3 +1503,64 @@ def test_generate_proposal_uses_raw_single_line_repair() -> None:
     assert "repair_max_tokens = 32" in source
     assert "_single_line_edit_response" in source
     assert "raw_single_line_repair" in source
+
+
+def test_unified_diff_validator_keeps_first_hunk_context() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _validate_unified_diff_structure,
+    )
+
+    patch = (
+        "diff --git a/src/example.py b/src/example.py\n"
+        "--- a/src/example.py\n"
+        "+++ b/src/example.py\n"
+        "@@ -478,6 +478,6 @@\n"
+        "             test_target.name,\n"
+        "         ],\n"
+        "         cwd=workspace,\n"
+        "-        timeout=120,\n"
+        "+        timeout=60,\n"
+        "     )\n"
+        "     evidence.append(red)\n"
+    )
+
+    assert (
+        _validate_unified_diff_structure(
+            patch
+        )
+        == []
+    )
+
+
+def test_patch_serialization_preserves_blank_context_line(
+    tmp_path: Path,
+) -> None:
+    """A final whitespace-only context line must survive patch persistence."""
+    patch = (
+        "diff --git a/a.py b/a.py\n"
+        "--- a/a.py\n"
+        "+++ b/a.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        "-value = 1\n"
+        "+value = 2\n"
+        " \n"
+    )
+
+    target = tmp_path / "candidate.patch"
+    patch_text = str(patch or "")
+
+    target.write_text(
+        (
+            patch_text
+            if patch_text.endswith("\n")
+            else patch_text + "\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert target.read_text(
+        encoding="utf-8"
+    ).endswith(
+        "+value = 2\n \n"
+    )
+

@@ -2925,9 +2925,16 @@ Validation error:
             )
         )
 
+        patch_text = str(
+            patch or ""
+        )
+
         patch_path.write_text(
-            str(patch or "").rstrip()
-            + "\n",
+            (
+                patch_text
+                if patch_text.endswith("\n")
+                else patch_text + "\n"
+            ),
             encoding="utf-8",
         )
 
@@ -2997,9 +3004,16 @@ Validation error:
             / f"{stem}.error.txt"
         )
 
+        patch_text = str(
+            patch or ""
+        )
+
         patch_path.write_text(
-            str(patch or "").rstrip()
-            + "\n",
+            (
+                patch_text
+                if patch_text.endswith("\n")
+                else patch_text + "\n"
+            ),
             encoding="utf-8",
         )
 
