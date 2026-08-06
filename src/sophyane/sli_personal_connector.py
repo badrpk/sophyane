@@ -54,8 +54,55 @@ _EMAIL_PATTERNS = (
 
 
 def is_personal_connector_request(message: str) -> bool:
-    text = " ".join(str(message or "").casefold().split())
-    return any(re.search(pattern, text) for pattern in _EMAIL_PATTERNS)
+    text = " ".join(
+        str(message or "")
+        .casefold()
+        .split()
+    )
+
+    # Account and secret-management requests belong to the private boundary.
+    try:
+        from sophyane.private_connector_management import (
+            private_management_intent,
+        )
+
+        if private_management_intent(text):
+            return True
+    except Exception:
+        pass
+
+    # Explicit private-message platforms must never escape into public
+    # acquisition, even when their connectors are unavailable.
+    source_named = bool(
+        re.search(
+            r"\b(?:"
+            r"whatsapp|whats\s*app|"
+            r"sms|text\s+message|phone\s+message|"
+            r"snapchat|snap\s*chat|"
+            r"wechat|we\s*chat"
+            r")\b",
+            text,
+        )
+    )
+
+    message_intent = bool(
+        re.search(
+            r"\b(?:"
+            r"message|messages|chat|"
+            r"sent|outgoing|ougoing|"
+            r"latest|last|newest|recent"
+            r")\b",
+            text,
+        )
+    )
+
+    if source_named and message_intent:
+        return True
+
+    return any(
+        re.search(pattern, text)
+        for pattern in _EMAIL_PATTERNS
+    )
 
 
 _MESSAGE_SOURCES = (
@@ -188,6 +235,9 @@ def _operation(message: str) -> tuple[str, dict[str, Any]]:
             "outgoing email",
             "outgoing mail",
             "outgoing message",
+            "ougoing email",
+            "ougoing mail",
+            "ougoing message",
             "last email i sent",
             "latest email i sent",
             "newest email i sent",
@@ -659,7 +709,23 @@ def run_personal_connector(request: str, workspace: Path | str, *, progress: Pro
         )
 
     operation, args = _operation(request)
-    progress(f"SLI private connector: email operation={operation}")
+
+    # Use the currently selected mailbox unless the caller explicitly
+    # supplied another vault profile.
+    if profile == "default":
+        try:
+            from sophyane.email_account_registry import (
+                active_profile,
+            )
+
+            profile = active_profile()
+        except Exception:
+            profile = "default"
+
+    progress(
+        "SLI private connector: "
+        f"email operation={operation}; profile={profile}"
+    )
     try:
         from sophyane.connectors.email_imap.handler import execute
 

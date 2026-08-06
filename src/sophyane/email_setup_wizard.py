@@ -299,6 +299,7 @@ def configure_email_interactively(
     *,
     profile: str = "default",
     progress: Progress | None = None,
+    initial_email: str = "",
 ) -> dict[str, object]:
     progress = progress or (lambda _message: None)
 
@@ -329,7 +330,20 @@ def configure_email_interactively(
     print("  • Public internet fallback remains blocked.")
     print()
 
-    address = _ask_email_address()
+    address = str(
+        initial_email or ""
+    ).strip()
+
+    if address:
+        if not _EMAIL_RE.fullmatch(address):
+            address = ""
+        else:
+            print(
+                f"Email address: {address}"
+            )
+
+    if not address:
+        address = _ask_email_address()
 
     if not address:
         return {

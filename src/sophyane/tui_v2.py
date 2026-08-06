@@ -41,6 +41,32 @@ def _clean_message(message: str) -> str:
 
 
 def _simple_chat_reply(message: str) -> str | None:
+    # SOPHYANE_PRIVATE_CONNECTOR_MANAGEMENT_PREFLIGHT
+    # Credential and account-management requests must never reach memory,
+    # public internet acquisition, or an LLM.
+    try:
+        from sophyane.private_connector_management import (
+            handle_private_management,
+        )
+
+        management_reply = handle_private_management(
+            message
+        )
+
+        if management_reply is not None:
+            return management_reply
+    except Exception as error:
+        import os as _management_os
+
+        if _management_os.environ.get(
+            "SOPHYANE_DEBUG_PRIVATE_MANAGEMENT",
+            "",
+        ) == "1":
+            return (
+                "Private connector management failed safely: "
+                f"{type(error).__name__}: {error}"
+            )
+
     # SOPHYANE_FLYWHEEL_TUI_V1
     # SOPHYANE_NATIVE_FAST_PATH_DISPATCH
     try:
