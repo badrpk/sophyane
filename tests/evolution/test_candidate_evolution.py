@@ -2231,3 +2231,110 @@ def test_generation_prompt_does_not_request_start_or_end() -> None:
     assert '"choice": 1' in source
     assert "Do not return start, end, op" in source
     assert "_indexed_choice_payload" in source
+
+
+def test_python_semantic_gate_rejects_quote_only_change() -> None:
+    import pytest
+
+    from sophyane.evolution.candidate_evolution import (
+        _validate_python_semantic_change,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="no semantic Python change",
+    ):
+        _validate_python_semantic_change(
+            relative="src/example.py",
+            original='value = "utf-8"\n',
+            updated="value = 'utf-8'\n",
+        )
+
+
+def test_python_semantic_gate_accepts_behavior_change() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _validate_python_semantic_change,
+    )
+
+    _validate_python_semantic_change(
+        relative="src/example.py",
+        original="value = 1\n",
+        updated="value = 2\n",
+    )
+
+
+def test_worktree_paths_ignore_generated_catalogue(
+    tmp_path: Path,
+) -> None:
+    import subprocess
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    subprocess.run(
+        ["git", "init"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    source = tmp_path / "src/example.py"
+    source.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    source.write_text(
+        "value = 1\n",
+        encoding="utf-8",
+    )
+
+    catalogue = (
+        tmp_path
+        / "improvements/CATALOG.md"
+    )
+    catalogue.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    catalogue.write_text(
+        "# Catalogue\n",
+        encoding="utf-8",
+    )
+
+    subprocess.run(
+        ["git", "add", "."],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    source.write_text(
+        "value = 2\n",
+        encoding="utf-8",
+    )
+    catalogue.write_text(
+        "# Refreshed catalogue\n",
+        encoding="utf-8",
+    )
+
+    assert CandidateEvolver._worktree_changed_paths(
+        tmp_path
+    ) == {
+        "src/example.py",
+    }

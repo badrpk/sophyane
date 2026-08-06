@@ -1273,6 +1273,48 @@ def _recover_single_line_indexed_edit(
     return recovered
 
 
+def _python_ast_fingerprint(
+    source: str,
+) -> str:
+    """Return a stable semantic fingerprint for valid Python source."""
+    import ast
+
+    tree = ast.parse(
+        source
+    )
+
+    return ast.dump(
+        tree,
+        annotate_fields=True,
+        include_attributes=False,
+    )
+
+
+def _validate_python_semantic_change(
+    *,
+    relative: str,
+    original: str,
+    updated: str,
+) -> None:
+    """Reject formatting-only Python edits."""
+    if not relative.endswith(
+        ".py"
+    ):
+        return
+
+    before = _python_ast_fingerprint(
+        original
+    )
+    after = _python_ast_fingerprint(
+        updated
+    )
+
+    if before == after:
+        raise ValueError(
+            "Indexed edit produced no semantic Python change"
+        )
+
+
 def _indexed_edit_to_patch(
     *,
     repo: Path,
@@ -1503,6 +1545,13 @@ def _indexed_edit_to_patch(
                 "Indexed edit produced invalid Python syntax: "
                 f"{error.msg} at line {error.lineno}"
             ) from error
+
+    # Semantic comparison is safe only after syntax validation succeeds.
+    _validate_python_semantic_change(
+        relative=relative,
+        original=original,
+        updated=updated,
+    )
 
     selected_text = "".join(
         original_lines[
@@ -3891,6 +3940,11 @@ Original patch:
                     and changed_path.endswith(
                         ".json"
                     )
+                ):
+                    continue
+
+                if changed_path == (
+                    "improvements/CATALOG.md"
                 ):
                     continue
 
