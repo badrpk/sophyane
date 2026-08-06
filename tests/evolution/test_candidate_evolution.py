@@ -1757,3 +1757,47 @@ def test_single_line_response_rejects_no_relevant_edit() -> None:
         _single_line_edit_response(
             "NO_RELEVANT_EDIT"
         )
+
+
+def test_bounded_source_response_accepts_source() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _bounded_source_edit_response,
+    )
+
+    assert _bounded_source_edit_response(
+        "first()\nsecond()\nthird()",
+        max_lines=5,
+    ) == "first()\nsecond()\nthird()"
+
+
+def test_bounded_source_response_rejects_json() -> None:
+    import pytest
+
+    from sophyane.evolution.candidate_evolution import (
+        _bounded_source_edit_response,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="structured output",
+    ):
+        _bounded_source_edit_response(
+            '{"start":27,"end":38,"code":"value"}'
+        )
+
+
+def test_generate_proposal_preserves_original_repair_range() -> None:
+    import inspect
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    source = inspect.getsource(
+        CandidateEvolver.generate_proposal
+    )
+
+    assert "Return only replacement source text" in source
+    assert "parsed = dict(" in source
+    assert "_bounded_source_edit_response" in source
+    assert "raw_bounded_source_repair" in source

@@ -287,6 +287,63 @@ def _single_line_edit_response(
     return line
 
 
+def _bounded_source_edit_response(
+    value: str,
+    *,
+    max_lines: int = 5,
+) -> str:
+    """Parse raw replacement source while preserving the original edit range."""
+    raw = str(value or "").strip()
+
+    if not raw:
+        raise ValueError(
+            "Bounded source repair returned an empty response"
+        )
+
+    fenced = re.fullmatch(
+        r"```(?:python)?\s*(.*?)\s*```",
+        raw,
+        flags=re.I | re.S,
+    )
+
+    if fenced:
+        raw = fenced.group(1).strip()
+
+    if raw.lstrip().startswith(("{", "[")):
+        raise ValueError(
+            "Bounded source repair returned structured output"
+        )
+
+    lines = raw.splitlines()
+
+    while lines and not lines[0].strip():
+        lines.pop(0)
+
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    if not lines:
+        raise ValueError(
+            "Bounded source repair returned no source text"
+        )
+
+    if len(lines) > max_lines:
+        raise ValueError(
+            "Bounded source repair exceeded its source-line limit: "
+            f"{len(lines)} > {max_lines}"
+        )
+
+    if any(
+        line.strip() == "NO_RELEVANT_EDIT"
+        for line in lines
+    ):
+        raise ValueError(
+            "Bounded source repair found no relevant edit"
+        )
+
+    return "\n".join(lines)
+
+
 def _indexed_edit_payload(
     value: str,
 ) -> dict[str, Any]:
@@ -2526,27 +2583,55 @@ Rules:
                 repair_max_tokens = 32
 
             else:
+                if original_indexed_payload is None:
+                    raise ValueError(
+                        "Original indexed edit could not be parsed, "
+                        "so its repair cannot be safely anchored"
+                    )
+
+                original_start = int(
+                    original_indexed_payload["start"]
+                )
+                original_end = int(
+                    original_indexed_payload["end"]
+                )
+
+                selected_source = "".join(
+                    indexed_window["lines"][
+                        original_start - 1:
+                        original_end
+                    ]
+                ).rstrip("\n")
+
                 repair_prompt = f"""
-Repair one compact indexed edit.
+Original selected source range:
+{original_start}-{original_end}
 
-Numbered source window:
-{indexed_window["numbered"]}
+Selected source:
+{selected_source}
 
-Return one minified JSON object only:
-{{"op":"replace","start":1,"end":1,"code":"ACTUAL_CODE"}}
+Required source anchors:
+{sorted(
+    indexed_window.get(
+        "required_anchors"
+    )
+    or []
+)}
+
+Return only replacement source text for this original range.
+
+The harness automatically reuses:
+- the original operation;
+- start={original_start};
+- end={original_end}.
 
 Rules:
-- no Markdown or explanation;
-- no file path or Git diff;
-- start/end must be within the numbered window;
-- code may contain at most five short source lines;
-- ACTUAL_CODE is a schema label and must not be copied;
+- no JSON, Markdown, line numbers or explanation;
+- return at most five source lines;
+- do not include neighbouring source;
+- remain related to a required source anchor;
 - preserve relative indentation;
-- remain related to the selected source;
-- stay below 80 tokens.
-
-Validation error:
-{first_error}
+- return NO_RELEVANT_EDIT when no safe edit exists.
 """
 
                 repair_max_tokens = 80
@@ -2573,22 +2658,28 @@ Validation error:
                         "so its repair cannot be safely anchored"
                     )
 
+                # The analyst may replace source text only. The original
+                # operation and range are immutable.
+                parsed = dict(
+                    original_indexed_payload
+                )
+
                 if single_line_repair:
-                    parsed = dict(
-                        original_indexed_payload
-                    )
                     parsed["code"] = (
                         _single_line_edit_response(
                             repaired_response
                         )
                     )
-                    parsed[
-                        "raw_single_line_repair"
-                    ] = True
+                    parsed["raw_single_line_repair"] = True
+
                 else:
-                    parsed = _indexed_edit_payload(
-                        repaired_response
+                    parsed["code"] = (
+                        _bounded_source_edit_response(
+                            repaired_response,
+                            max_lines=5,
+                        )
                     )
+                    parsed["raw_bounded_source_repair"] = True
 
                 _validate_indexed_repair_anchor(
                     original_payload=original_indexed_payload,
@@ -2607,37 +2698,13 @@ Validation error:
                     ),
                 )
 
-                if (
-                    int(parsed["start"])
-                    == int(parsed["end"])
-                    and len(
-                        str(
-                            parsed.get("code")
-                            or ""
-                        ).splitlines()
-                    )
-                    > 1
-                ):
-                    parsed = (
-                        _recover_single_line_indexed_edit(
-                            repo=self.repo,
-                            component=component,
-                            window=indexed_window,
-                            payload=parsed,
-                        )
-                    )
+                parsed["file"] = indexed_window["file"]
 
-                parsed["file"] = (
-                    indexed_window["file"]
-                )
-
-                parsed["patch"] = (
-                    _indexed_edit_to_patch(
-                        repo=self.repo,
-                        component=component,
-                        window=indexed_window,
-                        payload=parsed,
-                    )
+                parsed["patch"] = _indexed_edit_to_patch(
+                    repo=self.repo,
+                    component=component,
+                    window=indexed_window,
+                    payload=parsed,
                 )
 
             except ValueError as repair_error:
