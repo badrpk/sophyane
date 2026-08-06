@@ -1,7 +1,6 @@
-from pathlib import Path
-
 from sophyane.goal_completion_dialogue import (
     continue_private_goal,
+    redact_sensitive_text,
 )
 
 
@@ -20,7 +19,7 @@ def _payload() -> dict:
     }
 
 
-def test_noninteractive_result_completes_without_blocking(
+def test_noninteractive_result_does_not_block(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
@@ -38,9 +37,14 @@ def test_noninteractive_result_completes_without_blocking(
     assert result["action"] == "message_displayed"
 
 
-def test_user_can_confirm_goal_complete(
+def test_show_full_then_finish_stays_in_same_session(
     monkeypatch,
 ) -> None:
+    answers = iter([
+        "1",  # show full
+        "3",  # finish: full, open, finish, defer
+    ])
+
     monkeypatch.setattr(
         "sophyane.goal_completion_dialogue."
         "sys.stdin.isatty",
@@ -48,21 +52,31 @@ def test_user_can_confirm_goal_complete(
     )
     monkeypatch.setattr(
         "builtins.input",
-        lambda _prompt="": "1",
+        lambda _prompt="": next(answers),
     )
 
     result = continue_private_goal(
         _payload()
     )
 
-    assert result["asked"] is True
     assert result["resolved"] is True
     assert result["action"] == "confirmed_complete"
+    assert result["actions"] == [
+        {
+            "action": "full_message_shown",
+            "success": True,
+        }
+    ]
 
 
-def test_user_can_request_complete_message(
+def test_open_link_then_finish_stays_in_same_session(
     monkeypatch,
 ) -> None:
+    answers = iter([
+        "2",  # open link
+        "3",  # finish
+    ])
+
     monkeypatch.setattr(
         "sophyane.goal_completion_dialogue."
         "sys.stdin.isatty",
@@ -70,7 +84,11 @@ def test_user_can_request_complete_message(
     )
     monkeypatch.setattr(
         "builtins.input",
-        lambda _prompt="": "2",
+        lambda _prompt="": next(answers),
+    )
+    monkeypatch.setattr(
+        "sophyane.goal_completion_dialogue._open_url",
+        lambda _url: True,
     )
 
     result = continue_private_goal(
@@ -78,24 +96,26 @@ def test_user_can_request_complete_message(
     )
 
     assert result["resolved"] is True
-    assert result["action"] == "full_message_shown"
-    assert "CI run failed" in result["body"]
+    assert result["action"] == "confirmed_complete"
+    assert result["actions"][0]["action"] == "link_opened"
 
 
-def test_user_can_search_related_emails(
+def test_related_search_then_finish(
     monkeypatch,
 ) -> None:
+    answers = iter([
+        "3",  # related: full, open, related, finish, defer
+        "4",  # finish
+    ])
+
     monkeypatch.setattr(
         "sophyane.goal_completion_dialogue."
         "sys.stdin.isatty",
         lambda: True,
     )
-
-    # Options are:
-    # 1 done, 2 full message, 3 open URL, 4 related emails.
     monkeypatch.setattr(
         "builtins.input",
-        lambda _prompt="": "4",
+        lambda _prompt="": next(answers),
     )
 
     queries: list[str] = []
@@ -106,7 +126,7 @@ def test_user_can_search_related_emails(
         return {
             "ok": True,
             "matches": 2,
-            "formatted": "Two related CI emails found.",
+            "formatted": "Two related messages found.",
         }
 
     result = continue_private_goal(
@@ -115,20 +135,22 @@ def test_user_can_search_related_emails(
     )
 
     assert result["resolved"] is True
-    assert result["action"] == "related_emails_searched"
     assert queries
+    assert (
+        result["actions"][0]["action"]
+        == "related_emails_searched"
+    )
 
 
-def test_user_can_defer_resolution(
+def test_defer_leaves_goal_unresolved(
     monkeypatch,
 ) -> None:
+    # With full, open, related, finish and defer: defer is 5.
     monkeypatch.setattr(
         "sophyane.goal_completion_dialogue."
         "sys.stdin.isatty",
         lambda: True,
     )
-
-    # With URL and search callback, defer is option 5.
     monkeypatch.setattr(
         "builtins.input",
         lambda _prompt="": "5",
@@ -143,3 +165,27 @@ def test_user_can_defer_resolution(
 
     assert result["resolved"] is False
     assert result["action"] == "deferred"
+
+
+def test_secret_like_tokens_are_masked() -> None:
+    token = (
+        "AQ.Ab8RN6Jl75fbM1VpPdMV3Rj"
+        "-zZxbVwezhOokIbTFs1V-Qik0dQ"
+    )
+
+    redacted = redact_sensitive_text(token)
+
+    assert token not in redacted
+    assert "[REDACTED]" in redacted
+
+
+def test_notification_email_token_is_removed() -> None:
+    value = (
+        "https://github.com/settings/notifications"
+        "?email_token=THISISALONGPRIVATEEMAILTOKEN123456"
+    )
+
+    redacted = redact_sensitive_text(value)
+
+    assert "THISISALONGPRIVATEEMAILTOKEN123456" not in redacted
+    assert "email_token=[REDACTED]" in redacted

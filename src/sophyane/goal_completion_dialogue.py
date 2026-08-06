@@ -1,4 +1,4 @@
-"""Goal-completion dialogue manager for private connector results."""
+"""Conversation-scoped goal-completion manager for private connector results."""
 
 from __future__ import annotations
 
@@ -12,10 +12,58 @@ from typing import Any, Callable
 
 SearchCallback = Callable[[str], dict[str, Any]]
 
+MAX_GOAL_ACTIONS = 8
+
 _URL_RE = re.compile(
     r"https?://[^\s<>\]\[\"']+",
     re.I,
 )
+
+# Mask likely API keys, app tokens and notification tokens before terminal display.
+_LONG_SECRET_RE = re.compile(
+    r"(?<![A-Za-z0-9])"
+    r"(?=[A-Za-z0-9._~-]{32,})"
+    r"(?=[A-Za-z0-9._~-]*[A-Za-z])"
+    r"(?=[A-Za-z0-9._~-]*[0-9])"
+    r"[A-Za-z0-9._~-]{32,}"
+)
+
+_EMAIL_TOKEN_RE = re.compile(
+    r"([?&](?:email_token|token|access_token|api_key)=)"
+    r"([^&\s]+)",
+    re.I,
+)
+
+
+def redact_sensitive_text(value: str) -> str:
+    """Mask likely credentials while preserving ordinary message text."""
+    text = str(value or "")
+
+    text = _EMAIL_TOKEN_RE.sub(
+        lambda match: match.group(1) + "[REDACTED]",
+        text,
+    )
+
+    def replace_secret(match: re.Match[str]) -> str:
+        token = match.group(0)
+
+        # Preserve common non-secret URLs and identifiers.
+        if token.startswith(("http", "github.com")):
+            return token
+
+        if len(token) <= 12:
+            return "[REDACTED]"
+
+        return (
+            token[:6]
+            + "…[REDACTED]…"
+            + token[-4:]
+        )
+
+    return _LONG_SECRET_RE.sub(
+        replace_secret,
+        text,
+    )
 
 
 def _clean_url(value: str) -> str:
@@ -35,6 +83,14 @@ def _urls(payload: dict[str, Any]) -> list[str]:
 
     for match in _URL_RE.findall(material):
         url = _clean_url(match)
+
+        # Notification-management URLs often contain private tokens.
+        if re.search(
+            r"[?&](?:email_token|token|access_token)=",
+            url,
+            flags=re.I,
+        ):
+            continue
 
         if url and url not in found:
             found.append(url)
@@ -106,11 +162,18 @@ def _open_url(url: str) -> bool:
         return False
 
 
+def _message_text(payload: dict[str, Any]) -> str:
+    return (
+        str(payload.get("body") or "").strip()
+        or str(payload.get("preview") or "").strip()
+        or "(no plain-text message body)"
+    )
+
+
 def _related_query(payload: dict[str, Any]) -> str:
     subject = str(payload.get("subject") or "").strip()
     sender = str(payload.get("from") or "").strip()
 
-    # Remove common reply/forward prefixes.
     subject = re.sub(
         r"^(?:re|fw|fwd)\s*:\s*",
         "",
@@ -132,14 +195,6 @@ def _related_query(payload: dict[str, Any]) -> str:
     return sender[:180]
 
 
-def _message_text(payload: dict[str, Any]) -> str:
-    return (
-        str(payload.get("body") or "").strip()
-        or str(payload.get("preview") or "").strip()
-        or "(no plain-text message body)"
-    )
-
-
 def _print_retrieved_message(
     payload: dict[str, Any],
 ) -> None:
@@ -149,20 +204,36 @@ def _print_retrieved_message(
     print("─" * 72)
 
     if payload.get("from"):
-        print(f"From: {payload['from']}")
+        print(
+            "From: "
+            + redact_sensitive_text(
+                str(payload["from"])
+            )
+        )
 
     if payload.get("to"):
-        print(f"To: {payload['to']}")
+        print(
+            "To: "
+            + redact_sensitive_text(
+                str(payload["to"])
+            )
+        )
 
     print(
         "Subject: "
-        + str(
-            payload.get("subject")
-            or "(no subject)"
+        + redact_sensitive_text(
+            str(
+                payload.get("subject")
+                or "(no subject)"
+            )
         )
     )
     print()
-    print(_message_text(payload)[:4000])
+    print(
+        redact_sensitive_text(
+            _message_text(payload)
+        )[:5000]
+    )
     print("─" * 72)
 
 
@@ -176,11 +247,74 @@ def _format_search_result(
     ).strip()
 
     if formatted:
-        return formatted[:5000]
+        return redact_sensitive_text(
+            formatted
+        )[:6000]
 
     matches = int(result.get("matches") or 0)
 
-    return f"Related-email search completed with {matches} matches."
+    return (
+        "Related-email search completed with "
+        f"{matches} matches."
+    )
+
+
+def _contextual_open_label(
+    url: str,
+) -> str:
+    lowered = url.casefold()
+
+    if (
+        "github.com" in lowered
+        and "/actions/runs/" in lowered
+    ):
+        return "Open the GitHub Actions result"
+
+    if "github.com" in lowered:
+        return "Open the GitHub link"
+
+    return "Open the first safe link in the message"
+
+
+def _menu(
+    *,
+    urls: list[str],
+    search_available: bool,
+) -> tuple[dict[int, str], int]:
+    actions: dict[int, str] = {}
+    number = 1
+
+    actions[number] = "show_full"
+    print(
+        f"  {number}. Show the complete available message"
+    )
+    number += 1
+
+    if urls:
+        actions[number] = "open_link"
+        print(
+            f"  {number}. {_contextual_open_label(urls[0])}"
+        )
+        number += 1
+
+    if search_available:
+        actions[number] = "related"
+        print(f"  {number}. Find related emails")
+        number += 1
+
+    actions[number] = "finish"
+    print(
+        f"  {number}. My request is complete — finish"
+    )
+    finish_number = number
+    number += 1
+
+    actions[number] = "defer"
+    print(
+        f"  {number}. Leave this unresolved for now"
+    )
+
+    return actions, finish_number
 
 
 def continue_private_goal(
@@ -188,20 +322,22 @@ def continue_private_goal(
     *,
     search_callback: SearchCallback | None = None,
 ) -> dict[str, Any]:
-    """Ask what would complete the user's private-message request."""
+    """Keep control until the user finishes or defers the active goal."""
 
     if not payload.get("ok"):
         return {
             "asked": False,
             "resolved": False,
             "action": "connector_failed",
-            "summary": "The connector failed before goal completion.",
+            "actions": [],
+            "summary": (
+                "The connector failed before goal completion."
+            ),
         }
 
     body = _message_text(payload)
     urls = _urls(payload)
 
-    # Tests, scripts, redirected input, and explicit opt-out remain nonblocking.
     if (
         not sys.stdin.isatty()
         or os.environ.get(
@@ -214,157 +350,186 @@ def continue_private_goal(
             "asked": False,
             "resolved": True,
             "action": "message_displayed",
+            "actions": ["message_displayed"],
             "summary": (
                 "The retrieved message was displayed. "
                 "Interactive follow-up was unavailable."
             ),
-            "body": body,
+            "body": redact_sensitive_text(body),
         }
 
     _print_retrieved_message(payload)
 
-    print()
-    print("What would complete your request?")
-    print()
-    print("  1. This answers my request — finish")
-    print("  2. Show the complete available message")
+    action_history: list[dict[str, Any]] = []
 
-    next_number = 3
-    open_number: int | None = None
-    related_number: int | None = None
-
-    if urls:
-        open_number = next_number
-
-        label = (
-            "Open the GitHub Actions result"
-            if "github.com" in urls[0]
-            and "/actions/" in urls[0]
-            else "Open the first link in the message"
-        )
-
-        print(f"  {open_number}. {label}")
-        next_number += 1
-
-    if search_callback is not None:
-        related_number = next_number
-        print(
-            f"  {related_number}. Find related emails"
-        )
-        next_number += 1
-
-    print(f"  {next_number}. Leave this unresolved for now")
-    defer_number = next_number
-    print()
-
-    try:
-        answer = input(
-            f"Select next action [1-{defer_number}, default 1]: "
-        ).strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-
-        return {
-            "asked": True,
-            "resolved": False,
-            "action": "cancelled",
-            "summary": "Follow-up selection was cancelled.",
-        }
-
-    if not answer:
-        answer = "1"
-
-    try:
-        selection = int(answer)
-    except ValueError:
-        selection = 1
-
-    if selection == 1:
-        return {
-            "asked": True,
-            "resolved": True,
-            "action": "confirmed_complete",
-            "summary": (
-                "The user confirmed that the retrieved message "
-                "answered the request."
-            ),
-        }
-
-    if selection == 2:
-        print()
-        print("Complete available message")
-        print("─" * 72)
-        print(body[:8000])
-        print("─" * 72)
-
-        return {
-            "asked": True,
-            "resolved": True,
-            "action": "full_message_shown",
-            "summary": "The complete available message was shown.",
-            "body": body[:8000],
-        }
-
-    if open_number is not None and selection == open_number:
-        opened = _open_url(urls[0])
-
-        return {
-            "asked": True,
-            "resolved": opened,
-            "action": "link_opened" if opened else "link_open_failed",
-            "summary": (
-                f"Opened: {urls[0]}"
-                if opened
-                else f"Could not open: {urls[0]}"
-            ),
-            "url": urls[0],
-        }
-
-    if (
-        related_number is not None
-        and selection == related_number
-        and search_callback is not None
+    for action_index in range(
+        1,
+        MAX_GOAL_ACTIONS + 1,
     ):
-        query = _related_query(payload)
-        print(f"Searching related emails for: {query}")
-
-        result = search_callback(query)
-
         print()
-        print(_format_search_result(result))
+        print("What would you like to do next?")
+        print()
 
-        return {
-            "asked": True,
-            "resolved": bool(result.get("ok")),
-            "action": "related_emails_searched",
-            "summary": (
-                f"Related-email search completed for: {query}"
+        actions, finish_number = _menu(
+            urls=urls,
+            search_available=(
+                search_callback is not None
             ),
-            "query": query,
-            "search_result": result,
-        }
+        )
 
-    if selection == defer_number:
-        return {
-            "asked": True,
-            "resolved": False,
-            "action": "deferred",
-            "summary": (
-                "The user left the request unresolved for later."
-            ),
-        }
+        max_number = max(actions)
+
+        try:
+            answer = input(
+                "Select next action "
+                f"[1-{max_number}, "
+                f"default {finish_number}]: "
+            ).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+
+            return {
+                "asked": True,
+                "resolved": False,
+                "action": "cancelled",
+                "actions": action_history,
+                "summary": (
+                    "The active goal session was cancelled."
+                ),
+            }
+
+        if not answer:
+            selection = finish_number
+        else:
+            try:
+                selection = int(answer)
+            except ValueError:
+                print(
+                    "Please select one of the numbered actions."
+                )
+                continue
+
+        action = actions.get(selection)
+
+        if action is None:
+            print(
+                "That option is not available. "
+                "Please choose again."
+            )
+            continue
+
+        if action == "show_full":
+            print()
+            print("Complete available message")
+            print("─" * 72)
+            print(
+                redact_sensitive_text(body)[:8000]
+            )
+            print("─" * 72)
+
+            action_history.append(
+                {
+                    "action": "full_message_shown",
+                    "success": True,
+                }
+            )
+
+            # Do not return: the goal session remains active.
+            continue
+
+        if action == "open_link":
+            opened = _open_url(urls[0])
+
+            if opened:
+                print(f"Opened: {urls[0]}")
+            else:
+                print(
+                    "The link could not be opened automatically."
+                )
+
+            action_history.append(
+                {
+                    "action": (
+                        "link_opened"
+                        if opened
+                        else "link_open_failed"
+                    ),
+                    "success": opened,
+                    "url": urls[0],
+                }
+            )
+
+            # Opening evidence is progress, not automatic resolution.
+            continue
+
+        if action == "related":
+            query = _related_query(payload)
+
+            print(
+                "Searching related emails for: "
+                + query
+            )
+
+            try:
+                result = search_callback(query)  # type: ignore[misc]
+            except Exception as error:
+                result = {
+                    "ok": False,
+                    "error": str(error),
+                }
+
+            print()
+            print(_format_search_result(result))
+
+            action_history.append(
+                {
+                    "action": "related_emails_searched",
+                    "success": bool(result.get("ok")),
+                    "query": query,
+                }
+            )
+
+            # Search results may create another action, so remain active.
+            continue
+
+        if action == "finish":
+            return {
+                "asked": True,
+                "resolved": True,
+                "action": "confirmed_complete",
+                "actions": action_history,
+                "summary": (
+                    "The user confirmed that the active "
+                    "private-message goal was complete."
+                ),
+            }
+
+        if action == "defer":
+            return {
+                "asked": True,
+                "resolved": False,
+                "action": "deferred",
+                "actions": action_history,
+                "summary": (
+                    "The user left the active goal "
+                    "unresolved for later."
+                ),
+            }
 
     return {
         "asked": True,
-        "resolved": True,
-        "action": "confirmed_complete",
+        "resolved": False,
+        "action": "action_limit_reached",
+        "actions": action_history,
         "summary": (
-            "The retrieved message was treated as completing "
-            "the request."
+            "The goal session reached its bounded action limit "
+            f"of {MAX_GOAL_ACTIONS} without explicit completion."
         ),
     }
 
 
 __all__ = [
+    "MAX_GOAL_ACTIONS",
     "continue_private_goal",
+    "redact_sensitive_text",
 ]
