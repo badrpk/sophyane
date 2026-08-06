@@ -51,6 +51,36 @@ def _simple_chat_reply(message: str) -> str | None:
     except Exception:
         pass
 
+    # SOPHYANE_CROSS_MODE_TOPIC_SITE_PREFLIGHT
+    # Informational website construction is a deterministic SLI capability.
+    # Run it before any local/cloud provider in every session mode.
+    try:
+        from pathlib import Path as _TopicPath
+
+        from sophyane.code_memory.topic_site_compose import (
+            is_topic_site_request,
+        )
+        from sophyane.code_memory.sli_rich_site_compose import (
+            compose_rich_topic_site,
+        )
+
+        if is_topic_site_request(message):
+            return compose_rich_topic_site(
+                message,
+                _TopicPath.cwd() / ".sophyane-workspace",
+            )
+    except Exception as _topic_site_error:
+        import os as _topic_os
+
+        if _topic_os.environ.get(
+            "SOPHYANE_DEBUG_TOPIC_SITE",
+        ) == "1":
+            return (
+                "Topic-site capability failed safely: "
+                f"{type(_topic_site_error).__name__}: "
+                f"{_topic_site_error}"
+            )
+
     # SOPHYANE_SLI_CHUNK_TIER
     import os as _sophyane_os
 

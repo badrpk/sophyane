@@ -154,47 +154,44 @@ def resolve_tier(
     )
     reporter = progress or (lambda _message: None)
 
-    # Informational/browser website construction is already a deterministic
-    # SLI capability. Run it before local/cloud generation in every mode.
-    if (
-        selected_mode in {
-            "sli_chunks",
-            "local_llm",
-            "cloud_llm",
-        }
-        and _is_build(message)
-        and _is_browser_build(message)
-    ):
-        reporter(
-            "SLI deterministic preflight: website build bypasses "
-            "the selected LLM provider"
+    # Informational topic websites are a deterministic SLI capability.
+    # Execute them before local/cloud providers in every session mode.
+    # This keeps website creation working when llama-server is unavailable,
+    # a cloud quota is exhausted, or the user deliberately selected no LLM.
+    try:
+        from sophyane.code_memory.topic_site_compose import (
+            is_topic_site_request,
         )
 
-        try:
-            report = try_sli_chunks(
+        if is_topic_site_request(message):
+            from sophyane.code_memory.sli_rich_site_compose import (
+                compose_rich_topic_site,
+            )
+
+            reporter(
+                "SLI deterministic preflight: handling informational "
+                "website before the selected LLM provider"
+            )
+
+            report = compose_rich_topic_site(
                 message,
-                workspace=target,
+                target,
                 progress=reporter,
             )
-        except Exception as error:
-            reporter(
-                "SLI website preflight failed safely: "
-                f"{type(error).__name__}: {error}"
-            )
-        else:
-            artifact = target / "index.html"
-            report_text = str(report or "")
 
-            if (
-                artifact.is_file()
-                and "success: true" in report_text.casefold()
-            ):
-                return "sli_topic_site", report_text
+            if "success: true" in str(report or "").casefold():
+                return "sli_topic_site", str(report)
 
             reporter(
-                "SLI website preflight did not produce a validated "
-                "index.html; continuing to the selected provider"
+                "SLI topic-site preflight did not complete; "
+                "continuing to the selected provider"
             )
+    except Exception as error:
+        reporter(
+            "SLI topic-site preflight failed safely; "
+            f"continuing to the selected provider: "
+            f"{type(error).__name__}: {error}"
+        )
 
     if selected_mode == "sli_chunks":
         return (

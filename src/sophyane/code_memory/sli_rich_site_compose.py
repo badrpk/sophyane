@@ -10,9 +10,13 @@ import base64
 import html
 import json
 import mimetypes
+import os
 import re
+import shutil
+import subprocess
 import urllib.parse
 import urllib.request
+import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -199,6 +203,86 @@ const modal=document.querySelector('#modal');function openModal(i){{const e=enti
 document.querySelector('#theme').onclick=()=>document.body.classList.toggle('light');const observer=new IntersectionObserver(rows=>rows.forEach(r=>{{if(r.isIntersecting)r.target.classList.add('visible')}}),{{threshold:.12}});document.querySelectorAll('.reveal').forEach(x=>observer.observe(x));addEventListener('scroll',()=>{{const d=document.documentElement;document.querySelector('.progress').style.width=((d.scrollTop/(d.scrollHeight-d.clientHeight))*100||0)+'%'}});</script></body></html>'''
 
 
+def _open_generated_site(
+    target: Path,
+    progress: Progress,
+) -> tuple[bool, str]:
+    """Open a generated HTML artifact in the user's desktop browser."""
+    target = target.expanduser().resolve()
+
+    if not target.is_file():
+        return False, f"Browser launch skipped: file is missing: {target}"
+
+    if str(os.environ.get("SOPHYANE_NO_BROWSER", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return False, "Browser launch disabled by SOPHYANE_NO_BROWSER"
+
+    # Under WSL, ask Windows to open the generated file.
+    if os.environ.get("WSL_DISTRO_NAME"):
+        try:
+            converted = subprocess.run(
+                ["wslpath", "-w", str(target)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            windows_path = converted.stdout.strip()
+
+            if windows_path:
+                powershell = shutil.which("powershell.exe")
+                if powershell:
+                    subprocess.run(
+                        [
+                            powershell,
+                            "-NoProfile",
+                            "-NonInteractive",
+                            "-Command",
+                            "Start-Process",
+                            "-FilePath",
+                            windows_path,
+                        ],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
+                    )
+                    progress(f"Opened website in Windows browser: {windows_path}")
+                    return True, windows_path
+
+                cmd = shutil.which("cmd.exe")
+                if cmd:
+                    subprocess.run(
+                        [cmd, "/c", "start", "", windows_path],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
+                    )
+                    progress(f"Opened website in Windows browser: {windows_path}")
+                    return True, windows_path
+        except Exception as error:
+            progress(
+                "Windows browser launch failed; trying platform browser: "
+                f"{type(error).__name__}: {error}"
+            )
+
+    # Native Linux, macOS, Windows Python, or WSL fallback.
+    try:
+        uri = target.as_uri()
+        opened = bool(webbrowser.open(uri, new=2))
+        if opened:
+            progress(f"Opened website in browser: {uri}")
+            return True, uri
+        return False, f"Browser launcher declined URI: {uri}"
+    except Exception as error:
+        return False, f"Browser launch failed: {type(error).__name__}: {error}"
+
+
 def _validate(document: str, entities: list[Entity]) -> str:
     checks = {
         "complete document": "</html>" in document.lower(),
@@ -235,6 +319,12 @@ def compose_rich_topic_site(request: str, workspace: Path, *, progress: Progress
         output.unlink(missing_ok=True)
         return f"SLI rich-site validation failed: {problem}\nSuccess: False\n"
     output.write_text(document, encoding="utf-8")
+
+    browser_opened, browser_target = _open_generated_site(
+        output,
+        progress,
+    )
+
     return "\n".join([
         "Sophyane rich SLI website orchestrator",
         f"Request: {request}",
@@ -244,6 +334,8 @@ def compose_rich_topic_site(request: str, workspace: Path, *, progress: Progress
         "Components: cinematic hero, editorial grid, search, filters, profile modal, theme toggle, scroll motion, provenance",
         f"Bytes: {len(document.encode('utf-8'))}",
         "Files: index.html",
+        f"Browser opened: {browser_opened}",
+        f"Browser target: {browser_target}",
         "Validation: passed",
         "LLM used: False",
         "Success: True",

@@ -34,7 +34,7 @@ def test_website_build_uses_sli_before_provider(
         return report
 
     with patch(
-        "sophyane.sli_chunk_router.try_sli_chunks",
+        "sophyane.code_memory.sli_rich_site_compose.compose_rich_topic_site",
         side_effect=compose,
     ) as mocked:
         tier, result = resolve_tier(

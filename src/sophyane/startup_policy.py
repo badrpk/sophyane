@@ -147,23 +147,43 @@ def choose_startup_provider() -> dict[str, Any]:
             return updated
 
         if answer == "2":
+            # Option 2 is intentionally strict local-only mode.
+            # Never consult, rescue through, or fall back to a cloud model.
             os.environ["SOPHYANE_SESSION_MODE"] = "local_llm"
+            os.environ["SOPHYANE_LOCAL_ONLY"] = "1"
+            os.environ["SOPHYANE_DISABLE_CLOUD_FALLBACK"] = "1"
+
             local_id, local_model = local
-            rescue_id = clouds[0][0]
+
             updated = dict(config)
-            updated.update({"provider": local_id, "model": local_model, "company": "Local", "timeout": 300})
+            updated.update({
+                "provider": local_id,
+                "model": local_model,
+                "company": "Local",
+                "timeout": 300,
+            })
             save_config(updated)
+
             llm["active_provider"] = local_id
-            llm["allow_quality_escalation"] = True
-            llm["quality_rescue_provider"] = rescue_id
-            order = [local_id, rescue_id]
-            for value in llm.get("fallback_order", []) or []:
-                name = str(value).strip().lower()
-                if name and name not in order:
-                    order.append(name)
-            llm["fallback_order"] = order
+            llm["fallback_order"] = [local_id]
+            llm["allow_quality_escalation"] = False
+            llm["quality_rescue_provider"] = ""
+            llm["allow_local_fallbacks"] = False
+            llm["allow_cloud_local_rescue"] = False
+
+            providers = llm.setdefault("providers", {})
+            if isinstance(providers, dict):
+                local_entry = providers.setdefault(local_id, {})
+                if isinstance(local_entry, dict):
+                    local_entry["enabled"] = True
+
             save_json(LLM_FILE, llm, private=False)
-            print(f"Mode: Local LLM ({local_model}); rescue: {rescue_id}", file=sys.stderr)
+
+            print(
+                f"Mode: Local LLM only ({local_model}); "
+                "cloud fallback disabled",
+                file=sys.stderr,
+            )
             return updated
 
         if answer == "3":
