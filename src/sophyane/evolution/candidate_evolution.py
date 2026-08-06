@@ -410,6 +410,121 @@ def _format_indexed_edit_choices(
     )
 
 
+def _semantic_rechoice_response(
+    value: str,
+    *,
+    window: dict[str, Any],
+) -> dict[str, Any]:
+    """Parse CHOICE/CODE repair output without JSON escaping requirements."""
+    raw = str(value or "").strip()
+
+    fenced = re.fullmatch(
+        r"```(?:text|python)?\s*(.*?)\s*```",
+        raw,
+        flags=re.I | re.S,
+    )
+
+    if fenced:
+        raw = fenced.group(1).strip()
+
+    lines = raw.splitlines()
+
+    choice_line = next(
+        (
+            line
+            for line in lines
+            if line.strip().upper().startswith(
+                "CHOICE="
+            )
+        ),
+        "",
+    )
+
+    code_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.strip().upper().startswith(
+                "CODE="
+            )
+        ),
+        -1,
+    )
+
+    if not choice_line:
+        raise ValueError(
+            "Semantic re-choice response has no CHOICE field"
+        )
+
+    if code_index < 0:
+        raise ValueError(
+            "Semantic re-choice response has no CODE field"
+        )
+
+    try:
+        choice = int(
+            choice_line.split(
+                "=",
+                1,
+            )[1].strip()
+        )
+    except (
+        IndexError,
+        TypeError,
+        ValueError,
+    ) as error:
+        raise ValueError(
+            "Semantic re-choice CHOICE must be an integer"
+        ) from error
+
+    first_code = lines[
+        code_index
+    ].split(
+        "=",
+        1,
+    )[1]
+
+    remaining = lines[
+        code_index + 1:
+    ]
+
+    code = "\n".join(
+        [
+            first_code,
+            *remaining,
+        ]
+    ).strip()
+
+    if not code:
+        raise ValueError(
+            "Semantic re-choice CODE is empty"
+        )
+
+    if code.casefold() in {
+        "actual_code",
+        "code",
+        "replacement",
+        "source",
+        "todo",
+        "placeholder",
+    }:
+        raise ValueError(
+            "Semantic re-choice copied a schema placeholder"
+        )
+
+    synthetic = json.dumps(
+        {
+            "choice": choice,
+            "code": code,
+        }
+    )
+
+    return _indexed_choice_payload(
+        synthetic,
+        window=window,
+    )
+
+
 def _indexed_choice_payload(
     value: str,
     *,
@@ -2916,21 +3031,21 @@ Choose a DIFFERENT editable source choice:
 
 {alternative_catalogue}
 
-Return one minified JSON object with exactly two keys:
-- "choice": an integer from the alternative catalogue;
-- "code": the actual executable replacement source line.
+Return exactly this two-field plain-text format:
 
-Do not include a sample JSON object. Generate the real source directly.
+CHOICE=<integer from the alternative catalogue>
+CODE=<actual executable replacement source>
 
 Rules:
+- do not use JSON, Markdown, quotes around the whole response or explanation;
 - do not select choice {original_choice};
 - choice must appear in the alternative catalogue;
-- code must make a real behavioral Python change;
-- code must not be empty;
-- no start, end, op, path, diff, Markdown or explanation;
+- CODE may contain Python quotes without escaping them for JSON;
+- CODE must make a real behavioral Python change;
+- CODE must not be empty;
 - do not rewrite only quotes, whitespace or formatting;
 - do not copy benchmark inputs, filenames or expected answers;
-- never return ACTUAL_CODE, CODE, REPLACEMENT, SOURCE, TODO, or PLACEHOLDER;
+- never return ACTUAL_CODE, REPLACEMENT, SOURCE, TODO, or PLACEHOLDER;
 - stay below 100 output tokens.
 """
 
@@ -3061,7 +3176,7 @@ Rules:
                     )
 
                 if semantic_rechoice:
-                    parsed = _indexed_choice_payload(
+                    parsed = _semantic_rechoice_response(
                         repaired_response,
                         window=indexed_window,
                     )

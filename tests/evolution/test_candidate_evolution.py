@@ -2429,9 +2429,91 @@ def test_semantic_rechoice_prompt_has_no_copyable_code_example() -> None:
     ]
 
     assert '"code": "ACTUAL_CODE"' not in section
-    assert "Do not include a sample JSON object" in section
     assert (
-        "never return ACTUAL_CODE, CODE, REPLACEMENT, "
+        "CHOICE=<integer from the alternative catalogue>"
+        in section
+    )
+    assert (
+        "CODE=<actual executable replacement source>"
+        in section
+    )
+    assert (
+        "do not use JSON, Markdown"
+        in section
+    )
+    assert (
+        "never return ACTUAL_CODE, REPLACEMENT, "
         "SOURCE, TODO, or PLACEHOLDER"
         in section
     )
+
+
+def test_semantic_rechoice_response_accepts_python_quotes() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _semantic_rechoice_response,
+    )
+
+    parsed = _semantic_rechoice_response(
+        (
+            "CHOICE=2\n"
+            'CODE="pytest --cov-report=xml --cov=" + test_target.name'
+        ),
+        window={
+            "lines": [
+                '    test_target.write_text(tests_source, encoding="utf-8")\n',
+                '            "pytest",\n',
+            ],
+            "allowed_edit_lines": {
+                1,
+                2,
+            },
+        },
+    )
+
+    assert parsed["selected_choice"] == 2
+    assert parsed["start"] == 2
+    assert (
+        parsed["code"]
+        == '"pytest --cov-report=xml --cov=" + test_target.name'
+    )
+
+
+def test_semantic_rechoice_response_rejects_missing_code() -> None:
+    import pytest
+
+    from sophyane.evolution.candidate_evolution import (
+        _semantic_rechoice_response,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="no CODE field",
+    ):
+        _semantic_rechoice_response(
+            "CHOICE=2",
+            window={
+                "lines": [
+                    '"pytest",\n',
+                ],
+                "allowed_edit_lines": {
+                    1,
+                },
+            },
+        )
+
+
+def test_semantic_rechoice_prompt_uses_plain_text_protocol() -> None:
+    import inspect
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    source = inspect.getsource(
+        CandidateEvolver.generate_proposal
+    )
+
+    assert "CHOICE=<integer from the alternative catalogue>" in source
+    assert "CODE=<actual executable replacement source>" in source
+    assert "CODE may contain Python quotes without escaping" in source
+    assert "_semantic_rechoice_response" in source
