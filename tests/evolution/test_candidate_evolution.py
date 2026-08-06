@@ -2675,3 +2675,24 @@ def test_semantic_rechoice_still_uses_ast_gate() -> None:
     )
 
     assert "_validate_python_semantic_change" in source
+
+
+def test_runtime_command_invokes_public_cli_entry(
+    tmp_path: Path,
+) -> None:
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    evolver = CandidateEvolver(tmp_path)
+
+    command, _ = evolver._runtime_command(
+        source_repo=tmp_path,
+    )
+
+    assert command[1] == "-c"
+    assert (
+        "from sophyane.cli_entry import main"
+        in command[2]
+    )
+    assert "sophyane.tui_v2" not in command

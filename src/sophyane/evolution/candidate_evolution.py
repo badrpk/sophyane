@@ -3523,8 +3523,11 @@ Rules:
 
         command = [
             str(python),
-            "-m",
-            "sophyane.tui_v2",
+            "-c",
+            (
+                "from sophyane.cli_entry import main; "
+                "raise SystemExit(main())"
+            ),
         ]
 
         env = os.environ.copy()
