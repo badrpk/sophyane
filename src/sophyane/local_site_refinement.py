@@ -200,6 +200,44 @@ def _clean_patch(value: str) -> str:
     return cleaned
 
 
+def _effective_verdict(
+    critique: dict,
+) -> str:
+    """Resolve contradictory local-review output conservatively."""
+    verdict = str(
+        critique.get("verdict") or "improve"
+    ).strip().casefold()
+
+    issues = [
+        str(item).strip()
+        for item in (
+            critique.get("issues") or []
+        )
+        if str(item).strip()
+    ]
+
+    improvements = [
+        str(item).strip()
+        for item in (
+            critique.get("improvements") or []
+        )
+        if str(item).strip()
+    ]
+
+    if verdict == "pass" and (
+        issues or improvements
+    ):
+        return "improve"
+
+    if verdict not in {
+        "pass",
+        "improve",
+    }:
+        return "improve"
+
+    return verdict
+
+
 def _generate_patch(
     provider: LocalGgufProvider,
     request: str,
@@ -425,9 +463,9 @@ def compose_refined_local_topic_site(
 
         critiques.append(critique)
 
-        verdict = str(
-            critique.get("verdict") or "improve"
-        ).strip().casefold()
+        verdict = _effective_verdict(
+            critique
+        )
 
         if verdict == "pass":
             _progress(

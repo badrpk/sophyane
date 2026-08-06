@@ -183,3 +183,49 @@ def test_local_runtime_failure_stops_without_browser_or_provider_fallback(
     assert "Cloud LLM used: False" in report
     assert "Provider fallback used: False" in report
     assert "Success: False" in report
+
+
+def test_pass_with_issues_is_treated_as_improve() -> None:
+    from sophyane.local_site_refinement import (
+        _effective_verdict,
+    )
+
+    critique = {
+        "verdict": "pass",
+        "issues": [
+            "Navigation could be improved",
+        ],
+        "improvements": [
+            "Add visible focus styles",
+        ],
+    }
+
+    assert _effective_verdict(critique) == "improve"
+
+
+def test_clean_pass_remains_pass() -> None:
+    from sophyane.local_site_refinement import (
+        _effective_verdict,
+    )
+
+    critique = {
+        "verdict": "pass",
+        "issues": [],
+        "improvements": [],
+    }
+
+    assert _effective_verdict(critique) == "pass"
+
+
+def test_unknown_verdict_defaults_to_improve() -> None:
+    from sophyane.local_site_refinement import (
+        _effective_verdict,
+    )
+
+    critique = {
+        "verdict": "maybe",
+        "issues": [],
+        "improvements": [],
+    }
+
+    assert _effective_verdict(critique) == "improve"
