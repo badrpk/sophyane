@@ -18,9 +18,38 @@ REPORT_NAME = ".sophyane-personal-connector-report.json"
 DASHBOARD_NAME = "connector-report.html"
 
 _EMAIL_PATTERNS = (
-    r"\b(?:read|show|check|open|summari[sz]e|find|search)\s+(?:my\s+)?(?:last|latest|newest|recent|unread)?\s*(?:email|mail|inbox|message)s?\b",
+    # General inbox and email requests.
+    r"\b(?:read|show|check|open|summari[sz]e|find|search)\s+"
+    r"(?:my\s+)?"
+    r"(?:last|latest|newest|recent|unread|sent|outgoing)?\s*"
+    r"(?:email|mail|inbox|message)s?\b",
+
+    # Direct ownership phrases.
     r"\bmy\s+(?:email|mail|inbox|messages?)\b",
-    r"\b(?:last|latest|newest|recent|unread)\s+(?:email|mail|message)\b",
+
+    # Latest incoming or outgoing message.
+    r"\b(?:last|latest|newest|recent|unread)\s+"
+    r"(?:sent|outgoing\s+)?"
+    r"(?:email|mail|message)\b",
+
+    # Natural-language sent-mail variants.
+    r"\b(?:what\s+(?:was|is)\s+)?"
+    r"(?:my\s+)?"
+    r"(?:last|latest|newest|recent)\s+"
+    r"(?:outgoing|sent)\s+"
+    r"(?:email|mail|message)\b",
+
+    r"\b(?:last|latest|newest|recent)\s+"
+    r"(?:email|mail|message)\s+i\s+sent\b",
+
+    r"\bwhat\s+(?:was|is)\s+"
+    r"(?:the\s+)?"
+    r"(?:last|latest)\s+"
+    r"(?:email|mail|message)\s+i\s+sent\b",
+
+    # Folder-oriented requests.
+    r"\b(?:show|check|read|open)\s+"
+    r"(?:my\s+)?sent\s+(?:mail|email|messages?|folder)\b",
 )
 
 
@@ -31,7 +60,31 @@ def is_personal_connector_request(message: str) -> bool:
 
 def _operation(message: str) -> tuple[str, dict[str, Any]]:
     text = " ".join(str(message or "").casefold().split())
-    if any(term in text for term in ("sent email", "sent mail", "outgoing email", "last email i sent")):
+
+    sent_request = any(
+        term in text
+        for term in (
+            "sent email",
+            "sent mail",
+            "sent message",
+            "outgoing email",
+            "outgoing mail",
+            "outgoing message",
+            "last email i sent",
+            "latest email i sent",
+            "newest email i sent",
+            "recent email i sent",
+            "last mail i sent",
+            "latest mail i sent",
+            "last message i sent",
+            "latest message i sent",
+            "newest message i sent",
+            "recent message i sent",
+            "sent folder",
+        )
+    )
+
+    if sent_request:
         return "latest_sent", {}
     if any(term in text for term in ("search", "find", "about", "from ")) and not any(
         term in text for term in ("last email", "latest email", "newest email", "recent email")
