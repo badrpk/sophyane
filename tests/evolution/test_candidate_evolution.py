@@ -340,3 +340,58 @@ def test_corrupt_patch_fails_before_worktree_creation(
     assert not any(
         evolver.worktrees.iterdir()
     )
+
+
+def test_json_patch_field_unwraps_fenced_diff_without_git_header() -> None:
+    import json
+
+    from sophyane.evolution.candidate_evolution import (
+        _candidate_payload,
+    )
+
+    response = json.dumps(
+        {
+            "component": "python",
+            "rationale": "Run requested tests.",
+            "patch": (
+                "```diff\n"
+                "--- a/src/sophyane/local_coding_capability.py\n"
+                "+++ b/src/sophyane/local_coding_capability.py\n"
+                "@@ -1 +1 @@\n"
+                "-old\n"
+                "+new\n"
+                "```"
+            ),
+            "tests": [],
+            "confidence": 0.9,
+        }
+    )
+
+    payload = _candidate_payload(
+        response,
+        component="python",
+    )
+
+    assert payload["patch"].startswith(
+        "diff --git "
+        "a/src/sophyane/local_coding_capability.py "
+        "b/src/sophyane/local_coding_capability.py"
+    )
+    assert "```" not in payload["patch"]
+
+
+def test_normalise_patch_preserves_existing_git_diff() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _normalise_patch_text,
+    )
+
+    patch = (
+        "diff --git a/src/example.py b/src/example.py\n"
+        "--- a/src/example.py\n"
+        "+++ b/src/example.py\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+
+    assert _normalise_patch_text(patch) == patch.strip()

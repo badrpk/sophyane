@@ -117,6 +117,65 @@ def _json_object(value: str) -> dict[str, Any]:
     return json.loads(text[start : end + 1])
 
 
+def _normalise_patch_text(
+    value: str,
+) -> str:
+    """Normalize model-produced unified diffs without weakening patch gates."""
+    patch = str(value or "").strip()
+
+    fenced = re.fullmatch(
+        r"```(?:diff|patch)?\s*(.*?)\s*```",
+        patch,
+        flags=re.I | re.S,
+    )
+
+    if fenced:
+        patch = fenced.group(1).strip()
+
+    start = patch.find("diff --git ")
+
+    if start >= 0:
+        return patch[start:].strip()
+
+    # Gemini sometimes emits conventional ---/+++ unified diffs but omits
+    # the required Git file header. Add it only when both paths are explicit.
+    lines = patch.splitlines()
+    output: list[str] = []
+    index = 0
+    converted = False
+
+    while index < len(lines):
+        line = lines[index]
+
+        if (
+            line.startswith("--- a/")
+            and index + 1 < len(lines)
+            and lines[index + 1].startswith("+++ b/")
+        ):
+            old_path = line[len("--- a/"):].strip()
+            new_path = lines[index + 1][len("+++ b/"):].strip()
+
+            output.append(
+                f"diff --git a/{old_path} b/{new_path}"
+            )
+            output.append(line)
+            output.append(lines[index + 1])
+
+            converted = True
+            index += 2
+            continue
+
+        output.append(line)
+        index += 1
+
+    normalized = "\\n".join(output).strip()
+
+    if converted:
+        return normalized
+
+    return patch
+
+
 def _candidate_payload(
     value: str,
     *,
@@ -139,7 +198,20 @@ def _candidate_payload(
     try:
         payload = _json_object(raw)
 
-        if str(payload.get("patch") or "").strip():
+        patch = _normalise_patch_text(
+            str(payload.get("patch") or "")
+        )
+
+        if patch:
+            payload["patch"] = patch
+
+            if not payload.get("tests"):
+                payload["tests"] = [
+                    item
+                    for item in _diff_paths(patch)
+                    if item.startswith("tests/")
+                ]
+
             return payload
     except (
         ValueError,
@@ -156,17 +228,22 @@ def _candidate_payload(
     )
 
     if fenced:
-        patch = fenced.group(1).strip()
+        patch = _normalise_patch_text(
+            fenced.group(1)
+        )
     else:
         start = raw.find("diff --git ")
 
-        if start < 0:
-            raise ValueError(
-                "Gemini response contained neither valid JSON "
-                "nor a unified Git diff"
-            )
+        if start >= 0:
+            patch = raw[start:].strip()
+        else:
+            patch = _normalise_patch_text(raw)
 
-        patch = raw[start:].strip()
+            if not patch.startswith("diff --git "):
+                raise ValueError(
+                    "Gemini response contained neither valid JSON "
+                    "nor a unified Git diff"
+                )
 
     tests = [
         item
