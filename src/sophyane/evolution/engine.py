@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
 import tempfile
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -435,14 +437,185 @@ Trace:
             method="POST",
         )
 
-        with urllib.request.urlopen(
-            request,
-            timeout=240,
-        ) as response:
-            data = json.loads(
-                response.read().decode(
-                    "utf-8"
+        max_attempts = max(
+            1,
+            int(
+                os.environ.get(
+                    "SOPHYANE_EVOLUTION_GEMINI_MAX_ATTEMPTS",
+                    "4",
                 )
+            ),
+        )
+
+        base_delay = max(
+            0.1,
+            float(
+                os.environ.get(
+                    "SOPHYANE_EVOLUTION_GEMINI_RETRY_BASE_SECONDS",
+                    "2",
+                )
+            ),
+        )
+
+        retryable_statuses = {
+            408,
+            429,
+            500,
+            502,
+            503,
+            504,
+        }
+
+        data = None
+        last_error: Exception | None = None
+
+        for attempt in range(
+            1,
+            max_attempts + 1,
+        ):
+            try:
+                with urllib.request.urlopen(
+                    request,
+                    timeout=240,
+                ) as response:
+                    data = json.loads(
+                        response.read().decode(
+                            "utf-8"
+                        )
+                    )
+
+                break
+
+            except urllib.error.HTTPError as error:
+                last_error = error
+                status = int(
+                    getattr(
+                        error,
+                        "code",
+                        0,
+                    )
+                    or 0
+                )
+
+                try:
+                    response_body = (
+                        error.read()
+                        .decode(
+                            "utf-8",
+                            errors="replace",
+                        )
+                    )
+                except Exception:
+                    response_body = ""
+
+                if (
+                    status not in retryable_statuses
+                    or attempt >= max_attempts
+                ):
+                    raise RuntimeError(
+                        "Gemini HTTP request failed. "
+                        f"status={status}; "
+                        f"attempt={attempt}/{max_attempts}; "
+                        f"body={response_body[:2000]}"
+                    ) from error
+
+                retry_after = 0.0
+
+                try:
+                    retry_after = float(
+                        error.headers.get(
+                            "Retry-After",
+                            "0",
+                        )
+                        or 0
+                    )
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+                    retry_after = 0.0
+
+                exponential = (
+                    base_delay
+                    * (
+                        2
+                        ** (
+                            attempt - 1
+                        )
+                    )
+                )
+
+                jitter = random.uniform(
+                    0.0,
+                    min(
+                        2.0,
+                        exponential * 0.25,
+                    ),
+                )
+
+                delay = max(
+                    retry_after,
+                    exponential + jitter,
+                )
+
+                print(
+                    "Gemini transient HTTP failure: "
+                    f"{status}; "
+                    f"retrying in {delay:.1f}s "
+                    f"({attempt}/{max_attempts})"
+                )
+
+                time.sleep(delay)
+
+            except (
+                urllib.error.URLError,
+                TimeoutError,
+            ) as error:
+                last_error = error
+
+                if attempt >= max_attempts:
+                    raise RuntimeError(
+                        "Gemini network request failed "
+                        f"after {max_attempts} attempts: "
+                        f"{type(error).__name__}: {error}"
+                    ) from error
+
+                exponential = (
+                    base_delay
+                    * (
+                        2
+                        ** (
+                            attempt - 1
+                        )
+                    )
+                )
+
+                jitter = random.uniform(
+                    0.0,
+                    min(
+                        2.0,
+                        exponential * 0.25,
+                    ),
+                )
+
+                delay = (
+                    exponential
+                    + jitter
+                )
+
+                print(
+                    "Gemini transient network failure: "
+                    f"{type(error).__name__}; "
+                    f"retrying in {delay:.1f}s "
+                    f"({attempt}/{max_attempts})"
+                )
+
+                time.sleep(delay)
+
+        if data is None:
+            raise RuntimeError(
+                "Gemini produced no response after "
+                f"{max_attempts} attempts: {last_error}"
             )
 
         candidates = data.get(
