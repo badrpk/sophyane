@@ -2696,3 +2696,51 @@ def test_runtime_command_invokes_public_cli_entry(
         in command[2]
     )
     assert "sophyane.tui_v2" not in command
+
+
+def test_duplicate_adjacent_failure_routes_to_semantic_rechoice() -> None:
+    import inspect
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    source = inspect.getsource(
+        CandidateEvolver.generate_proposal
+    )
+
+    semantic_start = source.index(
+        "semantic_rechoice = bool("
+    )
+
+    semantic_end = source.index(
+        "single_line_repair = bool(",
+        semantic_start,
+    )
+
+    classification = source[
+        semantic_start:
+        semantic_end
+    ]
+
+    assert (
+        "duplicate adjacent source lines"
+        in classification
+    )
+
+
+def test_duplicate_adjacent_edit_gate_remains_enabled() -> None:
+    import inspect
+
+    from sophyane.evolution.candidate_evolution import (
+        _indexed_edit_to_patch,
+    )
+
+    source = inspect.getsource(
+        _indexed_edit_to_patch
+    )
+
+    assert (
+        "Indexed edit created duplicate adjacent source lines"
+        in source
+    )

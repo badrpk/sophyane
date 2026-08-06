@@ -3015,6 +3015,7 @@ Rules:
                     for marker in (
                         "no semantic python change",
                         "no source change",
+                        "duplicate adjacent source lines",
                     )
                 )
             )
