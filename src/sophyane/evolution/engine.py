@@ -359,6 +359,7 @@ Trace:
         self,
         prompt: str,
     ) -> str:
+        """Generate complete Gemini output with explicit completion checks."""
         key = self._gemini_key()
 
         if not key:
@@ -371,6 +372,20 @@ Trace:
             "gemini-2.5-flash",
         )
 
+        max_output_tokens = int(
+            os.environ.get(
+                "SOPHYANE_EVOLUTION_GEMINI_MAX_OUTPUT_TOKENS",
+                "16384",
+            )
+        )
+
+        thinking_budget = int(
+            os.environ.get(
+                "SOPHYANE_EVOLUTION_GEMINI_THINKING_BUDGET",
+                "0",
+            )
+        )
+
         url = (
             "https://generativelanguage.googleapis.com/"
             f"v1beta/models/{model}:generateContent?"
@@ -378,6 +393,21 @@ Trace:
                 {"key": key}
             )
         )
+
+        generation_config = {
+            "temperature": 0.1,
+            "maxOutputTokens": max_output_tokens,
+        }
+
+        # Gemini 2.5 Flash supports disabling or bounding thinking.
+        if model.startswith("gemini-2.5"):
+            generation_config[
+                "thinkingConfig"
+            ] = {
+                "thinkingBudget": (
+                    thinking_budget
+                )
+            }
 
         body = json.dumps(
             {
@@ -390,10 +420,9 @@ Trace:
                         ]
                     }
                 ],
-                "generationConfig": {
-                    "temperature": 0.1,
-                    "maxOutputTokens": 5000,
-                },
+                "generationConfig": (
+                    generation_config
+                ),
             }
         ).encode("utf-8")
 
@@ -408,7 +437,7 @@ Trace:
 
         with urllib.request.urlopen(
             request,
-            timeout=180,
+            timeout=240,
         ) as response:
             data = json.loads(
                 response.read().decode(
@@ -416,12 +445,85 @@ Trace:
                 )
             )
 
-        return str(
-            data["candidates"][0]
-            ["content"]["parts"][0]["text"]
+        candidates = data.get(
+            "candidates"
+        ) or []
+
+        if not candidates:
+            feedback = data.get(
+                "promptFeedback"
+            ) or {}
+
+            raise RuntimeError(
+                "Gemini returned no candidates. "
+                f"Prompt feedback: {feedback}"
+            )
+
+        candidate = candidates[0]
+        finish_reason = str(
+            candidate.get(
+                "finishReason"
+            )
+            or ""
         )
 
-    @staticmethod
+        parts = (
+            candidate.get(
+                "content",
+                {},
+            ).get(
+                "parts",
+                []
+            )
+            or []
+        )
+
+        output = "".join(
+            str(part.get("text") or "")
+            for part in parts
+            if isinstance(part, dict)
+        )
+
+        usage = data.get(
+            "usageMetadata"
+        ) or {}
+
+        if finish_reason == "MAX_TOKENS":
+            raise RuntimeError(
+                "Gemini output was truncated at MAX_TOKENS. "
+                f"characters={len(output)}; "
+                f"usage={usage}; "
+                f"configured_max={max_output_tokens}; "
+                f"thinking_budget={thinking_budget}"
+            )
+
+        allowed_finish_reasons = {
+            "",
+            "STOP",
+            "FINISH_REASON_UNSPECIFIED",
+        }
+
+        if (
+            finish_reason
+            not in allowed_finish_reasons
+        ):
+            raise RuntimeError(
+                "Gemini generation stopped abnormally. "
+                f"finish_reason={finish_reason}; "
+                f"finish_message="
+                f"{candidate.get('finishMessage')}; "
+                f"usage={usage}"
+            )
+
+        if not output.strip():
+            raise RuntimeError(
+                "Gemini returned an empty text response. "
+                f"finish_reason={finish_reason}; "
+                f"usage={usage}"
+            )
+
+        return output
+
     def _json_object(
         text: str,
     ) -> dict[str, Any]:
