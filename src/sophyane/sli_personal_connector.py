@@ -454,10 +454,63 @@ def run_personal_connector(request: str, workspace: Path | str, *, progress: Pro
     progress(f"SLI private connector: email operation={operation}")
     try:
         from sophyane.connectors.email_imap.handler import execute
-        result = execute(op=operation, args=args, profile=profile, manifest={})
+
+        result = execute(
+            op=operation,
+            args=args,
+            profile=profile,
+            manifest={},
+        )
+
+        # A private connector request should complete the setup workflow
+        # instead of merely reporting that credentials are missing.
+        if (
+            not result.get("ok")
+            and result.get("error") == "not_configured"
+        ):
+            from sophyane.gmail_setup_wizard import (
+                configure_gmail_interactively,
+            )
+
+            setup = configure_gmail_interactively(
+                profile=profile,
+                progress=progress,
+            )
+
+            if setup.get("ok"):
+                # Retry the original email request immediately after
+                # successful verification and vault storage.
+                result = execute(
+                    op=operation,
+                    args=args,
+                    profile=profile,
+                    manifest={},
+                )
+            else:
+                result = {
+                    "ok": False,
+                    "error": str(
+                        setup.get("error")
+                        or "not_configured"
+                    ),
+                    "message": str(
+                        setup.get("message")
+                        or "Gmail setup was not completed."
+                    ),
+                }
+
     except Exception as error:
-        result = {"ok": False, "error": "connector_error", "message": str(error)}
-    payload = _safe_payload(result, request, operation)
+        result = {
+            "ok": False,
+            "error": "connector_error",
+            "message": str(error),
+        }
+
+    payload = _safe_payload(
+        result,
+        request,
+        operation,
+    )
     (root / REPORT_NAME).write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     try:
         dashboard = _open_dashboard(root, payload)
