@@ -177,6 +177,468 @@ def _normalise_patch_text(
     return patch
 
 
+def _indexed_edit_payload(
+    value: str,
+) -> dict[str, Any]:
+    """Parse a compact operation over a preselected numbered source window."""
+    payload = _json_object(value)
+
+    operation = str(
+        payload.get("op")
+        or "replace"
+    ).strip().casefold()
+
+    if operation not in {
+        "replace",
+        "insert_before",
+        "insert_after",
+        "delete",
+    }:
+        raise ValueError(
+            f"Unsupported indexed-edit operation: {operation}"
+        )
+
+    try:
+        start = int(payload.get("start"))
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            "Indexed edit requires an integer start line"
+        ) from error
+
+    try:
+        end = int(
+            payload.get(
+                "end",
+                start,
+            )
+        )
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            "Indexed edit requires an integer end line"
+        ) from error
+
+    code = str(
+        payload.get("code")
+        or ""
+    )
+
+    if operation != "delete" and not code:
+        raise ValueError(
+            "Indexed edit requires replacement code"
+        )
+
+    return {
+        "op": operation,
+        "start": start,
+        "end": end,
+        "code": code,
+        "rationale": str(
+            payload.get("reason")
+            or payload.get("rationale")
+            or "Apply one bounded indexed edit."
+        ).strip(),
+        "confidence": float(
+            payload.get("confidence")
+            or 0.70
+        ),
+    }
+
+
+def _window_keywords(
+    value: str,
+) -> set[str]:
+    return {
+        token
+        for token in re.findall(
+            r"[a-z_][a-z0-9_]{3,}",
+            str(value or "").casefold(),
+        )
+        if token not in {
+            "this",
+            "that",
+            "with",
+            "from",
+            "must",
+            "before",
+            "after",
+            "task",
+            "failure",
+            "python",
+            "source",
+            "component",
+        }
+    }
+
+
+def _select_indexed_window(
+    *,
+    repo: Path,
+    component: str,
+    principle: str,
+    records: list[tuple[Path, dict[str, Any]]],
+    window_size: int = 48,
+) -> dict[str, Any]:
+    """Select one deterministic source window using failure-keyword overlap."""
+    if component not in SOURCE_COMPONENT_PATHS:
+        raise ValueError(
+            f"Unknown indexed-edit component: {component}"
+        )
+
+    evidence_parts = [principle]
+
+    for _, record in records:
+        evidence_parts.append(
+            str(
+                record.get(
+                    "task",
+                    {},
+                ).get(
+                    "prompt"
+                )
+                or ""
+            )
+        )
+        evidence_parts.extend(
+            str(item)
+            for item in (
+                record.get(
+                    "validation",
+                    {},
+                ).get(
+                    "errors",
+                    [],
+                )
+                or []
+            )
+        )
+
+    keywords = _window_keywords(
+        "\n".join(evidence_parts)
+    )
+
+    candidates: list[
+        tuple[int, str, int, list[str]]
+    ] = []
+
+    for allowed in SOURCE_COMPONENT_PATHS[
+        component
+    ]:
+        allowed_path = Path(repo) / allowed
+
+        files: list[Path]
+
+        if allowed_path.is_file():
+            files = [allowed_path]
+        elif allowed_path.is_dir():
+            files = sorted(
+                allowed_path.rglob("*.py")
+            )[:8]
+        else:
+            continue
+
+        for source_path in files:
+            relative = str(
+                source_path.relative_to(repo)
+            ).replace("\\", "/")
+
+            lines = source_path.read_text(
+                encoding="utf-8",
+                errors="replace",
+            ).splitlines(
+                keepends=True
+            )
+
+            if not lines:
+                continue
+
+            step = max(
+                12,
+                window_size // 2,
+            )
+
+            for offset in range(
+                0,
+                len(lines),
+                step,
+            ):
+                chunk = lines[
+                    offset:
+                    offset + window_size
+                ]
+
+                chunk_text = "".join(
+                    chunk
+                ).casefold()
+
+                score = sum(
+                    chunk_text.count(keyword)
+                    for keyword in keywords
+                )
+
+                # Prefer executable regions over import/header-only regions.
+                score += 3 * sum(
+                    marker in chunk_text
+                    for marker in (
+                        "def ",
+                        "if ",
+                        "return ",
+                        "raise ",
+                        "except ",
+                    )
+                )
+
+                candidates.append(
+                    (
+                        score,
+                        relative,
+                        offset,
+                        chunk,
+                    )
+                )
+
+    if not candidates:
+        raise RuntimeError(
+            f"No indexed-edit source window found for {component}"
+        )
+
+    score, relative, offset, lines = max(
+        candidates,
+        key=lambda item: (
+            item[0],
+            -item[2],
+            item[1],
+        ),
+    )
+
+    numbered = "".join(
+        f"{index:02d}|{line}"
+        for index, line in enumerate(
+            lines,
+            start=1,
+        )
+    )
+
+    return {
+        "file": relative,
+        "offset": offset,
+        "lines": lines,
+        "numbered": numbered,
+        "score": score,
+    }
+
+
+def _indexed_edit_to_patch(
+    *,
+    repo: Path,
+    component: str,
+    window: dict[str, Any],
+    payload: dict[str, Any],
+) -> str:
+    """Convert a bounded numbered-window edit into a deterministic Git patch."""
+    relative = str(
+        window["file"]
+    )
+
+    if not _path_allowed(
+        relative,
+        SOURCE_COMPONENT_PATHS[
+            component
+        ],
+    ):
+        raise ValueError(
+            "Indexed edit escaped its component boundary"
+        )
+
+    target = (
+        Path(repo).resolve()
+        / relative
+    ).resolve()
+
+    repository = Path(repo).resolve()
+
+    try:
+        target.relative_to(repository)
+    except ValueError as error:
+        raise ValueError(
+            "Indexed edit resolved outside the repository"
+        ) from error
+
+    original = target.read_text(
+        encoding="utf-8"
+    )
+
+    original_lines = original.splitlines(
+        keepends=True
+    )
+
+    window_lines = list(
+        window["lines"]
+    )
+
+    start = int(
+        payload["start"]
+    )
+    end = int(
+        payload["end"]
+    )
+
+    if (
+        start < 1
+        or end < start
+        or end > len(window_lines)
+    ):
+        raise ValueError(
+            "Indexed edit range is outside the selected window"
+        )
+
+    operation = str(
+        payload["op"]
+    )
+
+    code = str(
+        payload.get("code")
+        or ""
+    )
+
+    code_lines = (
+        code.splitlines(
+            keepends=True
+        )
+        if code
+        else []
+    )
+
+    code_lines = [
+        line
+        if line.endswith("\n")
+        else line + "\n"
+        for line in code_lines
+    ]
+
+    if len(code_lines) > 5:
+        raise ValueError(
+            "Indexed edit may emit at most five code lines"
+        )
+
+    absolute_start = (
+        int(window["offset"])
+        + start
+        - 1
+    )
+
+    absolute_end = (
+        int(window["offset"])
+        + end
+    )
+
+    updated_lines = list(
+        original_lines
+    )
+
+    if operation == "replace":
+        updated_lines[
+            absolute_start:
+            absolute_end
+        ] = code_lines
+
+    elif operation == "delete":
+        del updated_lines[
+            absolute_start:
+            absolute_end
+        ]
+
+    elif operation == "insert_before":
+        updated_lines[
+            absolute_start:
+            absolute_start
+        ] = code_lines
+
+    elif operation == "insert_after":
+        updated_lines[
+            absolute_end:
+            absolute_end
+        ] = code_lines
+
+    updated = "".join(
+        updated_lines
+    )
+
+    if updated == original:
+        raise ValueError(
+            "Indexed edit produced no source change"
+        )
+
+    selected_text = "".join(
+        original_lines[
+            absolute_start:
+            absolute_end
+        ]
+    )
+
+    changed_material = (
+        selected_text
+        + "\n"
+        + code
+    )
+
+    if _EXACT_BENCHMARK_LITERAL_RE.search(
+        changed_material
+    ):
+        raise ValueError(
+            "Indexed edit contains an exact benchmark literal"
+        )
+
+    changed_lines = (
+        end - start + 1
+        + len(code_lines)
+    )
+
+    if changed_lines > MAX_CHANGED_LINES:
+        raise ValueError(
+            "Indexed edit exceeds the changed-line limit"
+        )
+
+    diff_lines = list(
+        difflib.unified_diff(
+            original.splitlines(
+                keepends=True
+            ),
+            updated.splitlines(
+                keepends=True
+            ),
+            fromfile=f"a/{relative}",
+            tofile=f"b/{relative}",
+            n=3,
+        )
+    )
+
+    if not diff_lines:
+        raise ValueError(
+            "Indexed edit generated an empty patch"
+        )
+
+    patch = (
+        f"diff --git a/{relative} b/{relative}\n"
+        + "".join(diff_lines)
+    )
+
+    structural_errors = (
+        _validate_unified_diff_structure(
+            patch
+        )
+    )
+
+    if structural_errors:
+        raise ValueError(
+            "Indexed patch failed structural validation: "
+            + "; ".join(
+                structural_errors
+            )
+        )
+
+    return patch
+
+
 def _micro_edit_payload(
     value: str,
     *,
@@ -1229,6 +1691,20 @@ Patch:
             )
         )
 
+        indexed_window = (
+            _select_indexed_window(
+                repo=self.repo,
+                component=component,
+                principle=str(
+                    principle_item.get(
+                        "principle"
+                    )
+                    or ""
+                ),
+                records=records,
+            )
+        )
+
         prompt = f"""
 You are generating one constrained candidate patch for Sophyane.
 
@@ -1274,17 +1750,29 @@ Patch constraints:
 Representative failure:
 {records_context}
 
-Relevant current source:
-{source_context}
+Selected production file:
+{indexed_window["file"]}
+
+Numbered source window:
+{indexed_window["numbered"]}
 
 Return compact JSON only:
 {{
-  "file": "one allowed production path",
-  "find": "exact existing source text",
-  "replace": "small replacement source text",
-  "rationale": "brief reusable reason",
-  "confidence": 0.0
+  "op": "replace",
+  "start": 1,
+  "end": 1,
+  "code": "maximum five replacement lines",
+  "reason": "brief reusable reason"
 }}
+
+Rules for the indexed operation:
+- start and end refer only to the numbered window above;
+- use replace, insert_before, insert_after or delete;
+- output no file path, find text, diff, Markdown or explanation;
+- modify the smallest possible range;
+- code may contain at most five lines;
+- preserve indentation exactly;
+- stay below 100 output tokens.
 """
 
         raw_response = self.engine._analyst_llm(
@@ -1300,52 +1788,50 @@ Return compact JSON only:
         )
 
         try:
-            parsed = _micro_edit_payload(
-                raw_response,
-                component=component,
+            parsed = _indexed_edit_payload(
+                raw_response
+            )
+
+            parsed["file"] = (
+                indexed_window["file"]
             )
 
             parsed["patch"] = (
-                _micro_edit_to_patch(
+                _indexed_edit_to_patch(
                     repo=self.repo,
                     component=component,
+                    window=indexed_window,
                     payload=parsed,
                 )
             )
 
         except ValueError as first_error:
             repair_prompt = f"""
-Repair this compact micro-edit response.
+Repair one compact indexed source edit.
 
-Return JSON only with exactly these keys:
+Numbered source window:
+{indexed_window["numbered"]}
+
+Return JSON only:
 {{
-  "file": "one allowed production path",
-  "find": "exact source text copied from the supplied source",
-  "replace": "small replacement source text",
-  "rationale": "brief reason",
-  "confidence": 0.0
+  "op": "replace",
+  "start": 1,
+  "end": 1,
+  "code": "maximum five source lines"
 }}
 
 Rules:
-- Do not return a Git diff.
-- Do not return Markdown.
-- Do not invent index hashes or hunk numbers.
-- The exact find text must occur once in the current source.
-- Combined find and replace must remain within
-  {MAX_CHANGED_LINES} lines.
-- Do not hardcode benchmark inputs, filenames, or answers.
-
-Component:
-{component}
-
-Allowed paths:
-{json.dumps(allowed)}
-
-Relevant source:
-{source_context}
+- no Markdown;
+- no file path;
+- no original source copy;
+- no Git diff;
+- start/end must be within this window;
+- code may contain at most five lines;
+- preserve indentation;
+- stay below 100 tokens.
 
 Invalid response:
-{raw_response[-4000:]}
+{raw_response[-1200:]}
 
 Validation error:
 {first_error}
@@ -1353,35 +1839,40 @@ Validation error:
 
             repaired_response = (
                 self.engine._analyst_llm(
-                    repair_prompt
+                    repair_prompt,
+                    max_tokens=100,
                 )
             )
 
             repaired_path = (
                 self._save_raw_candidate_response(
                     component=component,
-                    stage="micro-edit-repair",
+                    stage="indexed-edit-repair",
                     response=repaired_response,
                 )
             )
 
             try:
-                parsed = _micro_edit_payload(
-                    repaired_response,
-                    component=component,
+                parsed = _indexed_edit_payload(
+                    repaired_response
+                )
+
+                parsed["file"] = (
+                    indexed_window["file"]
                 )
 
                 parsed["patch"] = (
-                    _micro_edit_to_patch(
+                    _indexed_edit_to_patch(
                         repo=self.repo,
                         component=component,
+                        window=indexed_window,
                         payload=parsed,
                     )
                 )
 
             except ValueError as repair_error:
                 raise ValueError(
-                    "Micro-edit candidate failed after one "
+                    "Indexed candidate failed after one "
                     "bounded repair attempt. "
                     f"Initial response: {raw_path}. "
                     f"Repair response: {repaired_path}. "

@@ -672,3 +672,129 @@ def test_micro_edit_rejects_benchmark_literal(
                 ),
             },
         )
+
+
+def test_indexed_edit_generates_patch_from_numbered_window(
+    tmp_path: Path,
+) -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _diff_paths,
+        _indexed_edit_to_patch,
+    )
+
+    target = (
+        tmp_path
+        / "src/sophyane/capability_executors.py"
+    )
+
+    target.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    target.write_text(
+        "def execute(value):\n"
+        "    if value is None:\n"
+        "        return None\n"
+        "    return value\n",
+        encoding="utf-8",
+    )
+
+    lines = target.read_text(
+        encoding="utf-8"
+    ).splitlines(
+        keepends=True
+    )
+
+    patch = _indexed_edit_to_patch(
+        repo=tmp_path,
+        component="python",
+        window={
+            "file": (
+                "src/sophyane/"
+                "capability_executors.py"
+            ),
+            "offset": 0,
+            "lines": lines,
+        },
+        payload={
+            "op": "replace",
+            "start": 3,
+            "end": 3,
+            "code": "        return False",
+        },
+    )
+
+    assert _diff_paths(patch) == [
+        (
+            "src/sophyane/"
+            "capability_executors.py"
+        )
+    ]
+
+    assert "-        return None" in patch
+    assert "+        return False" in patch
+
+
+def test_indexed_edit_rejects_range_outside_window(
+    tmp_path: Path,
+) -> None:
+    import pytest
+
+    from sophyane.evolution.candidate_evolution import (
+        _indexed_edit_to_patch,
+    )
+
+    target = (
+        tmp_path
+        / "src/sophyane/capability_executors.py"
+    )
+
+    target.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    target.write_text(
+        "value = 1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="outside the selected window",
+    ):
+        _indexed_edit_to_patch(
+            repo=tmp_path,
+            component="python",
+            window={
+                "file": (
+                    "src/sophyane/"
+                    "capability_executors.py"
+                ),
+                "offset": 0,
+                "lines": ["value = 1\n"],
+            },
+            payload={
+                "op": "replace",
+                "start": 2,
+                "end": 2,
+                "code": "value = 2",
+            },
+        )
+
+
+def test_indexed_edit_payload_is_compact() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _indexed_edit_payload,
+    )
+
+    payload = _indexed_edit_payload(
+        '{"op":"insert_after","start":2,'
+        '"end":2,"code":"    verify()"}'
+    )
+
+    assert payload["op"] == "insert_after"
+    assert payload["start"] == 2
+    assert payload["end"] == 2
+    assert payload["code"] == "    verify()"
