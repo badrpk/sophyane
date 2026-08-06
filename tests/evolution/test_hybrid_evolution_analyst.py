@@ -73,3 +73,50 @@ def test_programming_error_does_not_fallback() -> None:
         )
         is False
     )
+
+
+def test_candidate_cli_has_no_cloud_only_preflight() -> None:
+    from pathlib import Path
+
+    source = Path(
+        "tools/sophyane_candidate_evolution.py"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "Candidate generation requires the cloud analyst"
+        not in source
+    )
+    assert "if not evolver.cloud_available()" not in source
+
+
+def test_candidate_generation_has_no_gemini_only_gate() -> None:
+    import inspect
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    source = inspect.getsource(
+        CandidateEvolver.generate_proposal
+    )
+
+    assert "A Gemini key is required" not in source
+    assert "_analyst_llm" in source
+
+
+def test_candidate_repair_has_no_gemini_only_gate() -> None:
+    import inspect
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+
+    source = inspect.getsource(
+        CandidateEvolver._repair_unapplicable_patch
+    )
+
+    assert (
+        "Gemini is unavailable for one repair attempt"
+        not in source
+    )
+    assert "_analyst_llm" in source

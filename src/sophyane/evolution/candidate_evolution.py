@@ -829,12 +829,6 @@ Patch:
             tuple[Path, dict[str, Any]]
         ],
     ) -> PatchProposal:
-        if not self.cloud_available():
-            raise RuntimeError(
-                "Cloud analyst is unavailable. "
-                "A Gemini key is required for candidate generation."
-            )
-
         component = str(
             principle_item["component"]
         )
@@ -1510,12 +1504,6 @@ Original response:
         apply_error: str,
     ) -> PatchProposal:
         """Request exactly one syntax/context repair for a malformed diff."""
-        if not self.cloud_available():
-            raise RuntimeError(
-                "Candidate patch is invalid and Gemini "
-                "is unavailable for one repair attempt."
-            )
-
         repair_prompt = f"""
 Repair this unified Git diff so that `git apply --check` succeeds against the
 current Sophyane repository.

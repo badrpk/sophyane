@@ -89,13 +89,6 @@ def main() -> int:
 
         return 0
 
-    if not evolver.cloud_available():
-        print(
-            "ERROR: Gemini is unavailable. "
-            "Candidate generation requires the cloud analyst."
-        )
-        return 2
-
     try:
         result = evolver.evolve(
             component=args.component,
