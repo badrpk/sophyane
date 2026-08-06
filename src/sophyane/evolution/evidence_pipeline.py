@@ -22,7 +22,20 @@ from .models import EvolutionConfig, FeedbackReport
 from .principles import PrincipleStore
 
 
-ANALYSIS_VERSION = 1
+ANALYSIS_VERSION = 2
+
+
+# The objective benchmark capability establishes the component boundary.
+# Model analysts may diagnose within this boundary, but cannot silently move
+# a failure into an unrelated component.
+CAPABILITY_COMPONENT = {
+    "filesystem": "filesystem",
+    "shell": "shell",
+    "python": "python",
+    "html": "html",
+    "security": "security",
+    "semantic_routing": "semantic_router",
+}
 
 
 def _now() -> str:
@@ -464,21 +477,106 @@ class AnalysisPipeline:
     @staticmethod
     def _select_final(
         *,
+        capability: str,
         deterministic: FeedbackReport,
         blind: FeedbackReport | None,
         cloud: FeedbackReport | None,
-    ) -> FeedbackReport:
-        """Prefer grounded cloud synthesis, then deterministic diagnosis."""
-        if (
-            cloud
-            and cloud.suspected_component
+    ) -> tuple[FeedbackReport, dict[str, Any]]:
+        """Arbitrate analyses without allowing model-driven component drift.
+
+        Objective validation establishes the benchmark capability boundary.
+        A model may enrich the diagnosis only when it agrees with the expected
+        component. Cross-component observations remain recorded as secondary
+        evidence, but cannot authorize a patch for the unrelated component.
+        """
+        expected_component = CAPABILITY_COMPONENT.get(
+            capability,
+            deterministic.suspected_component,
+        )
+
+        arbitration: dict[str, Any] = {
+            "capability": capability,
+            "expected_component": expected_component,
+            "deterministic_component": (
+                deterministic.suspected_component
+            ),
+            "blind_component": (
+                blind.suspected_component
+                if blind
+                else ""
+            ),
+            "cloud_component": (
+                cloud.suspected_component
+                if cloud
+                else ""
+            ),
+            "cloud_accepted": False,
+            "decision": "deterministic",
+            "disagreement": "",
+        }
+
+        if cloud is None:
+            arbitration["decision"] = (
+                "deterministic_cloud_unavailable"
+            )
+            return deterministic, arbitration
+
+        if not (
+            cloud.suspected_component
             and cloud.general_principle
             and cloud.confidence >= 0.65
         ):
-            return cloud
+            arbitration["decision"] = (
+                "deterministic_cloud_incomplete"
+            )
+            return deterministic, arbitration
 
-        # Deterministic output is valid even with no model connectivity.
-        return deterministic
+        if (
+            expected_component
+            and cloud.suspected_component
+            != expected_component
+        ):
+            arbitration["decision"] = (
+                "deterministic_component_guard"
+            )
+            arbitration["disagreement"] = (
+                "Cloud analysis selected "
+                f"{cloud.suspected_component!r}, but objective "
+                f"capability {capability!r} is bounded to "
+                f"{expected_component!r}."
+            )
+
+            # Preserve useful cloud observations without allowing component
+            # reassignment or cross-component patch authorization.
+            deterministic.evidence.extend(
+                [
+                    (
+                        "cloud_secondary_summary="
+                        + cloud.summary
+                    ),
+                    (
+                        "cloud_secondary_component="
+                        + cloud.suspected_component
+                    ),
+                    (
+                        "cloud_secondary_mismatch="
+                        + cloud.mismatch
+                    ),
+                ]
+            )
+
+            return deterministic, arbitration
+
+        arbitration["cloud_accepted"] = True
+        arbitration["decision"] = "cloud_grounded"
+
+        # Keep the objective component authoritative even when the model agrees.
+        cloud.suspected_component = (
+            expected_component
+            or cloud.suspected_component
+        )
+
+        return cloud, arbitration
 
     def analyze_path(
         self,
@@ -507,13 +605,17 @@ class AnalysisPipeline:
             else None
         )
 
-        final = self._select_final(
+        task = record.get("task") or {}
+        capability = str(
+            task.get("capability") or ""
+        )
+
+        final, arbitration = self._select_final(
+            capability=capability,
             deterministic=deterministic,
             blind=blind,
             cloud=cloud,
         )
-
-        task = record.get("task") or {}
 
         learned = (
             self.store.principles.record_failure_principle(
@@ -548,6 +650,7 @@ class AnalysisPipeline:
                 else None
             ),
             "final": asdict(final),
+            "arbitration": arbitration,
             "principle": learned,
             "synthesized": learned is not None,
         }

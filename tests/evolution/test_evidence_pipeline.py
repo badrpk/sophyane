@@ -134,3 +134,110 @@ def test_same_offline_principle_becomes_recurrent(
         )
         == 2
     )
+
+
+def test_cloud_cannot_move_filesystem_failure_to_semantic_router(
+    tmp_path: Path,
+) -> None:
+    from sophyane.evolution.models import FeedbackReport
+
+    deterministic = deterministic_analysis(
+        _failed_record("filesystem")
+    )
+
+    cloud = FeedbackReport(
+        kind="hindsight",
+        author="gemini",
+        summary="The request was misrouted.",
+        evidence=["index.html was attempted"],
+        suspected_component="semantic_router",
+        confidence=0.95,
+        mismatch=(
+            "The requested file was not written because another "
+            "route intercepted execution."
+        ),
+        general_principle=(
+            "Accurate semantic interpretation must precede execution."
+        ),
+    )
+
+    final, arbitration = (
+        AnalysisPipeline._select_final(
+            capability="filesystem",
+            deterministic=deterministic,
+            blind=None,
+            cloud=cloud,
+        )
+    )
+
+    assert final.suspected_component == "filesystem"
+    assert arbitration["cloud_accepted"] is False
+    assert (
+        arbitration["decision"]
+        == "deterministic_component_guard"
+    )
+    assert arbitration["disagreement"]
+
+
+def test_grounded_cloud_analysis_is_accepted(
+    tmp_path: Path,
+) -> None:
+    from sophyane.evolution.models import FeedbackReport
+
+    deterministic = deterministic_analysis(
+        _failed_record("filesystem")
+    )
+
+    cloud = FeedbackReport(
+        kind="hindsight",
+        author="gemini",
+        summary=(
+            "The filesystem executor did not create the requested artifact."
+        ),
+        evidence=["file_exists=False"],
+        suspected_component="filesystem",
+        confidence=0.91,
+        mismatch=(
+            "The actor believed execution completed, but no file existed."
+        ),
+        general_principle=(
+            "Filesystem completion must be based on verified workspace "
+            "effects rather than process completion alone."
+        ),
+    )
+
+    final, arbitration = (
+        AnalysisPipeline._select_final(
+            capability="filesystem",
+            deterministic=deterministic,
+            blind=None,
+            cloud=cloud,
+        )
+    )
+
+    assert final is cloud
+    assert final.suspected_component == "filesystem"
+    assert arbitration["cloud_accepted"] is True
+    assert arbitration["decision"] == "cloud_grounded"
+
+
+def test_missing_cloud_uses_deterministic_analysis() -> None:
+    deterministic = deterministic_analysis(
+        _failed_record("python")
+    )
+
+    final, arbitration = (
+        AnalysisPipeline._select_final(
+            capability="python",
+            deterministic=deterministic,
+            blind=None,
+            cloud=None,
+        )
+    )
+
+    assert final is deterministic
+    assert final.suspected_component == "python"
+    assert (
+        arbitration["decision"]
+        == "deterministic_cloud_unavailable"
+    )
