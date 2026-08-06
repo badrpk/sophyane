@@ -357,6 +357,209 @@ Trace:
         except Exception:
             return ""
 
+    def _evolution_local_llm(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int = 16384,
+    ) -> str:
+        """Use the dedicated larger local evolution analyst."""
+        endpoint = os.environ.get(
+            "SOPHYANE_EVOLUTION_LOCAL_ENDPOINT",
+            "http://127.0.0.1:8767",
+        ).rstrip("/")
+
+        model = os.environ.get(
+            "SOPHYANE_EVOLUTION_LOCAL_MODEL_NAME",
+            "local-evolution",
+        )
+
+        body = json.dumps(
+            {
+                "model": model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are Sophyane's constrained harness "
+                            "evolution analyst. Return exactly the "
+                            "requested JSON or unified Git diff. "
+                            "Never weaken validators, security boundaries, "
+                            "private-data boundaries, or promotion gates."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    },
+                ],
+                "temperature": 0.05,
+                "max_tokens": max_tokens,
+            }
+        ).encode("utf-8")
+
+        request = urllib.request.Request(
+            endpoint + "/v1/chat/completions",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        timeout = int(
+            os.environ.get(
+                "SOPHYANE_EVOLUTION_LOCAL_TIMEOUT_SECONDS",
+                "900",
+            )
+        )
+
+        try:
+            with urllib.request.urlopen(
+                request,
+                timeout=timeout,
+            ) as response:
+                payload = json.loads(
+                    response.read().decode(
+                        "utf-8"
+                    )
+                )
+        except Exception as error:
+            raise RuntimeError(
+                "Larger local evolution analyst failed: "
+                f"{type(error).__name__}: {error}"
+            ) from error
+
+        choices = payload.get("choices") or []
+
+        if not choices:
+            raise RuntimeError(
+                "Larger local evolution analyst returned no choices"
+            )
+
+        output = str(
+            choices[0]
+            .get("message", {})
+            .get("content")
+            or ""
+        )
+
+        if not output.strip():
+            raise RuntimeError(
+                "Larger local evolution analyst returned empty output"
+            )
+
+        return output
+
+    @staticmethod
+    def _cloud_failure_allows_local_fallback(
+        error: Exception,
+    ) -> bool:
+        """Classify cloud failures that permit the local analyst."""
+        message = (
+            f"{type(error).__name__}: {error}"
+        ).casefold()
+
+        markers = (
+            "gemini api key unavailable",
+            "daily quota",
+            "quota exceeded",
+            "resource_exhausted",
+            "free_tier_requests",
+            "http error 429",
+            "http error 500",
+            "http error 502",
+            "http error 503",
+            "http error 504",
+            "status=429",
+            "status=500",
+            "status=502",
+            "status=503",
+            "status=504",
+            "service unavailable",
+            "network request failed",
+            "timed out",
+            "timeout",
+        )
+
+        return any(
+            marker in message
+            for marker in markers
+        )
+
+    def _analyst_llm(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int = 16384,
+        cloud_first: bool = True,
+    ) -> str:
+        """Use Gemini first, then the dedicated larger local analyst."""
+        local_enabled = (
+            os.environ.get(
+                "SOPHYANE_EVOLUTION_ALLOW_LOCAL_FALLBACK",
+                "1",
+            )
+            != "0"
+        )
+
+        force_local = (
+            os.environ.get(
+                "SOPHYANE_EVOLUTION_FORCE_LOCAL_ANALYST",
+                "0",
+            )
+            == "1"
+        )
+
+        if force_local or not cloud_first:
+            print(
+                "Evolution analyst route: larger local GGUF"
+            )
+            return self._evolution_local_llm(
+                prompt,
+                max_tokens=max_tokens,
+            )
+
+        try:
+            output = self._gemini(prompt)
+            print(
+                "Evolution analyst route: Gemini"
+            )
+            return output
+
+        except Exception as cloud_error:
+            if (
+                not local_enabled
+                or not self._cloud_failure_allows_local_fallback(
+                    cloud_error
+                )
+            ):
+                raise
+
+            print(
+                "Gemini unavailable; using larger local "
+                "evolution analyst."
+            )
+            print(
+                "Cloud failure: "
+                f"{type(cloud_error).__name__}: "
+                f"{cloud_error}"
+            )
+
+            try:
+                return self._evolution_local_llm(
+                    prompt,
+                    max_tokens=max_tokens,
+                )
+            except Exception as local_error:
+                raise RuntimeError(
+                    "Both evolution analysts failed. "
+                    f"Cloud: {type(cloud_error).__name__}: "
+                    f"{cloud_error}. "
+                    f"Local: {type(local_error).__name__}: "
+                    f"{local_error}"
+                ) from local_error
+
     def _gemini(
         self,
         prompt: str,

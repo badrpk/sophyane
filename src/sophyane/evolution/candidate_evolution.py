@@ -898,7 +898,7 @@ Return JSON only:
 }}
 """
 
-        raw_response = self.engine._gemini(
+        raw_response = self.engine._analyst_llm(
             prompt
         )
 
@@ -939,7 +939,7 @@ Original response:
 """
 
             repaired_response = (
-                self.engine._gemini(
+                self.engine._analyst_llm(
                     repair_prompt
                 )
             )
@@ -1543,7 +1543,7 @@ Original patch:
 {proposal.patch}
 """
 
-        response = self.engine._gemini(
+        response = self.engine._analyst_llm(
             repair_prompt
         )
 

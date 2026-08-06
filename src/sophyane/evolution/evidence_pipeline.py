@@ -438,7 +438,10 @@ Trace excerpt:
 
         try:
             parsed = _json_object(
-                self.engine._gemini(prompt)
+                self.engine._analyst_llm(
+                    prompt,
+                    max_tokens=5000,
+                )
             )
         except Exception:
             return None
