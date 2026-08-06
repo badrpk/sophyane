@@ -17,6 +17,7 @@ Safety model:
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -172,6 +173,235 @@ def _normalise_patch_text(
 
     if converted:
         return normalized
+
+    return patch
+
+
+def _micro_edit_payload(
+    value: str,
+    *,
+    component: str,
+) -> dict[str, Any]:
+    """Parse one compact exact-replacement edit from an analyst response."""
+    payload = _json_object(value)
+
+    file_path = str(
+        payload.get("file")
+        or payload.get("path")
+        or ""
+    ).strip()
+
+    find_text = str(
+        payload.get("find")
+        or payload.get("old")
+        or ""
+    )
+
+    replace_text = str(
+        payload.get("replace")
+        or payload.get("new")
+        or ""
+    )
+
+    if not file_path:
+        raise ValueError(
+            "Micro-edit response has no file path"
+        )
+
+    if not find_text:
+        raise ValueError(
+            "Micro-edit response has no exact find text"
+        )
+
+    if find_text == replace_text:
+        raise ValueError(
+            "Micro-edit find and replace values are identical"
+        )
+
+    return {
+        "component": component,
+        "file": file_path,
+        "find": find_text,
+        "replace": replace_text,
+        "rationale": str(
+            payload.get("rationale")
+            or payload.get("reason")
+            or "Apply one bounded exact replacement."
+        ).strip(),
+        "confidence": float(
+            payload.get("confidence")
+            or 0.70
+        ),
+        "tests": [
+            str(item)
+            for item in (
+                payload.get("tests")
+                or []
+            )
+            if str(item).strip()
+        ],
+    }
+
+
+def _micro_edit_to_patch(
+    *,
+    repo: Path,
+    component: str,
+    payload: dict[str, Any],
+) -> str:
+    """Construct a valid Git diff from one exact, uniquely matched edit."""
+    if component not in SOURCE_COMPONENT_PATHS:
+        raise ValueError(
+            f"Unknown micro-edit component: {component}"
+        )
+
+    relative = str(
+        payload.get("file")
+        or ""
+    ).strip().replace("\\", "/")
+
+    if (
+        not relative
+        or relative.startswith("/")
+        or ".." in Path(relative).parts
+    ):
+        raise ValueError(
+            "Micro-edit file path is unsafe"
+        )
+
+    allowed = SOURCE_COMPONENT_PATHS[
+        component
+    ]
+
+    if not _path_allowed(
+        relative,
+        allowed,
+    ):
+        raise ValueError(
+            "Micro-edit targets a file outside the "
+            f"{component!r} component: {relative}"
+        )
+
+    target = (
+        Path(repo).resolve()
+        / relative
+    ).resolve()
+
+    repository = Path(repo).resolve()
+
+    try:
+        target.relative_to(repository)
+    except ValueError as error:
+        raise ValueError(
+            "Micro-edit resolved outside the repository"
+        ) from error
+
+    if not target.is_file():
+        raise ValueError(
+            f"Micro-edit target does not exist: {relative}"
+        )
+
+    original = target.read_text(
+        encoding="utf-8"
+    )
+
+    find_text = str(
+        payload.get("find")
+        or ""
+    )
+
+    replace_text = str(
+        payload.get("replace")
+        or ""
+    )
+
+    occurrences = original.count(
+        find_text
+    )
+
+    if occurrences == 0:
+        raise ValueError(
+            "Micro-edit exact find text was not found "
+            f"in {relative}"
+        )
+
+    if occurrences != 1:
+        raise ValueError(
+            "Micro-edit exact find text must occur once; "
+            f"observed {occurrences} occurrences in {relative}"
+        )
+
+    updated = original.replace(
+        find_text,
+        replace_text,
+        1,
+    )
+
+    if updated == original:
+        raise ValueError(
+            "Micro-edit produced no file change"
+        )
+
+    changed_lines = (
+        len(find_text.splitlines())
+        + len(replace_text.splitlines())
+    )
+
+    if changed_lines > MAX_CHANGED_LINES:
+        raise ValueError(
+            "Micro-edit exceeds changed-line limit: "
+            f"{changed_lines} > {MAX_CHANGED_LINES}"
+        )
+
+    changed_material = (
+        find_text
+        + "\n"
+        + replace_text
+    )
+
+    if _EXACT_BENCHMARK_LITERAL_RE.search(
+        changed_material
+    ):
+        raise ValueError(
+            "Micro-edit contains an exact benchmark literal"
+        )
+
+    diff_lines = list(
+        difflib.unified_diff(
+            original.splitlines(
+                keepends=True
+            ),
+            updated.splitlines(
+                keepends=True
+            ),
+            fromfile=f"a/{relative}",
+            tofile=f"b/{relative}",
+            n=3,
+        )
+    )
+
+    if not diff_lines:
+        raise ValueError(
+            "Micro-edit generated an empty diff"
+        )
+
+    patch = (
+        f"diff --git a/{relative} b/{relative}\n"
+        + "".join(diff_lines)
+    )
+
+    structural_errors = (
+        _validate_unified_diff_structure(
+            patch
+        )
+    )
+
+    if structural_errors:
+        raise ValueError(
+            "Deterministically generated micro-patch "
+            "failed structural validation: "
+            + "; ".join(structural_errors)
+        )
 
     return patch
 
@@ -1032,21 +1262,27 @@ Patch constraints:
 - Preserve Option 2 strict local-only policy.
 - Preserve private/public semantic boundaries.
 - Maximum changed lines: {MAX_CHANGED_LINES}.
-- Return a valid unified Git diff.
-- Include a test that proves reusable behavior.
+- Do not generate Git diff headers, index hashes, or hunk numbers.
+- Return one exact replacement only.
+- The "find" value must be copied exactly from the supplied source.
+- Keep "find" and "replace" as short as possible.
+- The combined find and replace blocks must stay within
+  {MAX_CHANGED_LINES} lines.
+- Do not include Markdown fences.
+- Do not invent source code that is absent from the supplied context.
 
-Representative failures:
+Representative failure:
 {records_context}
 
 Relevant current source:
 {source_context}
 
-Return JSON only:
+Return compact JSON only:
 {{
-  "component": "{component}",
-  "rationale": "...",
-  "patch": "diff --git ...",
-  "tests": ["tests/path_to_test.py"],
+  "file": "one allowed production path",
+  "find": "exact existing source text",
+  "replace": "small replacement source text",
+  "rationale": "brief reusable reason",
   "confidence": 0.0
 }}
 """
@@ -1064,31 +1300,55 @@ Return JSON only:
         )
 
         try:
-            parsed = _candidate_payload(
+            parsed = _micro_edit_payload(
                 raw_response,
                 component=component,
             )
+
+            parsed["patch"] = (
+                _micro_edit_to_patch(
+                    repo=self.repo,
+                    component=component,
+                    payload=parsed,
+                )
+            )
+
         except ValueError as first_error:
             repair_prompt = f"""
-Reformat the candidate below without changing its intended code change.
+Repair this compact micro-edit response.
 
-Return either:
+Return JSON only with exactly these keys:
+{{
+  "file": "one allowed production path",
+  "find": "exact source text copied from the supplied source",
+  "replace": "small replacement source text",
+  "rationale": "brief reason",
+  "confidence": 0.0
+}}
 
-1. Valid JSON with keys component, rationale, patch, tests and confidence;
-   the patch value must contain the complete unified Git diff.
+Rules:
+- Do not return a Git diff.
+- Do not return Markdown.
+- Do not invent index hashes or hunk numbers.
+- The exact find text must occur once in the current source.
+- Combined find and replace must remain within
+  {MAX_CHANGED_LINES} lines.
+- Do not hardcode benchmark inputs, filenames, or answers.
 
-or, if valid JSON escaping is difficult:
-
-2. A short rationale followed by exactly one fenced ```diff block.
-
-Do not add a second patch. Do not broaden the change. Do not omit diff
-headers.
-
-Required component:
+Component:
 {component}
 
-Original response:
-{raw_response[-16000:]}
+Allowed paths:
+{json.dumps(allowed)}
+
+Relevant source:
+{source_context}
+
+Invalid response:
+{raw_response[-4000:]}
+
+Validation error:
+{first_error}
 """
 
             repaired_response = (
@@ -1100,20 +1360,29 @@ Original response:
             repaired_path = (
                 self._save_raw_candidate_response(
                     component=component,
-                    stage="repair",
+                    stage="micro-edit-repair",
                     response=repaired_response,
                 )
             )
 
             try:
-                parsed = _candidate_payload(
+                parsed = _micro_edit_payload(
                     repaired_response,
                     component=component,
                 )
+
+                parsed["patch"] = (
+                    _micro_edit_to_patch(
+                        repo=self.repo,
+                        component=component,
+                        payload=parsed,
+                    )
+                )
+
             except ValueError as repair_error:
                 raise ValueError(
-                    "Gemini candidate formatting failed after one "
-                    "repair attempt. "
+                    "Micro-edit candidate failed after one "
+                    "bounded repair attempt. "
                     f"Initial response: {raw_path}. "
                     f"Repair response: {repaired_path}. "
                     f"Initial error: {first_error}. "

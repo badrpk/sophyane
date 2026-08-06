@@ -515,3 +515,160 @@ def test_local_candidate_policy_is_micro_patch_sized() -> None:
     assert "Produce one micro-patch only" in source
     assert "no more than 20 total added/removed lines" in source
     assert "one function or one adjacent code block" in source
+
+
+def test_micro_edit_constructs_valid_git_patch(
+    tmp_path: Path,
+) -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _diff_paths,
+        _micro_edit_to_patch,
+        _validate_unified_diff_structure,
+    )
+
+    target = (
+        tmp_path
+        / "src/sophyane/local_coding_capability.py"
+    )
+
+    target.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    target.write_text(
+        "def execute(value):\n"
+        "    return value\n",
+        encoding="utf-8",
+    )
+
+    patch = _micro_edit_to_patch(
+        repo=tmp_path,
+        component="python",
+        payload={
+            "file": (
+                "src/sophyane/"
+                "local_coding_capability.py"
+            ),
+            "find": (
+                "def execute(value):\n"
+                "    return value\n"
+            ),
+            "replace": (
+                "def execute(value):\n"
+                "    if value is None:\n"
+                "        return False\n"
+                "    return value\n"
+            ),
+        },
+    )
+
+    assert patch.startswith(
+        "diff --git "
+    )
+
+    assert _diff_paths(patch) == [
+        (
+            "src/sophyane/"
+            "local_coding_capability.py"
+        )
+    ]
+
+    assert (
+        _validate_unified_diff_structure(
+            patch
+        )
+        == []
+    )
+
+
+def test_micro_edit_requires_unique_exact_match(
+    tmp_path: Path,
+) -> None:
+    import pytest
+
+    from sophyane.evolution.candidate_evolution import (
+        _micro_edit_to_patch,
+    )
+
+    target = (
+        tmp_path
+        / "src/sophyane/local_coding_capability.py"
+    )
+
+    target.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    target.write_text(
+        "value = 1\n"
+        "value = 1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="must occur once",
+    ):
+        _micro_edit_to_patch(
+            repo=tmp_path,
+            component="python",
+            payload={
+                "file": (
+                    "src/sophyane/"
+                    "local_coding_capability.py"
+                ),
+                "find": "value = 1\n",
+                "replace": "value = 2\n",
+            },
+        )
+
+
+def test_micro_edit_rejects_benchmark_literal(
+    tmp_path: Path,
+) -> None:
+    import pytest
+
+    from sophyane.evolution.candidate_evolution import (
+        _micro_edit_to_patch,
+    )
+
+    target = (
+        tmp_path
+        / "src/sophyane/local_coding_capability.py"
+    )
+
+    target.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    target.write_text(
+        "def check():\n"
+        "    return True\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="benchmark literal",
+    ):
+        _micro_edit_to_patch(
+            repo=tmp_path,
+            component="python",
+            payload={
+                "file": (
+                    "src/sophyane/"
+                    "local_coding_capability.py"
+                ),
+                "find": (
+                    "def check():\n"
+                    "    return True\n"
+                ),
+                "replace": (
+                    "def check():\n"
+                    "    return add(20, 22) == 42\n"
+                ),
+            },
+        )
