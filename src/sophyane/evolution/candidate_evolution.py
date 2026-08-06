@@ -95,6 +95,15 @@ MAX_SOURCE_FILES = 1
 MAX_TEST_FILES = 1
 MAX_CHANGED_LINES = 20
 
+INDEXED_EDIT_PLACEHOLDERS = {
+    "maximum five source lines",
+    "maximum five replacement lines",
+    "brief reusable reason",
+    "actual_code",
+    "<actual code>",
+    "<replacement code>",
+}
+
 
 def _now() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
@@ -225,6 +234,19 @@ def _indexed_edit_payload(
     if operation != "delete" and not code:
         raise ValueError(
             "Indexed edit requires replacement code"
+        )
+
+    normalized_code = " ".join(
+        code.casefold().split()
+    )
+
+    if any(
+        marker in normalized_code
+        for marker in INDEXED_EDIT_PLACEHOLDERS
+    ):
+        raise ValueError(
+            "Indexed edit copied a schema placeholder "
+            "instead of producing source code"
         )
 
     return {
@@ -1761,8 +1783,7 @@ Return compact JSON only:
   "op": "replace",
   "start": 1,
   "end": 1,
-  "code": "maximum five replacement lines",
-  "reason": "brief reusable reason"
+  "code": "ACTUAL_CODE"
 }}
 
 Rules for the indexed operation:
@@ -1771,6 +1792,7 @@ Rules for the indexed operation:
 - output no file path, find text, diff, Markdown or explanation;
 - modify the smallest possible range;
 - code may contain at most five lines;
+- ACTUAL_CODE is a schema label and must never be returned literally;
 - preserve indentation exactly;
 - stay below 100 output tokens.
 """
@@ -1817,7 +1839,7 @@ Return JSON only:
   "op": "replace",
   "start": 1,
   "end": 1,
-  "code": "maximum five source lines"
+  "code": "ACTUAL_CODE"
 }}
 
 Rules:
@@ -1827,6 +1849,7 @@ Rules:
 - no Git diff;
 - start/end must be within this window;
 - code may contain at most five lines;
+- ACTUAL_CODE is a schema label and must never be returned literally;
 - preserve indentation;
 - stay below 100 tokens.
 
@@ -2686,6 +2709,109 @@ Original patch:
             missing_ok=True
         )
 
+    @staticmethod
+    def _worktree_changed_paths(
+        worktree: Path,
+    ) -> set[str]:
+        """Return tracked, staged and untracked worktree paths."""
+        commands = (
+            [
+                "git",
+                "diff",
+                "--name-only",
+                "--relative",
+            ],
+            [
+                "git",
+                "diff",
+                "--cached",
+                "--name-only",
+                "--relative",
+            ],
+            [
+                "git",
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+            ],
+        )
+
+        changed: set[str] = set()
+
+        for command in commands:
+            result = subprocess.run(
+                command,
+                cwd=worktree,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            if result.returncode != 0:
+                raise RuntimeError(
+                    "Could not inspect candidate worktree: "
+                    + result.stdout
+                    + result.stderr
+                )
+
+            for line in result.stdout.splitlines():
+                changed_path = (
+                    line.strip()
+                    .replace("\\", "/")
+                )
+
+                if not changed_path:
+                    continue
+
+                # Sophyane's own runtime bookkeeping is not candidate code.
+                if changed_path.startswith(
+                    ".sophyane-evolution/"
+                ):
+                    continue
+
+                if changed_path == (
+                    ".sophyane-candidate.patch"
+                ):
+                    continue
+
+                changed.add(
+                    changed_path
+                )
+
+        return changed
+
+    def _worktree_cleanliness(
+        self,
+        *,
+        worktree: Path,
+        proposal: PatchProposal,
+    ) -> tuple[bool, list[str], list[str]]:
+        """Require all worktree mutations to belong to the proposal."""
+        expected = set(
+            _diff_paths(
+                proposal.patch
+            )
+        )
+
+        observed = self._worktree_changed_paths(
+            worktree
+        )
+
+        unexpected = sorted(
+            observed - expected
+        )
+
+        missing = sorted(
+            expected - observed
+        )
+
+        return (
+            not unexpected
+            and not missing,
+            unexpected,
+            missing,
+        )
+
     def _targeted_tests(
         self,
         *,
@@ -2970,6 +3096,15 @@ Original patch:
             worktree=worktree,
         )
 
+        (
+            worktree_clean,
+            unexpected_worktree_paths,
+            missing_proposal_paths,
+        ) = self._worktree_cleanliness(
+            worktree=worktree,
+            proposal=proposal,
+        )
+
         security_gate_passed = (
             full_suite_passed
             and not any(
@@ -2992,6 +3127,7 @@ Original patch:
                 full_suite_passed,
                 held_out_not_regressed,
                 security_gate_passed,
+                worktree_clean,
             )
         )
 
@@ -3001,11 +3137,20 @@ Original patch:
             promotable
             and commit_candidate
         ):
+            proposal_paths = sorted(
+                set(
+                    _diff_paths(
+                        proposal.patch
+                    )
+                )
+            )
+
             subprocess.run(
                 [
                     "git",
                     "add",
-                    "-A",
+                    "--",
+                    *proposal_paths,
                 ],
                 cwd=worktree,
                 check=True,
@@ -3100,6 +3245,20 @@ Original patch:
                 ),
                 "full_suite_output": (
                     full_suite_output
+                ),
+                "worktree_clean": (
+                    worktree_clean
+                ),
+                "unexpected_worktree_paths": (
+                    unexpected_worktree_paths
+                ),
+                "missing_proposal_paths": (
+                    missing_proposal_paths
+                ),
+                "observed_worktree_paths": sorted(
+                    self._worktree_changed_paths(
+                        worktree
+                    )
                 ),
                 "baseline_held_out": [
                     asdict(item)

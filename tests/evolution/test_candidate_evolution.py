@@ -798,3 +798,221 @@ def test_indexed_edit_payload_is_compact() -> None:
     assert payload["start"] == 2
     assert payload["end"] == 2
     assert payload["code"] == "    verify()"
+
+
+def test_indexed_edit_rejects_schema_placeholder() -> None:
+    import pytest
+
+    from sophyane.evolution.candidate_evolution import (
+        _indexed_edit_payload,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="schema placeholder",
+    ):
+        _indexed_edit_payload(
+            '{"op":"replace","start":2,"end":2,'
+            '"code":"maximum five source lines"}'
+        )
+
+
+def test_worktree_cleanliness_detects_generated_file(
+    tmp_path: Path,
+) -> None:
+    import subprocess
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+    from sophyane.evolution.models import (
+        PatchProposal,
+    )
+
+    subprocess.run(
+        ["git", "init"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    source = (
+        tmp_path
+        / "src/sophyane/capability_executors.py"
+    )
+    source.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    source.write_text(
+        "value = 1\n",
+        encoding="utf-8",
+    )
+
+    subprocess.run(
+        ["git", "add", "."],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    source.write_text(
+        "value = 2\n",
+        encoding="utf-8",
+    )
+
+    generated = (
+        tmp_path
+        / "improvements/epoch-test.json"
+    )
+    generated.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    generated.write_text(
+        "{}\n",
+        encoding="utf-8",
+    )
+
+    proposal = PatchProposal(
+        component="python",
+        rationale="Test",
+        patch=(
+            "diff --git "
+            "a/src/sophyane/capability_executors.py "
+            "b/src/sophyane/capability_executors.py\n"
+            "--- a/src/sophyane/capability_executors.py\n"
+            "+++ b/src/sophyane/capability_executors.py\n"
+            "@@ -1 +1 @@\n"
+            "-value = 1\n"
+            "+value = 2\n"
+        ),
+        tests=[],
+        confidence=0.9,
+        allowed_paths=[
+            "src/sophyane/capability_executors.py",
+        ],
+    )
+
+    evolver = CandidateEvolver(tmp_path)
+
+    clean, unexpected, missing = (
+        evolver._worktree_cleanliness(
+            worktree=tmp_path,
+            proposal=proposal,
+        )
+    )
+
+    assert clean is False
+    assert unexpected == [
+        "improvements/epoch-test.json"
+    ]
+    assert missing == []
+
+
+def test_worktree_cleanliness_accepts_only_proposal_path(
+    tmp_path: Path,
+) -> None:
+    import subprocess
+
+    from sophyane.evolution.candidate_evolution import (
+        CandidateEvolver,
+    )
+    from sophyane.evolution.models import (
+        PatchProposal,
+    )
+
+    subprocess.run(
+        ["git", "init"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    source = (
+        tmp_path
+        / "src/sophyane/capability_executors.py"
+    )
+    source.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    source.write_text(
+        "value = 1\n",
+        encoding="utf-8",
+    )
+
+    subprocess.run(
+        ["git", "add", "."],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    source.write_text(
+        "value = 2\n",
+        encoding="utf-8",
+    )
+
+    proposal = PatchProposal(
+        component="python",
+        rationale="Test",
+        patch=(
+            "diff --git "
+            "a/src/sophyane/capability_executors.py "
+            "b/src/sophyane/capability_executors.py\n"
+            "--- a/src/sophyane/capability_executors.py\n"
+            "+++ b/src/sophyane/capability_executors.py\n"
+            "@@ -1 +1 @@\n"
+            "-value = 1\n"
+            "+value = 2\n"
+        ),
+        tests=[],
+        confidence=0.9,
+        allowed_paths=[
+            "src/sophyane/capability_executors.py",
+        ],
+    )
+
+    evolver = CandidateEvolver(tmp_path)
+
+    clean, unexpected, missing = (
+        evolver._worktree_cleanliness(
+            worktree=tmp_path,
+            proposal=proposal,
+        )
+    )
+
+    assert clean is True
+    assert unexpected == []
+    assert missing == []
