@@ -168,7 +168,7 @@ def _normalise_patch_text(
         output.append(line)
         index += 1
 
-    normalized = "\\n".join(output).strip()
+    normalized = "\n".join(output).strip()
 
     if converted:
         return normalized

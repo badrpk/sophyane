@@ -395,3 +395,44 @@ def test_normalise_patch_preserves_existing_git_diff() -> None:
     )
 
     assert _normalise_patch_text(patch) == patch.strip()
+
+
+def test_normalized_patch_uses_physical_newlines() -> None:
+    import json
+
+    from sophyane.evolution.candidate_evolution import (
+        _candidate_payload,
+        _diff_paths,
+    )
+
+    response = json.dumps(
+        {
+            "component": "python",
+            "rationale": "Test patch normalization.",
+            "patch": (
+                "```diff\n"
+                "--- a/src/sophyane/local_coding_capability.py\n"
+                "+++ b/src/sophyane/local_coding_capability.py\n"
+                "@@ -1 +1 @@\n"
+                "-old\n"
+                "+new\n"
+                "```"
+            ),
+            "tests": [],
+            "confidence": 0.9,
+        }
+    )
+
+    payload = _candidate_payload(
+        response,
+        component="python",
+    )
+
+    patch = payload["patch"]
+
+    assert "\\n" not in patch
+    assert len(patch.splitlines()) == 6
+    assert _diff_paths(patch) == [
+        "src/sophyane/local_coding_capability.py"
+    ]
+
