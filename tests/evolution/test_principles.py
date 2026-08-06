@@ -88,3 +88,17 @@ def test_task_specific_secret_is_rejected(
     )
 
     assert result is None
+
+
+def test_store_is_initialized_when_created(
+    tmp_path: Path,
+) -> None:
+    store = PrincipleStore(tmp_path)
+
+    assert store.path.is_file()
+
+    data = store._load()
+
+    assert data["version"] == 1
+    assert data["principles"] == {}
+    assert data["success_patterns"] == {}

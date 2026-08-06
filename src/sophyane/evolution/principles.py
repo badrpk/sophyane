@@ -60,6 +60,17 @@ class PrincipleStore:
             / "principles.json"
         )
 
+        # Always create an observable principle store, even before the
+        # first valid hindsight principle has been learned.
+        if not self.path.is_file():
+            self._save(
+                {
+                    "version": 1,
+                    "principles": {},
+                    "success_patterns": {},
+                }
+            )
+
     def _load(self) -> dict[str, Any]:
         if not self.path.is_file():
             return {
