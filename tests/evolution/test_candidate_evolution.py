@@ -1588,7 +1588,8 @@ def test_failed_check_anchors_include_python_artifact_routes() -> None:
 
     assert "target.write_text" in anchors
     assert "test_target.write_text" in anchors
-    assert "pytest" in anchors
+    assert '"pytest"' in anchors
+    assert "pytest" not in anchors
     assert "py_compile" not in anchors
 
 
@@ -2070,3 +2071,57 @@ def test_indexed_line_selection_accepts_pytest_line() -> None:
             27,
         },
     )
+
+
+def test_pytest_failed_check_anchors_exclude_broad_word() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _failed_check_anchors,
+    )
+
+    anchors = _failed_check_anchors(
+        [
+            (
+                Path("record.json"),
+                {
+                    "validation": {
+                        "checks": {
+                            "pytest_passed": False,
+                        }
+                    }
+                },
+            )
+        ]
+    )
+
+    assert '"pytest"' in anchors
+    assert "test_target" in anchors
+    assert "evidence.append" in anchors
+    assert "exit_code" in anchors
+    assert "pytest" not in anchors
+
+
+def test_direct_anchor_lines_exclude_adjacent_keyword_argument() -> None:
+    from sophyane.evolution.candidate_evolution import (
+        _allowed_anchor_line_numbers,
+    )
+
+    lines = [
+        "        files=[target.name, test_target.name],\n",
+        "        evidence=evidence,\n",
+        '        error="Expected the initial pytest run to fail.",\n',
+    ]
+
+    allowed = _allowed_anchor_line_numbers(
+        lines=lines,
+        required_anchors={
+            '"pytest"',
+            "test_target",
+            "evidence.append",
+            "exit_code",
+        },
+        adjacency=0,
+    )
+
+    assert allowed == {1}
+    assert 2 not in allowed
+    assert 3 not in allowed

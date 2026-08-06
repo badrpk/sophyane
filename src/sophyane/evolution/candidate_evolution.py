@@ -111,7 +111,6 @@ FAILURE_CHECK_SOURCE_ANCHORS: dict[str, tuple[str, ...]] = {
     ),
     "pytest_passed": (
         "\"pytest\"",
-        "pytest",
         "test_target",
         "evidence.append",
         "exit_code",
@@ -798,7 +797,7 @@ def _select_indexed_window(
         _allowed_anchor_line_numbers(
             lines=lines,
             required_anchors=required_anchors,
-            adjacency=1,
+            adjacency=0,
         )
     )
 
