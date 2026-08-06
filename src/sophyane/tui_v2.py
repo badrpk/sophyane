@@ -55,6 +55,7 @@ def _simple_chat_reply(message: str) -> str | None:
     # Informational website construction is a deterministic SLI capability.
     # Run it before any local/cloud provider in every session mode.
     try:
+        import os as _topic_os
         from pathlib import Path as _TopicPath
 
         from sophyane.code_memory.topic_site_compose import (
@@ -65,9 +66,27 @@ def _simple_chat_reply(message: str) -> str | None:
         )
 
         if is_topic_site_request(message):
+            _topic_workspace = (
+                _TopicPath.cwd()
+                / ".sophyane-workspace"
+            )
+
+            if _topic_os.environ.get(
+                "SOPHYANE_SESSION_MODE",
+                "",
+            ) == "local_llm":
+                from sophyane.local_site_refinement import (
+                    compose_refined_local_topic_site,
+                )
+
+                return compose_refined_local_topic_site(
+                    message,
+                    _topic_workspace,
+                )
+
             return compose_rich_topic_site(
                 message,
-                _TopicPath.cwd() / ".sophyane-workspace",
+                _topic_workspace,
             )
     except Exception as _topic_site_error:
         import os as _topic_os
