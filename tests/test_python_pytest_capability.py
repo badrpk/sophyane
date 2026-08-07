@@ -1110,3 +1110,284 @@ def test_unique_sort_guided_red_to_green_witness(
         + "\n"
         + green.stderr
     )
+
+
+def test_descending_unique_sort_red_generation_prompt_contains_selected_guidance(
+    monkeypatch,
+) -> None:
+    import sophyane.local_coding_capability as capability
+
+    request = (
+        "Create compound_lock.py with descending_unique_values(values) and "
+        "use pytest RED-GREEN repair until all tests pass. Sort numeric "
+        "values in descending order and remove duplicates."
+    )
+
+    captured_prompts: list[str] = []
+
+    def fake_model_call(
+        prompt,
+        **_kwargs,
+    ):
+        captured_prompts.append(
+            str(prompt)
+        )
+
+        return """
+{
+  "broken_source": "def descending_unique_values(values):\\n    return sorted(values, reverse=True)\\n",
+  "test_source": "from compound_lock import descending_unique_values\\n\\ndef test_compound():\\n    assert descending_unique_values([3, 1, 3, 2, 1]) == [3, 2, 1]\\n"
+}
+"""
+
+    monkeypatch.setattr(
+        capability,
+        "_ask_local_coding_model",
+        fake_model_call,
+    )
+
+    broken_source, test_source = (
+        capability._adaptive_generation(
+            request=request,
+            filename="compound_lock.py",
+            function_name="descending_unique_values",
+            parameters=[
+                "values",
+            ],
+            execution_feedback="",
+            memory_context=None,
+            generation_round=0,
+        )
+    )
+
+    assert captured_prompts
+
+    prompt = captured_prompts[0].lower()
+
+    assert (
+        "contract-directed red defect guidance"
+        in prompt
+    )
+
+    assert (
+        "sort descending but preserve duplicates"
+        in prompt
+    )
+
+    assert (
+        "plausible deliberate red defect"
+        in prompt
+    )
+
+    assert (
+        "return sorted(values, reverse=true)"
+        in broken_source.lower()
+    )
+
+    # Known deterministic compound contracts own the authoritative tests.
+    assert (
+        "test_objective_desc_unique_duplicates"
+        in test_source
+    )
+
+    assert (
+        "descending_unique_values([3, 1, 3, 2, 1]) == [3, 2, 1]"
+        in test_source
+    )
+
+
+def test_descending_unique_guided_defect_is_objective_red(
+    tmp_path,
+) -> None:
+    from sophyane.coding_contracts import (
+        format_red_defect_guidance,
+        objective_preflight_test_source,
+    )
+
+    request = (
+        "Create compound_lock.py with descending_unique_values(values). "
+        "Sort numeric values in descending order and remove duplicates."
+    )
+
+    guidance = format_red_defect_guidance(
+        request=request
+    )
+
+    lowered = guidance.lower()
+
+    assert "descending" in lowered
+    assert "preserve duplicates" in lowered
+
+    tests = objective_preflight_test_source(
+        request=request,
+        module_name="compound_lock",
+        function_name="descending_unique_values",
+    )
+
+    assert tests is not None
+
+    source_path = (
+        tmp_path
+        / "compound_lock.py"
+    )
+
+    test_path = (
+        tmp_path
+        / "test_compound_lock.py"
+    )
+
+    # Contract-directed deliberate RED:
+    # descending direction is correct, duplicate removal is omitted.
+    source_path.write_text(
+        (
+            "def descending_unique_values(values):\n"
+            "    return sorted(values, reverse=True)\n"
+        ),
+        encoding="utf-8",
+    )
+
+    test_path.write_text(
+        tests,
+        encoding="utf-8",
+    )
+
+    import subprocess
+    import sys
+
+    red = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            test_path.name,
+        ],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    output = (
+        red.stdout
+        + "\n"
+        + red.stderr
+    )
+
+    assert red.returncode != 0
+
+    assert (
+        "test_objective_desc_unique_duplicates"
+        in output
+    )
+
+    assert (
+        "test_objective_desc_unique_unsorted"
+        in output
+    )
+
+
+def test_descending_unique_guided_red_to_green_witness(
+    tmp_path,
+) -> None:
+    from sophyane.coding_contracts import (
+        objective_preflight_test_source,
+    )
+
+    request = (
+        "Create compound_lock.py with descending_unique_values(values). "
+        "Sort numeric values in descending order and remove duplicates."
+    )
+
+    tests = objective_preflight_test_source(
+        request=request,
+        module_name="compound_lock",
+        function_name="descending_unique_values",
+    )
+
+    assert tests is not None
+
+    source_path = (
+        tmp_path
+        / "compound_lock.py"
+    )
+
+    test_path = (
+        tmp_path
+        / "test_compound_lock.py"
+    )
+
+    test_path.write_text(
+        tests,
+        encoding="utf-8",
+    )
+
+    source_path.write_text(
+        (
+            "def descending_unique_values(values):\n"
+            "    return sorted(values, reverse=True)\n"
+        ),
+        encoding="utf-8",
+    )
+
+    import subprocess
+    import sys
+
+    red = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            test_path.name,
+        ],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert red.returncode != 0
+
+    source_path.write_text(
+        (
+            "def descending_unique_values(values):\n"
+            "    return sorted(set(values), reverse=True)\n"
+        ),
+        encoding="utf-8",
+    )
+
+    pycache = (
+        tmp_path
+        / "__pycache__"
+    )
+
+    if pycache.exists():
+        import shutil
+
+        shutil.rmtree(
+            pycache
+        )
+
+    green = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            test_path.name,
+        ],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert green.returncode == 0, (
+        green.stdout
+        + "\n"
+        + green.stderr
+    )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .base import CodingContract
 from .descending_sort import DescendingSortContract
+from .descending_unique_sort import DescendingUniqueSortContract
 from .median import MedianContract
 from .sort import SortContract
 from .unique_sort import UniqueSortContract
@@ -17,12 +18,14 @@ def builtin_coding_contracts(
         SortContract(),
         DescendingSortContract(),
         UniqueSortContract(),
+        DescendingUniqueSortContract(),
     )
 
 
 __all__ = [
     "CodingContract",
     "DescendingSortContract",
+    "DescendingUniqueSortContract",
     "MedianContract",
     "SortContract",
     "UniqueSortContract",

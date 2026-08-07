@@ -368,6 +368,7 @@ def test_registered_contract_snapshot_contains_builtin_nodes() -> None:
         "sort",
         "descending_sort",
         "unique_sort",
+        "descending_unique_sort",
     )
 
 
@@ -429,6 +430,7 @@ def test_builtin_contract_loader_returns_deterministic_nodes() -> None:
         "sort",
         "descending_sort",
         "unique_sort",
+        "descending_unique_sort",
     )
 
 
@@ -587,6 +589,7 @@ def test_builtin_loader_can_populate_isolated_registry() -> None:
         "sort",
         "descending_sort",
         "unique_sort",
+        "descending_unique_sort",
     )
 
 
@@ -1061,3 +1064,111 @@ def test_unique_sort_red_guidance_targets_missing_deduplication() -> None:
 
     assert "preserve duplicates" in guidance
     assert "deliberately incorrect" in guidance
+
+
+DESCENDING_UNIQUE_SORT_REQUEST = (
+    "Create compound_order.py with descending_unique_values(values). "
+    "Sort numeric values in descending order and remove duplicates."
+)
+
+
+def test_descending_unique_sort_contract_matches() -> None:
+    contract = match_coding_contract(
+        DESCENDING_UNIQUE_SORT_REQUEST
+    )
+
+    assert contract is not None
+    assert contract.name == "descending_unique_sort"
+    assert contract.priority == 300
+
+
+def test_descending_unique_sort_has_real_parent_overlap() -> None:
+    from sophyane.coding_contracts import (
+        registered_coding_contracts,
+    )
+
+    matches = [
+        contract
+        for contract in registered_coding_contracts()
+        if contract.matches(
+            DESCENDING_UNIQUE_SORT_REQUEST
+        )
+    ]
+
+    names = {
+        contract.name
+        for contract in matches
+    }
+
+    assert "sort" in names
+    assert "descending_sort" in names
+    assert "descending_unique_sort" in names
+
+    selected = match_coding_contract(
+        DESCENDING_UNIQUE_SORT_REQUEST
+    )
+
+    assert selected is not None
+    assert selected.name == "descending_unique_sort"
+    assert selected.priority == 300
+
+
+def test_descending_unique_sort_objective_tests() -> None:
+    source = objective_preflight_test_source(
+        request=DESCENDING_UNIQUE_SORT_REQUEST,
+        module_name="compound_order",
+        function_name="descending_unique_values",
+    )
+
+    assert source is not None
+
+    assert (
+        "descending_unique_values([3, 1, 3, 2, 1]) == [3, 2, 1]"
+        in source
+    )
+
+    assert (
+        "descending_unique_values([9, 2, 5, 2]) == [9, 5, 2]"
+        in source
+    )
+
+
+def test_wrong_descending_unique_sort_contract_rejected() -> None:
+    source = """
+from compound_order import descending_unique_values
+
+def test_wrong():
+    assert descending_unique_values([3, 1, 3, 2, 1]) == [3, 3, 2, 1, 1]
+"""
+
+    with pytest.raises(
+        ValueError,
+        match="descending-unique-sort request",
+    ):
+        validate_generated_test_contract(
+            request=DESCENDING_UNIQUE_SORT_REQUEST,
+            function_name="descending_unique_values",
+            test_source=source,
+        )
+
+
+def test_descending_unique_sort_guidance_targets_deduplication() -> None:
+    from sophyane.coding_contracts import (
+        format_red_defect_guidance,
+    )
+
+    guidance = format_red_defect_guidance(
+        request=DESCENDING_UNIQUE_SORT_REQUEST
+    ).lower()
+
+    assert "descending" in guidance
+    assert "preserve duplicates" in guidance
+
+
+def test_descending_unique_sort_preflight_has_compound_witness() -> None:
+    guidance = format_red_preflight_constraints(
+        request=DESCENDING_UNIQUE_SORT_REQUEST
+    )
+
+    assert "[3, 1, 3, 2, 1]" in guidance
+    assert "[3, 2, 1]" in guidance
