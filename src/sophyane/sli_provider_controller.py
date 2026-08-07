@@ -18,6 +18,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from sophyane.sli_svr import (
+    SVRFeatures,
+    get_svr_controller,
+)
+
 _LOCK = threading.RLock()
 
 
@@ -118,18 +123,78 @@ class SLIProviderController:
             self.hidden = output_gate * math.tanh(self.cell)
             risk = max(0.0, min(1.0, 0.5 + 0.5 * self.hidden))
 
-            severe = any(item in defects for item in ("missing_html_close", "missing_javascript", "missing_interaction"))
-            if local and defects and (severe or self.defect_streak >= 2 or repeated or risk >= 0.68):
-                action = "escalate_cloud"
-                reason = "SLI sequence predicts low local completion probability"
-            elif defects:
-                action = "targeted_repair"
-                reason = "artifact is incomplete but one bounded repair remains worthwhile"
-            else:
-                action = "accept"
-                reason = "artifact passed SLI structural checks"
+            severe = any(
+                item in defects
+                for item in (
+                    "missing_html_close",
+                    "missing_javascript",
+                    "missing_interaction",
+                )
+            )
 
-            confidence = max(0.5, min(0.99, 0.55 + abs(risk - 0.5)))
+            if (
+                local
+                and defects
+                and (
+                    severe
+                    or self.defect_streak >= 2
+                    or repeated
+                    or risk >= 0.68
+                )
+            ):
+                base_action = "escalate_cloud"
+                base_reason = (
+                    "SLI sequence predicts low local completion probability"
+                )
+
+            elif defects:
+                base_action = "targeted_repair"
+                base_reason = (
+                    "artifact is incomplete but one bounded repair "
+                    "remains worthwhile"
+                )
+
+            else:
+                base_action = "accept"
+                base_reason = (
+                    "artifact passed SLI structural checks"
+                )
+
+            features = SVRFeatures(
+                defect_ratio=min(
+                    1.0,
+                    len(defects) / 3.0,
+                ),
+                defect_streak=min(
+                    1.0,
+                    self.defect_streak / 3.0,
+                ),
+                repeated=1.0 if repeated else 0.0,
+                repair_turn=1.0 if repair_prompt else 0.0,
+                latency=min(
+                    1.0,
+                    max(0.0, latency_seconds) / 45.0,
+                ),
+                local_provider=1.0 if local else 0.0,
+                recurrent_risk=risk,
+            )
+
+            svr = get_svr_controller().decide(
+                features=features,
+                base_action=base_action,
+                defects=defects,
+                local_provider=local,
+            )
+
+            action = svr.action
+            confidence = svr.confidence
+
+            reason = (
+                f"{svr.reason}; "
+                f"p_correct={svr.p_correct:.4f}; "
+                f"verdict={svr.verdict}; "
+                f"base={base_action}: {base_reason}"
+            )
             self.last_digest = digest
             self.last_action = action
             decision = SLIDecision(action, round(risk, 4), round(confidence, 4), reason, defects, self.attempt, round(self.hidden, 6), round(self.cell, 6))

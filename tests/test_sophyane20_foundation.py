@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from pathlib import Path
 
 from sophyane.coi import AgentManifest, COIOrchestrator, TaskContract
@@ -47,3 +49,75 @@ def test_release_gate_import_mode(tmp_path: Path) -> None:
     report = ReleaseGate(tmp_path).run(execute_commands=False)
     assert report.version
     assert report.checks
+
+
+def test_coi_preserves_agent_semantic_failure(tmp_path):
+    coi = COIOrchestrator(tmp_path / "coi")
+
+    manifest = AgentManifest(
+        name="semantic-failure-agent",
+        role="test",
+    )
+
+    def runner(task, context):
+        return {
+            "ok": False,
+            "handled": True,
+            "summary": "objective validator rejected result",
+            "error": "pytest did not reach GREEN",
+        }
+
+    coi.register(manifest, runner)
+
+    task = TaskContract(
+        "exercise semantic failure propagation",
+        timeout_seconds=30,
+    )
+
+    result = coi.run(
+        task,
+        agent="semantic-failure-agent",
+    )
+
+    assert result["ok"] is False
+    assert result["output"]["ok"] is False
+    assert result["error"] == "pytest did not reach GREEN"
+
+    run_path = (
+        tmp_path
+        / "coi"
+        / "runs"
+        / f"{task.task_id}.json"
+    )
+
+    stored = json.loads(
+        run_path.read_text(encoding="utf-8")
+    )
+
+    assert stored["ok"] is False
+    assert stored["output"]["ok"] is False
+
+    event_path = (
+        tmp_path
+        / "coi"
+        / "events"
+        / f"{task.task_id}.jsonl"
+    )
+
+    events = [
+        json.loads(line)
+        for line in event_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+
+    assert any(
+        event["kind"] == "agent.failed"
+        for event in events
+    )
+    assert not any(
+        event["kind"] == "agent.completed"
+        and event["payload"].get("ok") is True
+        for event in events
+    )

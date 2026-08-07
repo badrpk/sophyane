@@ -127,10 +127,47 @@ class COIOrchestrator:
             output = runner(task, context or {})
             elapsed = time.monotonic() - started
             timed_out = elapsed > task.timeout_seconds
-            result = {"ok": not timed_out, "task_id": task.task_id, "agent": agent, "elapsed_seconds": round(elapsed, 6), "output": output}
+
+            # Transport success is not necessarily task success.
+            # If an agent returns an explicit semantic `ok` field,
+            # preserve it rather than treating a normal Python return
+            # as successful completion.
+            output_ok = True
+
+            if isinstance(output, dict) and "ok" in output:
+                output_ok = bool(output["ok"])
+
+            result = {
+                "ok": bool(output_ok) and not timed_out,
+                "task_id": task.task_id,
+                "agent": agent,
+                "elapsed_seconds": round(elapsed, 6),
+                "output": output,
+            }
+
             if timed_out:
                 result["error"] = "task exceeded timeout budget"
-            self.emit(COIEvent(task.task_id, "agent.completed" if result["ok"] else "agent.timeout", agent, result))
+                event_type = "agent.timeout"
+            elif not output_ok:
+                result["error"] = (
+                    output.get("error")
+                    or output.get("summary")
+                    or "agent reported semantic failure"
+                ) if isinstance(output, dict) else (
+                    "agent reported semantic failure"
+                )
+                event_type = "agent.failed"
+            else:
+                event_type = "agent.completed"
+
+            self.emit(
+                COIEvent(
+                    task.task_id,
+                    event_type,
+                    agent,
+                    result,
+                )
+            )
         except Exception as error:  # noqa: BLE001
             result = {"ok": False, "task_id": task.task_id, "agent": agent, "error": f"{type(error).__name__}: {error}"}
             self.emit(COIEvent(task.task_id, "agent.failed", agent, result))

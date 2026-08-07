@@ -62,6 +62,264 @@ def _write_report(workspace: Path, payload: dict[str, Any]) -> None:
     )
 
 
+def _coding_result_report(
+    result: object,
+) -> str:
+    """Serialize local coding capability result for the SLI graph."""
+    handled = bool(
+        getattr(result, "handled", False)
+    )
+    ok = bool(
+        getattr(result, "ok", False)
+    )
+    capability = str(
+        getattr(result, "capability", "") or ""
+    )
+    summary = str(
+        getattr(result, "summary", "") or ""
+    )
+    workspace = str(
+        getattr(result, "workspace", "") or ""
+    )
+    error = str(
+        getattr(result, "error", "") or ""
+    )
+
+    files = list(
+        getattr(result, "files", []) or []
+    )
+
+    lines = [
+        "Sophyane local coding harness",
+        f"Handled: {handled}",
+        f"Capability: {capability}",
+        f"Summary: {summary}",
+        f"Workspace: {workspace}",
+        f"Files: {', '.join(str(x) for x in files)}",
+    ]
+
+    if error:
+        lines.append(
+            f"Error: {error}"
+        )
+
+    lines.append(
+        f"Success: {ok}"
+    )
+
+    return "\n".join(lines)
+
+
+def _run_local_coding_via_coi(
+    request: str,
+    root: Path,
+    *,
+    progress: Progress,
+) -> object | None:
+    """Run Sophyane's dedicated coding capability as a bounded COI task.
+
+    COI owns orchestration, permissions and persistent task/run/event traces.
+    The coding capability continues to own generation, immutable tests,
+    RED/GREEN execution and SVR objective feedback.
+    """
+    from sophyane.coi import (
+        AgentManifest,
+        COIOrchestrator,
+        TaskContract,
+    )
+    from sophyane.local_coding_capability import (
+        try_coding_request,
+    )
+
+    coi = COIOrchestrator()
+
+    permissions = [
+        "workspace.read",
+        "workspace.write",
+        "process.run",
+        "validator.pytest",
+    ]
+
+    manifest = AgentManifest(
+        name="adaptive-python-coding",
+        role="coding-validator",
+        skills=[
+            "python",
+            "pytest",
+            "adaptive_tdd",
+            "red_green",
+            "evidence_diagnosis",
+            "svr_feedback",
+        ],
+        permissions=permissions,
+        tools=[
+            "local_gguf",
+            "pytest",
+            "sli_svr",
+        ],
+        # Model selection remains with Sophyane's provider/runtime layer.
+        provider="dispatcher",
+        max_steps=12,
+    )
+
+    result_holder: dict[str, object] = {}
+
+    def runner(
+        task: TaskContract,
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        coding_result = try_coding_request(
+            task.goal,
+            workspace=task.workspace,
+            memory_context=context.get(
+                "durable_memory"
+            ),
+        )
+
+        result_holder["coding_result"] = (
+            coding_result
+        )
+
+        if coding_result is None:
+            return {
+                "handled": False,
+                "ok": False,
+                "reason": (
+                    "dedicated coding capability "
+                    "did not claim request"
+                ),
+            }
+
+        return {
+            "handled": bool(
+                coding_result.handled
+            ),
+            "ok": bool(
+                coding_result.ok
+            ),
+            "capability": str(
+                coding_result.capability
+            ),
+            "summary": str(
+                coding_result.summary
+            ),
+            "files": list(
+                coding_result.files
+            ),
+            "error": str(
+                coding_result.error
+            ),
+            "evidence_count": len(
+                coding_result.evidence or []
+            ),
+        }
+
+    coi.register(
+        manifest,
+        runner,
+    )
+
+    task = TaskContract(
+        goal=request,
+        owner="sli-harness",
+        priority=90,
+        workspace=str(root),
+        repository=str(
+            Path.cwd().resolve()
+        ),
+        permissions=permissions,
+        outputs=[],
+        validation=[
+            "pytest.red",
+            "pytest.green",
+            "tests.immutable",
+            "evidence.grounded",
+            "svr.feedback",
+        ],
+        timeout_seconds=1200,
+    )
+
+    progress(
+        f"COI: submitted adaptive coding task {task.task_id}"
+    )
+
+    try:
+        from sophyane.durable_memory import (
+            recall as recall_durable_memory,
+        )
+
+        recalled_memory = recall_durable_memory(
+            request,
+            limit=6,
+        )
+
+    except Exception:
+        recalled_memory = []
+
+    coi_result = coi.run(
+        task,
+        agent="adaptive-python-coding",
+        context={
+            "source": "sli_harness",
+            "verification": "objective",
+            "durable_memory": recalled_memory,
+        },
+    )
+
+    progress(
+        "COI: adaptive coding run "
+        f"ok={coi_result.get('ok')} "
+        f"task={task.task_id}"
+    )
+
+    try:
+        from sophyane.durable_memory import (
+            remember_event,
+        )
+
+        remember_event(
+            "coi.adaptive_coding.completed",
+            {
+                "task_id": task.task_id,
+                "goal": request,
+                "ok": bool(
+                    coi_result.get("ok")
+                ),
+                "agent":
+                    "adaptive-python-coding",
+                "result": coi_result,
+            },
+            namespace="coi",
+        )
+
+    except Exception:
+        pass
+
+    coding_result = result_holder.get(
+        "coding_result"
+    )
+
+    if coding_result is None:
+        return None
+
+    # Attach task identity for external diagnostics without changing the
+    # immutable CodingResult dataclass.
+    try:
+        marker = (
+            root
+            / ".sophyane-coi-task-id"
+        )
+
+        marker.write_text(
+            task.task_id + "\n",
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+    return coding_result
+
+
 def run_harness_execution(
     request: str,
     workspace: Path | str,
@@ -73,6 +331,116 @@ def run_harness_execution(
     progress = progress or (lambda _message: None)
     root = Path(workspace).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
+
+    # Explicit coding/TDD requests retain first refusal, but execute through
+    # Sophyane COI so orchestration, permissions, task identity, events and
+    # local traces remain first-class rather than bypassed.
+    try:
+        coding_result = _run_local_coding_via_coi(
+            request,
+            root,
+            progress=progress,
+        )
+
+        if (
+            coding_result is not None
+            and getattr(
+                coding_result,
+                "handled",
+                False,
+            )
+        ):
+            progress(
+                "SLI harness: COI adaptive coding capability handled request"
+            )
+
+            coi_task_id = ""
+
+            try:
+                marker = (
+                    root
+                    / ".sophyane-coi-task-id"
+                )
+
+                if marker.exists():
+                    coi_task_id = (
+                        marker.read_text(
+                            encoding="utf-8"
+                        ).strip()
+                    )
+            except Exception:
+                pass
+
+            payload = {
+                "request": request,
+                "workspace": str(root),
+                "handled": bool(
+                    coding_result.handled
+                ),
+                "ok": bool(
+                    coding_result.ok
+                ),
+                "capability": str(
+                    coding_result.capability
+                ),
+                "orchestrator": "coi",
+                "coi_task_id": coi_task_id,
+                "svr_feedback": True,
+                "output": str(
+                    coding_result.summary
+                ),
+                "files": list(
+                    coding_result.files
+                ),
+                "error": str(
+                    coding_result.error
+                ),
+                "evidence": [
+                    {
+                        "command": list(
+                            item.command
+                        ),
+                        "cwd": item.cwd,
+                        "exit_code": item.exit_code,
+                        "stdout": item.stdout,
+                        "stderr": item.stderr,
+                        "duration_ms": item.duration_ms,
+                        "timed_out": item.timed_out,
+                    }
+                    for item in (
+                        coding_result.evidence
+                        or []
+                    )
+                ],
+            }
+
+            _write_report(
+                root,
+                payload,
+            )
+
+            report = _coding_result_report(
+                coding_result
+            )
+
+            return (
+                report
+                + "\nOrchestrator: COI"
+                + (
+                    f"\nCOI task: {coi_task_id}"
+                    if coi_task_id
+                    else ""
+                )
+                + "\nSVR feedback: enabled"
+            )
+
+    except Exception as error:
+        # Coding errors are surfaced, but generic execution can still attempt
+        # a compatible deterministic capability. Internet acquisition remains
+        # outside this dedicated coding branch.
+        progress(
+            f"SLI harness COI coding error: {error}"
+        )
 
     policy = classify(request)
     if not policy.execution or policy.filesystem_only:

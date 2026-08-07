@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .base import CodingContract
+from .clamp import ClampContract
 from .descending_sort import DescendingSortContract
 from .descending_unique_sort import DescendingUniqueSortContract
 from .median import MedianContract
@@ -14,6 +15,7 @@ def builtin_coding_contracts(
 ) -> tuple[CodingContract, ...]:
     """Return built-in contract nodes in deterministic matching order."""
     return (
+        ClampContract(),
         MedianContract(),
         SortContract(),
         DescendingSortContract(),
@@ -24,6 +26,7 @@ def builtin_coding_contracts(
 
 __all__ = [
     "CodingContract",
+    "ClampContract",
     "DescendingSortContract",
     "DescendingUniqueSortContract",
     "MedianContract",

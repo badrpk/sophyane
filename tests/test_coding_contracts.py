@@ -364,6 +364,7 @@ def test_registered_contract_snapshot_contains_builtin_nodes() -> None:
         contract.name
         for contract in contracts
     ) == (
+        "clamp",
         "median",
         "sort",
         "descending_sort",
@@ -426,6 +427,7 @@ def test_builtin_contract_loader_returns_deterministic_nodes() -> None:
         contract.name
         for contract in contracts
     ) == (
+        "clamp",
         "median",
         "sort",
         "descending_sort",
@@ -585,6 +587,7 @@ def test_builtin_loader_can_populate_isolated_registry() -> None:
         contract.name
         for contract in registry.snapshot()
     ) == (
+        "clamp",
         "median",
         "sort",
         "descending_sort",
@@ -1172,3 +1175,102 @@ def test_descending_unique_sort_preflight_has_compound_witness() -> None:
 
     assert "[3, 1, 3, 2, 1]" in guidance
     assert "[3, 2, 1]" in guidance
+
+
+CLAMP_REQUEST = (
+    "Create bounds.py with clamp_value(value, lower, upper). "
+    "Clamp the numeric value between a minimum lower bound "
+    "and maximum upper bound."
+)
+
+
+def test_clamp_contract_matches() -> None:
+    contract = match_coding_contract(
+        CLAMP_REQUEST
+    )
+
+    assert contract is not None
+    assert contract.name == "clamp"
+    assert contract.priority == 100
+
+
+def test_clamp_objective_tests_cover_three_regions() -> None:
+    source = objective_preflight_test_source(
+        request=CLAMP_REQUEST,
+        module_name="bounds",
+        function_name="clamp_value",
+    )
+
+    assert source is not None
+
+    assert "clamp_value(-5, 0, 10) == 0" in source
+    assert "clamp_value(6, 0, 10) == 6" in source
+    assert "clamp_value(14, 0, 10) == 10" in source
+
+
+def test_clamp_objective_tests_validate() -> None:
+    source = objective_preflight_test_source(
+        request=CLAMP_REQUEST,
+        module_name="bounds",
+        function_name="clamp_value",
+    )
+
+    assert source is not None
+
+    validate_generated_test_contract(
+        request=CLAMP_REQUEST,
+        function_name="clamp_value",
+        test_source=source,
+    )
+
+
+def test_wrong_clamp_expected_value_is_rejected() -> None:
+    source = """
+from bounds import clamp_value
+
+def test_wrong():
+    assert clamp_value(-5, 0, 10) == -5
+"""
+
+    with pytest.raises(
+        ValueError,
+        match="clamp request",
+    ):
+        validate_generated_test_contract(
+            request=CLAMP_REQUEST,
+            function_name="clamp_value",
+            test_source=source,
+        )
+
+
+def test_clamp_requires_all_three_behavioral_regions() -> None:
+    source = """
+from bounds import clamp_value
+
+def test_inside():
+    assert clamp_value(5, 0, 10) == 5
+"""
+
+    with pytest.raises(
+        ValueError,
+        match="non-discriminating",
+    ):
+        validate_generated_test_contract(
+            request=CLAMP_REQUEST,
+            function_name="clamp_value",
+            test_source=source,
+        )
+
+
+def test_clamp_red_guidance_targets_missing_lower_bound() -> None:
+    from sophyane.coding_contracts import (
+        format_red_defect_guidance,
+    )
+
+    guidance = format_red_defect_guidance(
+        request=CLAMP_REQUEST
+    ).lower()
+
+    assert "upper bound" in guidance
+    assert "lower bound" in guidance
+    assert "deliberately incorrect" in guidance
