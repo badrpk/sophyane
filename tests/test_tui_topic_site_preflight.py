@@ -96,25 +96,21 @@ def test_local_mode_uses_hybrid_sli_gguf_pipeline_before_provider(
     ).is_file()
 
 
-@pytest.mark.parametrize(
-    "mode",
-    [
-        "cloud_llm",
-        "sli_graph",
-    ],
-)
-def test_nonlocal_modes_use_deterministic_site_composer(
+def test_cloud_mode_uses_deterministic_site_composer(
     tmp_path: Path,
     monkeypatch,
-    mode: str,
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(
         "SOPHYANE_SESSION_MODE",
-        mode,
+        "cloud_llm",
     )
     monkeypatch.delenv(
         "SOPHYANE_SLI_ONLY",
+        raising=False,
+    )
+    monkeypatch.delenv(
+        "SOPHYANE_SLI_GRAPH",
         raising=False,
     )
 
@@ -145,6 +141,9 @@ def test_nonlocal_modes_use_deterministic_site_composer(
             "sophyane.local_site_refinement."
             "compose_refined_local_topic_site",
         ) as hybrid,
+        patch(
+            "sophyane.sli_graph.run_sli_graph",
+        ) as graph,
     ):
         result = _simple_chat_reply(
             "make tigers website"
@@ -153,6 +152,7 @@ def test_nonlocal_modes_use_deterministic_site_composer(
     assert result == report
     deterministic.assert_called_once()
     hybrid.assert_not_called()
+    graph.assert_not_called()
 
     assert (
         tmp_path
@@ -194,3 +194,60 @@ def test_ordinary_local_prompt_does_not_use_site_pipeline(
 
     # None means the ordinary request continues to strict local GGUF.
     assert result is None
+
+
+def test_sli_graph_topic_site_uses_graph_lifecycle_before_direct_composer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(
+        "SOPHYANE_SESSION_MODE",
+        "sli_graph",
+    )
+    monkeypatch.setenv(
+        "SOPHYANE_SLI_ONLY",
+        "1",
+    )
+    monkeypatch.setenv(
+        "SOPHYANE_SLI_GRAPH",
+        "1",
+    )
+
+    report = (
+        "Sophyane rich SLI website orchestrator\n"
+        "Validation: passed\n"
+        "Success: True\n"
+        "SLI-graph route: topic_site; "
+        "seconds: 0.01; promoted: True; chunks_added: 3"
+    )
+
+    class FakeState:
+        def __init__(self) -> None:
+            self.report = report
+
+    with (
+        patch(
+            "sophyane.sli_graph.run_sli_graph",
+            return_value=FakeState(),
+        ) as graph,
+        patch(
+            "sophyane.code_memory.sli_rich_site_compose."
+            "compose_rich_topic_site",
+        ) as direct,
+    ):
+        result = _simple_chat_reply(
+            "make website on demis hassabis"
+        )
+
+    assert result == report
+
+    graph.assert_called_once_with(
+        "make website on demis hassabis",
+        workspace=(
+            tmp_path
+            / ".sophyane-workspace"
+        ),
+    )
+
+    direct.assert_not_called()

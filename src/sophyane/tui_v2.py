@@ -125,10 +125,12 @@ def _simple_chat_reply(message: str) -> str | None:
                 / ".sophyane-workspace"
             )
 
-            if _topic_os.environ.get(
+            _topic_mode = _topic_os.environ.get(
                 "SOPHYANE_SESSION_MODE",
                 "",
-            ) == "local_llm":
+            )
+
+            if _topic_mode == "local_llm":
                 from sophyane.local_site_refinement import (
                     compose_refined_local_topic_site,
                 )
@@ -137,6 +139,23 @@ def _simple_chat_reply(message: str) -> str | None:
                     message,
                     _topic_workspace,
                 )
+
+            # SLI Graph must retain ownership of its full lifecycle:
+            #
+            #   classify -> topic composition -> validation -> promotion
+            #
+            # Calling compose_rich_topic_site() directly here used to
+            # short-circuit run_sli_graph() and therefore bypass the
+            # graph-level promotion/behavior-validation gate.
+            if _topic_mode == "sli_graph":
+                from sophyane.sli_graph import (
+                    run_sli_graph,
+                )
+
+                return run_sli_graph(
+                    message,
+                    workspace=_topic_workspace,
+                ).report
 
             return compose_rich_topic_site(
                 message,

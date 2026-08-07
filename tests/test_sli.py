@@ -63,3 +63,63 @@ def test_unusable_response_is_categorized() -> None:
 def test_browser_requests_use_browser_action() -> None:
     assert classify_action("make a responsive tip calculator") == "GENERATE_BROWSER_ARTIFACT"
     assert classify_action("explain a repository") == "EXECUTE_STRUCTURED_TASK"
+
+
+def test_sli_learner_paths_accepts_structured_snapshot():
+    from sophyane.sli_learner import _paths
+
+    snapshot = {
+        "files": 2,
+        "bytes": 1400,
+        "sample": [
+            {
+                "path": "index.html",
+                "bytes": 1200,
+            },
+            {
+                "path": "assets/app.js",
+                "bytes": 200,
+            },
+        ],
+    }
+
+    assert _paths(snapshot) == {
+        "index.html",
+        "assets/app.js",
+    }
+
+
+def test_sli_learner_paths_accepts_hash_snapshot():
+    from sophyane.sli_learner import _paths
+
+    snapshot = {
+        "index.html": "abc123",
+        "src/app.py": "def456",
+    }
+
+    assert _paths(snapshot) == {
+        "index.html",
+        "src/app.py",
+    }
+
+
+def test_sli_quality_reward_detects_html_from_hash_snapshot():
+    from sophyane.sli_learner import (
+        calculate_quality_reward,
+    )
+
+    reward, signals, category = (
+        calculate_quality_reward(
+            status="succeeded",
+            result="Validation: passed",
+            workspace_before={},
+            workspace_after={
+                "index.html": "abc123",
+            },
+        )
+    )
+
+    assert category == ""
+    assert reward >= 0.85
+    assert "artifact_created:+0.20" in signals
+    assert "validation_passed:+0.20" in signals

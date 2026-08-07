@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -13,6 +14,51 @@ _GRAPH_DEPTH = 0
 
 def _p(progress: Progress | None) -> Progress:
     return progress or (lambda _m: None)
+
+
+def _workspace_snapshot(
+    workspace: Path,
+) -> dict[str, Any]:
+    """Capture bounded artifact evidence for SLI outcome learning."""
+    root = Path(workspace)
+
+    sample: list[dict[str, Any]] = []
+    total_bytes = 0
+    file_count = 0
+
+    if not root.is_dir():
+        return {
+            "files": 0,
+            "bytes": 0,
+            "sample": [],
+        }
+
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+
+        try:
+            relative = path.relative_to(root)
+            size = path.stat().st_size
+        except (OSError, ValueError):
+            continue
+
+        file_count += 1
+        total_bytes += size
+
+        if len(sample) < 80:
+            sample.append(
+                {
+                    "path": str(relative),
+                    "bytes": size,
+                }
+            )
+
+    return {
+        "files": file_count,
+        "bytes": total_bytes,
+        "sample": sample,
+    }
 
 
 @dataclass
@@ -366,6 +412,21 @@ def validate_and_promote(state: SLIState, progress: Progress) -> SLIState:
         )
         state.promoted = bool(result.get("ok"))
         state.chunks_added = int(result.get("chunks_added") or 0)
+
+        if not state.promoted:
+            reason = str(
+                result.get("reason")
+                or "promotion rejected"
+            ).strip()
+
+            state.errors.append(
+                "promotion-blocked: "
+                + reason
+            )
+
+            state.meta[
+                "promotion_reason"
+            ] = reason
     except Exception as error:
         state.errors.append(f"promote:{error}")
         progress(f"SLI-graph promote error: {error}")
@@ -396,6 +457,12 @@ def run_sli_graph(
         root.mkdir(parents=True, exist_ok=True)
         state = SLIState(request=request, workspace=str(root))
         state = classify(state, progress)
+
+        learning_before = (
+            _workspace_snapshot(root)
+            if state.route == "topic_site"
+            else None
+        )
 
         pipelines = {
             "personal_connector": [try_personal_connector],
@@ -451,6 +518,75 @@ def run_sli_graph(
                 + f"\nSLI-graph route: {state.route}; seconds: {state.seconds}; "
                 f"promoted: {state.promoted}; chunks_added: {state.chunks_added}\n"
             )
+
+        if (
+            state.route == "topic_site"
+            and learning_before is not None
+        ):
+            try:
+                from sophyane.sli_learner import (
+                    learn_execution,
+                )
+                from sophyane.sli_schema import (
+                    ensure_current_schema,
+                )
+
+                ensure_current_schema()
+
+                learning_status = (
+                    "succeeded"
+                    if (
+                        state.success
+                        and state.promoted
+                    )
+                    else "failed"
+                )
+
+                learning_error = "\n".join(
+                    state.errors
+                )
+
+                learned = learn_execution(
+                    trace_id=(
+                        "topic-site-"
+                        + uuid.uuid4().hex[:12]
+                    ),
+                    request=state.request,
+                    workspace_before=learning_before,
+                    workspace_after=_workspace_snapshot(root),
+                    status=learning_status,
+                    reward=(
+                        1.0
+                        if learning_status == "succeeded"
+                        else -1.0
+                    ),
+                    result=state.report,
+                    elapsed_seconds=state.seconds,
+                    error=learning_error,
+                )
+
+                state.meta[
+                    "learning"
+                ] = learned
+
+                progress(
+                    "SLI-graph learned topic-site outcome "
+                    f"reward="
+                    f"{float(learned.get('quality_reward', 0.0)):+.2f}"
+                )
+
+            except Exception as error:
+                state.errors.append(
+                    "topic-site-learning:"
+                    + f"{type(error).__name__}: {error}"
+                )
+
+                progress(
+                    "SLI-graph topic-site learning "
+                    "skipped safely: "
+                    f"{type(error).__name__}: {error}"
+                )
+
         progress(f"SLI-graph done success={state.success} in {state.seconds}s")
         return state
     finally:

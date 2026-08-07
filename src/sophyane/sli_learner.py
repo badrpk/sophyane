@@ -41,13 +41,60 @@ def classify_failure(status: object, result: object, error: object = "") -> str:
 
 
 def _paths(snapshot: object) -> set[str]:
+    """Return artifact paths from supported execution-snapshot shapes."""
     if not isinstance(snapshot, dict):
         return set()
+
     paths: set[str] = set()
-    for item in snapshot.get("sample", []):
-        value = item.get("path", "") if isinstance(item, dict) else item
-        if str(value).strip():
-            paths.add(str(value).lower())
+
+    # Canonical structured snapshot used by SLI training/evaluation:
+    #
+    # {
+    #     "files": ...,
+    #     "bytes": ...,
+    #     "sample": [
+    #         {"path": "index.html", "bytes": ...},
+    #     ],
+    # }
+    sample = snapshot.get("sample", [])
+
+    if isinstance(sample, (list, tuple)):
+        for item in sample:
+            value = (
+                item.get("path", "")
+                if isinstance(item, dict)
+                else item
+            )
+
+            if str(value).strip():
+                paths.add(
+                    str(value).strip().lower()
+                )
+
+    # Compatibility with execution-runtime snapshots that map relative
+    # artifact paths directly to hashes or other fingerprints:
+    #
+    # {
+    #     "index.html": "<sha256>",
+    #     "src/app.py": "<sha256>",
+    # }
+    metadata_keys = {
+        "files",
+        "bytes",
+        "sample",
+    }
+
+    for key in snapshot:
+        value = str(key).strip()
+
+        if (
+            value
+            and value.lower() not in metadata_keys
+        ):
+            paths.add(
+                value.lower()
+            )
+
     return paths
 
 
@@ -75,8 +122,13 @@ def calculate_quality_reward(
             reward += 0.20
             signals.append("artifact_created:+0.20")
         if any(marker in evidence for marker in (
-            "passed structural verification", "validation passed",
-            "verified current workspace page", "browser artifact passed",
+            "passed structural verification",
+            "validation passed",
+            "validation: passed",
+            "final validation: passed",
+            "strict behavioral validation: passed",
+            "verified current workspace page",
+            "browser artifact passed",
         )):
             reward += 0.20
             signals.append("validation_passed:+0.20")
