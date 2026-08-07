@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from .base import (
-    _called_function_name,
+    _literal_equality_assertions,
     _normalized_request,
 )
 
@@ -65,108 +64,23 @@ class ClampContract:
         function_name: str,
         test_source: str,
     ) -> None:
-        try:
-            tree = ast.parse(
-                str(test_source or "")
-            )
-
-        except SyntaxError as error:
-            raise ValueError(
-                "Generated test contract is syntactically invalid"
-            ) from error
-
         checked = 0
         covers_lower = False
         covers_inside = False
         covers_upper = False
 
-        for node in ast.walk(tree):
-            if not isinstance(
-                node,
-                ast.Assert,
-            ):
-                continue
+        assertions = _literal_equality_assertions(
+            function_name=function_name,
+            test_source=test_source,
+            argument_count=3,
+        )
 
-            comparison = node.test
-
-            if not (
-                isinstance(
-                    comparison,
-                    ast.Compare,
-                )
-                and len(
-                    comparison.ops
-                ) == 1
-                and isinstance(
-                    comparison.ops[0],
-                    ast.Eq,
-                )
-                and len(
-                    comparison.comparators
-                ) == 1
-            ):
-                continue
-
-            left = comparison.left
-            right = comparison.comparators[0]
-
-            call: ast.Call | None = None
-            expected_node: ast.AST | None = None
-
-            if (
-                isinstance(
-                    left,
-                    ast.Call,
-                )
-                and _called_function_name(
-                    left
-                )
-                == function_name
-            ):
-                call = left
-                expected_node = right
-
-            elif (
-                isinstance(
-                    right,
-                    ast.Call,
-                )
-                and _called_function_name(
-                    right
-                )
-                == function_name
-            ):
-                call = right
-                expected_node = left
-
-            if (
-                call is None
-                or expected_node is None
-                or len(
-                    call.args
-                ) != 3
-            ):
-                continue
-
-            try:
-                value = ast.literal_eval(
-                    call.args[0]
-                )
-                lower = ast.literal_eval(
-                    call.args[1]
-                )
-                upper = ast.literal_eval(
-                    call.args[2]
-                )
-                expected = ast.literal_eval(
-                    expected_node
-                )
-
-            except (
-                ValueError,
-                TypeError,
-            ):
-                continue
+        for arguments, expected in assertions:
+            (
+                value,
+                lower,
+                upper,
+            ) = arguments
 
             items = (
                 value,
@@ -203,8 +117,10 @@ class ClampContract:
 
             if value < lower:
                 covers_lower = True
+
             elif value > upper:
                 covers_upper = True
+
             else:
                 covers_inside = True
 
@@ -217,10 +133,13 @@ class ClampContract:
                     f"test expects {expected!r}."
                 )
 
-        if checked > 0 and not (
-            covers_lower
-            and covers_inside
-            and covers_upper
+        if (
+            checked > 0
+            and not (
+                covers_lower
+                and covers_inside
+                and covers_upper
+            )
         ):
             raise ValueError(
                 "Generated pytest is correct for the CURRENT clamp request, "

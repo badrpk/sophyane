@@ -82,3 +82,143 @@ def _called_function_name(
         return func.attr
 
     return None
+
+
+def _literal_equality_assertions(
+    *,
+    function_name: str,
+    test_source: str,
+    argument_count: int | None = None,
+) -> tuple[
+    tuple[
+        tuple[object, ...],
+        object,
+    ],
+    ...,
+]:
+    """Extract literal ``function(...) == expected`` pytest assertions.
+
+    Both direct calls and module-qualified calls are accepted. Dynamic
+    expressions are deliberately ignored rather than assigned invented
+    semantics by the harness.
+    """
+    try:
+        tree = ast.parse(
+            str(test_source or "")
+        )
+
+    except SyntaxError as error:
+        raise ValueError(
+            "Generated test contract is syntactically invalid"
+        ) from error
+
+    results: list[
+        tuple[
+            tuple[object, ...],
+            object,
+        ]
+    ] = []
+
+    for node in ast.walk(tree):
+        if not isinstance(
+            node,
+            ast.Assert,
+        ):
+            continue
+
+        comparison = node.test
+
+        if not (
+            isinstance(
+                comparison,
+                ast.Compare,
+            )
+            and len(
+                comparison.ops
+            ) == 1
+            and isinstance(
+                comparison.ops[0],
+                ast.Eq,
+            )
+            and len(
+                comparison.comparators
+            ) == 1
+        ):
+            continue
+
+        left = comparison.left
+        right = comparison.comparators[0]
+
+        call: ast.Call | None = None
+        expected_node: ast.AST | None = None
+
+        if (
+            isinstance(
+                left,
+                ast.Call,
+            )
+            and _called_function_name(
+                left
+            )
+            == function_name
+        ):
+            call = left
+            expected_node = right
+
+        elif (
+            isinstance(
+                right,
+                ast.Call,
+            )
+            and _called_function_name(
+                right
+            )
+            == function_name
+        ):
+            call = right
+            expected_node = left
+
+        if (
+            call is None
+            or expected_node is None
+        ):
+            continue
+
+        if (
+            argument_count is not None
+            and len(
+                call.args
+            )
+            != argument_count
+        ):
+            continue
+
+        try:
+            arguments = tuple(
+                ast.literal_eval(
+                    argument
+                )
+                for argument in call.args
+            )
+
+            expected = ast.literal_eval(
+                expected_node
+            )
+
+        except (
+            ValueError,
+            TypeError,
+        ):
+            # Dynamic expressions remain subject to runtime pytest truth.
+            continue
+
+        results.append(
+            (
+                arguments,
+                expected,
+            )
+        )
+
+    return tuple(
+        results
+    )

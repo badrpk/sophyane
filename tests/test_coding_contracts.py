@@ -1274,3 +1274,106 @@ def test_clamp_red_guidance_targets_missing_lower_bound() -> None:
     assert "upper bound" in guidance
     assert "lower bound" in guidance
     assert "deliberately incorrect" in guidance
+
+
+def test_literal_equality_assertion_extractor_direct_call() -> None:
+    from sophyane.coding_contract_nodes.base import (
+        _literal_equality_assertions,
+    )
+
+    assertions = _literal_equality_assertions(
+        function_name="clamp_value",
+        test_source="""
+from bounds import clamp_value
+
+def test_one():
+    assert clamp_value(-5, 0, 10) == 0
+""",
+        argument_count=3,
+    )
+
+    assert assertions == (
+        (
+            (
+                -5,
+                0,
+                10,
+            ),
+            0,
+        ),
+    )
+
+
+def test_literal_equality_assertion_extractor_module_call() -> None:
+    from sophyane.coding_contract_nodes.base import (
+        _literal_equality_assertions,
+    )
+
+    assertions = _literal_equality_assertions(
+        function_name="clamp_value",
+        test_source="""
+import bounds
+
+def test_one():
+    assert bounds.clamp_value(14, 0, 10) == 10
+""",
+        argument_count=3,
+    )
+
+    assert assertions == (
+        (
+            (
+                14,
+                0,
+                10,
+            ),
+            10,
+        ),
+    )
+
+
+def test_literal_equality_assertion_extractor_ignores_dynamic_values() -> None:
+    from sophyane.coding_contract_nodes.base import (
+        _literal_equality_assertions,
+    )
+
+    assertions = _literal_equality_assertions(
+        function_name="clamp_value",
+        test_source="""
+from bounds import clamp_value
+
+def test_dynamic(value, lower, upper, expected):
+    assert clamp_value(value, lower, upper) == expected
+""",
+        argument_count=3,
+    )
+
+    assert assertions == ()
+
+
+def test_literal_equality_assertion_extractor_accepts_reversed_equality() -> None:
+    from sophyane.coding_contract_nodes.base import (
+        _literal_equality_assertions,
+    )
+
+    assertions = _literal_equality_assertions(
+        function_name="clamp_value",
+        test_source="""
+from bounds import clamp_value
+
+def test_reverse():
+    assert 0 == clamp_value(-5, 0, 10)
+""",
+        argument_count=3,
+    )
+
+    assert assertions == (
+        (
+            (
+                -5,
+                0,
+                10,
+            ),
+            0,
+        ),
+    )
