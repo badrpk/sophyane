@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 
 from .base import (
-    _called_function_name,
+    _literal_equality_assertions,
     _normalized_request,
 )
 
@@ -73,96 +72,19 @@ class UniqueSortContract:
         function_name: str,
         test_source: str,
     ) -> None:
-        try:
-            tree = ast.parse(
-                str(test_source or "")
-            )
-        except SyntaxError as error:
-            raise ValueError(
-                "Generated test contract is syntactically invalid"
-            ) from error
-
         checked = 0
         discriminates_from_plain_sort = False
 
-        for node in ast.walk(tree):
-            if not isinstance(
-                node,
-                ast.Assert,
-            ):
-                continue
+        assertions = _literal_equality_assertions(
+            function_name=function_name,
+            test_source=test_source,
+            argument_count=1,
+        )
 
-            comparison = node.test
-
-            if not (
-                isinstance(
-                    comparison,
-                    ast.Compare,
-                )
-                and len(comparison.ops) == 1
-                and isinstance(
-                    comparison.ops[0],
-                    ast.Eq,
-                )
-                and len(
-                    comparison.comparators
-                ) == 1
-            ):
-                continue
-
-            left = comparison.left
-            right = comparison.comparators[0]
-
-            call: ast.Call | None = None
-            expected_node: ast.AST | None = None
-
-            if (
-                isinstance(
-                    left,
-                    ast.Call,
-                )
-                and _called_function_name(
-                    left
-                )
-                == function_name
-            ):
-                call = left
-                expected_node = right
-
-            elif (
-                isinstance(
-                    right,
-                    ast.Call,
-                )
-                and _called_function_name(
-                    right
-                )
-                == function_name
-            ):
-                call = right
-                expected_node = left
-
-            if (
-                call is None
-                or expected_node is None
-                or len(call.args) != 1
-            ):
-                continue
-
-            try:
-                values = ast.literal_eval(
-                    call.args[0]
-                )
-
-                expected = ast.literal_eval(
-                    expected_node
-                )
-
-            except (
-                ValueError,
-                TypeError,
-            ):
-                continue
+        for arguments, expected in assertions:
+            (
+                values,
+            ) = arguments
 
             if not isinstance(
                 values,
@@ -195,7 +117,11 @@ class UniqueSortContract:
 
             checked += 1
 
-            if sorted(values) != actual:
+            plain_sorted = sorted(
+                values
+            )
+
+            if actual != plain_sorted:
                 discriminates_from_plain_sort = True
 
             if list(expected) != actual:
@@ -214,8 +140,8 @@ class UniqueSortContract:
             raise ValueError(
                 "Generated pytest is correct for the CURRENT unique-sort "
                 "request, but its literal examples are non-discriminating: "
-                "plain sorting and unique sorting produce the same output. "
-                "Include at least one ordinary input containing duplicates."
+                "they do not expose duplicate removal. Include at least one "
+                "ordinary literal input containing duplicates."
             )
 
     def red_defect_guidance(

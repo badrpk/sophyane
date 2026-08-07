@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import ast
 import statistics
 from dataclasses import dataclass
 
 from .base import (
-    _called_function_name,
+    _literal_equality_assertions,
     _normalized_request,
 )
 
@@ -54,105 +53,19 @@ class MedianContract:
         function_name: str,
         test_source: str,
     ) -> None:
-        """Validate literal median assertions against Python's reference median."""
-        try:
-            tree = ast.parse(
-                str(test_source or "")
-            )
-
-        except SyntaxError as error:
-            raise ValueError(
-                "Generated test contract is syntactically invalid"
-            ) from error
-
         checked = 0
         discriminates_from_mean = False
 
-        for node in ast.walk(tree):
-            if not isinstance(
-                node,
-                ast.Assert,
-            ):
-                continue
+        assertions = _literal_equality_assertions(
+            function_name=function_name,
+            test_source=test_source,
+            argument_count=1,
+        )
 
-            comparison = node.test
-
-            if not (
-                isinstance(
-                    comparison,
-                    ast.Compare,
-                )
-                and len(
-                    comparison.ops
-                ) == 1
-                and isinstance(
-                    comparison.ops[0],
-                    ast.Eq,
-                )
-                and len(
-                    comparison.comparators
-                ) == 1
-            ):
-                continue
-
-            left = comparison.left
-            right = (
-                comparison
-                .comparators[0]
-            )
-
-            call: ast.Call | None = None
-            expected_node: ast.AST | None = None
-
-            if (
-                isinstance(
-                    left,
-                    ast.Call,
-                )
-                and _called_function_name(
-                    left
-                )
-                == function_name
-            ):
-                call = left
-                expected_node = right
-
-            elif (
-                isinstance(
-                    right,
-                    ast.Call,
-                )
-                and _called_function_name(
-                    right
-                )
-                == function_name
-            ):
-                call = right
-                expected_node = left
-
-            if (
-                call is None
-                or expected_node is None
-                or len(
-                    call.args
-                ) != 1
-            ):
-                continue
-
-            try:
-                values = ast.literal_eval(
-                    call.args[0]
-                )
-                expected = ast.literal_eval(
-                    expected_node
-                )
-
-            except (
-                ValueError,
-                TypeError,
-            ):
-                # Dynamic/non-literal assertions remain subject to runtime truth.
-                continue
+        for arguments, expected in assertions:
+            (
+                values,
+            ) = arguments
 
             if not isinstance(
                 values,
@@ -161,7 +74,7 @@ class MedianContract:
                 continue
 
             if not values:
-                # Empty-input semantics are not implied merely by "median".
+                # Empty-input behavior is not implied merely by "median".
                 continue
 
             if not all(
