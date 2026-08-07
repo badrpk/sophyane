@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .base import (
-    _literal_equality_assertions,
     _normalized_request,
+    _numeric_list_equality_assertions,
 )
 
 
@@ -75,41 +75,12 @@ class UniqueSortContract:
         checked = 0
         discriminates_from_plain_sort = False
 
-        assertions = _literal_equality_assertions(
+        assertions = _numeric_list_equality_assertions(
             function_name=function_name,
             test_source=test_source,
-            argument_count=1,
         )
 
-        for arguments, expected in assertions:
-            (
-                values,
-            ) = arguments
-
-            if not isinstance(
-                values,
-                (list, tuple),
-            ):
-                continue
-
-            if not isinstance(
-                expected,
-                (list, tuple),
-            ):
-                continue
-
-            if not all(
-                isinstance(
-                    value,
-                    (int, float),
-                )
-                and not isinstance(
-                    value,
-                    bool,
-                )
-                for value in values
-            ):
-                continue
+        for values, expected in assertions:
 
             actual = sorted(
                 set(values)

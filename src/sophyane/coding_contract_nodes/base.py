@@ -222,3 +222,75 @@ def _literal_equality_assertions(
     return tuple(
         results
     )
+
+
+def _numeric_list_equality_assertions(
+    *,
+    function_name: str,
+    test_source: str,
+) -> tuple[
+    tuple[
+        list[int | float] | tuple[int | float, ...],
+        list[object] | tuple[object, ...],
+    ],
+    ...,
+]:
+    """Extract literal one-argument numeric-list equality assertions.
+
+    This helper owns only structural/type facts shared by list-oriented
+    contracts. It deliberately does not assign sorting, uniqueness, order,
+    or other domain semantics.
+    """
+    assertions = _literal_equality_assertions(
+        function_name=function_name,
+        test_source=test_source,
+        argument_count=1,
+    )
+
+    results: list[
+        tuple[
+            list[int | float] | tuple[int | float, ...],
+            list[object] | tuple[object, ...],
+        ]
+    ] = []
+
+    for arguments, expected in assertions:
+        (
+            values,
+        ) = arguments
+
+        if not isinstance(
+            values,
+            (list, tuple),
+        ):
+            continue
+
+        if not isinstance(
+            expected,
+            (list, tuple),
+        ):
+            continue
+
+        if not all(
+            isinstance(
+                value,
+                (int, float),
+            )
+            and not isinstance(
+                value,
+                bool,
+            )
+            for value in values
+        ):
+            continue
+
+        results.append(
+            (
+                values,
+                expected,
+            )
+        )
+
+    return tuple(
+        results
+    )

@@ -1377,3 +1377,103 @@ def test_reverse():
             0,
         ),
     )
+
+
+def test_numeric_list_equality_assertions_accept_list_input() -> None:
+    from sophyane.coding_contract_nodes.base import (
+        _numeric_list_equality_assertions,
+    )
+
+    assertions = _numeric_list_equality_assertions(
+        function_name="ascending_values",
+        test_source="""
+from ordering import ascending_values
+
+def test_values():
+    assert ascending_values([9, 1, 5, 2]) == [1, 2, 5, 9]
+""",
+    )
+
+    assert assertions == (
+        (
+            [9, 1, 5, 2],
+            [1, 2, 5, 9],
+        ),
+    )
+
+
+def test_numeric_list_equality_assertions_accept_tuple_input() -> None:
+    from sophyane.coding_contract_nodes.base import (
+        _numeric_list_equality_assertions,
+    )
+
+    assertions = _numeric_list_equality_assertions(
+        function_name="ascending_values",
+        test_source="""
+from ordering import ascending_values
+
+def test_values():
+    assert ascending_values((4, 1, 3)) == [1, 3, 4]
+""",
+    )
+
+    assert assertions == (
+        (
+            (4, 1, 3),
+            [1, 3, 4],
+        ),
+    )
+
+
+def test_numeric_list_equality_assertions_reject_bool_input() -> None:
+    from sophyane.coding_contract_nodes.base import (
+        _numeric_list_equality_assertions,
+    )
+
+    assertions = _numeric_list_equality_assertions(
+        function_name="ascending_values",
+        test_source="""
+from ordering import ascending_values
+
+def test_values():
+    assert ascending_values([3, True, 1]) == [1, True, 3]
+""",
+    )
+
+    assert assertions == ()
+
+
+def test_numeric_list_equality_assertions_ignore_non_list_argument() -> None:
+    from sophyane.coding_contract_nodes.base import (
+        _numeric_list_equality_assertions,
+    )
+
+    assertions = _numeric_list_equality_assertions(
+        function_name="ascending_values",
+        test_source="""
+from ordering import ascending_values
+
+def test_values():
+    assert ascending_values(42) == [42]
+""",
+    )
+
+    assert assertions == ()
+
+
+def test_numeric_list_equality_assertions_ignore_non_sequence_expected() -> None:
+    from sophyane.coding_contract_nodes.base import (
+        _numeric_list_equality_assertions,
+    )
+
+    assertions = _numeric_list_equality_assertions(
+        function_name="ascending_values",
+        test_source="""
+from ordering import ascending_values
+
+def test_values():
+    assert ascending_values([3, 1, 2]) == 123
+""",
+    )
+
+    assert assertions == ()
