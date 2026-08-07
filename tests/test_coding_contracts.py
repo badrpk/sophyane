@@ -367,6 +367,7 @@ def test_registered_contract_snapshot_contains_builtin_nodes() -> None:
         "median",
         "sort",
         "descending_sort",
+        "unique_sort",
     )
 
 
@@ -427,6 +428,7 @@ def test_builtin_contract_loader_returns_deterministic_nodes() -> None:
         "median",
         "sort",
         "descending_sort",
+        "unique_sort",
     )
 
 
@@ -584,6 +586,7 @@ def test_builtin_loader_can_populate_isolated_registry() -> None:
         "median",
         "sort",
         "descending_sort",
+        "unique_sort",
     )
 
 
@@ -947,3 +950,114 @@ def test_nonmatching_request_has_no_red_defect_guidance() -> None:
         )
         == ""
     )
+
+
+UNIQUE_SORT_REQUEST = (
+    "Create unique_order.py with unique_values(values). "
+    "Sort numeric values in ascending order and remove duplicates."
+)
+
+
+def test_unique_sort_contract_matches() -> None:
+    contract = match_coding_contract(
+        UNIQUE_SORT_REQUEST
+    )
+
+    assert contract is not None
+    assert contract.name == "unique_sort"
+    assert contract.priority == 200
+
+
+def test_unique_sort_overrides_generic_sort() -> None:
+    from sophyane.coding_contracts import (
+        registered_coding_contracts,
+    )
+
+    matches = [
+        contract
+        for contract in registered_coding_contracts()
+        if contract.matches(
+            UNIQUE_SORT_REQUEST
+        )
+    ]
+
+    names = {
+        contract.name
+        for contract in matches
+    }
+
+    assert "sort" in names
+    assert "unique_sort" in names
+
+    selected = match_coding_contract(
+        UNIQUE_SORT_REQUEST
+    )
+
+    assert selected is not None
+    assert selected.name == "unique_sort"
+
+
+def test_unique_sort_objective_tests() -> None:
+    source = objective_preflight_test_source(
+        request=UNIQUE_SORT_REQUEST,
+        module_name="unique_order",
+        function_name="unique_values",
+    )
+
+    assert source is not None
+
+    assert (
+        "unique_values([3, 1, 3, 2, 1]) == [1, 2, 3]"
+        in source
+    )
+
+
+def test_wrong_unique_sort_contract_rejected() -> None:
+    source = """
+from unique_order import unique_values
+
+def test_wrong():
+    assert unique_values([3, 1, 3, 2, 1]) == [1, 1, 2, 3, 3]
+"""
+
+    with pytest.raises(
+        ValueError,
+        match="unique-sort request",
+    ):
+        validate_generated_test_contract(
+            request=UNIQUE_SORT_REQUEST,
+            function_name="unique_values",
+            test_source=source,
+        )
+
+
+def test_unique_sort_requires_duplicate_witness() -> None:
+    source = """
+from unique_order import unique_values
+
+def test_weak():
+    assert unique_values([3, 1, 2]) == [1, 2, 3]
+"""
+
+    with pytest.raises(
+        ValueError,
+        match="non-discriminating",
+    ):
+        validate_generated_test_contract(
+            request=UNIQUE_SORT_REQUEST,
+            function_name="unique_values",
+            test_source=source,
+        )
+
+
+def test_unique_sort_red_guidance_targets_missing_deduplication() -> None:
+    from sophyane.coding_contracts import (
+        format_red_defect_guidance,
+    )
+
+    guidance = format_red_defect_guidance(
+        request=UNIQUE_SORT_REQUEST
+    ).lower()
+
+    assert "preserve duplicates" in guidance
+    assert "deliberately incorrect" in guidance

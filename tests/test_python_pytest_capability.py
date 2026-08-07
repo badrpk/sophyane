@@ -828,3 +828,285 @@ def test_contract_guided_defect_and_green_repair_are_distinct(
         + "\n"
         + green.stderr
     )
+
+
+def test_unique_sort_red_generation_prompt_contains_selected_guidance(
+    monkeypatch,
+) -> None:
+    import sophyane.local_coding_capability as capability
+
+    request = (
+        "Create unique_lock.py with unique_values(values) and use pytest "
+        "RED-GREEN repair until all tests pass. Sort numeric values in "
+        "ascending order and remove duplicates."
+    )
+
+    captured_prompts: list[str] = []
+
+    def fake_model_call(
+        prompt,
+        **_kwargs,
+    ):
+        captured_prompts.append(
+            str(prompt)
+        )
+
+        return """
+{
+  "broken_source": "def unique_values(values):\\n    return sorted(values)\\n",
+  "test_source": "from unique_lock import unique_values\\n\\ndef test_unique():\\n    assert unique_values([3, 1, 3, 2, 1]) == [1, 2, 3]\\n"
+}
+"""
+
+    monkeypatch.setattr(
+        capability,
+        "_ask_local_coding_model",
+        fake_model_call,
+    )
+
+    broken_source, test_source = (
+        capability._adaptive_generation(
+            request=request,
+            filename="unique_lock.py",
+            function_name="unique_values",
+            parameters=[
+                "values",
+            ],
+            execution_feedback="",
+            memory_context=None,
+            generation_round=0,
+        )
+    )
+
+    assert captured_prompts
+
+    prompt = captured_prompts[0].lower()
+
+    assert (
+        "contract-directed red defect guidance"
+        in prompt
+    )
+
+    assert (
+        "preserve duplicates"
+        in prompt
+    )
+
+    assert (
+        "plausible deliberate red defect"
+        in prompt
+    )
+
+    assert (
+        "return sorted(values)"
+        in broken_source
+    )
+
+    # The model-authored tests are not authoritative for a known
+    # deterministic contract. The unique-sort node supplies them.
+    assert (
+        "test_objective_unique_sort_duplicates"
+        in test_source
+    )
+
+    assert (
+        "unique_values([3, 1, 3, 2, 1]) == [1, 2, 3]"
+        in test_source
+    )
+
+
+def test_unique_sort_guided_defect_is_objective_red(
+    tmp_path,
+) -> None:
+    from sophyane.coding_contracts import (
+        format_red_defect_guidance,
+        objective_preflight_test_source,
+    )
+
+    request = (
+        "Create unique_lock.py with unique_values(values). "
+        "Sort numeric values in ascending order and remove duplicates."
+    )
+
+    guidance = format_red_defect_guidance(
+        request=request
+    )
+
+    assert (
+        "preserve duplicates"
+        in guidance.lower()
+    )
+
+    tests = objective_preflight_test_source(
+        request=request,
+        module_name="unique_lock",
+        function_name="unique_values",
+    )
+
+    assert tests is not None
+
+    source_path = (
+        tmp_path
+        / "unique_lock.py"
+    )
+
+    test_path = (
+        tmp_path
+        / "test_unique_lock.py"
+    )
+
+    # Plausible contract-directed defect:
+    # ordering is correct, duplicate removal is missing.
+    source_path.write_text(
+        (
+            "def unique_values(values):\n"
+            "    return sorted(values)\n"
+        ),
+        encoding="utf-8",
+    )
+
+    test_path.write_text(
+        tests,
+        encoding="utf-8",
+    )
+
+    import subprocess
+    import sys
+
+    red = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            test_path.name,
+        ],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    output = (
+        red.stdout
+        + "\n"
+        + red.stderr
+    )
+
+    assert red.returncode != 0
+
+    assert (
+        "test_objective_unique_sort_duplicates"
+        in output
+    )
+
+    assert (
+        "test_objective_unique_sort_unsorted"
+        in output
+    )
+
+
+def test_unique_sort_guided_red_to_green_witness(
+    tmp_path,
+) -> None:
+    from sophyane.coding_contracts import (
+        objective_preflight_test_source,
+    )
+
+    request = (
+        "Create unique_lock.py with unique_values(values). "
+        "Sort numeric values in ascending order and remove duplicates."
+    )
+
+    tests = objective_preflight_test_source(
+        request=request,
+        module_name="unique_lock",
+        function_name="unique_values",
+    )
+
+    assert tests is not None
+
+    source_path = (
+        tmp_path
+        / "unique_lock.py"
+    )
+
+    test_path = (
+        tmp_path
+        / "test_unique_lock.py"
+    )
+
+    test_path.write_text(
+        tests,
+        encoding="utf-8",
+    )
+
+    source_path.write_text(
+        (
+            "def unique_values(values):\n"
+            "    return sorted(values)\n"
+        ),
+        encoding="utf-8",
+    )
+
+    import subprocess
+    import sys
+
+    red = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            test_path.name,
+        ],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert red.returncode != 0
+
+    source_path.write_text(
+        (
+            "def unique_values(values):\n"
+            "    return sorted(set(values))\n"
+        ),
+        encoding="utf-8",
+    )
+
+    pycache = (
+        tmp_path
+        / "__pycache__"
+    )
+
+    if pycache.exists():
+        import shutil
+
+        shutil.rmtree(
+            pycache
+        )
+
+    green = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            test_path.name,
+        ],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert green.returncode == 0, (
+        green.stdout
+        + "\n"
+        + green.stderr
+    )

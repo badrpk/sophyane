@@ -6,6 +6,7 @@ from .base import CodingContract
 from .descending_sort import DescendingSortContract
 from .median import MedianContract
 from .sort import SortContract
+from .unique_sort import UniqueSortContract
 
 
 def builtin_coding_contracts(
@@ -15,6 +16,7 @@ def builtin_coding_contracts(
         MedianContract(),
         SortContract(),
         DescendingSortContract(),
+        UniqueSortContract(),
     )
 
 
@@ -23,5 +25,6 @@ __all__ = [
     "DescendingSortContract",
     "MedianContract",
     "SortContract",
+    "UniqueSortContract",
     "builtin_coding_contracts",
 ]
