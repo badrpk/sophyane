@@ -1212,6 +1212,49 @@ def _record_adaptive_model_call(
         pass
 
 
+def _normalize_adaptive_model_result(
+    result: object,
+) -> tuple[str, dict[str, Any]]:
+    """Normalize legacy/plain and metadata-bearing model responses.
+
+    Tests, plugins, and older integrations may monkeypatch or wrap
+    _ask_local_coding_model and return only the response string.
+    Harness telemetry must not change that compatibility contract.
+    """
+    if (
+        isinstance(
+            result,
+            tuple,
+        )
+        and len(result) == 2
+        and isinstance(
+            result[0],
+            str,
+        )
+        and isinstance(
+            result[1],
+            dict,
+        )
+    ):
+        return (
+            result[0],
+            result[1],
+        )
+
+    if isinstance(
+        result,
+        str,
+    ):
+        return (
+            result,
+            {},
+        )
+
+    raise RuntimeError(
+        "Adaptive coding model returned an unsupported response shape"
+    )
+
+
 def _ask_local_coding_model(
     prompt: str,
     *,
@@ -1598,231 +1641,16 @@ def _validate_generated_test_contract(
     function_name: str,
     test_source: str,
 ) -> None:
-    """Reject generated tests that contradict a deterministic request contract.
-
-    This is deliberately narrow rather than pretending to solve arbitrary
-    program semantics. The adaptive coding capability currently handles
-    bounded function-generation tasks, and known deterministic contracts can
-    be checked before generated tests become immutable.
-
-    For an explicitly requested median function, literal list assertions are
-    compared against Python's reference statistics.median implementation.
-    """
-
-    request_text = " ".join(
-        str(request or "")
-        .casefold()
-        .split()
+    """Compatibility wrapper for deterministic coding-contract validation."""
+    from sophyane.coding_contracts import (
+        validate_generated_test_contract,
     )
 
-    if "median" not in request_text:
-        return
-
-    import statistics
-
-    try:
-        tree = ast.parse(
-            str(test_source or "")
-        )
-    except SyntaxError as error:
-        raise ValueError(
-            "Generated test contract is syntactically invalid"
-        ) from error
-
-    checked = 0
-    discriminates_from_mean = False
-
-    for node in ast.walk(tree):
-
-        if not isinstance(
-            node,
-            ast.Assert,
-        ):
-            continue
-
-        comparison = node.test
-
-        if not (
-            isinstance(
-                comparison,
-                ast.Compare,
-            )
-            and len(
-                comparison.ops
-            ) == 1
-            and isinstance(
-                comparison.ops[0],
-                ast.Eq,
-            )
-            and len(
-                comparison.comparators
-            ) == 1
-        ):
-            continue
-
-        left = comparison.left
-        right = comparison.comparators[0]
-
-        call = None
-        expected_node = None
-
-        if (
-            isinstance(
-                left,
-                ast.Call,
-            )
-            and (
-                (
-                    isinstance(
-                        left.func,
-                        ast.Name,
-                    )
-                    and left.func.id
-                        == function_name
-                )
-                or (
-                    isinstance(
-                        left.func,
-                        ast.Attribute,
-                    )
-                    and left.func.attr
-                        == function_name
-                )
-            )
-        ):
-            call = left
-            expected_node = right
-
-        elif (
-            isinstance(
-                right,
-                ast.Call,
-            )
-            and (
-                (
-                    isinstance(
-                        right.func,
-                        ast.Name,
-                    )
-                    and right.func.id
-                        == function_name
-                )
-                or (
-                    isinstance(
-                        right.func,
-                        ast.Attribute,
-                    )
-                    and right.func.attr
-                        == function_name
-                )
-            )
-        ):
-            call = right
-            expected_node = left
-
-        if (
-            call is None
-            or expected_node is None
-            or len(
-                call.args
-            ) != 1
-        ):
-            continue
-
-        try:
-            values = ast.literal_eval(
-                call.args[0]
-            )
-
-            expected = ast.literal_eval(
-                expected_node
-            )
-
-        except (
-            ValueError,
-            TypeError,
-        ):
-            # Non-literal assertions remain subject to runtime validation.
-            continue
-
-        if not isinstance(
-            values,
-            (list, tuple),
-        ):
-            continue
-
-        if not values:
-            # Empty-input semantics are not implied merely by "median".
-            continue
-
-        if not all(
-            isinstance(
-                value,
-                (int, float),
-            )
-            and not isinstance(
-                value,
-                bool,
-            )
-            for value in values
-        ):
-            continue
-
-        if not isinstance(
-            expected,
-            (int, float),
-        ) or isinstance(
-            expected,
-            bool,
-        ):
-            continue
-
-        actual = statistics.median(
-            values
-        )
-
-        checked += 1
-
-        # A correct median assertion is not necessarily useful as a RED
-        # discriminator. Arithmetic mean is a common plausible defect, and
-        # symmetric examples such as [1, 3, 5] accidentally give the same
-        # answer for mean and median. Require at least one literal ordinary
-        # example that separates the requested median contract from mean.
-        arithmetic_mean = (
-            sum(values)
-            / len(values)
-        )
-
-        if float(actual) != float(
-            arithmetic_mean
-        ):
-            discriminates_from_mean = True
-
-        if float(actual) != float(
-            expected
-        ):
-            raise ValueError(
-                "Generated pytest contradicts the CURRENT "
-                "median request: "
-                f"{function_name}({values!r}) should equal "
-                f"{actual!r}, but the generated test expects "
-                f"{expected!r}. Regenerate the test contract "
-                "from the user request before RED execution."
-            )
-
-    if checked > 0 and not discriminates_from_mean:
-        raise ValueError(
-            "Generated pytest is correct for the CURRENT median request, "
-            "but its literal examples are non-discriminating: arithmetic "
-            "mean and median produce the same expected values. Include at "
-            "least one ordinary literal input where mean != median, such as "
-            "[1, 2, 100] or another asymmetric/unsorted case."
-        )
-
-    if checked == 0:
-        # Do not invent semantics for arbitrary dynamic tests.
-        # Existing static/runtime validators continue to apply.
-        return
+    validate_generated_test_contract(
+        request=request,
+        function_name=function_name,
+        test_source=test_source,
+    )
 
 
 def _objective_preflight_test_source(
@@ -1831,25 +1659,15 @@ def _objective_preflight_test_source(
     module_name: str,
     function_name: str,
 ) -> str | None:
-    """Return an objective harness-owned test contract when semantics are known."""
-    request_lower = str(
-        request or ""
-    ).lower()
+    """Compatibility wrapper for harness-owned objective tests."""
+    from sophyane.coding_contracts import (
+        objective_preflight_test_source,
+    )
 
-    if "median" not in request_lower:
-        return None
-
-    # The CURRENT request explicitly asks for odd/even numeric median behavior.
-    # These witnesses are deterministic, ordinary and discriminate median from
-    # the plausible arithmetic-mean defect.
-    return (
-        f"from {module_name} import {function_name}\n"
-        "\n"
-        "def test_objective_median_odd():\n"
-        f"    assert {function_name}([1, 2, 100]) == 2\n"
-        "\n"
-        "def test_objective_median_even():\n"
-        f"    assert {function_name}([1, 4, 9, 100]) == 6.5\n"
+    return objective_preflight_test_source(
+        request=request,
+        module_name=module_name,
+        function_name=function_name,
     )
 
 
@@ -1857,41 +1675,13 @@ def _format_red_preflight_constraints(
     *,
     request: str,
 ) -> str:
-    """Provide deterministic task constraints known before RED generation."""
-    request_lower = str(
-        request or ""
-    ).lower()
+    """Compatibility wrapper for deterministic preflight constraints."""
+    from sophyane.coding_contracts import (
+        format_red_preflight_constraints,
+    )
 
-    constraints: list[str] = []
-
-    if "median" in request_lower:
-        constraints.extend(
-            [
-                (
-                    "For this median task, tests must include at least one "
-                    "ordinary literal numeric example where arithmetic mean "
-                    "and median differ."
-                ),
-                (
-                    "Objective witness available before generation: "
-                    "[1, 2, 100] has median 2."
-                ),
-                (
-                    "If [1, 2, 100] is used, its expected value MUST be 2; "
-                    "do not substitute the arithmetic mean."
-                ),
-            ]
-        )
-
-    if not constraints:
-        return ""
-
-    return (
-        "OBJECTIVE PREFLIGHT CONTRACT CONSTRAINTS:\n"
-        + "\n".join(
-            f"- {constraint}"
-            for constraint in constraints
-        )
+    return format_red_preflight_constraints(
+        request=request,
     )
 
 
@@ -1901,100 +1691,15 @@ def _format_red_corrective_constraints(
     last_error: str = "",
     execution_feedback: str = "",
 ) -> str:
-    """Turn objective RED rejection evidence into compact retry constraints."""
-    combined = (
-        str(last_error or "")
-        + "\n"
-        + str(execution_feedback or "")
-    ).lower()
+    """Compatibility wrapper for objective RED retry constraints."""
+    from sophyane.coding_contracts import (
+        format_red_corrective_constraints,
+    )
 
-    request_lower = str(request or "").lower()
-
-    constraints: list[str] = []
-
-    if "median" in request_lower:
-        if (
-            "non-discriminating" in combined
-            or "mean and median" in combined
-            or "arithmetic mean" in combined
-        ):
-            constraints.extend(
-                [
-                    (
-                        "For this median task, include at least one ordinary "
-                        "literal numeric example where arithmetic mean and "
-                        "median differ."
-                    ),
-                    (
-                        "Known objective witness: [1, 2, 100] has median 2 "
-                        "while its arithmetic mean is not 2."
-                    ),
-                    (
-                        "If that witness is used, its expected median MUST be 2."
-                    ),
-                ]
-            )
-
-        if (
-            "contradicts the current median request"
-            in combined
-        ):
-            constraints.extend(
-                [
-                    (
-                        "Recompute every expected median value from the CURRENT "
-                        "request; do not preserve an expected value that the "
-                        "validator already rejected."
-                    ),
-                    (
-                        "Known objective contract example: median([1, 2, 100]) "
-                        "is 2."
-                    ),
-                ]
-            )
-
-    if (
-        "repeated a red source/test pair"
-        in combined
-        or "materially different" in combined
-    ):
-        constraints.append(
-            (
-                "Do not repeat an observationally equivalent rejected "
-                "broken_source/test_source pair; change the behavioral defect "
-                "and/or the discriminating ordinary inputs."
-            )
-        )
-
-    if (
-        "passed every generated pytest test"
-        in combined
-        or "test suite was non-discriminating"
-        in combined
-    ):
-        constraints.append(
-            (
-                "At least one ordinary behavioral assertion MUST fail against "
-                "the deliberately defective implementation while remaining "
-                "correct for the requested behavior."
-            )
-        )
-
-    if not constraints:
-        return ""
-
-    unique: list[str] = []
-
-    for constraint in constraints:
-        if constraint not in unique:
-            unique.append(constraint)
-
-    return (
-        "OBJECTIVE CORRECTIVE CONSTRAINTS FOR THIS RETRY:\n"
-        + "\n".join(
-            f"- {constraint}"
-            for constraint in unique
-        )
+    return format_red_corrective_constraints(
+        request=request,
+        last_error=last_error,
+        execution_feedback=execution_feedback,
     )
 
 
@@ -2117,12 +1822,19 @@ and/or more discriminating tests that directly correct that weakness.
         model_metadata: dict[str, Any] = {}
 
         try:
-            model_text, model_metadata = (
+            model_result = (
                 _ask_local_coding_model(
                     prompt,
                     temperature=red_temperature,
                     return_metadata=True,
                 )
+            )
+
+            (
+                model_text,
+                model_metadata,
+            ) = _normalize_adaptive_model_result(
+                model_result
             )
 
             model_latency = (
@@ -2703,12 +2415,19 @@ Rules:
     model_metadata: dict[str, Any] = {}
 
     try:
-        model_text, model_metadata = (
+        model_result = (
             _ask_local_coding_model(
                 prompt,
                 temperature=repair_temperature,
                 return_metadata=True,
             )
+        )
+
+        (
+            model_text,
+            model_metadata,
+        ) = _normalize_adaptive_model_result(
+            model_result
         )
 
         model_latency = (
