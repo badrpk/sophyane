@@ -703,9 +703,54 @@ class MedianContract:
         )
 
 
-_CONTRACTS: tuple[CodingContract, ...] = (
-    MedianContract(),
-    SortContract(),
+_CONTRACTS: list[CodingContract] = []
+
+
+def register_coding_contract(
+    contract: CodingContract,
+) -> None:
+    """Register one deterministic coding contract exactly once by name."""
+    name = str(
+        getattr(
+            contract,
+            "name",
+            "",
+        )
+        or ""
+    ).strip()
+
+    if not name:
+        raise ValueError(
+            "Coding contract must define a non-empty name"
+        )
+
+    if any(
+        existing.name == name
+        for existing in _CONTRACTS
+    ):
+        raise ValueError(
+            f"Coding contract {name!r} is already registered"
+        )
+
+    _CONTRACTS.append(
+        contract
+    )
+
+
+def registered_coding_contracts(
+) -> tuple[CodingContract, ...]:
+    """Return an immutable snapshot of the registered contract nodes."""
+    return tuple(
+        _CONTRACTS
+    )
+
+
+register_coding_contract(
+    MedianContract()
+)
+
+register_coding_contract(
+    SortContract()
 )
 
 
@@ -713,7 +758,7 @@ def match_coding_contract(
     request: str,
 ) -> CodingContract | None:
     """Return the first deterministic contract node matching CURRENT request."""
-    for contract in _CONTRACTS:
+    for contract in registered_coding_contracts():
         if contract.matches(
             request
         ):

@@ -351,3 +351,62 @@ def test_sort_corrective_guidance_empty_without_evidence() -> None:
         == ""
     )
 
+
+
+def test_registered_contract_snapshot_contains_builtin_nodes() -> None:
+    from sophyane.coding_contracts import (
+        registered_coding_contracts,
+    )
+
+    contracts = registered_coding_contracts()
+
+    assert tuple(
+        contract.name
+        for contract in contracts
+    ) == (
+        "median",
+        "sort",
+    )
+
+
+def test_registered_contract_snapshot_is_immutable_tuple() -> None:
+    from sophyane.coding_contracts import (
+        registered_coding_contracts,
+    )
+
+    assert isinstance(
+        registered_coding_contracts(),
+        tuple,
+    )
+
+
+def test_duplicate_contract_name_is_rejected() -> None:
+    from sophyane.coding_contracts import (
+        MedianContract,
+        register_coding_contract,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="already registered",
+    ):
+        register_coding_contract(
+            MedianContract()
+        )
+
+
+def test_contract_without_name_is_rejected() -> None:
+    from sophyane.coding_contracts import (
+        register_coding_contract,
+    )
+
+    class NamelessContract:
+        name = ""
+
+    with pytest.raises(
+        ValueError,
+        match="non-empty name",
+    ):
+        register_coding_contract(
+            NamelessContract()
+        )
