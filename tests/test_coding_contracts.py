@@ -364,6 +364,7 @@ def test_registered_contract_snapshot_contains_builtin_nodes() -> None:
         contract.name
         for contract in contracts
     ) == (
+        "absolute_difference",
         "clamp",
         "median",
         "sort",
@@ -427,6 +428,7 @@ def test_builtin_contract_loader_returns_deterministic_nodes() -> None:
         contract.name
         for contract in contracts
     ) == (
+        "absolute_difference",
         "clamp",
         "median",
         "sort",
@@ -587,6 +589,7 @@ def test_builtin_loader_can_populate_isolated_registry() -> None:
         contract.name
         for contract in registry.snapshot()
     ) == (
+        "absolute_difference",
         "clamp",
         "median",
         "sort",
@@ -1477,3 +1480,154 @@ def test_values():
     )
 
     assert assertions == ()
+
+
+ABSOLUTE_DIFFERENCE_REQUEST = (
+    "Create distance.py with absolute_difference(left, right). "
+    "Return the absolute difference between two numeric values."
+)
+
+
+def test_absolute_difference_contract_matches() -> None:
+    contract = match_coding_contract(
+        ABSOLUTE_DIFFERENCE_REQUEST
+    )
+
+    assert contract is not None
+    assert contract.name == "absolute_difference"
+    assert contract.priority == 100
+
+
+def test_absolute_difference_objective_tests() -> None:
+    source = objective_preflight_test_source(
+        request=ABSOLUTE_DIFFERENCE_REQUEST,
+        module_name="distance",
+        function_name="absolute_difference",
+    )
+
+    assert source is not None
+
+    assert (
+        "absolute_difference(9, 2) == 7"
+        in source
+    )
+
+    assert (
+        "absolute_difference(2, 9) == 7"
+        in source
+    )
+
+    assert (
+        "absolute_difference(-3, 4) == 7"
+        in source
+    )
+
+
+def test_absolute_difference_objective_tests_validate() -> None:
+    source = objective_preflight_test_source(
+        request=ABSOLUTE_DIFFERENCE_REQUEST,
+        module_name="distance",
+        function_name="absolute_difference",
+    )
+
+    assert source is not None
+
+    validate_generated_test_contract(
+        request=ABSOLUTE_DIFFERENCE_REQUEST,
+        function_name="absolute_difference",
+        test_source=source,
+    )
+
+
+def test_wrong_absolute_difference_expected_value_is_rejected() -> None:
+    source = """
+from distance import absolute_difference
+
+def test_wrong():
+    assert absolute_difference(2, 9) == -7
+"""
+
+    with pytest.raises(
+        ValueError,
+        match="absolute-difference request",
+    ):
+        validate_generated_test_contract(
+            request=ABSOLUTE_DIFFERENCE_REQUEST,
+            function_name="absolute_difference",
+            test_source=source,
+        )
+
+
+def test_absolute_difference_requires_reverse_witness() -> None:
+    source = """
+from distance import absolute_difference
+
+def test_weak():
+    assert absolute_difference(9, 2) == 7
+"""
+
+    with pytest.raises(
+        ValueError,
+        match="non-discriminating",
+    ):
+        validate_generated_test_contract(
+            request=ABSOLUTE_DIFFERENCE_REQUEST,
+            function_name="absolute_difference",
+            test_source=source,
+        )
+
+
+def test_absolute_difference_module_qualified_call_validates() -> None:
+    source = """
+import distance
+
+def test_wrong():
+    assert distance.absolute_difference(2, 9) == -7
+"""
+
+    with pytest.raises(
+        ValueError,
+        match="absolute-difference request",
+    ):
+        validate_generated_test_contract(
+            request=ABSOLUTE_DIFFERENCE_REQUEST,
+            function_name="absolute_difference",
+            test_source=source,
+        )
+
+
+def test_absolute_difference_dynamic_assertion_is_untouched() -> None:
+    source = """
+from distance import absolute_difference
+
+def test_dynamic(left, right, expected):
+    assert absolute_difference(left, right) == expected
+"""
+
+    validate_generated_test_contract(
+        request=ABSOLUTE_DIFFERENCE_REQUEST,
+        function_name="absolute_difference",
+        test_source=source,
+    )
+
+
+def test_absolute_difference_red_guidance_targets_signed_subtraction() -> None:
+    from sophyane.coding_contracts import (
+        format_red_defect_guidance,
+    )
+
+    guidance = format_red_defect_guidance(
+        request=ABSOLUTE_DIFFERENCE_REQUEST
+    ).lower()
+
+    assert "left - right" in guidance
+    assert "abs()" in guidance
+
+
+def test_absolute_difference_preflight_contains_reverse_witness() -> None:
+    guidance = format_red_preflight_constraints(
+        request=ABSOLUTE_DIFFERENCE_REQUEST
+    )
+
+    assert "absolute_difference(2, 9)" in guidance
+    assert "7" in guidance
