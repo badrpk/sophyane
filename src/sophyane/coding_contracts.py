@@ -192,6 +192,33 @@ def objective_preflight_test_source(
     )
 
 
+def format_red_defect_guidance(
+    *,
+    request: str,
+) -> str:
+    """Return advisory deliberate-defect guidance from selected contract."""
+    contract = match_coding_contract(
+        request
+    )
+
+    if contract is None:
+        return ""
+
+    method = getattr(
+        contract,
+        "red_defect_guidance",
+        None,
+    )
+
+    if not callable(method):
+        return ""
+
+    return str(
+        method()
+        or ""
+    )
+
+
 def format_red_preflight_constraints(
     *,
     request: str,

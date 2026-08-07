@@ -521,3 +521,310 @@ def test_adaptive_tdd_retries_outer_red_round_after_generation_rejection(
     assert calls[0]["round"] == 0
     assert calls[1]["round"] == 1
     assert "non-discriminating" in calls[1]["feedback"]
+
+
+def test_red_defect_guidance_wrapper_uses_selected_contract() -> None:
+    from sophyane.local_coding_capability import (
+        _format_red_defect_guidance,
+    )
+
+    request = (
+        "Create descending_lock.py with descending_values(values). "
+        "Sort the numeric list in descending order."
+    )
+
+    guidance = _format_red_defect_guidance(
+        request=request,
+    )
+
+    lowered = guidance.lower()
+
+    assert "plausible deliberate red defect" in lowered
+    assert "ascending order" in lowered
+    assert "descending-sort" in lowered
+
+
+def test_red_generation_prompt_contains_contract_directed_guidance(
+    monkeypatch,
+) -> None:
+    import sophyane.local_coding_capability as capability
+
+    request = (
+        "Create descending_lock.py with descending_values(values) and use "
+        "pytest RED-GREEN repair until all tests pass. Sort the numeric list "
+        "in descending order and preserve duplicates."
+    )
+
+    captured_prompts: list[str] = []
+
+    def fake_model_call(
+        prompt,
+        **_kwargs,
+    ):
+        captured_prompts.append(
+            str(prompt)
+        )
+
+        return """
+{
+  "broken_source": "def descending_values(values):\\n    return sorted(values)\\n",
+  "test_source": "from descending_lock import descending_values\\n\\ndef test_descending():\\n    assert descending_values([1, 9, 2, 5]) == [9, 5, 2, 1]\\n"
+}
+"""
+
+    monkeypatch.setattr(
+        capability,
+        "_ask_local_coding_model",
+        fake_model_call,
+    )
+
+    broken_source, test_source = (
+        capability._adaptive_generation(
+            request=request,
+            filename="descending_lock.py",
+            function_name="descending_values",
+            parameters=[
+                "values",
+            ],
+            execution_feedback="",
+            memory_context=None,
+            generation_round=0,
+        )
+    )
+
+    assert captured_prompts
+
+    prompt = captured_prompts[0].lower()
+
+    assert (
+        "contract-directed red defect guidance"
+        in prompt
+    )
+
+    assert (
+        "sort the values in ascending order instead"
+        in prompt
+    )
+
+    assert (
+        "plausible deliberate red defect"
+        in prompt
+    )
+
+    # The selected contract owns the objective tests, so generated
+    # model tests are replaced by the descending-sort contract.
+    assert (
+        "return sorted(values)"
+        in broken_source
+    )
+
+    assert (
+        "test_objective_descending_unsorted"
+        in test_source
+    )
+
+    assert (
+        "descending_values([1, 9, 2, 5]) == [9, 5, 2, 1]"
+        in test_source
+    )
+
+
+def test_contract_guided_round_zero_candidate_is_discriminating(
+    tmp_path,
+) -> None:
+    """
+    Lock the objective property demonstrated by the live probe:
+
+    the descending contract's recommended deliberate defect is ascending
+    ordering, and the harness-owned objective tests reject that defect.
+    """
+    from sophyane.coding_contracts import (
+        format_red_defect_guidance,
+        objective_preflight_test_source,
+    )
+
+    request = (
+        "Create descending_lock.py with descending_values(values). "
+        "Sort the numeric list in descending order and preserve duplicates."
+    )
+
+    guidance = format_red_defect_guidance(
+        request=request,
+    )
+
+    assert "ascending order" in guidance.lower()
+
+    source = (
+        "def descending_values(values):\n"
+        "    return sorted(values)\n"
+    )
+
+    tests = objective_preflight_test_source(
+        request=request,
+        module_name="descending_lock",
+        function_name="descending_values",
+    )
+
+    assert tests is not None
+
+    source_path = (
+        tmp_path
+        / "descending_lock.py"
+    )
+
+    test_path = (
+        tmp_path
+        / "test_descending_lock.py"
+    )
+
+    source_path.write_text(
+        source,
+        encoding="utf-8",
+    )
+
+    test_path.write_text(
+        tests,
+        encoding="utf-8",
+    )
+
+    import subprocess
+    import sys
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            test_path.name,
+        ],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    output = (
+        completed.stdout
+        + "\n"
+        + completed.stderr
+    )
+
+    assert completed.returncode != 0
+    assert (
+        "test_objective_descending_unsorted"
+        in output
+    )
+    assert (
+        "test_objective_descending_duplicates"
+        in output
+    )
+
+
+def test_contract_guided_defect_and_green_repair_are_distinct(
+    tmp_path,
+) -> None:
+    """
+    Verify the deterministic RED -> GREEN witness independently of Qwen.
+    """
+    from sophyane.coding_contracts import (
+        objective_preflight_test_source,
+    )
+
+    request = (
+        "Create descending_lock.py with descending_values(values). "
+        "Sort the numeric list in descending order and preserve duplicates."
+    )
+
+    tests = objective_preflight_test_source(
+        request=request,
+        module_name="descending_lock",
+        function_name="descending_values",
+    )
+
+    assert tests is not None
+
+    source_path = (
+        tmp_path
+        / "descending_lock.py"
+    )
+
+    test_path = (
+        tmp_path
+        / "test_descending_lock.py"
+    )
+
+    test_path.write_text(
+        tests,
+        encoding="utf-8",
+    )
+
+    source_path.write_text(
+        (
+            "def descending_values(values):\n"
+            "    return sorted(values)\n"
+        ),
+        encoding="utf-8",
+    )
+
+    import subprocess
+    import sys
+
+    red = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            test_path.name,
+        ],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert red.returncode != 0
+
+    source_path.write_text(
+        (
+            "def descending_values(values):\n"
+            "    return sorted(values, reverse=True)\n"
+        ),
+        encoding="utf-8",
+    )
+
+    pycache = (
+        tmp_path
+        / "__pycache__"
+    )
+
+    if pycache.exists():
+        import shutil
+
+        shutil.rmtree(
+            pycache
+        )
+
+    green = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            test_path.name,
+        ],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert green.returncode == 0, (
+        green.stdout
+        + "\n"
+        + green.stderr
+    )

@@ -894,3 +894,56 @@ def test_descending_preflight_contains_objective_witness() -> None:
 
     assert "[1, 9, 2, 5]" in guidance
     assert "[9, 5, 2, 1]" in guidance
+
+
+def test_descending_sort_exposes_plausible_red_defect_guidance() -> None:
+    from sophyane.coding_contracts import (
+        format_red_defect_guidance,
+    )
+
+    guidance = format_red_defect_guidance(
+        request=DESCENDING_SORT_REQUEST
+    )
+
+    assert "ascending" in guidance.lower()
+    assert "deliberately incorrect" in guidance.lower()
+
+
+def test_median_exposes_mean_as_plausible_red_defect() -> None:
+    from sophyane.coding_contracts import (
+        format_red_defect_guidance,
+    )
+
+    guidance = format_red_defect_guidance(
+        request=MEDIAN_REQUEST
+    )
+
+    assert "arithmetic mean" in guidance.lower()
+
+
+def test_sort_exposes_behavioral_red_defect_guidance() -> None:
+    from sophyane.coding_contracts import (
+        format_red_defect_guidance,
+    )
+
+    guidance = format_red_defect_guidance(
+        request=SORT_REQUEST
+    )
+
+    assert (
+        "unchanged" in guidance.lower()
+        or "descending" in guidance.lower()
+    )
+
+
+def test_nonmatching_request_has_no_red_defect_guidance() -> None:
+    from sophyane.coding_contracts import (
+        format_red_defect_guidance,
+    )
+
+    assert (
+        format_red_defect_guidance(
+            request="Create add.py with add(a, b)."
+        )
+        == ""
+    )

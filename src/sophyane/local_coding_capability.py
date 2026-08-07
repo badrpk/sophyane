@@ -1671,6 +1671,20 @@ def _objective_preflight_test_source(
     )
 
 
+def _format_red_defect_guidance(
+    *,
+    request: str,
+) -> str:
+    """Compatibility wrapper for contract-directed RED defect guidance."""
+    from sophyane.coding_contracts import (
+        format_red_defect_guidance,
+    )
+
+    return format_red_defect_guidance(
+        request=request,
+    )
+
+
 def _format_red_preflight_constraints(
     *,
     request: str,
@@ -1743,6 +1757,16 @@ HIGH-PRIORITY OBJECTIVE CONTRACT STATE:
 {_format_red_preflight_constraints(
     request=request,
 )}
+
+CONTRACT-DIRECTED RED DEFECT GUIDANCE:
+
+{_format_red_defect_guidance(
+    request=request,
+)}
+
+The RED defect guidance is advisory about a plausible deliberately incorrect
+implementation. It MUST NOT override the CURRENT request, objective tests,
+validators, or pytest execution truth.
 
 HIGH-PRIORITY OBJECTIVE RETRY STATE:
 Previous rejected response reason:
@@ -2681,6 +2705,10 @@ def _python_adaptive_tdd_action(
                 ignore_errors=True,
             )
 
+        red_pytest_started = (
+            time.perf_counter()
+        )
+
         candidate_red = _run(
             [
                 sys.executable,
@@ -2691,6 +2719,36 @@ def _python_adaptive_tdd_action(
             ],
             cwd=workspace,
             timeout=120,
+        )
+
+        red_pytest_latency = (
+            time.perf_counter()
+            - red_pytest_started
+        )
+
+        _record_adaptive_model_call(
+            phase="red_pytest",
+            round_index=red_attempt,
+            attempt_index=red_attempt,
+            temperature=0.0,
+            latency_seconds=red_pytest_latency,
+            outcome=(
+                "passed_unusable"
+                if candidate_red.exit_code == 0
+                else "failed_candidate"
+            ),
+            error=(
+                (
+                    "Rejected RED source passed objective tests:\n"
+                    + broken_source[:600]
+                )
+                if candidate_red.exit_code == 0
+                else (
+                    candidate_red.stdout
+                    + "\n"
+                    + candidate_red.stderr
+                )[-800:]
+            ),
         )
 
         if candidate_red.exit_code == 0:
@@ -2751,6 +2809,16 @@ def _python_adaptive_tdd_action(
                 red_fingerprint
             )
 
+            _record_adaptive_model_call(
+                phase="red_quality",
+                round_index=red_attempt,
+                attempt_index=red_attempt,
+                temperature=0.0,
+                latency_seconds=0.0,
+                outcome="rejected",
+                error=str(error),
+            )
+
             red_feedback = (
                 "The harness executed the previous RED phase and rejected it: "
                 f"{error}. Generate a new broken_source/test_source pair. "
@@ -2761,6 +2829,15 @@ def _python_adaptive_tdd_action(
 
         # Only an accepted, objectively discriminating RED phase becomes
         # authoritative evidence for the repair stage.
+        _record_adaptive_model_call(
+            phase="red_quality",
+            round_index=red_attempt,
+            attempt_index=red_attempt,
+            temperature=0.0,
+            latency_seconds=0.0,
+            outcome="accepted",
+        )
+
         red = candidate_red
         failure_output = candidate_failure_output
         immutable_tests = test_target.read_bytes()

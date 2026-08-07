@@ -204,6 +204,17 @@ class DescendingSortContract:
                 "unsorted literal input."
             )
 
+    def red_defect_guidance(
+        self,
+    ) -> str:
+        return (
+            "PLAUSIBLE DELIBERATE RED DEFECT:\n"
+            "- A useful deliberately incorrect descending-sort implementation is "
+            "to sort the values in ascending order instead.\n"
+            "- Preserve duplicates so the defect is specifically ordering direction.\n"
+            "- Prefer a wrong returned list over crashes or syntax errors."
+        )
+
     def preflight_constraints(
         self,
     ) -> str:

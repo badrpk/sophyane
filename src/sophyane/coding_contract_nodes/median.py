@@ -235,6 +235,17 @@ class MedianContract:
                 "[1, 2, 100] or another asymmetric/unsorted case."
             )
 
+    def red_defect_guidance(
+        self,
+    ) -> str:
+        return (
+            "PLAUSIBLE DELIBERATE RED DEFECT:\n"
+            "- A useful deliberately incorrect median implementation may compute "
+            "the arithmetic mean instead of the median.\n"
+            "- Do not make the defect syntactic or crash-only.\n"
+            "- The objective tests must expose the wrong returned value."
+        )
+
     def preflight_constraints(
         self,
     ) -> str:

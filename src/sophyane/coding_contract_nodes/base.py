@@ -34,6 +34,11 @@ class CodingContract(Protocol):
     ) -> None:
         ...
 
+    def red_defect_guidance(
+        self,
+    ) -> str:
+        ...
+
     def preflight_constraints(
         self,
     ) -> str:

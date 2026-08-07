@@ -210,6 +210,16 @@ class SortContract:
                 "literal input."
             )
 
+    def red_defect_guidance(
+        self,
+    ) -> str:
+        return (
+            "PLAUSIBLE DELIBERATE RED DEFECT:\n"
+            "- A useful deliberately incorrect ascending-sort implementation may "
+            "return the input unchanged or sort in descending order.\n"
+            "- Prefer a behaviorally wrong returned list over crashes."
+        )
+
     def preflight_constraints(
         self,
     ) -> str:
