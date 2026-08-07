@@ -105,3 +105,13 @@ src/sophyane/code_memory/*.damaged-*
 evals/runs/
 
 .sophyane-evolution/
+
+# Sophyane transient validation/probe workspaces
+/tmp-*-probe/
+/tmp-adaptive-repeatability/
+/tmp-adaptive-repeatability-v2/
+
+# Interrupted/partial source recovery files
+*.partial-*
+# Sophyane transient tmp workspaces
+/tmp-*/

@@ -12,11 +12,8 @@ import json
 import mimetypes
 import os
 import re
-import shutil
-import subprocess
 import urllib.parse
 import urllib.request
-import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -207,80 +204,50 @@ def _open_generated_site(
     target: Path,
     progress: Progress,
 ) -> tuple[bool, str]:
-    """Open a generated HTML artifact in the user's desktop browser."""
+    """Serve, verify, and open the generated site over localhost HTTP."""
     target = target.expanduser().resolve()
 
     if not target.is_file():
-        return False, f"Browser launch skipped: file is missing: {target}"
+        return (
+            False,
+            "Browser launch skipped: "
+            f"file is missing: {target}",
+        )
 
-    if str(os.environ.get("SOPHYANE_NO_BROWSER", "")).strip().lower() in {
+    if str(
+        os.environ.get(
+            "SOPHYANE_NO_BROWSER",
+            "",
+        )
+    ).strip().lower() in {
         "1",
         "true",
         "yes",
         "on",
     }:
-        return False, "Browser launch disabled by SOPHYANE_NO_BROWSER"
+        return (
+            False,
+            "Browser launch disabled by "
+            "SOPHYANE_NO_BROWSER",
+        )
 
-    # Under WSL, ask Windows to open the generated file.
-    if os.environ.get("WSL_DISTRO_NAME"):
-        try:
-            converted = subprocess.run(
-                ["wslpath", "-w", str(target)],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            windows_path = converted.stdout.strip()
-
-            if windows_path:
-                powershell = shutil.which("powershell.exe")
-                if powershell:
-                    subprocess.run(
-                        [
-                            powershell,
-                            "-NoProfile",
-                            "-NonInteractive",
-                            "-Command",
-                            "Start-Process",
-                            "-FilePath",
-                            windows_path,
-                        ],
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                        timeout=15,
-                    )
-                    progress(f"Opened website in Windows browser: {windows_path}")
-                    return True, windows_path
-
-                cmd = shutil.which("cmd.exe")
-                if cmd:
-                    subprocess.run(
-                        [cmd, "/c", "start", "", windows_path],
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                        timeout=15,
-                    )
-                    progress(f"Opened website in Windows browser: {windows_path}")
-                    return True, windows_path
-        except Exception as error:
-            progress(
-                "Windows browser launch failed; trying platform browser: "
-                f"{type(error).__name__}: {error}"
-            )
-
-    # Native Linux, macOS, Windows Python, or WSL fallback.
     try:
-        uri = target.as_uri()
-        opened = bool(webbrowser.open(uri, new=2))
-        if opened:
-            progress(f"Opened website in browser: {uri}")
-            return True, uri
-        return False, f"Browser launcher declined URI: {uri}"
+        from sophyane.browser_runtime_v2 import (
+            open_verified_browser,
+        )
+
+        return open_verified_browser(
+            target.parent,
+            progress,
+        )
+
     except Exception as error:
-        return False, f"Browser launch failed: {type(error).__name__}: {error}"
+        return (
+            False,
+            "Verified browser launch failed: "
+            f"{type(error).__name__}: {error}",
+        )
+
 
 
 def _validate(document: str, entities: list[Entity]) -> str:
