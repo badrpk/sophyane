@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .base import (
+    ObjectiveWitness,
     _literal_equality_assertions,
     _normalized_request,
+    _render_objective_witness_tests,
 )
 
 
@@ -46,17 +48,35 @@ class AbsoluteDifferenceContract:
         module_name: str,
         function_name: str,
     ) -> str:
-        return (
-            f"from {module_name} import {function_name}\n"
-            "\n"
-            "def test_objective_absolute_difference_forward():\n"
-            f"    assert {function_name}(9, 2) == 7\n"
-            "\n"
-            "def test_objective_absolute_difference_reverse():\n"
-            f"    assert {function_name}(2, 9) == 7\n"
-            "\n"
-            "def test_objective_absolute_difference_signed():\n"
-            f"    assert {function_name}(-3, 4) == 7\n"
+        return _render_objective_witness_tests(
+            module_name=module_name,
+            function_name=function_name,
+            witnesses=(
+                ObjectiveWitness(
+                    name="absolute_difference_forward",
+                    arguments=(
+                        9,
+                        2,
+                    ),
+                    expected=7,
+                ),
+                ObjectiveWitness(
+                    name="absolute_difference_reverse",
+                    arguments=(
+                        2,
+                        9,
+                    ),
+                    expected=7,
+                ),
+                ObjectiveWitness(
+                    name="absolute_difference_signed",
+                    arguments=(
+                        -3,
+                        4,
+                    ),
+                    expected=7,
+                ),
+            ),
         )
 
     def validate_test_source(

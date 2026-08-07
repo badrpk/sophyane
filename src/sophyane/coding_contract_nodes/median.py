@@ -6,8 +6,10 @@ import statistics
 from dataclasses import dataclass
 
 from .base import (
+    ObjectiveWitness,
     _literal_equality_assertions,
     _normalized_request,
+    _render_objective_witness_tests,
 )
 
 
@@ -37,14 +39,25 @@ class MedianContract:
     ) -> str:
         # Both examples are ordinary behavioral witnesses and distinguish
         # median from the plausible arithmetic-mean defect.
-        return (
-            f"from {module_name} import {function_name}\n"
-            "\n"
-            "def test_objective_median_odd():\n"
-            f"    assert {function_name}([1, 2, 100]) == 2\n"
-            "\n"
-            "def test_objective_median_even():\n"
-            f"    assert {function_name}([1, 4, 9, 100]) == 6.5\n"
+        return _render_objective_witness_tests(
+            module_name=module_name,
+            function_name=function_name,
+            witnesses=(
+                ObjectiveWitness(
+                    name="median_odd",
+                    arguments=(
+                        [1, 2, 100],
+                    ),
+                    expected=2,
+                ),
+                ObjectiveWitness(
+                    name="median_even",
+                    arguments=(
+                        [1, 4, 9, 100],
+                    ),
+                    expected=6.5,
+                ),
+            ),
         )
 
     def validate_test_source(

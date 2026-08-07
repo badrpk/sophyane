@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .base import (
+    ObjectiveWitness,
     _normalized_request,
     _numeric_list_equality_assertions,
+    _render_objective_witness_tests,
 )
 
 
@@ -56,14 +58,33 @@ class UniqueSortContract:
         module_name: str,
         function_name: str,
     ) -> str:
-        return (
-            f"from {module_name} import {function_name}\n"
-            "\n"
-            "def test_objective_unique_sort_duplicates():\n"
-            f"    assert {function_name}([3, 1, 3, 2, 1]) == [1, 2, 3]\n"
-            "\n"
-            "def test_objective_unique_sort_unsorted():\n"
-            f"    assert {function_name}([9, 2, 5, 2]) == [2, 5, 9]\n"
+        return _render_objective_witness_tests(
+            module_name=module_name,
+            function_name=function_name,
+            witnesses=(
+                ObjectiveWitness(
+                    name="unique_sort_duplicates",
+                    arguments=(
+                        [3, 1, 3, 2, 1],
+                    ),
+                    expected=[
+                        1,
+                        2,
+                        3,
+                    ],
+                ),
+                ObjectiveWitness(
+                    name="unique_sort_unsorted",
+                    arguments=(
+                        [9, 2, 5, 2],
+                    ),
+                    expected=[
+                        2,
+                        5,
+                        9,
+                    ],
+                ),
+            ),
         )
 
     def validate_test_source(

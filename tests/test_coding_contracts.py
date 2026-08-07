@@ -1631,3 +1631,225 @@ def test_absolute_difference_preflight_contains_reverse_witness() -> None:
 
     assert "absolute_difference(2, 9)" in guidance
     assert "7" in guidance
+
+
+def test_objective_witness_renderer_builds_literal_pytest() -> None:
+    from sophyane.coding_contract_nodes.base import (
+        ObjectiveWitness,
+        _render_objective_witness_tests,
+    )
+
+    source = _render_objective_witness_tests(
+        module_name="example",
+        function_name="distance",
+        witnesses=(
+            ObjectiveWitness(
+                name="forward",
+                arguments=(
+                    9,
+                    2,
+                ),
+                expected=7,
+            ),
+            ObjectiveWitness(
+                name="reverse",
+                arguments=(
+                    2,
+                    9,
+                ),
+                expected=7,
+            ),
+        ),
+    )
+
+    assert (
+        "from example import distance"
+        in source
+    )
+
+    assert (
+        "def test_objective_forward():"
+        in source
+    )
+
+    assert (
+        "assert distance(9, 2) == 7"
+        in source
+    )
+
+    assert (
+        "def test_objective_reverse():"
+        in source
+    )
+
+    assert (
+        "assert distance(2, 9) == 7"
+        in source
+    )
+
+
+def test_objective_witness_renderer_preserves_literal_structures() -> None:
+    from sophyane.coding_contract_nodes.base import (
+        ObjectiveWitness,
+        _render_objective_witness_tests,
+    )
+
+    source = _render_objective_witness_tests(
+        module_name="ordering",
+        function_name="ordered",
+        witnesses=(
+            ObjectiveWitness(
+                name="list_case",
+                arguments=(
+                    [3, 1, 2],
+                ),
+                expected=[
+                    1,
+                    2,
+                    3,
+                ],
+            ),
+        ),
+    )
+
+    assert (
+        "assert ordered([3, 1, 2]) == [1, 2, 3]"
+        in source
+    )
+
+
+def test_absolute_difference_objective_source_remains_stable_after_witness_migration() -> None:
+    source = objective_preflight_test_source(
+        request=ABSOLUTE_DIFFERENCE_REQUEST,
+        module_name="distance",
+        function_name="absolute_difference",
+    )
+
+    assert source is not None
+
+    expected = """from distance import absolute_difference
+
+def test_objective_absolute_difference_forward():
+    assert absolute_difference(9, 2) == 7
+
+def test_objective_absolute_difference_reverse():
+    assert absolute_difference(2, 9) == 7
+
+def test_objective_absolute_difference_signed():
+    assert absolute_difference(-3, 4) == 7
+"""
+
+    assert source == expected
+
+
+def test_clamp_objective_source_remains_stable_after_witness_migration() -> None:
+    source = objective_preflight_test_source(
+        request=CLAMP_REQUEST,
+        module_name="bounds",
+        function_name="clamp_value",
+    )
+
+    assert source is not None
+
+    expected = """from bounds import clamp_value
+
+def test_objective_clamp_below_lower():
+    assert clamp_value(-5, 0, 10) == 0
+
+def test_objective_clamp_inside_range():
+    assert clamp_value(6, 0, 10) == 6
+
+def test_objective_clamp_above_upper():
+    assert clamp_value(14, 0, 10) == 10
+"""
+
+    assert source == expected
+
+
+def test_median_objective_source_remains_stable_after_witness_migration() -> None:
+    source = objective_preflight_test_source(
+        request=MEDIAN_REQUEST,
+        module_name="stats",
+        function_name="median_value",
+    )
+
+    assert source is not None
+
+    expected = """from stats import median_value
+
+def test_objective_median_odd():
+    assert median_value([1, 2, 100]) == 2
+
+def test_objective_median_even():
+    assert median_value([1, 4, 9, 100]) == 6.5
+"""
+
+    assert source == expected
+
+
+def test_sort_objective_source_remains_stable_after_witness_migration() -> None:
+    source = objective_preflight_test_source(
+        request=SORT_REQUEST,
+        module_name="ordering",
+        function_name="ascending_values",
+    )
+
+    assert source == """from ordering import ascending_values
+
+def test_objective_sort_unsorted():
+    assert ascending_values([9, 1, 5, 2]) == [1, 2, 5, 9]
+
+def test_objective_sort_duplicates():
+    assert ascending_values([3, 1, 3, 2]) == [1, 2, 3, 3]
+"""
+
+
+def test_descending_sort_objective_source_remains_stable_after_witness_migration() -> None:
+    source = objective_preflight_test_source(
+        request=DESCENDING_SORT_REQUEST,
+        module_name="reverse_order",
+        function_name="descending_values",
+    )
+
+    assert source == """from reverse_order import descending_values
+
+def test_objective_descending_unsorted():
+    assert descending_values([1, 9, 2, 5]) == [9, 5, 2, 1]
+
+def test_objective_descending_duplicates():
+    assert descending_values([3, 1, 3, 2]) == [3, 3, 2, 1]
+"""
+
+
+def test_unique_sort_objective_source_remains_stable_after_witness_migration() -> None:
+    source = objective_preflight_test_source(
+        request=UNIQUE_SORT_REQUEST,
+        module_name="unique_order",
+        function_name="unique_values",
+    )
+
+    assert source == """from unique_order import unique_values
+
+def test_objective_unique_sort_duplicates():
+    assert unique_values([3, 1, 3, 2, 1]) == [1, 2, 3]
+
+def test_objective_unique_sort_unsorted():
+    assert unique_values([9, 2, 5, 2]) == [2, 5, 9]
+"""
+
+
+def test_descending_unique_objective_source_remains_stable_after_witness_migration() -> None:
+    source = objective_preflight_test_source(
+        request=DESCENDING_UNIQUE_SORT_REQUEST,
+        module_name="compound_order",
+        function_name="descending_unique_values",
+    )
+
+    assert source == """from compound_order import descending_unique_values
+
+def test_objective_desc_unique_duplicates():
+    assert descending_unique_values([3, 1, 3, 2, 1]) == [3, 2, 1]
+
+def test_objective_desc_unique_unsorted():
+    assert descending_unique_values([9, 2, 5, 2]) == [9, 5, 2]
+"""

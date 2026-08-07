@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .base import (
+    ObjectiveWitness,
     _literal_equality_assertions,
     _normalized_request,
+    _render_objective_witness_tests,
 )
 
 
@@ -45,17 +47,38 @@ class ClampContract:
         module_name: str,
         function_name: str,
     ) -> str:
-        return (
-            f"from {module_name} import {function_name}\n"
-            "\n"
-            "def test_objective_clamp_below_lower():\n"
-            f"    assert {function_name}(-5, 0, 10) == 0\n"
-            "\n"
-            "def test_objective_clamp_inside_range():\n"
-            f"    assert {function_name}(6, 0, 10) == 6\n"
-            "\n"
-            "def test_objective_clamp_above_upper():\n"
-            f"    assert {function_name}(14, 0, 10) == 10\n"
+        return _render_objective_witness_tests(
+            module_name=module_name,
+            function_name=function_name,
+            witnesses=(
+                ObjectiveWitness(
+                    name="clamp_below_lower",
+                    arguments=(
+                        -5,
+                        0,
+                        10,
+                    ),
+                    expected=0,
+                ),
+                ObjectiveWitness(
+                    name="clamp_inside_range",
+                    arguments=(
+                        6,
+                        0,
+                        10,
+                    ),
+                    expected=6,
+                ),
+                ObjectiveWitness(
+                    name="clamp_above_upper",
+                    arguments=(
+                        14,
+                        0,
+                        10,
+                    ),
+                    expected=10,
+                ),
+            ),
         )
 
     def validate_test_source(

@@ -3,7 +3,66 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 from typing import Protocol
+
+
+@dataclass(frozen=True)
+class ObjectiveWitness:
+    """One literal behavioral witness owned by a coding contract."""
+
+    name: str
+    arguments: tuple[object, ...]
+    expected: object
+
+
+def _render_objective_witness_tests(
+    *,
+    module_name: str,
+    function_name: str,
+    witnesses: tuple[ObjectiveWitness, ...],
+) -> str:
+    """Render deterministic pytest source from contract-owned witnesses.
+
+    This helper knows only how to render literal function equality assertions.
+    It does not know what the values mean or whether a witness is correct.
+    Domain semantics remain inside the selected contract node.
+    """
+    lines = [
+        f"from {module_name} import {function_name}",
+        "",
+    ]
+
+    for index, witness in enumerate(
+        witnesses
+    ):
+        name = str(
+            witness.name
+            or f"witness_{index + 1}"
+        ).strip()
+
+        arguments = ", ".join(
+            repr(argument)
+            for argument in witness.arguments
+        )
+
+        lines.extend(
+            [
+                f"def test_objective_{name}():",
+                (
+                    f"    assert {function_name}("
+                    f"{arguments}) == {witness.expected!r}"
+                ),
+                "",
+            ]
+        )
+
+    return (
+        "\n".join(
+            lines
+        ).rstrip()
+        + "\n"
+    )
 
 
 class CodingContract(Protocol):
