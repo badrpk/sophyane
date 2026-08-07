@@ -366,6 +366,7 @@ def test_registered_contract_snapshot_contains_builtin_nodes() -> None:
     ) == (
         "median",
         "sort",
+        "descending_sort",
     )
 
 
@@ -410,3 +411,486 @@ def test_contract_without_name_is_rejected() -> None:
         register_coding_contract(
             NamelessContract()
         )
+
+
+def test_builtin_contract_loader_returns_deterministic_nodes() -> None:
+    from sophyane.coding_contract_nodes import (
+        builtin_coding_contracts,
+    )
+
+    contracts = builtin_coding_contracts()
+
+    assert tuple(
+        contract.name
+        for contract in contracts
+    ) == (
+        "median",
+        "sort",
+        "descending_sort",
+    )
+
+
+def test_builtin_contract_loader_returns_fresh_instances() -> None:
+    from sophyane.coding_contract_nodes import (
+        builtin_coding_contracts,
+    )
+
+    first = builtin_coding_contracts()
+    second = builtin_coding_contracts()
+
+    assert first is not second
+    assert first[0] is not second[0]
+    assert first[1] is not second[1]
+
+
+def test_facade_load_builtin_api_exists() -> None:
+    from sophyane.coding_contracts import (
+        load_builtin_coding_contracts,
+    )
+
+    assert callable(
+        load_builtin_coding_contracts
+    )
+
+
+def test_isolated_contract_registry_starts_empty() -> None:
+    from sophyane.coding_contracts import (
+        CodingContractRegistry,
+    )
+
+    registry = CodingContractRegistry()
+
+    assert registry.snapshot() == ()
+
+
+def test_isolated_registry_registration_does_not_mutate_default() -> None:
+    from sophyane.coding_contracts import (
+        CodingContractRegistry,
+        MedianContract,
+        registered_coding_contracts,
+    )
+
+    before = tuple(
+        contract.name
+        for contract in registered_coding_contracts()
+    )
+
+    registry = CodingContractRegistry()
+
+    registry.register(
+        MedianContract()
+    )
+
+    assert tuple(
+        contract.name
+        for contract in registry.snapshot()
+    ) == (
+        "median",
+    )
+
+    after = tuple(
+        contract.name
+        for contract in registered_coding_contracts()
+    )
+
+    assert after == before
+
+
+def test_isolated_registry_rejects_duplicate_name() -> None:
+    from sophyane.coding_contracts import (
+        CodingContractRegistry,
+        MedianContract,
+    )
+
+    registry = CodingContractRegistry()
+
+    registry.register(
+        MedianContract()
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="already registered",
+    ):
+        registry.register(
+            MedianContract()
+        )
+
+
+def test_isolated_registry_matches_in_registration_order() -> None:
+    from sophyane.coding_contracts import (
+        CodingContractRegistry,
+        MedianContract,
+        SortContract,
+    )
+
+    registry = CodingContractRegistry()
+
+    registry.register(
+        MedianContract()
+    )
+    registry.register(
+        SortContract()
+    )
+
+    assert (
+        registry.match(
+            "Calculate the median of numeric values."
+        ).name
+        == "median"
+    )
+
+    assert (
+        registry.match(
+            "Sort numeric values in ascending order."
+        ).name
+        == "sort"
+    )
+
+
+def test_isolated_registry_nonmatch_returns_none() -> None:
+    from sophyane.coding_contracts import (
+        CodingContractRegistry,
+    )
+
+    registry = CodingContractRegistry()
+
+    assert (
+        registry.match(
+            "Create add(a, b)."
+        )
+        is None
+    )
+
+
+def test_builtin_loader_can_populate_isolated_registry() -> None:
+    from sophyane.coding_contracts import (
+        CodingContractRegistry,
+        load_builtin_coding_contracts,
+    )
+
+    registry = CodingContractRegistry()
+
+    returned = load_builtin_coding_contracts(
+        registry
+    )
+
+    assert returned is registry
+
+    assert tuple(
+        contract.name
+        for contract in registry.snapshot()
+    ) == (
+        "median",
+        "sort",
+        "descending_sort",
+    )
+
+
+def test_builtin_loader_isolated_registry_does_not_mutate_default() -> None:
+    from sophyane.coding_contracts import (
+        CodingContractRegistry,
+        load_builtin_coding_contracts,
+        registered_coding_contracts,
+    )
+
+    before = tuple(
+        contract.name
+        for contract in registered_coding_contracts()
+    )
+
+    registry = CodingContractRegistry()
+
+    load_builtin_coding_contracts(
+        registry
+    )
+
+    after = tuple(
+        contract.name
+        for contract in registered_coding_contracts()
+    )
+
+    assert after == before
+
+
+def test_builtin_loader_rejects_duplicate_loading_into_same_registry() -> None:
+    from sophyane.coding_contracts import (
+        CodingContractRegistry,
+        load_builtin_coding_contracts,
+    )
+
+    registry = CodingContractRegistry()
+
+    load_builtin_coding_contracts(
+        registry
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="already registered",
+    ):
+        load_builtin_coding_contracts(
+            registry
+        )
+
+
+def test_builtin_contracts_define_priority() -> None:
+    from sophyane.coding_contracts import (
+        registered_coding_contracts,
+    )
+
+    for contract in registered_coding_contracts():
+        assert isinstance(
+            contract.priority,
+            int,
+        )
+
+
+def test_higher_priority_contract_wins_over_registration_order() -> None:
+    from sophyane.coding_contracts import (
+        CodingContractRegistry,
+    )
+
+    class LowPriority:
+        name = "low"
+        priority = 10
+
+        def matches(self, request):
+            return True
+
+        def objective_test_source(self, **kwargs):
+            return None
+
+        def validate_test_source(self, **kwargs):
+            return None
+
+        def preflight_constraints(self):
+            return ""
+
+        def corrective_constraints(self, **kwargs):
+            return ""
+
+    class HighPriority:
+        name = "high"
+        priority = 100
+
+        def matches(self, request):
+            return True
+
+        def objective_test_source(self, **kwargs):
+            return None
+
+        def validate_test_source(self, **kwargs):
+            return None
+
+        def preflight_constraints(self):
+            return ""
+
+        def corrective_constraints(self, **kwargs):
+            return ""
+
+    registry = CodingContractRegistry()
+
+    registry.register(
+        LowPriority()
+    )
+    registry.register(
+        HighPriority()
+    )
+
+    matched = registry.match(
+        "ambiguous request"
+    )
+
+    assert matched is not None
+    assert matched.name == "high"
+
+
+def test_equal_priority_uses_registration_order() -> None:
+    from sophyane.coding_contracts import (
+        CodingContractRegistry,
+    )
+
+    class First:
+        name = "first"
+        priority = 50
+
+        def matches(self, request):
+            return True
+
+        def objective_test_source(self, **kwargs):
+            return None
+
+        def validate_test_source(self, **kwargs):
+            return None
+
+        def preflight_constraints(self):
+            return ""
+
+        def corrective_constraints(self, **kwargs):
+            return ""
+
+    class Second:
+        name = "second"
+        priority = 50
+
+        def matches(self, request):
+            return True
+
+        def objective_test_source(self, **kwargs):
+            return None
+
+        def validate_test_source(self, **kwargs):
+            return None
+
+        def preflight_constraints(self):
+            return ""
+
+        def corrective_constraints(self, **kwargs):
+            return ""
+
+    registry = CodingContractRegistry()
+
+    registry.register(
+        First()
+    )
+    registry.register(
+        Second()
+    )
+
+    matched = registry.match(
+        "ambiguous request"
+    )
+
+    assert matched is not None
+    assert matched.name == "first"
+
+
+def test_missing_priority_defaults_to_zero() -> None:
+    from sophyane.coding_contracts import (
+        CodingContractRegistry,
+    )
+
+    class LegacyContract:
+        name = "legacy"
+
+        def matches(self, request):
+            return True
+
+        def objective_test_source(self, **kwargs):
+            return None
+
+        def validate_test_source(self, **kwargs):
+            return None
+
+        def preflight_constraints(self):
+            return ""
+
+        def corrective_constraints(self, **kwargs):
+            return ""
+
+    registry = CodingContractRegistry()
+
+    registry.register(
+        LegacyContract()
+    )
+
+    matched = registry.match(
+        "legacy request"
+    )
+
+    assert matched is not None
+    assert matched.name == "legacy"
+
+
+DESCENDING_SORT_REQUEST = (
+    "Create reverse_order.py with descending_values(values). "
+    "Sort the numeric list in descending order."
+)
+
+
+def test_descending_sort_contract_matches() -> None:
+    contract = match_coding_contract(
+        DESCENDING_SORT_REQUEST
+    )
+
+    assert contract is not None
+    assert contract.name == "descending_sort"
+    assert contract.priority == 200
+
+
+def test_descending_sort_overrides_generic_sort_contract() -> None:
+    from sophyane.coding_contracts import (
+        registered_coding_contracts,
+    )
+
+    matches = [
+        contract
+        for contract in registered_coding_contracts()
+        if contract.matches(
+            DESCENDING_SORT_REQUEST
+        )
+    ]
+
+    names = [
+        contract.name
+        for contract in matches
+    ]
+
+    assert "sort" in names
+    assert "descending_sort" in names
+
+    selected = match_coding_contract(
+        DESCENDING_SORT_REQUEST
+    )
+
+    assert selected is not None
+    assert selected.name == "descending_sort"
+
+
+def test_descending_contract_supplies_objective_tests() -> None:
+    source = objective_preflight_test_source(
+        request=DESCENDING_SORT_REQUEST,
+        module_name="reverse_order",
+        function_name="descending_values",
+    )
+
+    assert source is not None
+
+    assert (
+        "descending_values([1, 9, 2, 5]) == [9, 5, 2, 1]"
+        in source
+    )
+
+    assert (
+        "descending_values([3, 1, 3, 2]) == [3, 3, 2, 1]"
+        in source
+    )
+
+
+def test_wrong_descending_contract_is_rejected() -> None:
+    source = """
+from reverse_order import descending_values
+
+def test_wrong():
+    assert descending_values([1, 9, 2, 5]) == [1, 2, 5, 9]
+"""
+
+    with pytest.raises(
+        ValueError,
+        match="descending-sort request",
+    ):
+        validate_generated_test_contract(
+            request=DESCENDING_SORT_REQUEST,
+            function_name="descending_values",
+            test_source=source,
+        )
+
+
+def test_descending_preflight_contains_objective_witness() -> None:
+    guidance = format_red_preflight_constraints(
+        request=DESCENDING_SORT_REQUEST
+    )
+
+    assert "[1, 9, 2, 5]" in guidance
+    assert "[9, 5, 2, 1]" in guidance
