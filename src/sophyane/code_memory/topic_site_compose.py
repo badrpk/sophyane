@@ -165,31 +165,121 @@ def retrieve_topic(topic: str, *, progress: Progress | None = None) -> TopicSour
     extract = _normalise_multiline(str(page.get("extract") or ""))
     if len(extract) < 300:
         raise RuntimeError("The retrieved source did not contain enough factual text.")
-    primary_url = str((page.get("original") or {}).get("source") or (page.get("thumbnail") or {}).get("source") or "")
-    candidates: list[tuple[str, str]] = []
-    if primary_url:
-        candidates.append((str(page.get("title") or title), primary_url))
-    try:
-        candidates.extend(_commons_images(topic))
-    except Exception as error:
-        progress(f"SLI premium photography unavailable: {type(error).__name__}")
-    images: list[tuple[str, str, str]] = []
+    # Both URLs come directly from the resolved Wikipedia page and
+    # therefore carry the same primary-subject identity provenance.
+    #
+    # Prefer Wikipedia's requested display thumbnail: the original can
+    # be several megabytes and intentionally exceeds Sophyane's bounded
+    # embedded-image budget.  Fall back to the original only when no
+    # thumbnail is supplied.
+    primary_url = str(
+        (page.get("thumbnail") or {}).get("source")
+        or (page.get("original") or {}).get("source")
+        or ""
+    )
+    resolved_title = str(
+        page.get("title")
+        or title
+    )
+
+    # The Wikipedia page image is identity-bound to the resolved
+    # primary entity.  It is the only photograph permitted to become
+    # the subject hero.  Commons search results are supplementary
+    # gallery material and must never silently replace it.
+    primary_data = (
+        _download_data_uri(
+            primary_url
+        )
+        if primary_url
+        else None
+    )
+
+    images: list[
+        tuple[str, str, str]
+    ] = []
+
     seen: set[str] = set()
-    for label, url in candidates:
-        if len(images) >= MAX_IMAGES or url in seen:
+
+    if (
+        primary_url
+        and primary_data
+    ):
+        images.append(
+            (
+                resolved_title,
+                primary_url,
+                primary_data,
+            )
+        )
+
+        seen.add(
+            primary_url
+        )
+
+        progress(
+            "SLI verified primary photograph: "
+            f"{resolved_title[:60]}"
+        )
+
+    try:
+        commons_candidates = (
+            _commons_images(
+                topic
+            )
+        )
+    except Exception as error:
+        commons_candidates = []
+
+        progress(
+            "SLI premium photography unavailable: "
+            f"{type(error).__name__}"
+        )
+
+    for label, url in commons_candidates:
+        if (
+            len(images) >= MAX_IMAGES
+            or url in seen
+        ):
             continue
-        seen.add(url)
-        data = _download_data_uri(url)
+
+        seen.add(
+            url
+        )
+
+        data = _download_data_uri(
+            url
+        )
+
         if data:
-            images.append((label, url, data))
-            progress(f"SLI verified photograph {len(images)}/{MAX_IMAGES}: {label[:60]}")
+            images.append(
+                (
+                    label,
+                    url,
+                    data,
+                )
+            )
+
+            progress(
+                "SLI supplementary photograph "
+                f"{len(images)}/{MAX_IMAGES}: "
+                f"{label[:60]}"
+            )
+
     return TopicSource(
         requested_topic=topic,
-        resolved_title=str(page.get("title") or title),
+        resolved_title=resolved_title,
         extract=extract,
-        page_url=str(page.get("fullurl") or ""),
-        image_url=primary_url or None,
-        image_data_uri=images[0][2] if images else None,
+        page_url=str(
+            page.get("fullurl")
+            or ""
+        ),
+        image_url=(
+            primary_url
+            or None
+        ),
+        image_data_uri=(
+            primary_data
+        ),
         images=images,
     )
 

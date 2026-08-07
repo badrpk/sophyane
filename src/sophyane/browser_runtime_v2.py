@@ -1,13 +1,13 @@
 """Verified per-workspace browser launcher with trusted demo-photo localization."""
 from __future__ import annotations
 
-import functools
 import hashlib
-import http.server
 import re
 import shutil
+import socket
 import subprocess
-import threading
+import sys
+import time
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 Progress = Callable[[str], None]
-_SERVERS: dict[Path, tuple[http.server.ThreadingHTTPServer, threading.Thread, str]] = {}
+_SERVERS: dict[Path, tuple[subprocess.Popen[bytes], str]] = {}
 _REMOTE_IMG = re.compile(r"(<img\b[^>]*?\bsrc\s*=\s*)([\"'])(https://[^\"']+)(\2)", re.I)
 _TRUSTED_IMAGE_HOSTS = {"images.unsplash.com", "images.pexels.com", "cdn.pixabay.com"}
 
@@ -65,18 +65,184 @@ def _localize_demo_photos(workspace: Path, progress: Progress) -> None:
         progress(f"Localized {localized} trusted internet photo(s) into the project")
 
 
+def _free_preview_port() -> int:
+    """Choose an ephemeral loopback port for a detached preview server."""
+    with socket.socket(
+        socket.AF_INET,
+        socket.SOCK_STREAM,
+    ) as sock:
+        sock.bind(
+            (
+                "127.0.0.1",
+                0,
+            )
+        )
+
+        return int(
+            sock.getsockname()[1]
+        )
+
+
+def _server_ready(
+    base: str,
+    *,
+    timeout: float = 0.35,
+) -> bool:
+    try:
+        with urllib.request.urlopen(
+            f"{base}/index.html",
+            timeout=timeout,
+        ) as response:
+            return (
+                getattr(
+                    response,
+                    "status",
+                    200,
+                )
+                == 200
+            )
+    except Exception:
+        return False
+
+
+def _wait_for_server(
+    base: str,
+    process: subprocess.Popen[bytes],
+    *,
+    timeout: float = 4.0,
+) -> None:
+    deadline = (
+        time.monotonic()
+        + timeout
+    )
+
+    last_error = ""
+
+    while (
+        time.monotonic()
+        < deadline
+    ):
+        if (
+            process.poll()
+            is not None
+        ):
+            raise RuntimeError(
+                "preview HTTP server exited "
+                f"with code {process.returncode}"
+            )
+
+        try:
+            with urllib.request.urlopen(
+                f"{base}/index.html",
+                timeout=0.35,
+            ) as response:
+                if (
+                    getattr(
+                        response,
+                        "status",
+                        200,
+                    )
+                    == 200
+                ):
+                    return
+
+        except Exception as error:
+            last_error = (
+                f"{type(error).__name__}: "
+                f"{error}"
+            )
+
+        time.sleep(
+            0.05
+        )
+
+    raise RuntimeError(
+        "preview HTTP server did not "
+        "become ready"
+        + (
+            f": {last_error}"
+            if last_error
+            else ""
+        )
+    )
+
+
 def _server_for(workspace: Path) -> str:
+    """Return a preview URL whose server survives the caller process.
+
+    Android VIEW/termux-open-url is asynchronous.  A daemon thread owned by
+    the launching Python process can disappear before the external browser
+    performs its first request.  The preview therefore runs as a detached
+    Python HTTP-server process.
+    """
     root = workspace.resolve()
-    existing = _SERVERS.get(root)
-    if existing and existing[1].is_alive():
-        return existing[2]
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    server.daemon_threads = True
-    thread = threading.Thread(target=server.serve_forever, daemon=True, name=f"sophyane-preview-{server.server_port}")
-    thread.start()
-    base = f"http://127.0.0.1:{server.server_port}"
-    _SERVERS[root] = (server, thread, base)
+
+    existing = _SERVERS.get(
+        root
+    )
+
+    if existing:
+        process, base = existing
+
+        if (
+            process.poll()
+            is None
+            and _server_ready(
+                base
+            )
+        ):
+            return base
+
+        _SERVERS.pop(
+            root,
+            None,
+        )
+
+    port = _free_preview_port()
+
+    base = (
+        "http://127.0.0.1:"
+        f"{port}"
+    )
+
+    command = [
+        sys.executable,
+        "-m",
+        "http.server",
+        str(port),
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        str(root),
+    ]
+
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+    try:
+        _wait_for_server(
+            base,
+            process,
+        )
+
+    except Exception:
+        try:
+            process.terminate()
+        except Exception:
+            pass
+
+        raise
+
+    _SERVERS[root] = (
+        process,
+        base,
+    )
+
     return base
 
 
@@ -130,6 +296,32 @@ def open_verified_browser(workspace: Path, progress: Progress) -> tuple[bool, st
         return False, "Browser launch blocked: served page does not match current index.html."
 
     progress(f"Verified current workspace page over HTTP: {len(body)} bytes; SHA-256 {expected_hash[:12]}")
+
+    try:
+        from sophyane.rendered_evidence import (
+            capture_rendered_evidence,
+        )
+
+        rendered = capture_rendered_evidence(
+            url,
+            workspace,
+            progress,
+        )
+
+        rendered_summary = (
+            rendered.summary()
+        )
+
+    except Exception as error:  # noqa: BLE001
+        rendered_summary = (
+            "Rendered evidence: unavailable: "
+            f"{type(error).__name__}: {error}"
+        )
+
+        progress(
+            rendered_summary
+        )
+
     progress(f"Opening verified product preview in a new browser tab: {url}")
 
     if shutil.which("termux-open-url"):
@@ -137,6 +329,7 @@ def open_verified_browser(workspace: Path, progress: Progress) -> tuple[bool, st
         return completed.returncode == 0, (
             f"Browser file: {candidate}\nBrowser URL: {url}\n"
             f"HTTP verification: SHA-256 matched {expected_hash[:12]}\n"
+            f"{rendered_summary}\n"
             f"Browser command: termux-open-url {url}\nExit code: {completed.returncode}\n"
             f"{completed.stdout}{completed.stderr}"
         )
@@ -152,6 +345,7 @@ def open_verified_browser(workspace: Path, progress: Progress) -> tuple[bool, st
         return completed.returncode == 0, (
             f"Browser file: {candidate}\nBrowser URL: {url}\n"
             f"HTTP verification: SHA-256 matched {expected_hash[:12]}\n"
+            f"{rendered_summary}\n"
             f"Browser command: Android VIEW new-task {url}\nExit code: {completed.returncode}\n"
             f"{completed.stdout}{completed.stderr}"
         )
@@ -159,5 +353,6 @@ def open_verified_browser(workspace: Path, progress: Progress) -> tuple[bool, st
     opened, launch = _desktop_new_tab(url)
     return opened, (
         f"Browser file: {candidate}\nBrowser URL: {url}\n"
-        f"HTTP verification: SHA-256 matched {expected_hash[:12]}\n{launch}"
+        f"HTTP verification: SHA-256 matched {expected_hash[:12]}\n"
+        f"{rendered_summary}\n{launch}"
     )
