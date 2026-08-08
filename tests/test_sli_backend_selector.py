@@ -116,7 +116,7 @@ def test_explicit_postgres_selection_reads_prepared_schema(
 
         assert stats[
             "learned_executions"
-        ] == 117
+        ] == 119
 
 
 def test_postgres_public_read_parity(
@@ -235,3 +235,288 @@ def test_selector_does_not_modify_legacy_sli_connect(
 
     finally:
         db.close()
+
+
+def test_selector_defaults_to_sqlite_without_env_or_config(
+    monkeypatch,
+):
+    import sophyane.sli_backend as sli_backend
+
+    monkeypatch.delenv(
+        "SOPHYANE_SLI_BACKEND",
+        raising=False,
+    )
+
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {},
+    )
+
+    assert (
+        sli_backend.selected_backend()
+        == "sqlite"
+    )
+
+
+def test_selector_reads_persistent_sqlite_config(
+    monkeypatch,
+):
+    import sophyane.sli_backend as sli_backend
+
+    monkeypatch.delenv(
+        "SOPHYANE_SLI_BACKEND",
+        raising=False,
+    )
+
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {
+            "sli_backend":
+                "sqlite",
+        },
+    )
+
+    assert (
+        sli_backend.selected_backend()
+        == "sqlite"
+    )
+
+
+def test_selector_reads_persistent_postgres_config(
+    monkeypatch,
+):
+    import sophyane.sli_backend as sli_backend
+
+    monkeypatch.delenv(
+        "SOPHYANE_SLI_BACKEND",
+        raising=False,
+    )
+
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {
+            "sli_backend":
+                "postgres",
+        },
+    )
+
+    assert (
+        sli_backend.selected_backend()
+        == "postgres"
+    )
+
+
+def test_environment_sqlite_overrides_persistent_postgres(
+    monkeypatch,
+):
+    import sophyane.sli_backend as sli_backend
+
+    monkeypatch.setenv(
+        "SOPHYANE_SLI_BACKEND",
+        "sqlite",
+    )
+
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {
+            "sli_backend":
+                "postgres",
+        },
+    )
+
+    assert (
+        sli_backend.selected_backend()
+        == "sqlite"
+    )
+
+
+def test_environment_postgres_overrides_persistent_sqlite(
+    monkeypatch,
+):
+    import sophyane.sli_backend as sli_backend
+
+    monkeypatch.setenv(
+        "SOPHYANE_SLI_BACKEND",
+        "postgres",
+    )
+
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {
+            "sli_backend":
+                "sqlite",
+        },
+    )
+
+    assert (
+        sli_backend.selected_backend()
+        == "postgres"
+    )
+
+
+def test_empty_environment_uses_persistent_config(
+    monkeypatch,
+):
+    import sophyane.sli_backend as sli_backend
+
+    monkeypatch.setenv(
+        "SOPHYANE_SLI_BACKEND",
+        "   ",
+    )
+
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {
+            "sli_backend":
+                "postgres",
+        },
+    )
+
+    assert (
+        sli_backend.selected_backend()
+        == "postgres"
+    )
+
+
+def test_invalid_persistent_backend_is_rejected(
+    monkeypatch,
+):
+    import pytest
+    import sophyane.sli_backend as sli_backend
+
+    monkeypatch.delenv(
+        "SOPHYANE_SLI_BACKEND",
+        raising=False,
+    )
+
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {
+            "sli_backend":
+                "invalid-backend",
+        },
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Unsupported SLI backend",
+    ):
+        sli_backend.selected_backend()
+
+
+def test_invalid_environment_override_is_rejected_even_with_valid_config(
+    monkeypatch,
+):
+    import pytest
+    import sophyane.sli_backend as sli_backend
+
+    monkeypatch.setenv(
+        "SOPHYANE_SLI_BACKEND",
+        "invalid-backend",
+    )
+
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {
+            "sli_backend":
+                "sqlite",
+        },
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Unsupported SLI backend",
+    ):
+        sli_backend.selected_backend()
+
+
+def test_config_load_failure_fails_closed_to_sqlite(
+    monkeypatch,
+):
+    import sophyane.sli_backend as sli_backend
+
+    monkeypatch.delenv(
+        "SOPHYANE_SLI_BACKEND",
+        raising=False,
+    )
+
+    def fail():
+        raise RuntimeError(
+            "simulated config failure"
+        )
+
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        fail,
+    )
+
+    assert (
+        sli_backend.selected_backend()
+        == "sqlite"
+    )
+
+
+def test_explicit_sqlite_path_remains_sqlite_even_when_persistent_postgres(
+    tmp_path,
+    monkeypatch,
+):
+    import sqlite3
+
+    from sophyane import sli
+    import sophyane.sli_backend as sli_backend
+
+    path = tmp_path / "explicit.db"
+
+    source = sqlite3.connect(
+        f"file:{sli.DB_PATH.resolve()}?mode=ro",
+        uri=True,
+    )
+
+    target = sqlite3.connect(
+        path
+    )
+
+    try:
+        source.backup(
+            target
+        )
+
+    finally:
+        target.close()
+        source.close()
+
+    monkeypatch.delenv(
+        "SOPHYANE_SLI_BACKEND",
+        raising=False,
+    )
+
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {
+            "sli_backend":
+                "postgres",
+        },
+    )
+
+    assert (
+        sli_backend.selected_backend()
+        == "postgres"
+    )
+
+    with sli_backend.connect(
+        path
+    ) as db:
+        assert isinstance(
+            db,
+            sqlite3.Connection,
+        )

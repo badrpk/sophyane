@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from sophyane import sli
+from sophyane.config import load_config
 from sophyane.sli_postgres import PostgresSLIStore
 
 
@@ -29,18 +30,41 @@ _ALLOWED = {
 
 
 def selected_backend() -> str:
-    """Return the explicitly selected SLI backend.
+    """Return the selected SLI backend.
 
-    Absence of configuration always means SQLite.
+    Selection precedence is intentionally explicit and reversible:
+
+    1. SOPHYANE_SLI_BACKEND environment variable, when non-empty.
+    2. Persistent ``sli_backend`` value in Sophyane config.
+    3. SQLite when neither selector is configured.
+
+    Merely having PostgreSQL available never changes the runtime backend.
     """
-    value = (
+    environment_value = (
         os.environ.get(
             BACKEND_ENV,
-            SQLITE_BACKEND,
+            "",
         )
         .strip()
         .lower()
     )
+
+    if environment_value:
+        value = environment_value
+
+    else:
+        try:
+            config = load_config()
+        except Exception:
+            config = {}
+
+        value = str(
+            config.get(
+                "sli_backend",
+                SQLITE_BACKEND,
+            )
+            or SQLITE_BACKEND
+        ).strip().lower()
 
     if not value:
         value = SQLITE_BACKEND

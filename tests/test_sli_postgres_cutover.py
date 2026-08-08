@@ -299,6 +299,26 @@ def test_synchronize_postgres_to_sqlite_appends_exact_delta(
             store=store,
         )
 
+        baseline = sqlite_snapshot(
+            sqlite_path
+        )
+
+        baseline_memories = len(
+            baseline["memories"]
+        )
+
+        baseline_traces = len(
+            baseline["traces"]
+        )
+
+        expected_memory_id = (
+            max(
+                int(row["id"])
+                for row in baseline["memories"]
+            )
+            + 1
+        )
+
         monkeypatch.setenv(
             "SOPHYANE_SLI_BACKEND",
             "postgres",
@@ -338,7 +358,7 @@ def test_synchronize_postgres_to_sqlite_appends_exact_delta(
 
         assert result[
             "memory_id"
-        ] == 118
+        ] == expected_memory_id
 
         before = sqlite_snapshot(
             sqlite_path
@@ -348,19 +368,19 @@ def test_synchronize_postgres_to_sqlite_appends_exact_delta(
 
         assert len(
             before["memories"]
-        ) == 117
+        ) == baseline_memories
 
         assert len(
             before["traces"]
-        ) == 117
+        ) == baseline_traces
 
         assert len(
             postgres["memories"]
-        ) == 118
+        ) == baseline_memories + 1
 
         assert len(
             postgres["traces"]
-        ) == 118
+        ) == baseline_traces + 1
 
         synchronization = (
             cutover.synchronize_postgres_to_sqlite(
@@ -396,11 +416,11 @@ def test_synchronize_postgres_to_sqlite_appends_exact_delta(
 
         assert verification[
             "source_memories"
-        ] == 118
+        ] == baseline_memories + 1
 
         assert verification[
             "source_traces"
-        ] == 118
+        ] == baseline_traces + 1
 
     finally:
         if store.schema_exists():
@@ -459,6 +479,16 @@ def test_synchronize_postgres_to_sqlite_is_idempotent(
             store=store,
         )
 
+        baseline = store.export_snapshot()
+
+        baseline_memories = len(
+            baseline["memories"]
+        )
+
+        baseline_traces = len(
+            baseline["traces"]
+        )
+
         result = (
             cutover.synchronize_postgres_to_sqlite(
                 sqlite_path=sqlite_path,
@@ -480,11 +510,11 @@ def test_synchronize_postgres_to_sqlite_is_idempotent(
 
         assert result[
             "memories"
-        ] == 117
+        ] == baseline_memories
 
         assert result[
             "traces"
-        ] == 117
+        ] == baseline_traces
 
     finally:
         if store.schema_exists():
@@ -654,7 +684,12 @@ def test_synchronize_postgres_to_sqlite_refuses_noncontiguous_memory_ids(
 
         payload[
             "id"
-        ] = 119
+        ] = (
+            int(
+                payload["id"]
+            )
+            + 2
+        )
 
         payload[
             "request"
@@ -759,6 +794,16 @@ def test_rollback_synchronized_preserves_postgres_only_learning(
             store=store,
         )
 
+        baseline = store.export_snapshot()
+
+        baseline_memories = len(
+            baseline["memories"]
+        )
+
+        baseline_traces = len(
+            baseline["traces"]
+        )
+
         monkeypatch.setenv(
             "SOPHYANE_SLI_BACKEND",
             "postgres",
@@ -800,7 +845,7 @@ def test_rollback_synchronized_preserves_postgres_only_learning(
             store.export_snapshot()[
                 "memories"
             ]
-        ) == 118
+        ) == baseline_memories + 1
 
         cutover.PRODUCTION_SCHEMA = schema
         cutover.CUTOVER_STATE = manifest
@@ -829,11 +874,11 @@ def test_rollback_synchronized_preserves_postgres_only_learning(
 
         assert result[
             "memories"
-        ] == 118
+        ] == baseline_memories + 1
 
         assert result[
             "traces"
-        ] == 118
+        ] == baseline_traces + 1
 
         assert not store.schema_exists()
 
@@ -843,11 +888,11 @@ def test_rollback_synchronized_preserves_postgres_only_learning(
 
         assert len(
             final["memories"]
-        ) == 118
+        ) == baseline_memories + 1
 
         assert len(
             final["traces"]
-        ) == 118
+        ) == baseline_traces + 1
 
         assert manifest.is_file()
 
