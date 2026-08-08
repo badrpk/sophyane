@@ -1,141 +1,40 @@
 {
   "day": "2026-08-08",
-  "exported_at": 1786136773.385918,
-  "device": "localhost-cd8f5f9f",
+  "exported_at": 1786162103.4943724,
+  "device": "runnervmvrwv9-aae95289",
   "sophyane_version": "21.1.1",
   "chain_verify": {
     "ok": true,
-    "length": 899,
-    "tip": "52197aa27a77a1ec2c817eae4db73dadf29fc867fcdecdc7e5a52a33f99dea67"
+    "length": 1,
+    "tip": "f5615c68f2a98de7ca20ae3daee07cce9c06bb67bd0cf7492c00472c5ef7e7e3"
   },
-  "count": 6,
+  "count": 1,
   "blocks": [
     {
-      "index": 893,
-      "timestamp": 1786136769.987817,
+      "index": 0,
+      "timestamp": 1786162103.4940867,
       "proposal": {
-        "proposal_id": "842e948d-faba-4c45-a9c1-29cc19c708ee",
+        "proposal_id": "26e2f3f3-ed2a-4672-a10d-df76881ceae2",
         "kind": "benchmark",
-        "title": "appliance-boot",
-        "body": "Booted Sophyane appliance v21.1.1 on android/aarch64",
-        "source_device": "localhost-cd8f5f9f",
+        "title": "daily-ci-heartbeat",
+        "body": "Automated daily CI epoch for Sophyane continuous improvement catalog.",
+        "source_device": "runnervmvrwv9-aae95289",
         "evidence": {
-          "network_online": true,
-          "profile": null,
-          "ethernet": false,
-          "wifi": true
+          "workflow": "sophyane-daily-improve",
+          "verify": {
+            "ok": true,
+            "length": 0,
+            "message": "empty chain"
+          }
         },
         "score": 0.1,
-        "created_at": 1786136769.9878128
+        "created_at": 1786162103.4940844
       },
-      "prev_hash": "ba5ef5dcbce4ab44569d082df800af2bd6efb711b07bc46f733e31d61138d1d6",
-      "hash": "fe9efdaf8229d149946d2c5720573aa56dae4545769fe93681ef4e3f99cae00b",
-      "device": "localhost-cd8f5f9f",
-      "version": "21.1.1"
-    },
-    {
-      "index": 894,
-      "timestamp": 1786136770.1768196,
-      "proposal": {
-        "proposal_id": "d42e55d3-1601-42d6-b443-942a4095ae8d",
-        "kind": "benchmark",
-        "title": "appliance-boot",
-        "body": "Booted Sophyane appliance v21.1.1 on android/aarch64",
-        "source_device": "localhost-cd8f5f9f",
-        "evidence": {
-          "network_online": true,
-          "profile": null,
-          "ethernet": false,
-          "wifi": true
-        },
-        "score": 0.1,
-        "created_at": 1786136770.1768148
-      },
-      "prev_hash": "fe9efdaf8229d149946d2c5720573aa56dae4545769fe93681ef4e3f99cae00b",
-      "hash": "6ce964817413b57e4c7368e01dea70e22a3c5db00837ffdd5b697a91875d491e",
-      "device": "localhost-cd8f5f9f",
-      "version": "21.1.1"
-    },
-    {
-      "index": 895,
-      "timestamp": 1786136770.8074143,
-      "proposal": {
-        "proposal_id": "e06d1102-de27-480d-9004-59b63b921661",
-        "kind": "benchmark",
-        "title": "audit",
-        "body": "feature audit heartbeat",
-        "source_device": "localhost-cd8f5f9f",
-        "evidence": {},
-        "score": 0.05,
-        "created_at": 1786136770.8074117
-      },
-      "prev_hash": "6ce964817413b57e4c7368e01dea70e22a3c5db00837ffdd5b697a91875d491e",
-      "hash": "884a5e4b178a1d6310882bbd077ad3b987181995a32b9fbd1f79fd6e3226c2f8",
-      "device": "localhost-cd8f5f9f",
-      "version": "21.1.1"
-    },
-    {
-      "index": 896,
-      "timestamp": 1786136771.1515932,
-      "proposal": {
-        "proposal_id": "1096c00b-3e10-4483-974e-91ec313d4ad5",
-        "kind": "benchmark",
-        "title": "appliance-boot",
-        "body": "Booted Sophyane appliance v21.1.1 on android/aarch64",
-        "source_device": "localhost-cd8f5f9f",
-        "evidence": {
-          "network_online": true,
-          "profile": null,
-          "ethernet": false,
-          "wifi": true
-        },
-        "score": 0.1,
-        "created_at": 1786136771.1515894
-      },
-      "prev_hash": "884a5e4b178a1d6310882bbd077ad3b987181995a32b9fbd1f79fd6e3226c2f8",
-      "hash": "de7750ee7538c73d2a10a39519776582f28d36d15455d0c9d0fa77eee183ed3f",
-      "device": "localhost-cd8f5f9f",
-      "version": "21.1.1"
-    },
-    {
-      "index": 897,
-      "timestamp": 1786136771.2228615,
-      "proposal": {
-        "proposal_id": "df6bf8c2-26e8-4086-89c9-1ca775556cf0",
-        "kind": "train",
-        "title": "continual-local-step",
-        "body": "C++ PEFT local step round=496149 loss=0.015623601 samples=256",
-        "source_device": "localhost-cd8f5f9f",
-        "evidence": {
-          "base_hash": "fe2a5b4865ba530271fefad77fc1c1e5",
-          "weights": "4b9d0e05793cf62a9dda2e994a86259f"
-        },
-        "score": 0.15,
-        "created_at": 1786136771.2228594
-      },
-      "prev_hash": "de7750ee7538c73d2a10a39519776582f28d36d15455d0c9d0fa77eee183ed3f",
-      "hash": "f33c370a50f77feaa52e65d7830eedb1463bdf09ae39cf11ffcc8809af5604df",
-      "device": "localhost-cd8f5f9f",
-      "version": "21.1.1"
-    },
-    {
-      "index": 898,
-      "timestamp": 1786136773.3582394,
-      "proposal": {
-        "proposal_id": "3936029d-a670-42d3-8d10-15dd55bc3e25",
-        "kind": "fact",
-        "title": "test-proposal",
-        "body": "body for chain",
-        "source_device": "localhost-cd8f5f9f",
-        "evidence": {},
-        "score": 0.2,
-        "created_at": 1786136773.3582368
-      },
-      "prev_hash": "f33c370a50f77feaa52e65d7830eedb1463bdf09ae39cf11ffcc8809af5604df",
-      "hash": "52197aa27a77a1ec2c817eae4db73dadf29fc867fcdecdc7e5a52a33f99dea67",
-      "device": "localhost-cd8f5f9f",
+      "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "hash": "f5615c68f2a98de7ca20ae3daee07cce9c06bb67bd0cf7492c00472c5ef7e7e3",
+      "device": "runnervmvrwv9-aae95289",
       "version": "21.1.1"
     }
   ],
-  "merkle_root": "16391e5e827df932154d349cd26601bf745ddac99fedc7161488037b9e570320"
+  "merkle_root": "f5615c68f2a98de7ca20ae3daee07cce9c06bb67bd0cf7492c00472c5ef7e7e3"
 }
