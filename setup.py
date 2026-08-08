@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="sophyane",
-    version="21.1.1",
+    version="21.1.2",
     description=(
         "Local-first AI software engineering platform with durable execution, "
         "repository intelligence and validator-grounded recovery"
