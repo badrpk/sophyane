@@ -1186,3 +1186,53 @@ class PostgresSLIStore:
             "traces":
                 traces,
         }
+
+
+    def drop_schema(
+        self,
+    ) -> None:
+        """Drop this SLI schema explicitly.
+
+        Intended for controlled rollback and disposable-test cleanup.
+        """
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "DROP SCHEMA IF EXISTS {} CASCADE"
+                    ).format(
+                        sql.Identifier(
+                            self.schema
+                        )
+                    )
+                )
+
+            connection.commit()
+
+    def schema_exists(
+        self,
+    ) -> bool:
+        """Return whether this PostgreSQL schema currently exists."""
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM information_schema.schemata
+                        WHERE schema_name = %s
+                    ) AS present
+                    """,
+                    (
+                        self.schema,
+                    ),
+                )
+
+                row = cursor.fetchone()
+
+        return bool(
+            row
+            and row.get(
+                "present"
+            )
+        )
