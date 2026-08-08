@@ -244,3 +244,33 @@ def store_trace(db: sqlite3.Connection, payload: dict[str, Any]) -> None:
         ),
     )
     db.commit()
+
+def list_traces(
+    db: sqlite3.Connection,
+    *,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Return recent traces without exposing backend SQL to callers."""
+    rows = db.execute(
+        """
+        SELECT *
+        FROM learned_execution_traces
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        (
+            max(
+                1,
+                int(
+                    limit
+                ),
+            ),
+        ),
+    ).fetchall()
+
+    return [
+        dict(
+            row
+        )
+        for row in rows
+    ]

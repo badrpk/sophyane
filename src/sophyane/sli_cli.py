@@ -45,12 +45,19 @@ def main(argv: list[str] | None = None) -> int:
                 )
             return 0
 
-        rows = db.execute(
-            "SELECT * FROM learned_execution_traces ORDER BY created_at DESC LIMIT ?",
-            (max(1, args.limit),),
-        ).fetchall()
+        rows = sli.list_traces(
+            db,
+            limit=args.limit,
+        )
+
         for row in rows:
-            print(json.dumps(dict(row), ensure_ascii=False, indent=2))
+            print(
+                json.dumps(
+                    row,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
         return 0
 
 
