@@ -351,3 +351,248 @@ def test_backend_postgres_delegates_to_cutover_synchronizer(
     )
 
     assert captured["store"] is sentinel_store
+
+
+def test_atomic_learning_gate_defaults_off(
+    monkeypatch,
+) -> None:
+    import sophyane.sli_backend as backend
+
+    monkeypatch.delenv(
+        "SOPHYANE_SLI_ATOMIC_LEARNING",
+        raising=False,
+    )
+
+    assert (
+        backend.atomic_learning_enabled()
+        is False
+    )
+
+
+def test_atomic_learning_gate_accepts_explicit_true(
+    monkeypatch,
+) -> None:
+    import sophyane.sli_backend as backend
+
+    for value in (
+        "1",
+        "true",
+        "TRUE",
+        "yes",
+        "on",
+    ):
+        monkeypatch.setenv(
+            "SOPHYANE_SLI_ATOMIC_LEARNING",
+            value,
+        )
+
+        assert (
+            backend.atomic_learning_enabled()
+            is True
+        )
+
+
+def test_learner_event_digest_is_canonical() -> None:
+    import sophyane.sli_learner as learner
+
+    first = {
+        "b":
+            {
+                "z": 2,
+                "a": 1,
+            },
+
+        "a":
+            [
+                3,
+                2,
+                1,
+            ],
+    }
+
+    second = {
+        "a":
+            [
+                3,
+                2,
+                1,
+            ],
+
+        "b":
+            {
+                "a": 1,
+                "z": 2,
+            },
+    }
+
+    assert (
+        learner._learner_event_digest(
+            first
+        )
+        ==
+        learner._learner_event_digest(
+            second
+        )
+    )
+
+    assert len(
+        learner._learner_event_digest(
+            first
+        )
+    ) == 64
+
+
+def test_learn_execution_preserves_legacy_path_when_atomic_disabled(
+    monkeypatch,
+) -> None:
+    from contextlib import contextmanager
+
+    import sophyane.sli_learner as learner
+
+    events = []
+
+    class FakeDB:
+        pass
+
+    @contextmanager
+    def fake_connect():
+        events.append(
+            "connect"
+        )
+
+        yield FakeDB()
+
+        events.append(
+            "close"
+        )
+
+    monkeypatch.setattr(
+        learner.sli,
+        "connect",
+        fake_connect,
+    )
+
+    monkeypatch.setattr(
+        learner.sli,
+        "selected_backend",
+        lambda: "postgres",
+    )
+
+    monkeypatch.setattr(
+        learner.sli,
+        "atomic_learning_enabled",
+        lambda: False,
+    )
+
+    def fake_record(
+        db,
+        **kwargs,
+    ):
+        assert isinstance(
+            db,
+            FakeDB,
+        )
+
+        events.append(
+            "record"
+        )
+
+        return 121
+
+    def fake_trace(
+        db,
+        payload,
+    ):
+        assert isinstance(
+            db,
+            FakeDB,
+        )
+
+        assert payload[
+            "trace_id"
+        ] == "legacy-disabled"
+
+        events.append(
+            "trace"
+        )
+
+    monkeypatch.setattr(
+        learner.sli,
+        "record",
+        fake_record,
+    )
+
+    monkeypatch.setattr(
+        learner.sli,
+        "store_trace",
+        fake_trace,
+    )
+
+    monkeypatch.setattr(
+        learner.sli,
+        "atomic_learn_execution",
+        lambda *args, **kwargs: (
+            (_ for _ in ()).throw(
+                AssertionError(
+                    "atomic path must not run"
+                )
+            )
+        ),
+    )
+
+    monkeypatch.setattr(
+        learner.sli,
+        "synchronize_rollback_mirror",
+        lambda: (
+            events.append(
+                "mirror"
+            )
+            or {
+                "state":
+                    "synchronized",
+            }
+        ),
+    )
+
+    result = learner.learn_execution(
+        trace_id=
+            "legacy-disabled",
+
+        request=
+            "inspect existing project safely",
+
+        workspace_before=
+            {},
+
+        workspace_after=
+            {},
+
+        status=
+            "succeeded",
+
+        reward=
+            1.0,
+
+        result=
+            "completed successfully",
+
+        elapsed_seconds=
+            0.001,
+    )
+
+    assert result[
+        "memory_id"
+    ] == 121
+
+    assert (
+        "atomic_learning"
+        not in result
+    )
+
+    assert events == [
+        "connect",
+        "record",
+        "trace",
+        "close",
+        "mirror",
+    ]

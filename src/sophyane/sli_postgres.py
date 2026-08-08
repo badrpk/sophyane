@@ -226,6 +226,550 @@ class PostgresSLIStore:
 
             connection.commit()
 
+    def ensure_learner_event_keys_schema(
+        self,
+    ) -> None:
+        """Create the opt-in learner-event idempotency ledger.
+
+        This is deliberately separate from ensure_schema(). Existing
+        production installations must not acquire the new table merely
+        by opening the normal PostgreSQL SLI backend.
+        """
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS
+                        {}.learner_event_keys (
+                            trace_id TEXT PRIMARY KEY,
+                            memory_id BIGINT UNIQUE NOT NULL,
+                            payload_digest TEXT NOT NULL,
+                            created_at DOUBLE PRECISION NOT NULL,
+
+                            CONSTRAINT learner_event_keys_memory_fk
+                            FOREIGN KEY (memory_id)
+                            REFERENCES {}.memories(id)
+                            ON DELETE RESTRICT
+                        )
+                        """
+                    ).format(
+                        sql.Identifier(
+                            self.schema
+                        ),
+                        sql.Identifier(
+                            self.schema
+                        ),
+                    )
+                )
+
+            connection.commit()
+
+    def get_learner_event_key(
+        self,
+        trace_id: str,
+    ) -> dict[str, Any] | None:
+        value = str(
+            trace_id
+        ).strip()
+
+        if not value:
+            raise ValueError(
+                "trace_id must not be empty."
+            )
+
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        SELECT
+                            trace_id,
+                            memory_id,
+                            payload_digest,
+                            created_at
+                        FROM {}.learner_event_keys
+                        WHERE trace_id = %s
+                        """
+                    ).format(
+                        sql.Identifier(
+                            self.schema
+                        )
+                    ),
+                    (
+                        value,
+                    ),
+                )
+
+                row = cursor.fetchone()
+
+        if row is None:
+            return None
+
+        return {
+            "trace_id":
+                str(
+                    row[
+                        "trace_id"
+                    ]
+                ),
+
+            "memory_id":
+                int(
+                    row[
+                        "memory_id"
+                    ]
+                ),
+
+            "payload_digest":
+                str(
+                    row[
+                        "payload_digest"
+                    ]
+                ),
+
+            "created_at":
+                float(
+                    row[
+                        "created_at"
+                    ]
+                ),
+        }
+
+    def atomic_learn_execution(
+        self,
+        *,
+        trace_id: str,
+        payload_digest: str,
+        memory: dict[str, Any],
+        trace: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Atomically persist one authoritative learner event.
+
+        The caller must explicitly create learner_event_keys first.
+        Existing schemas therefore remain untouched until migration
+        activation is deliberately performed.
+
+        Same trace_id + same payload returns the original memory without
+        modifying memories or traces. Same trace_id + a different payload
+        fails closed.
+        """
+        trace_value = str(
+            trace_id
+        ).strip()
+
+        digest_value = str(
+            payload_digest
+        ).strip()
+
+        if not trace_value:
+            raise ValueError(
+                "trace_id must not be empty."
+            )
+
+        if not digest_value:
+            raise ValueError(
+                "payload_digest must not be empty."
+            )
+
+        trace_payload_id = str(
+            trace.get(
+                "trace_id",
+                trace_value,
+            )
+            or ""
+        ).strip()
+
+        if trace_payload_id != trace_value:
+            raise ValueError(
+                "trace payload trace_id does not "
+                "match authoritative trace_id."
+            )
+
+        source_type = str(
+            memory.get(
+                "source_type",
+                "unknown",
+            )
+            or "unknown"
+        )
+
+        source = (
+            source_type
+            if source_type in SOURCE_WEIGHTS
+            else "unknown"
+        )
+
+        memory_created_at_raw = (
+            memory.get(
+                "created_at"
+            )
+        )
+
+        memory_created_at = (
+            time.time()
+            if memory_created_at_raw is None
+            else float(
+                memory_created_at_raw
+            )
+        )
+
+        trace_created_at_raw = (
+            trace.get(
+                "created_at"
+            )
+        )
+
+        trace_created_at = (
+            time.time()
+            if trace_created_at_raw is None
+            else float(
+                trace_created_at_raw
+            )
+        )
+
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                # Serialize concurrent contenders for one logical event
+                # without globally serializing unrelated learning.
+                cursor.execute(
+                    """
+                    SELECT pg_advisory_xact_lock(
+                        hashtextextended(%s, 0)
+                    )
+                    """,
+                    (
+                        trace_value,
+                    ),
+                )
+
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        SELECT
+                            memory_id,
+                            payload_digest
+                        FROM {}.learner_event_keys
+                        WHERE trace_id = %s
+                        """
+                    ).format(
+                        sql.Identifier(
+                            self.schema
+                        )
+                    ),
+                    (
+                        trace_value,
+                    ),
+                )
+
+                existing = (
+                    cursor.fetchone()
+                )
+
+                if existing is not None:
+                    existing_digest = str(
+                        existing[
+                            "payload_digest"
+                        ]
+                    )
+
+                    memory_id = int(
+                        existing[
+                            "memory_id"
+                        ]
+                    )
+
+                    if (
+                        existing_digest
+                        != digest_value
+                    ):
+                        raise RuntimeError(
+                            "PostgreSQL SLI learner-event "
+                            "payload conflict for trace_id "
+                            f"{trace_value!r}."
+                        )
+
+                    return {
+                        "state":
+                            "already_recorded",
+
+                        "trace_id":
+                            trace_value,
+
+                        "memory_id":
+                            memory_id,
+
+                        "payload_digest":
+                            existing_digest,
+
+                        "created":
+                            False,
+                    }
+
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {}.memories (
+                            request,
+                            state,
+                            action,
+                            result,
+                            reward,
+                            confidence,
+                            elapsed_seconds,
+                            source_type,
+                            created_at
+                        )
+                        VALUES (
+                            %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s
+                        )
+                        RETURNING id
+                        """
+                    ).format(
+                        sql.Identifier(
+                            self.schema
+                        )
+                    ),
+                    (
+                        str(
+                            memory.get(
+                                "request"
+                            )
+                            or ""
+                        ),
+                        str(
+                            memory.get(
+                                "state"
+                            )
+                            or ""
+                        ),
+                        str(
+                            memory.get(
+                                "action"
+                            )
+                            or
+                            "EXECUTE_STRUCTURED_TASK"
+                        ),
+                        str(
+                            memory.get(
+                                "result"
+                            )
+                            or ""
+                        ),
+                        max(
+                            -1.0,
+                            min(
+                                1.0,
+                                float(
+                                    memory.get(
+                                        "reward",
+                                        0.0,
+                                    )
+                                ),
+                            ),
+                        ),
+                        max(
+                            0.0,
+                            min(
+                                1.0,
+                                float(
+                                    memory.get(
+                                        "confidence",
+                                        0.5,
+                                    )
+                                ),
+                            ),
+                        ),
+                        max(
+                            0.0,
+                            float(
+                                memory.get(
+                                    "elapsed_seconds",
+                                    0.0,
+                                )
+                            ),
+                        ),
+                        source,
+                        memory_created_at,
+                    ),
+                )
+
+                memory_row = (
+                    cursor.fetchone()
+                )
+
+                if not memory_row:
+                    raise RuntimeError(
+                        "Atomic PostgreSQL learner "
+                        "memory insert returned no id."
+                    )
+
+                memory_id = int(
+                    memory_row[
+                        "id"
+                    ]
+                )
+
+                # Intentionally plain INSERT: a retry must never mutate
+                # historical trace content.
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO
+                        {}.learned_execution_traces (
+                            trace_id,
+                            request,
+                            action,
+                            status,
+                            reward,
+                            quality_reward,
+                            failure_category,
+                            quality_signals,
+                            result,
+                            elapsed_seconds,
+                            workspace_before,
+                            workspace_after,
+                            created_at
+                        )
+                        VALUES (
+                            %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s,
+                            %s, %s, %s
+                        )
+                        """
+                    ).format(
+                        sql.Identifier(
+                            self.schema
+                        )
+                    ),
+                    (
+                        trace_value,
+                        str(
+                            trace.get(
+                                "request"
+                            )
+                            or ""
+                        ),
+                        str(
+                            trace.get(
+                                "action"
+                            )
+                            or
+                            "EXECUTE_STRUCTURED_TASK"
+                        ),
+                        str(
+                            trace.get(
+                                "status"
+                            )
+                            or "unknown"
+                        ),
+                        float(
+                            trace.get(
+                                "reward",
+                                0.0,
+                            )
+                        ),
+                        float(
+                            trace.get(
+                                "quality_reward",
+                                0.0,
+                            )
+                        ),
+                        str(
+                            trace.get(
+                                "failure_category"
+                            )
+                            or ""
+                        ),
+                        Jsonb(
+                            trace.get(
+                                "quality_signals",
+                                [],
+                            )
+                            or []
+                        ),
+                        str(
+                            trace.get(
+                                "result"
+                            )
+                            or ""
+                        ),
+                        max(
+                            0.0,
+                            float(
+                                trace.get(
+                                    "elapsed_seconds",
+                                    0.0,
+                                )
+                            ),
+                        ),
+                        Jsonb(
+                            trace.get(
+                                "workspace_before",
+                                {},
+                            )
+                            or {}
+                        ),
+                        Jsonb(
+                            trace.get(
+                                "workspace_after",
+                                {},
+                            )
+                            or {}
+                        ),
+                        trace_created_at,
+                    ),
+                )
+
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO
+                        {}.learner_event_keys (
+                            trace_id,
+                            memory_id,
+                            payload_digest,
+                            created_at
+                        )
+                        VALUES (
+                            %s, %s, %s, %s
+                        )
+                        """
+                    ).format(
+                        sql.Identifier(
+                            self.schema
+                        )
+                    ),
+                    (
+                        trace_value,
+                        memory_id,
+                        digest_value,
+                        time.time(),
+                    ),
+                )
+
+            # memory + immutable trace + event key become
+            # authoritative together.
+            connection.commit()
+
+        return {
+            "state":
+                "created",
+
+            "trace_id":
+                trace_value,
+
+            "memory_id":
+                memory_id,
+
+            "payload_digest":
+                digest_value,
+
+            "created":
+                True,
+        }
+
     def record(
         self,
         *,

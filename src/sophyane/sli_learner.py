@@ -1,6 +1,9 @@
 """Convert execution traces into source-aware SLI memories."""
 from __future__ import annotations
 
+import hashlib
+import json
+
 from typing import Any
 
 from sophyane import sli_backend as sli
@@ -173,6 +176,24 @@ def calculate_quality_reward(
     return max(-1.0, min(1.0, reward)), signals, category
 
 
+def _learner_event_digest(
+    payload: dict[str, Any],
+) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode(
+        "utf-8"
+    )
+
+    return hashlib.sha256(
+        encoded
+    ).hexdigest()
+
+
 def learn_execution(
     *,
     trace_id: str,
@@ -186,55 +207,238 @@ def learn_execution(
     error: str = "",
 ) -> dict[str, Any]:
     del reward  # quality is derived from validator evidence, not caller claims.
-    action = classify_action(request)
-    quality_reward, quality_signals, failure_category = calculate_quality_reward(
+
+    action = classify_action(
+        request
+    )
+
+    (
+        quality_reward,
+        quality_signals,
+        failure_category,
+    ) = calculate_quality_reward(
         status=status,
         result=result,
         error=error,
         workspace_before=workspace_before,
         workspace_after=workspace_after,
     )
-    with sli.connect() as db:
-        memory_id = sli.record(
-            db,
-            request=request,
-            state="execution completed",
-            action=action,
-            result=result,
-            reward=quality_reward,
-            confidence=1.0 if status.lower() in {"success", "succeeded", "completed"} else 0.8,
-            elapsed_seconds=elapsed_seconds,
-            source_type="execution",
-        )
-        sli.store_trace(
-            db,
-            {
-                "trace_id": trace_id,
-                "request": request,
-                "action": action,
-                "status": status,
-                "reward": quality_reward,
-                "quality_reward": quality_reward,
-                "failure_category": failure_category,
-                "quality_signals": quality_signals,
-                "result": result,
-                "elapsed_seconds": elapsed_seconds,
-                "workspace_before": workspace_before,
-                "workspace_after": workspace_after,
-            },
-        )
 
-    # A PostgreSQL learning event is not considered fully completed until
-    # its append-only delta has also reached the retained SQLite rollback
-    # mirror. SQLite-backed sessions return None and require no sync.
-    mirror_result = sli.synchronize_rollback_mirror()
+    confidence = (
+        1.0
+        if status.lower()
+        in {
+            "success",
+            "succeeded",
+            "completed",
+        }
+        else 0.8
+    )
 
-    return {
-        "memory_id": memory_id,
-        "trace_id": trace_id,
-        "action": action,
-        "quality_reward": quality_reward,
-        "quality_signals": quality_signals,
-        "failure_category": failure_category,
-        "rollback_mirror": mirror_result,
+    trace_payload = {
+        "trace_id":
+            trace_id,
+
+        "request":
+            request,
+
+        "action":
+            action,
+
+        "status":
+            status,
+
+        "reward":
+            quality_reward,
+
+        "quality_reward":
+            quality_reward,
+
+        "failure_category":
+            failure_category,
+
+        "quality_signals":
+            quality_signals,
+
+        "result":
+            result,
+
+        "elapsed_seconds":
+            elapsed_seconds,
+
+        "workspace_before":
+            workspace_before,
+
+        "workspace_after":
+            workspace_after,
     }
+
+    mirror_result = None
+    atomic_result = None
+
+    with sli.connect() as db:
+        use_atomic_postgres = (
+            sli.selected_backend()
+            == "postgres"
+            and sli.atomic_learning_enabled()
+        )
+
+        if use_atomic_postgres:
+            canonical_payload = {
+                "trace_id":
+                    trace_id,
+
+                "request":
+                    request,
+
+                "action":
+                    action,
+
+                "status":
+                    status,
+
+                "quality_reward":
+                    quality_reward,
+
+                "failure_category":
+                    failure_category,
+
+                "quality_signals":
+                    quality_signals,
+
+                "result":
+                    result,
+
+                "elapsed_seconds":
+                    elapsed_seconds,
+
+                "workspace_before":
+                    workspace_before,
+
+                "workspace_after":
+                    workspace_after,
+            }
+
+            payload_digest = (
+                _learner_event_digest(
+                    canonical_payload
+                )
+            )
+
+            atomic_result = (
+                sli.atomic_learn_execution(
+                    db,
+
+                    trace_id=trace_id,
+
+                    payload_digest=
+                        payload_digest,
+
+                    memory={
+                        "request":
+                            request,
+
+                        "state":
+                            "execution completed",
+
+                        "action":
+                            action,
+
+                        "result":
+                            result,
+
+                        "reward":
+                            quality_reward,
+
+                        "confidence":
+                            confidence,
+
+                        "elapsed_seconds":
+                            elapsed_seconds,
+
+                        "source_type":
+                            "execution",
+                    },
+
+                    trace=trace_payload,
+                )
+            )
+
+            memory_id = int(
+                atomic_result[
+                    "memory_id"
+                ]
+            )
+
+        else:
+            memory_id = sli.record(
+                db,
+                request=request,
+                state="execution completed",
+                action=action,
+                result=result,
+                reward=quality_reward,
+                confidence=confidence,
+                elapsed_seconds=elapsed_seconds,
+                source_type="execution",
+            )
+
+            sli.store_trace(
+                db,
+                trace_payload,
+            )
+
+    # PostgreSQL writes are not fully durable for rollback purposes until
+    # SQLite catches up. This is intentionally retried even when the atomic
+    # event already existed, because a prior attempt may have failed only
+    # during rollback-mirror synchronization.
+    mirror_result = (
+        sli.synchronize_rollback_mirror()
+    )
+
+    response = {
+        "memory_id":
+            memory_id,
+
+        "trace_id":
+            trace_id,
+
+        "action":
+            action,
+
+        "quality_reward":
+            quality_reward,
+
+        "quality_signals":
+            quality_signals,
+
+        "failure_category":
+            failure_category,
+
+        "rollback_mirror":
+            mirror_result,
+    }
+
+    if atomic_result is not None:
+        response[
+            "atomic_learning"
+        ] = {
+            "state":
+                atomic_result[
+                    "state"
+                ],
+
+            "created":
+                bool(
+                    atomic_result[
+                        "created"
+                    ]
+                ),
+
+            "payload_digest":
+                atomic_result[
+                    "payload_digest"
+                ],
+        }
+
+    return response

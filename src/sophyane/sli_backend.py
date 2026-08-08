@@ -29,6 +29,29 @@ _ALLOWED = {
 }
 
 
+def atomic_learning_enabled() -> bool:
+    """Return whether the new PostgreSQL atomic learner path is enabled.
+
+    Activation is deliberately explicit and independent of schema
+    presence. Production behavior therefore remains unchanged merely
+    because source support or a migration table exists.
+    """
+    value = str(
+        os.environ.get(
+            "SOPHYANE_SLI_ATOMIC_LEARNING",
+            "",
+        )
+        or ""
+    ).strip().lower()
+
+    return value in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def selected_backend() -> str:
     """Return the selected SLI backend.
 
@@ -123,6 +146,31 @@ def connect(
         )
 
     yield store
+
+
+def atomic_learn_execution(
+    db: Any,
+    *,
+    trace_id: str,
+    payload_digest: str,
+    memory: dict[str, Any],
+    trace: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(
+        db,
+        PostgresSLIStore,
+    ):
+        raise RuntimeError(
+            "Atomic learner events require "
+            "the PostgreSQL SLI backend."
+        )
+
+    return db.atomic_learn_execution(
+        trace_id=trace_id,
+        payload_digest=payload_digest,
+        memory=memory,
+        trace=trace,
+    )
 
 
 def record(
