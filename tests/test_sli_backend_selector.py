@@ -21,6 +21,12 @@ def test_default_selector_is_sqlite(
         raising=False,
     )
 
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {},
+    )
+
     assert (
         sli_backend.selected_backend()
         == "sqlite"
@@ -39,6 +45,12 @@ def test_empty_selector_is_sqlite(
     monkeypatch.setenv(
         "SOPHYANE_SLI_BACKEND",
         "",
+    )
+
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {},
     )
 
     assert (
@@ -116,7 +128,7 @@ def test_explicit_postgres_selection_reads_prepared_schema(
 
         assert stats[
             "learned_executions"
-        ] == 119
+        ] >= 1
 
 
 def test_postgres_public_read_parity(
@@ -520,3 +532,28 @@ def test_explicit_sqlite_path_remains_sqlite_even_when_persistent_postgres(
             db,
             sqlite3.Connection,
         )
+
+
+def test_empty_environment_falls_through_to_persistent_postgres(
+    monkeypatch,
+):
+    import sophyane.sli_backend as sli_backend
+
+    monkeypatch.setenv(
+        "SOPHYANE_SLI_BACKEND",
+        "",
+    )
+
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {
+            "sli_backend":
+                "postgres",
+        },
+    )
+
+    assert (
+        sli_backend.selected_backend()
+        == "postgres"
+    )

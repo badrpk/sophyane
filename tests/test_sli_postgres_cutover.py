@@ -331,6 +331,16 @@ def test_synchronize_postgres_to_sqlite_appends_exact_delta(
                 store,
         )
 
+        # This test validates explicit/manual cutover synchronization.
+        # Automatic production rollback mirroring is covered separately
+        # and must never target the live SQLite database from this
+        # disposable PostgreSQL test schema.
+        monkeypatch.setattr(
+            sli_backend,
+            "synchronize_rollback_mirror",
+            lambda: None,
+        )
+
         result = learner.learn_execution(
             trace_id=(
                 "phase2q-sync-"
@@ -814,6 +824,15 @@ def test_rollback_synchronized_preserves_postgres_only_learning(
             "postgres_store",
             lambda:
                 store,
+        )
+
+        # This test intentionally creates PostgreSQL-only learning before
+        # exercising explicit rollback synchronization. Keep the new
+        # automatic production mirror out of this isolated test fixture.
+        monkeypatch.setattr(
+            sli_backend,
+            "synchronize_rollback_mirror",
+            lambda: None,
         )
 
         learner.learn_execution(

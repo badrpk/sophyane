@@ -241,3 +241,28 @@ def list_traces(
         db,
         limit=limit,
     )
+
+
+
+def synchronize_rollback_mirror() -> dict[str, Any] | None:
+    """Synchronize PostgreSQL learning into retained SQLite.
+
+    SQLite needs no mirror operation because it is already the historical
+    rollback store. PostgreSQL uses the existing append-only cutover
+    synchronizer so the SQLite rollback copy follows every completed
+    production learning event.
+
+    Importing the cutover module lazily avoids a module-level dependency
+    cycle between backend selection and cutover management.
+    """
+    if selected_backend() != POSTGRES_BACKEND:
+        return None
+
+    from sophyane.sli_cutover import (
+        synchronize_postgres_to_sqlite,
+    )
+
+    return synchronize_postgres_to_sqlite(
+        sqlite_path=sli.DB_PATH,
+        store=postgres_store(),
+    )

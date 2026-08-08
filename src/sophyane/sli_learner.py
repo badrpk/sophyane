@@ -223,6 +223,12 @@ def learn_execution(
                 "workspace_after": workspace_after,
             },
         )
+
+    # A PostgreSQL learning event is not considered fully completed until
+    # its append-only delta has also reached the retained SQLite rollback
+    # mirror. SQLite-backed sessions return None and require no sync.
+    mirror_result = sli.synchronize_rollback_mirror()
+
     return {
         "memory_id": memory_id,
         "trace_id": trace_id,
@@ -230,4 +236,5 @@ def learn_execution(
         "quality_reward": quality_reward,
         "quality_signals": quality_signals,
         "failure_category": failure_category,
+        "rollback_mirror": mirror_result,
     }
