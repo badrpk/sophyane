@@ -136,6 +136,39 @@ def classify(state: SLIState, progress: Progress) -> SLIState:
                 )
             ):
                 state.route = "python_harness"
+            elif (
+                any(
+                    term in q
+                    for term in (
+                        "make",
+                        "create",
+                        "build",
+                        "develop",
+                        "generate",
+                        "implement",
+                        "design",
+                    )
+                )
+                and any(
+                    term in q
+                    for term in (
+                        "email service",
+                        "email app",
+                        "mail app",
+                        "mail service",
+                        "gmail",
+                        "webmail",
+                        "web app",
+                        "browser app",
+                        "dashboard",
+                        "workspace",
+                        "platform",
+                        "client",
+                    )
+                )
+            ):
+                state.route = "product_app"
+
             elif any(key in q for key in ("ping pong", "pong", "snake", "game", "canvas")):
                 state.route = "action_or_internet"
             elif any(key in q for key in ("missing word", "missing letter", "quiz", "cloze")):
@@ -374,6 +407,198 @@ def try_internet(state: SLIState, progress: Progress) -> SLIState:
     return state
 
 
+
+
+def try_product_reuse(
+    state: SLIState,
+    progress: Progress,
+) -> SLIState:
+    """Use browser-component memory then strict acquisition.
+
+    Product requests must not be reinterpreted as informational
+    topic-site requests while attempting reuse.
+    """
+    if (
+        state.success
+        or state.meta.get("terminal")
+        or state.meta.get("private")
+    ):
+        return state
+
+    workspace = Path(
+        state.workspace
+    )
+
+    progress(
+        "SLI-graph: product browser-memory reuse"
+    )
+
+    try:
+        from sophyane.code_memory.intelligent_compose import (
+            compose_browser_request,
+        )
+        from sophyane.code_memory.store import (
+            ChunkStore,
+        )
+
+        report, _used = compose_browser_request(
+            state.request,
+            workspace,
+            ChunkStore(),
+            progress=progress,
+        )
+
+        state.report = str(
+            report
+            or ""
+        )
+
+        _ok(
+            state
+        )
+
+        state.log(
+            "product-memory "
+            f"success={state.success}"
+        )
+
+    except Exception as error:
+        state.errors.append(
+            "product-memory:"
+            + f"{type(error).__name__}: {error}"
+        )
+
+        progress(
+            "SLI-graph product browser-memory miss: "
+            f"{type(error).__name__}: {error}"
+        )
+
+    if state.success:
+        return state
+
+    progress(
+        "SLI-graph: strict product internet acquisition"
+    )
+
+    try:
+        from sophyane.code_memory.internet_acquire import (
+            acquire_and_build,
+        )
+
+        try:
+            report = acquire_and_build(
+                state.request,
+                workspace=workspace,
+                progress=progress,
+            )
+
+        except TypeError:
+            report = acquire_and_build(
+                state.request,
+                workspace,
+                progress,
+            )
+
+        state.report = str(
+            report
+            or ""
+        )
+
+        _ok(
+            state
+        )
+
+        state.log(
+            "product-acquisition "
+            f"success={state.success}"
+        )
+
+    except Exception as error:
+        state.errors.append(
+            "product-acquisition:"
+            + f"{type(error).__name__}: {error}"
+        )
+
+        progress(
+            "SLI-graph strict product acquisition error: "
+            f"{type(error).__name__}: {error}"
+        )
+
+    return state
+
+
+def try_product_app(
+    state: SLIState,
+    progress: Progress,
+) -> SLIState:
+    """Recover constructive product requests after strict SLI reuse fails."""
+    if (
+        state.success
+        or state.meta.get("terminal")
+        or state.meta.get("private")
+    ):
+        return state
+
+    progress(
+        "SLI-graph: acquisition miss; "
+        "switching to bounded local product synthesis"
+    )
+
+    acquisition_report = str(
+        state.report
+        or ""
+    )
+
+    try:
+        from sophyane.code_memory.sli_product_app_compose import (
+            compose_product_app,
+        )
+
+        state.report = str(
+            compose_product_app(
+                state.request,
+                Path(
+                    state.workspace
+                ),
+                progress=progress,
+                acquisition_report=acquisition_report,
+            )
+            or ""
+        )
+
+        _ok(
+            state
+        )
+
+        state.meta[
+            "product_generation_attempted"
+        ] = True
+
+        state.meta[
+            "product_generation_success"
+        ] = bool(
+            state.success
+        )
+
+        state.log(
+            "product-generation "
+            f"success={state.success}"
+        )
+
+    except Exception as error:
+        state.errors.append(
+            "product-generation:"
+            + f"{type(error).__name__}: {error}"
+        )
+
+        progress(
+            "SLI-graph product synthesis failed safely: "
+            f"{type(error).__name__}: {error}"
+        )
+
+    return state
+
+
 def validate_and_promote(state: SLIState, progress: Progress) -> SLIState:
     if (
         state.meta.get("private")
@@ -476,6 +701,10 @@ def run_sli_graph(
             "python_harness": [try_python_harness, try_harness_execution, try_memory_router],
             "language_or_internet": [try_memory_router, try_internet],
             "action_or_internet": [try_memory_router, try_internet],
+            "product_app": [
+                try_product_reuse,
+                try_product_app,
+            ],
             "memory_then_internet": [try_memory_router, try_internet],
         }
         steps = pipelines.get(
