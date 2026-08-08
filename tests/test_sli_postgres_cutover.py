@@ -240,3 +240,625 @@ def test_prepare_refuses_existing_schema(
             dsn,
             schema,
         )
+
+
+def test_synchronize_postgres_to_sqlite_appends_exact_delta(
+    tmp_path,
+    monkeypatch,
+):
+    import sqlite3
+
+    from sophyane import sli
+    import sophyane.sli_backend as sli_backend
+    import sophyane.sli_cutover as cutover
+    import sophyane.sli_learner as learner
+    from sophyane.sli_migrate_postgres import (
+        migrate,
+        sqlite_snapshot,
+        verify_snapshots,
+    )
+    from sophyane.sli_postgres import (
+        PostgresSLIStore,
+    )
+
+    sqlite_path = (
+        tmp_path
+        / "rollback.db"
+    )
+
+    source = sqlite3.connect(
+        f"file:{sli.DB_PATH.resolve()}?mode=ro",
+        uri=True,
+    )
+
+    target = sqlite3.connect(
+        sqlite_path
+    )
+
+    try:
+        source.backup(
+            target
+        )
+
+    finally:
+        target.close()
+        source.close()
+
+    schema = (
+        "sli_cutover_test_sync_"
+        + __import__("uuid").uuid4().hex[:12]
+    )
+
+    store = PostgresSLIStore(
+        schema=schema,
+    )
+
+    try:
+        migrate(
+            sqlite_path=sqlite_path,
+            store=store,
+        )
+
+        monkeypatch.setenv(
+            "SOPHYANE_SLI_BACKEND",
+            "postgres",
+        )
+
+        monkeypatch.setattr(
+            sli_backend,
+            "postgres_store",
+            lambda:
+                store,
+        )
+
+        result = learner.learn_execution(
+            trace_id=(
+                "phase2q-sync-"
+                + __import__("uuid").uuid4().hex[:12]
+            ),
+            request=(
+                "PHASE 2Q synchronization test"
+            ),
+            workspace_before={
+                "phase":
+                    "2Q",
+            },
+            workspace_after={
+                "phase":
+                    "2Q",
+
+                "written":
+                    True,
+            },
+            status="succeeded",
+            reward=1.0,
+            result="PHASE 2Q OK",
+            elapsed_seconds=0.001,
+        )
+
+        assert result[
+            "memory_id"
+        ] == 118
+
+        before = sqlite_snapshot(
+            sqlite_path
+        )
+
+        postgres = store.export_snapshot()
+
+        assert len(
+            before["memories"]
+        ) == 117
+
+        assert len(
+            before["traces"]
+        ) == 117
+
+        assert len(
+            postgres["memories"]
+        ) == 118
+
+        assert len(
+            postgres["traces"]
+        ) == 118
+
+        synchronization = (
+            cutover.synchronize_postgres_to_sqlite(
+                sqlite_path=sqlite_path,
+                store=store,
+            )
+        )
+
+        assert synchronization[
+            "state"
+        ] == "synchronized"
+
+        assert synchronization[
+            "memories_added"
+        ] == 1
+
+        assert synchronization[
+            "traces_added"
+        ] == 1
+
+        after = sqlite_snapshot(
+            sqlite_path
+        )
+
+        verification = verify_snapshots(
+            after,
+            postgres,
+        )
+
+        assert verification[
+            "equivalent"
+        ] is True
+
+        assert verification[
+            "source_memories"
+        ] == 118
+
+        assert verification[
+            "source_traces"
+        ] == 118
+
+    finally:
+        if store.schema_exists():
+            store.drop_schema()
+
+
+def test_synchronize_postgres_to_sqlite_is_idempotent(
+    tmp_path,
+):
+    import sqlite3
+
+    from sophyane import sli
+    import sophyane.sli_cutover as cutover
+    from sophyane.sli_migrate_postgres import (
+        migrate,
+    )
+    from sophyane.sli_postgres import (
+        PostgresSLIStore,
+    )
+
+    sqlite_path = (
+        tmp_path
+        / "idempotent.db"
+    )
+
+    source = sqlite3.connect(
+        f"file:{sli.DB_PATH.resolve()}?mode=ro",
+        uri=True,
+    )
+
+    target = sqlite3.connect(
+        sqlite_path
+    )
+
+    try:
+        source.backup(
+            target
+        )
+
+    finally:
+        target.close()
+        source.close()
+
+    schema = (
+        "sli_cutover_test_idempotent_"
+        + __import__("uuid").uuid4().hex[:12]
+    )
+
+    store = PostgresSLIStore(
+        schema=schema,
+    )
+
+    try:
+        migrate(
+            sqlite_path=sqlite_path,
+            store=store,
+        )
+
+        result = (
+            cutover.synchronize_postgres_to_sqlite(
+                sqlite_path=sqlite_path,
+                store=store,
+            )
+        )
+
+        assert result[
+            "state"
+        ] == "already_converged"
+
+        assert result[
+            "memories_added"
+        ] == 0
+
+        assert result[
+            "traces_added"
+        ] == 0
+
+        assert result[
+            "memories"
+        ] == 117
+
+        assert result[
+            "traces"
+        ] == 117
+
+    finally:
+        if store.schema_exists():
+            store.drop_schema()
+
+
+def test_synchronize_postgres_to_sqlite_refuses_conflict(
+    tmp_path,
+):
+    import sqlite3
+
+    from sophyane import sli
+    import sophyane.sli_cutover as cutover
+    from sophyane.sli_migrate_postgres import (
+        migrate,
+        sqlite_snapshot,
+    )
+    from sophyane.sli_postgres import (
+        PostgresSLIStore,
+    )
+
+    sqlite_path = (
+        tmp_path
+        / "conflict.db"
+    )
+
+    source = sqlite3.connect(
+        f"file:{sli.DB_PATH.resolve()}?mode=ro",
+        uri=True,
+    )
+
+    target = sqlite3.connect(
+        sqlite_path
+    )
+
+    try:
+        source.backup(
+            target
+        )
+
+    finally:
+        target.close()
+        source.close()
+
+    schema = (
+        "sli_cutover_test_conflict_"
+        + __import__("uuid").uuid4().hex[:12]
+    )
+
+    store = PostgresSLIStore(
+        schema=schema,
+    )
+
+    try:
+        migrate(
+            sqlite_path=sqlite_path,
+            store=store,
+        )
+
+        with store.connect() as connection:
+            with connection.cursor() as cursor:
+                from psycopg import sql
+
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}.memories
+                        SET request = %s
+                        WHERE id = 1
+                        """
+                    ).format(
+                        sql.Identifier(
+                            schema
+                        )
+                    ),
+                    (
+                        "conflicting row",
+                    ),
+                )
+
+            connection.commit()
+
+        before = sqlite_snapshot(
+            sqlite_path
+        )
+
+        import pytest
+
+        with pytest.raises(
+            RuntimeError,
+            match="conflicts with existing SQLite memory IDs",
+        ):
+            cutover.synchronize_postgres_to_sqlite(
+                sqlite_path=sqlite_path,
+                store=store,
+            )
+
+        after = sqlite_snapshot(
+            sqlite_path
+        )
+
+        assert before == after
+
+    finally:
+        if store.schema_exists():
+            store.drop_schema()
+
+
+def test_synchronize_postgres_to_sqlite_refuses_noncontiguous_memory_ids(
+    tmp_path,
+):
+    import sqlite3
+
+    from sophyane import sli
+    import sophyane.sli_cutover as cutover
+    from sophyane.sli_migrate_postgres import (
+        migrate,
+        sqlite_snapshot,
+    )
+    from sophyane.sli_postgres import (
+        PostgresSLIStore,
+    )
+
+    sqlite_path = (
+        tmp_path
+        / "gap.db"
+    )
+
+    source = sqlite3.connect(
+        f"file:{sli.DB_PATH.resolve()}?mode=ro",
+        uri=True,
+    )
+
+    target = sqlite3.connect(
+        sqlite_path
+    )
+
+    try:
+        source.backup(
+            target
+        )
+
+    finally:
+        target.close()
+        source.close()
+
+    schema = (
+        "sli_cutover_test_gap_"
+        + __import__("uuid").uuid4().hex[:12]
+    )
+
+    store = PostgresSLIStore(
+        schema=schema,
+    )
+
+    try:
+        migrate(
+            sqlite_path=sqlite_path,
+            store=store,
+        )
+
+        payload = dict(
+            store.export_snapshot()[
+                "memories"
+            ][-1]
+        )
+
+        payload[
+            "id"
+        ] = 119
+
+        payload[
+            "request"
+        ] = "non-contiguous rollback row"
+
+        store.import_memory(
+            payload
+        )
+
+        before = sqlite_snapshot(
+            sqlite_path
+        )
+
+        import pytest
+
+        with pytest.raises(
+            RuntimeError,
+            match="not one contiguous append-only sequence",
+        ):
+            cutover.synchronize_postgres_to_sqlite(
+                sqlite_path=sqlite_path,
+                store=store,
+            )
+
+        after = sqlite_snapshot(
+            sqlite_path
+        )
+
+        assert before == after
+
+    finally:
+        if store.schema_exists():
+            store.drop_schema()
+
+
+def test_rollback_synchronized_preserves_postgres_only_learning(
+    tmp_path,
+    monkeypatch,
+):
+    import sqlite3
+
+    from sophyane import sli
+    import sophyane.sli_backend as sli_backend
+    import sophyane.sli_cutover as cutover
+    import sophyane.sli_learner as learner
+    from sophyane.sli_migrate_postgres import (
+        migrate,
+        sqlite_snapshot,
+    )
+    from sophyane.sli_postgres import (
+        PostgresSLIStore,
+    )
+
+    sqlite_path = (
+        tmp_path
+        / "full-rollback.db"
+    )
+
+    source = sqlite3.connect(
+        f"file:{sli.DB_PATH.resolve()}?mode=ro",
+        uri=True,
+    )
+
+    target = sqlite3.connect(
+        sqlite_path
+    )
+
+    try:
+        source.backup(
+            target
+        )
+
+    finally:
+        target.close()
+        source.close()
+
+    schema = (
+        "sli_cutover_test_rollback_sync_"
+        + __import__("uuid").uuid4().hex[:12]
+    )
+
+    manifest = (
+        tmp_path
+        / "rollback-manifest.json"
+    )
+
+    store = PostgresSLIStore(
+        schema=schema,
+    )
+
+    old_schema = (
+        cutover.PRODUCTION_SCHEMA
+    )
+
+    old_state = (
+        cutover.CUTOVER_STATE
+    )
+
+    try:
+        migrate(
+            sqlite_path=sqlite_path,
+            store=store,
+        )
+
+        monkeypatch.setenv(
+            "SOPHYANE_SLI_BACKEND",
+            "postgres",
+        )
+
+        monkeypatch.setattr(
+            sli_backend,
+            "postgres_store",
+            lambda:
+                store,
+        )
+
+        learner.learn_execution(
+            trace_id=(
+                "phase2q-rollback-"
+                + __import__("uuid").uuid4().hex[:12]
+            ),
+            request=(
+                "PHASE 2Q synchronized rollback"
+            ),
+            workspace_before={
+                "phase":
+                    "2Q",
+            },
+            workspace_after={
+                "phase":
+                    "2Q",
+
+                "written":
+                    True,
+            },
+            status="succeeded",
+            reward=1.0,
+            result="PHASE 2Q ROLLBACK OK",
+            elapsed_seconds=0.001,
+        )
+
+        assert len(
+            store.export_snapshot()[
+                "memories"
+            ]
+        ) == 118
+
+        cutover.PRODUCTION_SCHEMA = schema
+        cutover.CUTOVER_STATE = manifest
+
+        result = cutover.rollback_synchronized(
+            sqlite_path=sqlite_path,
+            store=store,
+        )
+
+        print(
+            "rollback result:",
+            result,
+        )
+
+        assert result[
+            "state"
+        ] == "rolled_back_synchronized"
+
+        assert result[
+            "memories_added"
+        ] == 1
+
+        assert result[
+            "traces_added"
+        ] == 1
+
+        assert result[
+            "memories"
+        ] == 118
+
+        assert result[
+            "traces"
+        ] == 118
+
+        assert not store.schema_exists()
+
+        final = sqlite_snapshot(
+            sqlite_path
+        )
+
+        assert len(
+            final["memories"]
+        ) == 118
+
+        assert len(
+            final["traces"]
+        ) == 118
+
+        assert manifest.is_file()
+
+    finally:
+        cutover.PRODUCTION_SCHEMA = (
+            old_schema
+        )
+
+        cutover.CUTOVER_STATE = (
+            old_state
+        )
+
+        if store.schema_exists():
+            store.drop_schema()
