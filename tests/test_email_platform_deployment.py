@@ -307,3 +307,70 @@ def test_graph_does_not_fall_into_harness_or_internet(
         "Namecheap role: DNS control only"
         in state.report
     )
+
+
+def test_explicit_domain_real_mail_request_is_email_platform() -> None:
+    request = (
+        "make nifdu email service on www.nifdu.com "
+        "that can send and receive real email "
+        "using SMTP and IMAP"
+    )
+
+    assert is_email_platform_request(
+        request
+    )
+
+    state = classify(
+        SLIState(
+            request=request,
+            workspace=".",
+        ),
+        lambda _message:
+            None,
+    )
+
+    assert state.route == "email_platform"
+
+
+def test_natural_real_mail_followup_is_email_platform() -> None:
+    request = (
+        "I want it to be able to receive and send email "
+        "and name it nifdu email service on www.nifdu.com"
+    )
+
+    assert is_email_platform_request(
+        request
+    )
+
+    state = classify(
+        SLIState(
+            request=request,
+            workspace=".",
+        ),
+        lambda _message:
+            None,
+    )
+
+    assert state.route == "email_platform"
+
+
+def test_email_ui_with_domain_but_no_real_transport_stays_product_app() -> None:
+    request = (
+        "make an email service website interface "
+        "for www.nifdu.com like gmail"
+    )
+
+    assert not is_email_platform_request(
+        request
+    )
+
+    state = classify(
+        SLIState(
+            request=request,
+            workspace=".",
+        ),
+        lambda _message:
+            None,
+    )
+
+    assert state.route == "product_app"

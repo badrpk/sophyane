@@ -128,22 +128,6 @@ def classify(state: SLIState, progress: Progress) -> SLIState:
             ):
                 state.route = "email_platform"
 
-            elif is_harness_execution_request(state.request):
-                state.route = "harness_execution"
-            elif any(
-                key in q
-                for key in (
-                    "python file",
-                    "audit_chain",
-                    "append_event",
-                    "verify_chain",
-                    "safe_members",
-                    "implement ",
-                    "fastapi",
-                    "policy_engine",
-                )
-            ):
-                state.route = "python_harness"
             elif (
                 any(
                     term in q
@@ -176,6 +160,26 @@ def classify(state: SLIState, progress: Progress) -> SLIState:
                 )
             ):
                 state.route = "product_app"
+
+            elif is_harness_execution_request(
+                state.request
+            ):
+                state.route = "harness_execution"
+
+            elif any(
+                key in q
+                for key in (
+                    "python file",
+                    "audit_chain",
+                    "append_event",
+                    "verify_chain",
+                    "safe_members",
+                    "implement ",
+                    "fastapi",
+                    "policy_engine",
+                )
+            ):
+                state.route = "python_harness"
 
             elif any(key in q for key in ("ping pong", "pong", "snake", "game", "canvas")):
                 state.route = "action_or_internet"

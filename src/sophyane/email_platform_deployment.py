@@ -85,9 +85,11 @@ def _normalise(
 def is_email_platform_request(
     request: str,
 ) -> bool:
-    """Recognise requests to create/deploy a new self-hosted mail service.
+    """Recognise creation or continuation of a real mail service.
 
-    A normal browser-only mail UI request remains product_app.
+    Browser-only email UI requests remain ``product_app``. Requests that
+    explicitly require real mail transport, a deployable mail domain, or
+    self-hosted mail infrastructure belong to ``email_platform``.
     """
     text = _normalise(
         request
@@ -103,9 +105,39 @@ def is_email_platform_request(
         for token in _CREATE_WORDS
     )
 
+    has_continuation = any(
+        token in text
+        for token in (
+            "i want it",
+            "want it to",
+            "make it able",
+            "be able to",
+            "add sending",
+            "add receiving",
+        )
+    )
+
     has_deployment = any(
         token in text
         for token in _DEPLOY_WORDS
+    )
+
+    transport_signal = any(
+        token in text
+        for token in (
+            "smtp",
+            "imap",
+            "send and receive email",
+            "receive and send email",
+            "send and receive real email",
+            "receive and send real email",
+            "real email",
+            "mailbox",
+            "mx record",
+            "dkim",
+            "dmarc",
+            "spf",
+        )
     )
 
     self_hosted_signal = any(
@@ -123,11 +155,35 @@ def is_email_platform_request(
         )
     )
 
+    domain = extract_domain(
+        request
+    )
+
+    explicit_domain_signal = bool(
+        domain
+    )
+
+    implementation_intent = (
+        has_create
+        or has_continuation
+    )
+
+    real_mail_intent = (
+        transport_signal
+        or self_hosted_signal
+    )
+
+    deployment_target = (
+        has_deployment
+        or self_hosted_signal
+        or explicit_domain_signal
+    )
+
     return (
         has_email
-        and has_create
-        and has_deployment
-        and self_hosted_signal
+        and implementation_intent
+        and real_mail_intent
+        and deployment_target
     )
 
 
