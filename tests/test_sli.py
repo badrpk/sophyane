@@ -596,3 +596,81 @@ def test_learn_execution_preserves_legacy_path_when_atomic_disabled(
         "close",
         "mirror",
     ]
+
+
+def test_atomic_learning_gate_accepts_persistent_true(
+    monkeypatch,
+) -> None:
+    from sophyane import sli_backend
+
+    monkeypatch.delenv(
+        "SOPHYANE_SLI_ATOMIC_LEARNING",
+        raising=False,
+    )
+
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {
+            "sli_backend": "postgres",
+            "sli_atomic_learning": True,
+        },
+    )
+
+    assert (
+        sli_backend.atomic_learning_enabled()
+        is True
+    )
+
+
+def test_atomic_learning_environment_false_overrides_persistent_true(
+    monkeypatch,
+) -> None:
+    from sophyane import sli_backend
+
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {
+            "sli_backend": "postgres",
+            "sli_atomic_learning": True,
+        },
+    )
+
+    monkeypatch.setenv(
+        "SOPHYANE_SLI_ATOMIC_LEARNING",
+        "0",
+    )
+
+    assert (
+        sli_backend.atomic_learning_enabled()
+        is False
+    )
+
+
+def test_atomic_learning_invalid_persistent_value_fails_closed(
+    monkeypatch,
+) -> None:
+    import pytest
+
+    from sophyane import sli_backend
+
+    monkeypatch.delenv(
+        "SOPHYANE_SLI_ATOMIC_LEARNING",
+        raising=False,
+    )
+
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {
+            "sli_backend": "postgres",
+            "sli_atomic_learning": "maybe",
+        },
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Unsupported atomic-learning value",
+    ):
+        sli_backend.atomic_learning_enabled()

@@ -29,27 +29,90 @@ _ALLOWED = {
 }
 
 
-def atomic_learning_enabled() -> bool:
-    """Return whether the new PostgreSQL atomic learner path is enabled.
+def _atomic_learning_value(
+    value: Any,
+    *,
+    source: str,
+) -> bool:
+    """Parse one explicit atomic-learning configuration value."""
+    if isinstance(
+        value,
+        bool,
+    ):
+        return value
 
-    Activation is deliberately explicit and independent of schema
-    presence. Production behavior therefore remains unchanged merely
-    because source support or a migration table exists.
-    """
-    value = str(
-        os.environ.get(
-            "SOPHYANE_SLI_ATOMIC_LEARNING",
-            "",
-        )
-        or ""
+    normalized = str(
+        value
+        if value is not None
+        else ""
     ).strip().lower()
 
-    return value in {
+    if normalized in {
         "1",
         "true",
         "yes",
         "on",
-    }
+    }:
+        return True
+
+    if normalized in {
+        "",
+        "0",
+        "false",
+        "no",
+        "off",
+    }:
+        return False
+
+    raise RuntimeError(
+        "Unsupported atomic-learning value "
+        f"{value!r} from {source}; expected "
+        "true/false, 1/0, yes/no, or on/off."
+    )
+
+
+def atomic_learning_enabled() -> bool:
+    """Return whether the PostgreSQL atomic learner path is enabled.
+
+    Selection precedence is explicit and reversible:
+
+    1. Non-empty SOPHYANE_SLI_ATOMIC_LEARNING environment value.
+    2. Persistent ``sli_atomic_learning`` Sophyane config value.
+    3. False when neither selector is configured.
+
+    Schema presence alone never activates atomic learning.
+    """
+    environment_value = os.environ.get(
+        "SOPHYANE_SLI_ATOMIC_LEARNING"
+    )
+
+    if (
+        environment_value is not None
+        and str(
+            environment_value
+        ).strip()
+    ):
+        return _atomic_learning_value(
+            environment_value,
+            source=(
+                "SOPHYANE_SLI_ATOMIC_LEARNING"
+            ),
+        )
+
+    try:
+        config = load_config()
+    except Exception:
+        config = {}
+
+    return _atomic_learning_value(
+        config.get(
+            "sli_atomic_learning",
+            False,
+        ),
+        source=(
+            "persistent sli_atomic_learning config"
+        ),
+    )
 
 
 def selected_backend() -> str:
