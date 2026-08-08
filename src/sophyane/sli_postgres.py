@@ -684,6 +684,18 @@ class PostgresSLIStore:
         self,
         payload: dict[str, Any],
     ) -> None:
+        created_at_raw = payload.get(
+            "created_at"
+        )
+
+        created_at = (
+            time.time()
+            if created_at_raw is None
+            else float(
+                created_at_raw
+            )
+        )
+
         with self.connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -816,7 +828,7 @@ class PostgresSLIStore:
                             )
                             or {}
                         ),
-                        time.time(),
+                        created_at,
                     ),
                 )
 
@@ -875,3 +887,302 @@ class PostgresSLIStore:
             )
             for row in rows
         ]
+
+
+    def import_memory(
+        self,
+        payload: dict[str, Any],
+    ) -> None:
+        """Import one SQLite memory while preserving its identity."""
+        source = str(
+            payload.get(
+                "source_type"
+            )
+            or "unknown"
+        )
+
+        if source not in SOURCE_WEIGHTS:
+            source = "unknown"
+
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {}.memories (
+                            id,
+                            request,
+                            state,
+                            action,
+                            result,
+                            reward,
+                            confidence,
+                            elapsed_seconds,
+                            source_type,
+                            created_at
+                        )
+                        VALUES (
+                            %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s
+                        )
+                        ON CONFLICT (id)
+                        DO UPDATE SET
+                            request =
+                                EXCLUDED.request,
+                            state =
+                                EXCLUDED.state,
+                            action =
+                                EXCLUDED.action,
+                            result =
+                                EXCLUDED.result,
+                            reward =
+                                EXCLUDED.reward,
+                            confidence =
+                                EXCLUDED.confidence,
+                            elapsed_seconds =
+                                EXCLUDED.elapsed_seconds,
+                            source_type =
+                                EXCLUDED.source_type,
+                            created_at =
+                                EXCLUDED.created_at
+                        """
+                    ).format(
+                        sql.Identifier(
+                            self.schema
+                        )
+                    ),
+                    (
+                        int(
+                            payload[
+                                "id"
+                            ]
+                        ),
+                        str(
+                            payload.get(
+                                "request"
+                            )
+                            or ""
+                        ),
+                        str(
+                            payload.get(
+                                "state"
+                            )
+                            or ""
+                        ),
+                        str(
+                            payload.get(
+                                "action"
+                            )
+                            or ""
+                        ),
+                        str(
+                            payload.get(
+                                "result"
+                            )
+                            or ""
+                        ),
+                        float(
+                            payload.get(
+                                "reward"
+                            )
+                            or 0.0
+                        ),
+                        float(
+                            payload.get(
+                                "confidence"
+                            )
+                            or 0.0
+                        ),
+                        float(
+                            payload.get(
+                                "elapsed_seconds"
+                            )
+                            or 0.0
+                        ),
+                        source,
+                        float(
+                            payload.get(
+                                "created_at"
+                            )
+                            or 0.0
+                        ),
+                    ),
+                )
+
+            connection.commit()
+
+    def synchronize_memory_identity(
+        self,
+    ) -> None:
+        """Advance the memories identity after explicit-ID imports."""
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        SELECT pg_get_serial_sequence(
+                            %s,
+                            'id'
+                        ) AS sequence_name
+                        """
+                    ),
+                    (
+                        (
+                            self.schema
+                            + ".memories"
+                        ),
+                    ),
+                )
+
+                row = cursor.fetchone()
+
+                sequence_name = (
+                    str(
+                        row[
+                            "sequence_name"
+                        ]
+                    )
+                    if row
+                    and row.get(
+                        "sequence_name"
+                    )
+                    else ""
+                )
+
+                if sequence_name:
+                    cursor.execute(
+                        sql.SQL(
+                            """
+                            SELECT COALESCE(
+                                MAX(id),
+                                0
+                            ) AS maximum_id
+                            FROM {}.memories
+                            """
+                        ).format(
+                            sql.Identifier(
+                                self.schema
+                            )
+                        )
+                    )
+
+                    maximum = cursor.fetchone()
+
+                    maximum_id = int(
+                        (
+                            maximum
+                            or {}
+                        ).get(
+                            "maximum_id"
+                        )
+                        or 0
+                    )
+
+                    if maximum_id > 0:
+                        cursor.execute(
+                            """
+                            SELECT setval(
+                                %s::regclass,
+                                %s,
+                                true
+                            )
+                            """,
+                            (
+                                sequence_name,
+                                maximum_id,
+                            ),
+                        )
+                    else:
+                        cursor.execute(
+                            """
+                            SELECT setval(
+                                %s::regclass,
+                                1,
+                                false
+                            )
+                            """,
+                            (
+                                sequence_name,
+                            ),
+                        )
+
+            connection.commit()
+
+    def export_snapshot(
+        self,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Return canonical PostgreSQL SLI rows for migration verification."""
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        SELECT
+                            id,
+                            request,
+                            state,
+                            action,
+                            result,
+                            reward,
+                            confidence,
+                            elapsed_seconds,
+                            source_type,
+                            created_at
+                        FROM {}.memories
+                        ORDER BY id
+                        """
+                    ).format(
+                        sql.Identifier(
+                            self.schema
+                        )
+                    )
+                )
+
+                memories = [
+                    dict(
+                        row
+                    )
+                    for row in cursor.fetchall()
+                ]
+
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        SELECT
+                            trace_id,
+                            request,
+                            action,
+                            status,
+                            reward,
+                            quality_reward,
+                            failure_category,
+                            quality_signals,
+                            result,
+                            elapsed_seconds,
+                            workspace_before,
+                            workspace_after,
+                            created_at
+                        FROM {}.learned_execution_traces
+                        ORDER BY trace_id
+                        """
+                    ).format(
+                        sql.Identifier(
+                            self.schema
+                        )
+                    )
+                )
+
+                traces = [
+                    dict(
+                        row
+                    )
+                    for row in cursor.fetchall()
+                ]
+
+        return {
+            "memories":
+                memories,
+
+            "traces":
+                traces,
+        }
