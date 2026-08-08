@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from sophyane import sli
+from sophyane import sli_backend as sli
 
 
 def main(argv: list[str] | None = None) -> int:

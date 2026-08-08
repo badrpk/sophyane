@@ -1,0 +1,219 @@
+"""Backend-neutral Sophyane Learning Intelligence access.
+
+SQLite remains the default backend.
+
+PostgreSQL is selected only when SOPHYANE_SLI_BACKEND is explicitly
+set to ``postgres``. Merely having PostgreSQL configured or prepared
+never changes runtime behavior.
+"""
+from __future__ import annotations
+
+from contextlib import contextmanager
+import os
+from pathlib import Path
+from typing import Any, Iterator
+
+from sophyane import sli
+from sophyane.sli_postgres import PostgresSLIStore
+
+
+BACKEND_ENV = "SOPHYANE_SLI_BACKEND"
+
+SQLITE_BACKEND = "sqlite"
+POSTGRES_BACKEND = "postgres"
+
+_ALLOWED = {
+    SQLITE_BACKEND,
+    POSTGRES_BACKEND,
+}
+
+
+def selected_backend() -> str:
+    """Return the explicitly selected SLI backend.
+
+    Absence of configuration always means SQLite.
+    """
+    value = (
+        os.environ.get(
+            BACKEND_ENV,
+            SQLITE_BACKEND,
+        )
+        .strip()
+        .lower()
+    )
+
+    if not value:
+        value = SQLITE_BACKEND
+
+    if value not in _ALLOWED:
+        raise RuntimeError(
+            "Unsupported SLI backend "
+            f"{value!r}; expected one of "
+            f"{sorted(_ALLOWED)!r}."
+        )
+
+    return value
+
+
+def backend_name() -> str:
+    return selected_backend()
+
+
+def postgres_store() -> PostgresSLIStore:
+    return PostgresSLIStore(
+        schema="sli"
+    )
+
+
+@contextmanager
+def connect(
+    path: Path | str | None = None,
+) -> Iterator[Any]:
+    """Yield the selected backend handle.
+
+    Explicit SQLite paths always preserve the historical SQLite
+    compatibility contract, regardless of environment selection.
+    """
+    if path is not None:
+        with sli.connect(
+            path
+        ) as db:
+            yield db
+
+        return
+
+    backend = selected_backend()
+
+    if backend == SQLITE_BACKEND:
+        with sli.connect() as db:
+            yield db
+
+        return
+
+    store = postgres_store()
+
+    if not store.schema_exists():
+        raise RuntimeError(
+            "PostgreSQL SLI backend selected but "
+            "production schema 'sli' does not exist."
+        )
+
+    yield store
+
+
+def record(
+    db: Any,
+    *,
+    request: str,
+    action: str,
+    reward: float,
+    state: str = "",
+    result: str = "",
+    confidence: float = 0.5,
+    elapsed_seconds: float = 0.0,
+    source_type: str = "unknown",
+) -> int:
+    if isinstance(
+        db,
+        PostgresSLIStore,
+    ):
+        return db.record(
+            request=request,
+            action=action,
+            reward=reward,
+            state=state,
+            result=result,
+            confidence=confidence,
+            elapsed_seconds=elapsed_seconds,
+            source_type=source_type,
+        )
+
+    return sli.record(
+        db,
+        request=request,
+        action=action,
+        reward=reward,
+        state=state,
+        result=result,
+        confidence=confidence,
+        elapsed_seconds=elapsed_seconds,
+        source_type=source_type,
+    )
+
+
+def recommend_actions(
+    db: Any,
+    *,
+    request: str,
+    state: str = "",
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    if isinstance(
+        db,
+        PostgresSLIStore,
+    ):
+        return db.recommend_actions(
+            request=request,
+            state=state,
+            limit=limit,
+        )
+
+    return sli.recommend_actions(
+        db,
+        request=request,
+        state=state,
+        limit=limit,
+    )
+
+
+def stats(
+    db: Any,
+) -> dict[str, Any]:
+    if isinstance(
+        db,
+        PostgresSLIStore,
+    ):
+        return db.stats()
+
+    return sli.stats(
+        db
+    )
+
+
+def store_trace(
+    db: Any,
+    payload: dict[str, Any],
+) -> None:
+    if isinstance(
+        db,
+        PostgresSLIStore,
+    ):
+        db.store_trace(
+            payload
+        )
+
+        return
+
+    sli.store_trace(
+        db,
+        payload,
+    )
+
+
+def list_traces(
+    db: Any,
+    *,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    if isinstance(
+        db,
+        PostgresSLIStore,
+    ):
+        return db.list_traces(
+            limit=limit
+        )
+
+    return sli.list_traces(
+        db,
+        limit=limit,
+    )

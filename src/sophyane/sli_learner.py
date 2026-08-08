@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sophyane import sli
+from sophyane import sli_backend as sli
 
 
 BROWSER_TERMS = (
