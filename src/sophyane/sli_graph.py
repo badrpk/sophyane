@@ -116,11 +116,19 @@ def classify(state: SLIState, progress: Progress) -> SLIState:
         state.route = "topic_site"
     else:
         try:
+            from sophyane.email_platform_deployment import (
+                is_email_platform_request,
+            )
             from sophyane.sli_harness_orchestrator import (
                 is_harness_execution_request,
             )
 
-            if is_harness_execution_request(state.request):
+            if is_email_platform_request(
+                state.request
+            ):
+                state.route = "email_platform"
+
+            elif is_harness_execution_request(state.request):
                 state.route = "harness_execution"
             elif any(
                 key in q
@@ -240,6 +248,79 @@ def try_personal_connector(
         progress(
             f"SLI-graph private connector error: {error}"
         )
+
+    return state
+
+
+def try_email_platform(
+    state: SLIState,
+    progress: Progress,
+) -> SLIState:
+    """Execute only the dedicated self-hosted mail deployment domain."""
+    if (
+        state.success
+        or state.meta.get(
+            "terminal"
+        )
+    ):
+        return state
+
+    progress(
+        "SLI-graph: dedicated self-hosted email platform"
+    )
+
+    try:
+        from sophyane.email_platform_deployment import (
+            run_email_platform_deployment,
+        )
+
+        state.report = str(
+            run_email_platform_deployment(
+                state.request,
+                Path(
+                    state.workspace
+                ),
+                progress=progress,
+            )
+            or ""
+        )
+
+        _ok(
+            state
+        )
+
+    except Exception as error:
+        state.errors.append(
+            "email-platform:"
+            + f"{type(error).__name__}: {error}"
+        )
+
+        state.report = (
+            "Nifdu self-hosted email platform\n"
+            "Handled: True\n"
+            f"Error: {type(error).__name__}: {error}\n"
+            "Success: False"
+        )
+
+    # Deployment is an external side-effect domain.
+    # Do not fall through into repository acquisition,
+    # topic-site composition or learning.
+    state.meta[
+        "terminal"
+    ] = True
+
+    state.meta[
+        "promotion_blocked"
+    ] = True
+
+    state.meta[
+        "deployment_domain"
+    ] = "self_hosted_email"
+
+    state.log(
+        "email-platform "
+        f"success={state.success}"
+    )
 
     return state
 
@@ -692,6 +773,9 @@ def run_sli_graph(
         pipelines = {
             "personal_connector": [try_personal_connector],
             "topic_site": [try_topic, try_memory_router, try_internet],
+            "email_platform": [
+                try_email_platform,
+            ],
             "harness_execution": [
                 try_harness_execution,
                 try_python_harness,

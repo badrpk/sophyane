@@ -160,6 +160,311 @@ class NamecheapClient:
         best["expires_parsed"] = sort_key(best).isoformat()
         return best
 
+    @staticmethod
+    def _domain_parts(
+        domain: str,
+    ) -> tuple[str, str]:
+        value = str(
+            domain
+            or ""
+        ).strip().casefold().rstrip(".")
+
+        parts = value.split(".")
+
+        if (
+            len(parts) < 2
+            or not all(parts)
+        ):
+            raise ValueError(
+                f"invalid domain: {domain}"
+            )
+
+        # Current Sophyane Namecheap integration targets
+        # ordinary registrable domains such as nifdu.com.
+        return (
+            parts[0],
+            ".".join(parts[1:]),
+        )
+
+    def get_hosts(
+        self,
+        domain: str,
+    ) -> list[dict[str, str]]:
+        """Read the complete Namecheap host set.
+
+        Required before any setHosts mutation because Namecheap's
+        setHosts operation is replacement-style.
+        """
+        sld, tld = self._domain_parts(
+            domain
+        )
+
+        root = self._call(
+            "namecheap.domains.dns.getHosts",
+            SLD=sld,
+            TLD=tld,
+        )
+
+        records: list[dict[str, str]] = []
+
+        for node in root.findall(
+            ".//{*}host"
+        ):
+            item = {
+                "host":
+                    str(
+                        node.attrib.get(
+                            "Name"
+                        )
+                        or ""
+                    ),
+
+                "type":
+                    str(
+                        node.attrib.get(
+                            "Type"
+                        )
+                        or ""
+                    ).upper(),
+
+                "address":
+                    str(
+                        node.attrib.get(
+                            "Address"
+                        )
+                        or ""
+                    ),
+
+                "mx_pref":
+                    str(
+                        node.attrib.get(
+                            "MXPref"
+                        )
+                        or "10"
+                    ),
+
+                "ttl":
+                    str(
+                        node.attrib.get(
+                            "TTL"
+                        )
+                        or "300"
+                    ),
+            }
+
+            if (
+                item["host"]
+                and item["type"]
+                and item["address"]
+            ):
+                records.append(
+                    item
+                )
+
+        return records
+
+    @staticmethod
+    def merge_hosts(
+        existing: list[dict[str, str]],
+        managed: list[dict[str, str]],
+        *,
+        managed_keys: set[tuple[str, str]],
+    ) -> list[dict[str, str]]:
+        """Replace only records owned by this deployment.
+
+        Unrelated website, verification, API, TXT and other
+        records are retained byte-for-byte at the semantic level.
+        """
+        retained: list[dict[str, str]] = []
+
+        for record in existing:
+            key = (
+                str(
+                    record.get(
+                        "host"
+                    )
+                    or ""
+                ).casefold(),
+
+                str(
+                    record.get(
+                        "type"
+                    )
+                    or ""
+                ).upper(),
+            )
+
+            if key in managed_keys:
+                continue
+
+            retained.append(
+                dict(record)
+            )
+
+        result = (
+            retained
+            + [
+                dict(record)
+                for record in managed
+            ]
+        )
+
+        return result
+
+    def replace_hosts(
+        self,
+        domain: str,
+        records: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        """Write one already-complete host set.
+
+        Caller must perform read/merge before invoking this method.
+        """
+        sld, tld = self._domain_parts(
+            domain
+        )
+
+        if not records:
+            raise ValueError(
+                "refusing to replace DNS with an empty host set"
+            )
+
+        params: dict[str, str] = {
+            "SLD": sld,
+            "TLD": tld,
+        }
+
+        for index, record in enumerate(
+            records,
+            1,
+        ):
+            host = str(
+                record.get(
+                    "host"
+                )
+                or ""
+            ).strip()
+
+            record_type = str(
+                record.get(
+                    "type"
+                )
+                or ""
+            ).strip().upper()
+
+            address = str(
+                record.get(
+                    "address"
+                )
+                or ""
+            ).strip()
+
+            ttl = str(
+                record.get(
+                    "ttl"
+                )
+                or "300"
+            ).strip()
+
+            if not (
+                host
+                and record_type
+                and address
+            ):
+                raise ValueError(
+                    "invalid DNS record supplied"
+                )
+
+            params[
+                f"HostName{index}"
+            ] = host
+
+            params[
+                f"RecordType{index}"
+            ] = record_type
+
+            params[
+                f"Address{index}"
+            ] = address
+
+            params[
+                f"TTL{index}"
+            ] = ttl
+
+            if record_type == "MX":
+                params[
+                    f"MXPref{index}"
+                ] = str(
+                    record.get(
+                        "mx_pref"
+                    )
+                    or "10"
+                )
+
+        self._call(
+            "namecheap.domains.dns.setHosts",
+            **params,
+        )
+
+        return {
+            "ok": True,
+            "domain": domain,
+            "hosts_set": len(records),
+            "command":
+                "namecheap.domains.dns.setHosts",
+        }
+
+    def merge_and_replace_hosts(
+        self,
+        domain: str,
+        managed: list[dict[str, str]],
+        *,
+        managed_keys: set[tuple[str, str]],
+        apply: bool = False,
+    ) -> dict[str, Any]:
+        """Read current DNS, merge managed mail records, optionally apply."""
+        existing = self.get_hosts(
+            domain
+        )
+
+        merged = self.merge_hosts(
+            existing,
+            managed,
+            managed_keys=managed_keys,
+        )
+
+        result: dict[str, Any] = {
+            "ok": True,
+            "domain": domain,
+            "existing_count":
+                len(existing),
+            "managed_count":
+                len(managed),
+            "merged_count":
+                len(merged),
+            "preserved_count":
+                len(merged)
+                - len(managed),
+            "applied": False,
+            "records": merged,
+        }
+
+        if apply:
+            write_result = self.replace_hosts(
+                domain,
+                merged,
+            )
+
+            result[
+                "applied"
+            ] = True
+
+            result[
+                "write"
+            ] = write_result
+
+        return result
+
     def set_hosts(
         self,
         domain: str,
