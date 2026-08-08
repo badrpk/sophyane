@@ -246,6 +246,11 @@ def test_synchronize_postgres_to_sqlite_appends_exact_delta(
     tmp_path,
     monkeypatch,
 ):
+    monkeypatch.setenv(
+        "SOPHYANE_SLI_ATOMIC_LEARNING",
+        "0",
+    )
+
     import sqlite3
 
     from sophyane import sli
@@ -739,6 +744,11 @@ def test_rollback_synchronized_preserves_postgres_only_learning(
     tmp_path,
     monkeypatch,
 ):
+    monkeypatch.setenv(
+        "SOPHYANE_SLI_ATOMIC_LEARNING",
+        "0",
+    )
+
     import sqlite3
 
     from sophyane import sli

@@ -128,6 +128,10 @@ def test_sli_quality_reward_detects_html_from_hash_snapshot():
 def test_learn_execution_requests_rollback_mirror_after_writes(
     monkeypatch,
 ):
+    monkeypatch.setenv(
+        "SOPHYANE_SLI_ATOMIC_LEARNING",
+        "0",
+    )
     from contextlib import contextmanager
 
     import sophyane.sli_learner as learner
@@ -226,6 +230,10 @@ def test_learn_execution_requests_rollback_mirror_after_writes(
 def test_learn_execution_surfaces_mirror_failure(
     monkeypatch,
 ):
+    monkeypatch.setenv(
+        "SOPHYANE_SLI_ATOMIC_LEARNING",
+        "0",
+    )
     from contextlib import contextmanager
 
     import pytest
@@ -361,6 +369,12 @@ def test_atomic_learning_gate_defaults_off(
     monkeypatch.delenv(
         "SOPHYANE_SLI_ATOMIC_LEARNING",
         raising=False,
+    )
+
+    monkeypatch.setattr(
+        backend,
+        "load_config",
+        lambda: {},
     )
 
     assert (

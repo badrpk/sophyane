@@ -206,6 +206,14 @@ def test_graph_recovers_after_acquisition_failure(
 
     with (
         patch(
+            "sophyane.sli_learner.learn_execution",
+            return_value={
+                "memory_id": 999,
+                "quality_reward": 0.0,
+                "test_isolated": True,
+            },
+        ),
+        patch(
             "sophyane.sli_graph.try_memory_router",
             side_effect=lambda state, _progress:
                 _failed_state(
@@ -432,6 +440,14 @@ def test_graph_product_recovery_uses_product_reuse(
     )
 
     with (
+        patch(
+            "sophyane.sli_learner.learn_execution",
+            return_value={
+                "memory_id": 999,
+                "quality_reward": 0.0,
+                "test_isolated": True,
+            },
+        ),
         patch(
             "sophyane.sli_graph.try_product_reuse",
             side_effect=lambda state, _progress:

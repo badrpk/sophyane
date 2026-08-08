@@ -764,9 +764,14 @@ def run_sli_graph(
         state = SLIState(request=request, workspace=str(root))
         state = classify(state, progress)
 
+        learning_routes = {
+            "topic_site",
+            "product_app",
+        }
+
         learning_before = (
             _workspace_snapshot(root)
-            if state.route == "topic_site"
+            if state.route in learning_routes
             else None
         )
 
@@ -833,7 +838,7 @@ def run_sli_graph(
             )
 
         if (
-            state.route == "topic_site"
+            state.route in learning_routes
             and learning_before is not None
         ):
             try:
@@ -846,12 +851,18 @@ def run_sli_graph(
 
                 ensure_current_schema()
 
-                learning_status = (
-                    "succeeded"
-                    if (
+                learning_succeeded = (
+                    state.success
+                    if state.route == "product_app"
+                    else (
                         state.success
                         and state.promoted
                     )
+                )
+
+                learning_status = (
+                    "succeeded"
+                    if learning_succeeded
                     else "failed"
                 )
 
@@ -859,9 +870,17 @@ def run_sli_graph(
                     state.errors
                 )
 
+                trace_prefix = (
+                    state.route.replace(
+                        "_",
+                        "-",
+                    )
+                    + "-"
+                )
+
                 learned = learn_execution(
                     trace_id=(
-                        "topic-site-"
+                        trace_prefix
                         + uuid.uuid4().hex[:12]
                     ),
                     request=state.request,
@@ -883,19 +902,21 @@ def run_sli_graph(
                 ] = learned
 
                 progress(
-                    "SLI-graph learned topic-site outcome "
+                    "SLI-graph learned "
+                    f"{state.route} outcome "
                     f"reward="
                     f"{float(learned.get('quality_reward', 0.0)):+.2f}"
                 )
 
             except Exception as error:
                 state.errors.append(
-                    "topic-site-learning:"
+                    f"{state.route}-learning:"
                     + f"{type(error).__name__}: {error}"
                 )
 
                 progress(
-                    "SLI-graph topic-site learning "
+                    "SLI-graph "
+                    f"{state.route} learning "
                     "skipped safely: "
                     f"{type(error).__name__}: {error}"
                 )
