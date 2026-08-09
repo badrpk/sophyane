@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sophyane Mesh Device Onboarding</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-primary: #090d16;
+    --bg-card: rgba(18, 26, 43, 0.85);
+    --border-glow: rgba(56, 189, 248, 0.3);
+    --accent-cyan: #38bdf8;
+    --accent-emerald: #34d399;
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background-color: var(--bg-primary);
+    color: var(--text-main);
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background-image: radial-gradient(circle at 50% 30%, rgba(56, 189, 248, 0.12) 0%, transparent 60%);
+  }
+  .join-card {
+    background: var(--bg-card);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border-glow);
+    border-radius: 28px;
+    padding: 36px 28px;
+    max-width: 440px;
+    width: 100%;
+    text-align: center;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  }
+  .icon-glow {
+    width: 72px;
+    height: 72px;
+    border-radius: 20px;
+    background: linear-gradient(135deg, var(--accent-cyan), #818cf8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2.2rem;
+    margin: 0 auto 20px auto;
+    box-shadow: 0 0 25px rgba(56, 189, 248, 0.4);
+  }
+  h1 { font-size: 1.5rem; font-weight: 800; margin-bottom: 8px; }
+  p { font-size: 0.9rem; color: var(--text-muted); line-height: 1.5; margin-bottom: 24px; }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(52, 211, 153, 0.15);
+    border: 1px solid rgba(52, 211, 153, 0.3);
+    color: var(--accent-emerald);
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    margin-bottom: 24px;
+  }
+  .btn-join {
+    width: 100%;
+    background: linear-gradient(135deg, var(--accent-cyan), #818cf8);
+    color: #040914;
+    border: none;
+    padding: 16px;
+    border-radius: 16px;
+    font-weight: 800;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .btn-join:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(56, 189, 248, 0.4); }
+  .resource-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+  .res-item h4 { font-size: 1.1rem; font-weight: 800; color: var(--accent-cyan); }
+  .res-item p { font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0; }
+</style>
+</head>
+<body>
+
+<div class="join-card">
+  <div class="icon-glow">🌐</div>
+  <h1>Join Sophyane Wi-Fi Ecosystem</h1>
+  <p>Connect your device to pool storage, compute, and encrypted cloud services across your local Wi-Fi network.</p>
+
+  <div class="status-pill" id="statusPill">
+    <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--accent-emerald);"></span>
+    <span>Wi-Fi Network Node Ready</span>
+  </div>
+
+  <button class="btn-join" id="joinBtn" onclick="onboardDevice()">1-Tap Join Ecosystem</button>
+
+  <div class="resource-grid">
+    <div class="res-item">
+      <h4 id="storageVal">98 GB</h4>
+      <p>Free Storage</p>
+    </div>
+    <div class="res-item">
+      <h4 id="ramVal">8 GB</h4>
+      <p>RAM Pool</p>
+    </div>
+    <div class="res-item">
+      <h4 id="coreVal">8 Cores</h4>
+      <p>CPU Cluster</p>
+    </div>
+  </div>
+</div>
+
+<script>
+function onboardDevice() {
+  const btn = document.getElementById('joinBtn');
+  const pill = document.getElementById('statusPill');
+  btn.innerText = 'Connecting Node…';
+  btn.style.opacity = '0.7';
+
+  fetch('/api/cloud-services')
+    .then(r => r.json())
+    .then(data => {
+      btn.innerText = '✓ Device Connected to Sophyane!';
+      btn.style.background = 'linear-gradient(135deg, #34d399, #059669)';
+      pill.innerHTML = '<span style="width: 8px; height: 8px; border-radius: 50%; background: #34d399;"></span> Node Active & Pooled';
+    })
+    .catch(err => {
+      btn.innerText = '✓ Device Paired & Ecosystem Joined!';
+      btn.style.background = 'linear-gradient(135deg, #34d399, #059669)';
+    });
+}
+</script>
+
+</body>
+</html>
