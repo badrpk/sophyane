@@ -1,17 +1,25 @@
 {
   "ok": true,
-  "status": "Android APK and Google Play Store Update Bundles Ready",
-  "sophyane_app": {
-    "apk": "/root/sophyane/playstore-bundle/release_output/sophyane-v21.2.0-release.apk",
-    "aab": "/root/sophyane/playstore-bundle/release_output/sophyane-v21.2.0-release.aab",
-    "package_id": "com.sophyane.app",
-    "app_name": "Sophyane AI"
+  "status": "Inceptory Tech Google Play Store Update Bundles Ready",
+  "live_playstore_apps": {
+    "xerus_main": {
+      "apk": "/root/sophyane/playstore-bundle/release_output/xerus-main-v21.2.0-release.apk",
+      "aab": "/root/sophyane/playstore-bundle/release_output/xerus-main-v21.2.0-release.aab",
+      "package_id": "com.inceptorytech.xerus",
+      "app_name": "Xerus"
+    },
+    "xerus_delivery": {
+      "apk": "/root/sophyane/playstore-bundle/release_output/xerus-delivery-v21.2.0-release.apk",
+      "aab": "/root/sophyane/playstore-bundle/release_output/xerus-delivery-v21.2.0-release.aab",
+      "package_id": "com.inceptorytech.xerus_delivery",
+      "app_name": "Xerus Delivery & Partner"
+    },
+    "sophyane_app": {
+      "apk": "/root/sophyane/playstore-bundle/release_output/sophyane-v21.2.0-release.apk",
+      "aab": "/root/sophyane/playstore-bundle/release_output/sophyane-v21.2.0-release.aab",
+      "package_id": "com.sophyane.app",
+      "app_name": "Sophyane AI"
+    }
   },
-  "xerus_playstore_update": {
-    "apk": "/root/sophyane/playstore-bundle/release_output/xerus-update-v21.2.0-release.apk",
-    "aab": "/root/sophyane/playstore-bundle/release_output/xerus-update-v21.2.0-release.aab",
-    "package_id": "com.xerus.app",
-    "app_name": "Xerus Sophyane AI"
-  },
-  "developer_account": "badrpk@gmail.com"
+  "developer_account": "badrpk@gmail.com / Inceptory Tech"
 }

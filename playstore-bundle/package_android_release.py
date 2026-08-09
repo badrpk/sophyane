@@ -1,8 +1,9 @@
-"""Android APK & Google Play Store Update Generator for Sophyane / Xerus.
+"""Android APK & Google Play Store Update Generator for Inceptory Tech / Xerus.
 
 Packages both:
-  1) Sophyane Standalone App (package: com.sophyane.app)
-  2) Xerus Play Store App Update (package: com.xerus.app for badrpk developer account)
+  1) com.inceptorytech.xerus (Xerus Main App on Google Play Store)
+  2) com.inceptorytech.xerus_delivery (Xerus Delivery & Partner App on Google Play Store)
+  3) com.sophyane.app (Sophyane AI Control Plane)
 """
 from __future__ import annotations
 
@@ -66,15 +67,19 @@ def build_apk_bundle(package_id: str, app_name: str, out_prefix: str) -> dict[st
 
 
 def main() -> None:
+    res_xerus = build_apk_bundle("com.inceptorytech.xerus", "Xerus", "xerus-main")
+    res_delivery = build_apk_bundle("com.inceptorytech.xerus_delivery", "Xerus Delivery & Partner", "xerus-delivery")
     res_sophyane = build_apk_bundle("com.sophyane.app", "Sophyane AI", "sophyane")
-    res_xerus = build_apk_bundle("com.xerus.app", "Xerus Sophyane AI", "xerus-update")
 
     summary = {
         "ok": True,
-        "status": "Android APK and Google Play Store Update Bundles Ready",
-        "sophyane_app": res_sophyane,
-        "xerus_playstore_update": res_xerus,
-        "developer_account": "badrpk@gmail.com",
+        "status": "Inceptory Tech Google Play Store Update Bundles Ready",
+        "live_playstore_apps": {
+            "xerus_main": res_xerus,
+            "xerus_delivery": res_delivery,
+            "sophyane_app": res_sophyane,
+        },
+        "developer_account": "badrpk@gmail.com / Inceptory Tech",
     }
 
     (OUT_DIR / "BUILD_SUMMARY.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
