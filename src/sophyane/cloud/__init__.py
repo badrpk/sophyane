@@ -4,6 +4,7 @@ from sophyane.cloud.container_engine import ContainerEngine
 from sophyane.cloud.github_client import GitHubClient
 from sophyane.cloud.web_server import SophyaneWebServerEngine, SophyaneWebServer, TLSCertificateManager
 from sophyane.cloud.gmail_oauth import GmailOAuthManager
+from sophyane.cloud.hybrid_fusion import HybridFusionEngine
 
 __all__ = [
     "create_portal_app",
@@ -16,4 +17,5 @@ __all__ = [
     "SophyaneWebServer",
     "TLSCertificateManager",
     "GmailOAuthManager",
+    "HybridFusionEngine",
 ]
