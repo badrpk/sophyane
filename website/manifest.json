@@ -1,0 +1,17 @@
+{
+  "name": "Sophyane AI Platform",
+  "short_name": "Sophyane",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b1020",
+  "theme_color": "#101827",
+  "description": "Local-first AI software engineering platform & cloud services control plane",
+  "icons": [
+    {
+      "src": "/icon.jpg",
+      "sizes": "192x192 512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ]
+}

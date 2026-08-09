@@ -1,0 +1,13 @@
+{
+  "app_title": "Sophyane AI: Cloud & Engineering",
+  "short_description": "Private local-first AI software engineering & cloud services platform",
+  "full_description": "Sophyane AI is a next-generation local-first software engineering and cloud services platform.\n\nKey Features:\n\u2022 Advanced AI Assistance: Powered by Google Gemini 3.6 Flash & local GGUF models.\n\u2022 One-Click Web & Mail Hosting: Built-in Nginx web server, reverse proxy, and self-hosted mail server for sastisawari.com.\n\u2022 Sophyane Cloud Services Suite: SEC2 Compute, S3 Storage, SDB Database, and DNS Shield Gate.\n\u2022 Monero Crypto Payment Vault: Integrated zero-knowledge XMR crypto payment processing.\n\u2022 Wi-Fi Device Resource Pooling: Share storage and compute across all devices connected to your network.\n\u2022 Code-Friendly GUI: Non-tech friendly dashboard with 1-click operations and custom PWA mobile app support.\n\nPrivacy First: All execution, repository intelligence, and memory logs run locally under user control.",
+  "package_id": "com.sophyane.app",
+  "version_name": "21.2.0",
+  "version_code": 210200,
+  "category": "Tools / Productivity",
+  "content_rating": "Everyone (PEGI 3 / ESRB E)",
+  "privacy_policy_url": "https://joins-skiing-passenger-once.trycloudflare.com/privacy_policy.html",
+  "developer_email": "badrpk@gmail.com",
+  "website_url": "https://joins-skiing-passenger-once.trycloudflare.com"
+}

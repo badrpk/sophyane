@@ -1,0 +1,20 @@
+{
+  "packageId": "com.sophyane.app",
+  "host": "joins-skiing-passenger-once.trycloudflare.com",
+  "name": "Sophyane AI: Cloud & Engineering",
+  "launcherName": "Sophyane",
+  "display": "standalone",
+  "themeColor": "#0F172A",
+  "navigationColor": "#090D16",
+  "backgroundColor": "#0B1020",
+  "enableNotifications": true,
+  "startUrl": "/",
+  "iconUrl": "https://joins-skiing-passenger-once.trycloudflare.com/icon.jpg",
+  "maskableIconUrl": "https://joins-skiing-passenger-once.trycloudflare.com/icon.jpg",
+  "appVersionName": "21.2.0",
+  "appVersionCode": 210200,
+  "signingKey": {
+    "path": "./sophyane-release-key.keystore",
+    "alias": "sophyane"
+  }
+}

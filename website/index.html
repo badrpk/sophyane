@@ -1,180 +1,562 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Sophyane — The Open Agent Infrastructure Layer</title>
-  <meta name="description" content="Sophyane is a cross-platform AI agent harness with ultra-low cost cloud tokens and free extra compute on your own hardware. Investor-ready agent OS for devices, cloud, and edge." />
-  <link rel="stylesheet" href="/css/site.css" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/jpeg" href="/icon.jpg">
+<link rel="apple-touch-icon" href="/icon.jpg">
+<title>Sophyane AI Cloud & Engineering Platform</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-dark: #090d16;
+  --panel-bg: rgba(18, 26, 43, 0.75);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --accent-cyan: #38bdf8;
+  --accent-purple: #c084fc;
+  --accent-green: #4ade80;
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --card-glow: rgba(56, 189, 248, 0.15);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg-dark);
+  color: var(--text-main);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  min-height: 100vh;
+  padding-bottom: 40px;
+  background-image: 
+    radial-gradient(circle at 15% 15%, rgba(56, 189, 248, 0.08) 0%, transparent 40%),
+    radial-gradient(circle at 85% 85%, rgba(192, 132, 252, 0.08) 0%, transparent 40%);
+}
+
+.container {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 20px 16px;
+}
+
+/* Header Navbar */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: var(--panel-bg);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--panel-border);
+  border-radius: 20px;
+  margin-bottom: 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brand img {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  box-shadow: 0 0 15px rgba(56, 189, 248, 0.4);
+}
+
+.brand h1 {
+  font-size: 1.4rem;
+  font-weight: 800;
+  background: linear-gradient(135deg, #38bdf8, #c084fc);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.brand p {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.install-pwa-btn {
+  background: linear-gradient(135deg, #38bdf8, #818cf8);
+  color: #040914;
+  border: none;
+  padding: 10px 18px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 15px rgba(56, 189, 248, 0.3);
+}
+
+.install-pwa-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(56, 189, 248, 0.5);
+}
+
+/* Quick Status Bar */
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.status-card {
+  background: var(--panel-bg);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: transform 0.2s;
+}
+
+.status-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
+.status-card .label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.status-card .val {
+  font-size: 1.1rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.badge-online {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  box-shadow: 0 0 10px var(--accent-green);
+}
+
+/* Section Titles */
+.section-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin: 28px 0 16px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 1-Click Action Cards Grid */
+.actions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+  margin-bottom: 28px;
+}
+
+.action-card {
+  background: var(--panel-bg);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--panel-border);
+  border-radius: 20px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+.action-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, #38bdf8, #c084fc);
+}
+
+.action-card h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.action-card p {
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.btn-card {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--panel-border);
+  color: var(--text-main);
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  text-decoration: none;
+  text-align: center;
+  transition: all 0.2s;
+}
+
+.btn-card:hover {
+  background: rgba(56, 189, 248, 0.2);
+  border-color: var(--accent-cyan);
+  color: #fff;
+}
+
+/* Chat Section */
+.chat-container {
+  background: var(--panel-bg);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--panel-border);
+  border-radius: 20px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  height: 480px;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-msg {
+  max-width: 85%;
+  padding: 14px 16px;
+  border-radius: 16px;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.msg-user {
+  align-self: flex-end;
+  background: linear-gradient(135deg, #1e3a8a, #1d4ed8);
+  border-bottom-right-radius: 4px;
+}
+
+.msg-ai {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--panel-border);
+  border-bottom-left-radius: 4px;
+}
+
+.prompt-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 14px 0 10px 0;
+}
+
+.chip {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--panel-border);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  padding: 6px 12px;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.chip:hover {
+  background: rgba(56, 189, 248, 0.15);
+  color: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+}
+
+.chat-input-box {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.chat-input-box textarea {
+  flex: 1;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  color: var(--text-main);
+  padding: 14px;
+  font-family: inherit;
+  font-size: 0.95rem;
+  resize: none;
+  height: 52px;
+}
+
+.chat-input-box textarea:focus {
+  outline: none;
+  border-color: var(--accent-cyan);
+}
+
+.btn-send {
+  background: linear-gradient(135deg, #38bdf8, #818cf8);
+  color: #040914;
+  border: none;
+  padding: 0 22px;
+  border-radius: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* Modal for Non-Tech Homescreen Helper */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(4, 9, 20, 0.85);
+  backdrop-filter: blur(10px);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.modal-card {
+  background: #111827;
+  border: 1px solid var(--panel-border);
+  border-radius: 24px;
+  max-width: 440px;
+  width: 100%;
+  padding: 28px;
+  text-align: center;
+}
+
+.modal-card img {
+  width: 80px;
+  height: 80px;
+  border-radius: 20px;
+  margin-bottom: 16px;
+  box-shadow: 0 0 25px rgba(56, 189, 248, 0.5);
+}
+
+.modal-card h2 {
+  font-size: 1.3rem;
+  margin-bottom: 10px;
+}
+
+.modal-card p {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-bottom: 20px;
+}
+
+.btn-close {
+  background: var(--accent-cyan);
+  color: #040914;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  width: 100%;
+}
+</style>
 </head>
 <body>
-  <div class="bg-glow"></div>
-  <header class="nav">
-    <a class="logo" href="/">◆ Sophyane</a>
-    <nav>
-      <a href="/start.html"><strong>Start</strong></a>
-      <a href="/browser.html">Browser</a>
-      <a href="#product">Product</a>
-      <a href="#hybrid">Hybrid</a>
-      <a href="/pricing.html">Pricing</a>
-      <a href="#investors">Investors</a>
-      <a href="/docs.html">Docs</a>
-      <a class="btn btn-sm" href="/get-api.html">Login / API</a>
-    </nav>
+
+<div class="container">
+  <!-- Header Navbar -->
+  <header>
+    <div class="brand">
+      <img src="/icon.jpg" alt="Sophyane Icon">
+      <div>
+        <h1>Sophyane AI</h1>
+        <p>Private Cloud & Engineering Control Plane</p>
+      </div>
+    </div>
+    <button class="install-pwa-btn" id="installBtn" onclick="openHomescreenGuide()">
+      <span>📲 Add to Home Screen</span>
+    </button>
   </header>
 
-  <main>
-    <section class="section" style="padding-bottom:0;max-width:1100px">
-      <div class="card" style="border-color:rgba(61,255,196,0.35);background:rgba(61,255,196,0.07)">
-        <h3 style="margin:0 0 0.5rem">New here? Read this first</h3>
-        <p style="margin:0 0 0.8rem;color:var(--muted)">
-          <strong>Email OTP login</strong> (code from <code>badrpk@gmail.com</code>) ·
-          API keys <code>sph_…</code> · ultra-low pricing · hybrid free edge compute ·
-          local install one-liner · ports 8780 / 8770 / 8777 / 8766
-        </p>
-        <div class="cta-row" style="margin:0">
-          <a class="btn btn-primary" href="/start.html">Full start guide</a>
-          <a class="btn btn-ghost" href="/get-api.html">Sign up / Log in</a>
-          <a class="btn btn-ghost" href="/static/Sophyane_Complete_Handbook.pdf">PDF handbook</a>
-        </div>
-      </div>
-    </section>
-
-    <section class="hero">
-      <p class="eyebrow">Cross-platform AI agent infrastructure · v17</p>
-      <h1>The agent layer that runs on <em>every device</em> — and costs almost nothing in the cloud.</h1>
-      <p class="lede">
-        Sophyane is a full agent operating system: plan → act → verify harness, mesh of user devices,
-        federated continual training, skills, RAG, MCP tools, and an ultra-low-cost public API.
-        Heavy inference can run on <strong>your users’ own hardware</strong> — free additional compute.
-      </p>
-      <div class="cta-row">
-        <a class="btn btn-primary" href="/get-api.html">Get free API key (email OTP)</a>
-        <a class="btn btn-ghost" href="/start.html">How to start</a>
-        <a class="btn btn-ghost" href="https://github.com/badrpk/sophyane" target="_blank" rel="noopener">GitHub ★</a>
-      </div>
-      <div class="hero-stats">
-        <div><strong>10–30×</strong><span>cheaper than typical frontier APIs</span></div>
-        <div><strong>$0–$1</strong><span>plans for builders</span></div>
-        <div><strong>Edge-free</strong><span>extra compute on user devices</span></div>
-        <div><strong>41</strong><span>modern agent capabilities</span></div>
-      </div>
-    </section>
-
-    <section id="product" class="section">
-      <h2>One agent stack. Phone → PC → cloud → industrial edge.</h2>
-      <div class="grid-3">
-        <article class="card">
-          <h3>Agent harness</h3>
-          <p>Plan → tool use → verify → self-repair. Multi-provider fallback, local GGUF rescue, skills, RAG, HITL, budgets, observability.</p>
-        </article>
-        <article class="card">
-          <h3>Mesh compute</h3>
-          <p>USB / Wi‑Fi / LAN peer federation. Clone install, shared storage, offload chat/compute to nearby devices users already own.</p>
-        </article>
-        <article class="card">
-          <h3>Continual learning</h3>
-          <p>C++ PEFT adapters over existing LLM weights. Opt-in federated rounds improve the shared Sophyane model across installs.</p>
-        </article>
-        <article class="card">
-          <h3>Enterprise connectors</h3>
-          <p>ERP adapters (Oracle, SAP, Odoo…), app factory for web/Android/iOS/Harmony, Hardware API for Python / C++ / JS.</p>
-        </article>
-        <article class="card">
-          <h3>Appliance boot</h3>
-          <p>Install on Linux-capable SoCs like an OS appliance — Ethernet + Wi‑Fi bring-up, kernel, mesh, API auto-start.</p>
-        </article>
-        <article class="card">
-          <h3>Open & installable</h3>
-          <p>One-liner install from GitHub always pulls the latest release. Zero mandatory heavy dependencies. Investor-clear architecture.</p>
-        </article>
-      </div>
-    </section>
-
-    <section id="hybrid" class="section band">
-      <div class="split">
-        <div>
-          <h2>Hybrid economics that win markets</h2>
-          <p>
-            Cloud APIs are metered at <strong>extreme low prices</strong> so teams adopt Sophyane everywhere.
-            For the <em>additional</em> heavy load — long coding loops, batch agents, fine-tune adapters —
-            Sophyane routes work onto hardware users already run (phones, PCs, gateways, servers).
-          </p>
-          <ul class="checks">
-            <li>Cloud tokens: orchestration, light chat, control plane</li>
-            <li>User devices: free extra FLOPs via mesh + local GGUF</li>
-            <li>Federated PEFT: network-wide model improvement, opt-in</li>
-            <li>Builders stay under $1/mo for millions of tokens</li>
-          </ul>
-          <a class="btn btn-primary" href="/pricing.html">See pricing →</a>
-        </div>
-        <div class="code-panel">
-          <pre><code># Get a key (free plan)
-curl -s https://YOUR_DOMAIN/api/v1/auth/request-otp \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"you@startup.com","plan":"hybrid"}'
-
-# Call Sophyane Cloud
-curl -s https://YOUR_DOMAIN/api/v1/chat \
-  -H "Authorization: Bearer sph_..." \
-  -H 'Content-Type: application/json' \
-  -d '{"message":"Design a verify loop for agents","edge":true}'
-
-# Or run free local compute
-curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
-sophyane --boot && sophyane --train-opt-in
-</code></pre>
-        </div>
-      </div>
-    </section>
-
-    <section id="investors" class="section">
-      <h2>Why investors pay attention</h2>
-      <div class="grid-2">
-        <article class="card tall">
-          <h3>Category</h3>
-          <p>Not another chatbot UI — an <strong>agent infrastructure layer</strong> spanning devices, cloud, and enterprise systems. Expandable surface: 38+ ready capabilities, honest roadmap for voice/GUI/A2A.</p>
-        </article>
-        <article class="card tall">
-          <h3>Moat</h3>
-          <p>Installed base becomes a <strong>compute + learning network</strong>. Every opted-in device improves the shared model and absorbs load competitors would pay GPU cloud for.</p>
-        </article>
-        <article class="card tall">
-          <h3>Go-to-market</h3>
-          <p>Open-source install + freemium API. Viral through developer tools, industrial gateways, and student devices. Ultra-low prices remove adoption friction.</p>
-        </article>
-        <article class="card tall">
-          <h3>Traction levers</h3>
-          <p>GitHub releases, appliance on SoCs, ERP connectors, multi-language SDKs, daily self-improvement ledger, public capability audit.</p>
-        </article>
-      </div>
-      <div class="investor-cta">
-        <p>Request the deck / technical deep-dive: <a href="mailto:invest@sophyane.local">contact via your domain email</a> · Product is live on GitHub today.</p>
-      </div>
-    </section>
-
-    <section class="section">
-      <h2>Install anywhere in one line</h2>
-      <div class="code-panel wide">
-        <pre><code>curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | sh
-sophyane --capabilities
-sophyane --audit</code></pre>
-      </div>
-    </section>
-  </main>
-
-  <footer class="footer">
-    <div>© <span id="y"></span> Sophyane · Open agent infrastructure</div>
-    <div class="footer-links">
-      <a href="https://github.com/badrpk/sophyane">GitHub</a>
-      <a href="/pricing.html">Pricing</a>
-      <a href="/get-api.html">API</a>
-      <a href="/docs.html">Docs</a>
+  <!-- Status Bar -->
+  <div class="status-grid">
+    <div class="status-card">
+      <div class="label">Website & Domain</div>
+      <div class="val"><span class="badge-online"></span> sastisawari.com</div>
     </div>
-  </footer>
-  <script src="/js/site.js"></script>
+    <div class="status-card">
+      <div class="label">AI Model Engine</div>
+      <div class="val">Gemini 3.6 Flash</div>
+    </div>
+    <div class="status-card">
+      <div class="label">Public SSL Tunnel</div>
+      <div class="val" style="color: var(--accent-cyan);">Cloudflare Live</div>
+    </div>
+    <div class="status-card">
+      <div class="label">Wi-Fi Device Pool</div>
+      <div class="val">100.8 GB Storage</div>
+    </div>
+  </div>
+
+  <!-- 1-Click Non-Tech Action Cards -->
+  <div class="section-title">⚡ 1-Click Operations</div>
+  <div class="actions-grid">
+    <div class="action-card">
+      <h3>🌐 Public Website Control</h3>
+      <p>Manage <code>sastisawari.com</code> & <code>www.sastisawari.com</code> with automated Cloudflare Zero-Trust SSL tunnels.</p>
+      <a href="https://joins-skiing-passenger-once.trycloudflare.com" target="_blank" class="btn-card">Open Live Website</a>
+    </div>
+
+    <div class="action-card">
+      <h3>✉️ Enterprise Mail Service</h3>
+      <p>Self-hosted SMTP (25/587) & IMAP (993) for <code>sastisawari.com</code> with Gmail authentication relay.</p>
+      <button class="btn-card" onclick="sendPrompt('Show status of sastisawari.com mail server and webmail client')">Check Mail Status</button>
+    </div>
+
+    <div class="action-card">
+      <h3>☁️ Sophyane Cloud Services</h3>
+      <p>AWS-grade Elastic Compute (SEC2), Unified Storage (S3), and SDB Database engines.</p>
+      <button class="btn-card" onclick="fetchCloudServices()">List Cloud Services</button>
+    </div>
+
+    <div class="action-card">
+      <h3>💎 Monero Payment Vault</h3>
+      <p>1-Click XMR crypto invoice generator with zero-knowledge payment processing.</p>
+      <button class="btn-card" onclick="fetchMoneroCheckout()">Generate Monero Invoice</button>
+    </div>
+  </div>
+
+  <!-- Interactive AI Assistant -->
+  <div class="section-title">🧠 Sophyane AI Code & Task Assistant</div>
+  <div class="chat-container">
+    <div class="chat-messages" id="chatLogs">
+      <div class="chat-msg msg-ai">
+        Welcome to Sophyane 21.2.0! Ask me any question, tell me to build software, deploy services, or manage your sastisawari.com cloud.
+      </div>
+    </div>
+
+    <div class="prompt-chips">
+      <div class="chip" onclick="sendPrompt('Check status of sastisawari.com website and DNS')">🌐 Website Status</div>
+      <div class="chip" onclick="sendPrompt('Deploy self-hosted email service for sastisawari.com')">✉️ Email Service</div>
+      <div class="chip" onclick="sendPrompt('Generate Monero crypto invoice for SEC2 compute service')">💎 Monero Invoice</div>
+      <div class="chip" onclick="sendPrompt('Show pooled storage and compute across all Wi-Fi connected devices')">📱 Wi-Fi Device Pool</div>
+    </div>
+
+    <div class="chat-input-box">
+      <textarea id="promptInput" placeholder="Type a task or question for Sophyane…"></textarea>
+      <button class="btn-send" onclick="submitChat()">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Guide for Adding to Homescreen -->
+<div class="modal-overlay" id="homescreenModal">
+  <div class="modal-card">
+    <img src="/icon.jpg" alt="Sophyane Logo">
+    <h2>Install Sophyane on Homescreen</h2>
+    <p>To place the Sophyane App Icon directly on your phone's homescreen:<br><br>
+    1. Tap your browser's menu button <strong>(⋮ or Share)</strong><br>
+    2. Tap <strong>"Add to Home screen"</strong> or <strong>"Install app"</strong><br>
+    3. Sophyane will launch as a native app icon!</p>
+    <button class="btn-close" onclick="closeHomescreenGuide()">Got It</button>
+  </div>
+</div>
+
+<script>
+let deferredPrompt = null;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  document.querySelector('#installBtn').style.display = 'flex';
+});
+
+function openHomescreenGuide() {
+  if (deferredPrompt) {
+    deferredPrompt.prompt();
+    deferredPrompt.userChoice.then(() => { deferredPrompt = null; });
+  } else {
+    document.querySelector('#homescreenModal').style.display = 'flex';
+  }
+}
+
+function closeHomescreenGuide() {
+  document.querySelector('#homescreenModal').style.display = 'none';
+}
+
+function sendPrompt(text) {
+  document.querySelector('#promptInput').value = text;
+  submitChat();
+}
+
+async function submitChat() {
+  const input = document.querySelector('#promptInput');
+  const text = input.value.strip ? input.value.trim() : input.value;
+  if (!text) return;
+
+  const logs = document.querySelector('#chatLogs');
+  
+  // Append User Msg
+  const uMsg = document.createElement('div');
+  uMsg.className = 'chat-msg msg-user';
+  uMsg.textContent = text;
+  logs.appendChild(uMsg);
+
+  input.value = '';
+  logs.scrollTop = logs.scrollHeight;
+
+  // Append AI Thinking Msg
+  const aiMsg = document.createElement('div');
+  aiMsg.className = 'chat-msg msg-ai';
+  aiMsg.textContent = 'Thinking…';
+  logs.appendChild(aiMsg);
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text })
+    });
+    const data = await res.json();
+    aiMsg.textContent = data.response || data.error || JSON.stringify(data, null, 2);
+  } catch (err) {
+    aiMsg.textContent = 'Error connecting to Sophyane: ' + err;
+  }
+  logs.scrollTop = logs.scrollHeight;
+}
+
+async function fetchCloudServices() {
+  const logs = document.querySelector('#chatLogs');
+  sendPrompt('List all Sophyane Cloud Services and Wi-Fi device pool stats');
+}
+
+async function fetchMoneroCheckout() {
+  const logs = document.querySelector('#chatLogs');
+  sendPrompt('Generate a Monero Vault crypto checkout invoice');
+}
+</script>
+
 </body>
 </html>
