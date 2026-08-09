@@ -60,12 +60,14 @@ TOP_PROVIDERS: list[dict[str, Any]] = [
         "requires_api_key": True,
         "docs": "https://aistudio.google.com/apikey",
         "models": [
+            {"id": "gemini-3.6-flash", "label": "Gemini 3.6 Flash (Latest)"},
+            {"id": "gemini-3.6-pro", "label": "Gemini 3.6 Pro (Latest)"},
             {"id": "gemini-2.5-pro", "label": "Gemini 2.5 Pro"},
             {"id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash"},
             {"id": "gemini-2.0-flash", "label": "Gemini 2.0 Flash"},
             {"id": "gemini-1.5-pro", "label": "Gemini 1.5 Pro"},
         ],
-        "default_model": "gemini-2.5-flash",
+        "default_model": "gemini-3.6-flash",
     },
     {
         "id": "xai",

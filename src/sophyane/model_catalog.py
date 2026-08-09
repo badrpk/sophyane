@@ -38,8 +38,10 @@ CLOUD_COMPANIES: tuple[CompanyChoice, ...] = (
         "credential_provider": "gemini",
         "note": "Gemini API",
         "models": (
-            _m("gemini", "gemini-2.5-flash", "Gemini 2.5 Flash", "fast and balanced"),
-            _m("gemini", "gemini-2.5-pro", "Gemini 2.5 Pro", "deeper reasoning"),
+            _m("gemini", "gemini-3.6-flash", "Gemini 3.6 Flash (Latest)", "fastest, latest generation balanced model"),
+            _m("gemini", "gemini-3.6-pro", "Gemini 3.6 Pro (Latest)", "latest generation deep reasoning model"),
+            _m("gemini", "gemini-2.5-flash", "Gemini 2.5 Flash", "stable fast and balanced"),
+            _m("gemini", "gemini-2.5-pro", "Gemini 2.5 Pro", "stable deeper reasoning"),
             _m("gemini", "gemini-2.0-flash", "Gemini 2.0 Flash", "compatible fallback"),
         ),
     },

@@ -50,7 +50,7 @@ def save_json(path: Path, data: dict[str, Any], private: bool = False) -> None:
 
 
 DEFAULT_PROVIDER = "gemini"
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.6-flash"
 DEFAULT_FALLBACK_ORDER = (
     "gemini", "xai", "openai", "anthropic", "groq", "openrouter",
     "deepseek", "local_gguf",
