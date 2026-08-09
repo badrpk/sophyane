@@ -12,7 +12,8 @@ from pathlib import Path
 
 PROFILE_DIR = Path.home() / ".config" / "sophyane" / "browser_profile"
 BUNDLE_DIR = Path("/root/sophyane/playstore-bundle")
-AAB_XERUS = BUNDLE_DIR / "release_output" / "xerus-update-v21.2.0-release.aab"
+AAB_BADRPK = BUNDLE_DIR / "release_output" / "xerus-badrpk-v21.2.0-release.aab"
+AAB_XERUS = BUNDLE_DIR / "release_output" / "xerus-main-v21.2.0-release.aab"
 AAB_SOPHYANE = BUNDLE_DIR / "release_output" / "sophyane-v21.2.0-release.aab"
 
 
