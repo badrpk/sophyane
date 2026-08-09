@@ -123,36 +123,9 @@ class CloudServicesManager:
 
     def get_mesh_device_pool(self) -> dict[str, Any]:
         """Aggregate total storage, memory, and compute of all connected Wi-Fi devices."""
-        ips = _local_ips()
-        disk = shutil.disk_usage(Path.home())
-
-        # Discover LAN/Wi-Fi peers
-        try:
-            peers = discover_peers(timeout=1.5)
-        except Exception:
-            peers = []
-
-        total_nodes = 1 + len(peers)
-        total_free_gb = round(disk.free / (1024 ** 3), 2)
-        total_ram_gb = 8  # Local phone baseline
-
-        peer_details = []
-        for p in peers:
-            peer_details.append({
-                "peer_id": p.peer_id,
-                "ip": p.ip,
-                "hostname": p.hostname,
-                "status": "online",
-            })
-
-        return {
-            "total_devices": total_nodes,
-            "static_ip": "154.57.212.38",
-            "local_ips": ips,
-            "pooled_storage_free_gb": total_free_gb,
-            "pooled_ram_gb": total_ram_gb,
-            "active_peers": peer_details,
-        }
+        from sophyane.cloud.wifi_mesh_manager import WiFiMeshManager
+        mesh = WiFiMeshManager()
+        return mesh.get_total_pooled_resources()
 
     def list_services(self) -> list[dict[str, Any]]:
         return [asdict(s) for s in CLOUD_SERVICES_CATALOG]
