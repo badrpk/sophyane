@@ -12,10 +12,18 @@ import os
 import time
 from typing import Any
 
-import psycopg
-from psycopg import sql
-from psycopg.rows import dict_row
-from psycopg.types.json import Jsonb
+try:
+    import psycopg
+    from psycopg import sql
+    from psycopg.rows import dict_row
+    from psycopg.types.json import Jsonb
+    HAS_PSYCOPG = True
+except ImportError:
+    psycopg = None
+    sql = None
+    dict_row = None
+    Jsonb = None
+    HAS_PSYCOPG = False
 
 
 SOURCE_WEIGHTS = {

@@ -132,7 +132,7 @@ class SophyaneWebServer(http.server.SimpleHTTPRequestHandler):
             self._send_json({
                 "server": "Sophyane-Nginx-Engine/21.1.2",
                 "status": "online",
-                "tls_active": isinstance(self.socket, ssl.SSLSocket),
+                "tls_active": isinstance(getattr(self, "connection", None), ssl.SSLSocket),
                 "host": host_header,
                 "vhosts_registered": len(self.vhosts),
             })
@@ -155,14 +155,45 @@ class SophyaneWebServer(http.server.SimpleHTTPRequestHandler):
             self._send_json(checkout)
             return
 
-        # 3. Custom Root Directory if configured
-        if vhost and vhost.root_dir and os.path.isdir(vhost.root_dir):
-            target_path = Path(vhost.root_dir) / self.path.lstrip("/")
-            if target_path.is_dir():
-                target_path = target_path / "index.html"
-            if target_path.is_file():
-                self._send_file(target_path)
-                return
+        if self.path == "/api/oauth/google/login":
+            from sophyane.cloud.gmail_oauth import GmailOAuthManager
+            mgr = GmailOAuthManager()
+            self._send_json({
+                "ok": True,
+                "authorization_url": mgr.get_authorization_url(),
+            })
+            return
+
+        if self.path.startswith("/api/oauth/google/callback"):
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+            code = params.get("code", [""])[0]
+            if code:
+                from sophyane.cloud.gmail_oauth import GmailOAuthManager
+                mgr = GmailOAuthManager()
+                result = mgr.exchange_code_for_tokens(code)
+                self._send_json(result)
+            else:
+                self._send_json({"ok": False, "error": "Missing authorization code in callback"}, status=400)
+            return
+
+        if self.path == "/api/users":
+            from sophyane.cloud.gmail_oauth import GmailOAuthManager
+            mgr = GmailOAuthManager()
+            self._send_json({
+                "ok": True,
+                "users": mgr.list_users(),
+            })
+            return
+
+        # 3. Custom or Default Root Directory
+        root_dir = Path(vhost.root_dir) if (vhost and vhost.root_dir and os.path.isdir(vhost.root_dir)) else self.default_root
+        target_path = root_dir / self.path.lstrip("/")
+        if target_path.is_dir():
+            target_path = target_path / "index.html"
+        if target_path.is_file():
+            self._send_file(target_path)
+            return
 
         # 4. Default Sophyane Web Portal fallback
         super().do_GET() if method == "GET" else self._send_json({"error": "Not found"}, status=404)
@@ -238,8 +269,8 @@ class SophyaneWebServerEngine:
         SophyaneWebServer.register_vhost(domain, root_dir=root_dir, proxy_target=proxy_target)
 
     def start(self) -> None:
-        socketserver.TCPServer.allow_reuse_address = True
-        self.server = socketserver.TCPServer((self.host, self.port), SophyaneWebServer)
+        http.server.ThreadingHTTPServer.allow_reuse_address = True
+        self.server = http.server.ThreadingHTTPServer((self.host, self.port), SophyaneWebServer)
 
         if self.enable_tls:
             cert_file, key_file = self.cert_manager.generate_self_signed(self.domain)

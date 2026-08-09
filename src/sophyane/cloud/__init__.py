@@ -3,6 +3,7 @@ from sophyane.cloud.cloudflare import CloudflareClient, CloudflareTunnel
 from sophyane.cloud.container_engine import ContainerEngine
 from sophyane.cloud.github_client import GitHubClient
 from sophyane.cloud.web_server import SophyaneWebServerEngine, SophyaneWebServer, TLSCertificateManager
+from sophyane.cloud.gmail_oauth import GmailOAuthManager
 
 __all__ = [
     "create_portal_app",
@@ -14,4 +15,5 @@ __all__ = [
     "SophyaneWebServerEngine",
     "SophyaneWebServer",
     "TLSCertificateManager",
+    "GmailOAuthManager",
 ]
