@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "status": "Android APK and Google Play Store Update Bundles Ready",
+  "sophyane_app": {
+    "apk": "/root/sophyane/playstore-bundle/release_output/sophyane-v21.2.0-release.apk",
+    "aab": "/root/sophyane/playstore-bundle/release_output/sophyane-v21.2.0-release.aab",
+    "package_id": "com.sophyane.app",
+    "app_name": "Sophyane AI"
+  },
+  "xerus_playstore_update": {
+    "apk": "/root/sophyane/playstore-bundle/release_output/xerus-update-v21.2.0-release.apk",
+    "aab": "/root/sophyane/playstore-bundle/release_output/xerus-update-v21.2.0-release.aab",
+    "package_id": "com.xerus.app",
+    "app_name": "Xerus Sophyane AI"
+  },
+  "developer_account": "badrpk@gmail.com"
+}
