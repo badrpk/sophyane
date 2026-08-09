@@ -60,12 +60,15 @@ class WiFiMeshManager:
             """)
             con.commit()
 
-    def get_mesh_join_url(self) -> str:
-        """Generate 1-scan Wi-Fi onboarding URL."""
+    def get_mesh_join_url(self) -> dict[str, str]:
+        """Generate 1-scan Wi-Fi and Global onboarding URLs."""
         ips = _local_ips()
-        host_ip = ips[0] if ips else "154.57.212.38"
+        wifi_ip = ips[0] if ips else "192.168.18.22"
         token = f"mesh-auto-join-{int(time.time())}"
-        return f"http://{host_ip}:8888/mesh/join?token={token}"
+        return {
+            "local_wifi_url": f"http://{wifi_ip}:8888/mesh/join?token={token}",
+            "global_ssl_url": f"https://joins-skiing-passenger-once.trycloudflare.com/mesh/join?token={token}",
+        }
 
     def register_mesh_device(
         self,
