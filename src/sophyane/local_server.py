@@ -250,17 +250,88 @@ def ensure_server_background() -> tuple[bool, str]:
 
 
 def wait_until_ready(timeout: float = 20.0) -> bool:
-    port = _configured_port()
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if _listening(port):
-            return True
-        status, _ = server_status()
-        if status in {"failed", "stalled", "stopped"}:
-            return False
-        time.sleep(0.5)
-    return False
+    """Wait until llama-server is genuinely ready for inference.
 
+    SOPHYANE_LLAMA_TRUE_HTTP_READINESS_V1
+
+    A listening TCP port is insufficient: llama-server may expose the
+    socket while the model is still loading and /health returns HTTP 503.
+    Readiness therefore requires an HTTP 200 response whose health payload
+    reports status=ok.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    deadline = time.monotonic() + max(
+        0.0,
+        float(timeout),
+    )
+
+    port = _configured_port()
+
+    health_url = (
+        f"http://127.0.0.1:{port}/health"
+    )
+
+    while time.monotonic() < deadline:
+        try:
+            request = urllib.request.Request(
+                health_url,
+                headers={
+                    "Accept":
+                        "application/json",
+                },
+            )
+
+            with urllib.request.urlopen(
+                request,
+                timeout=2.0,
+            ) as response:
+                if response.status != 200:
+                    time.sleep(0.25)
+                    continue
+
+                body = response.read().decode(
+                    "utf-8",
+                    errors="replace",
+                )
+
+                try:
+                    payload = json.loads(
+                        body
+                    )
+                except json.JSONDecodeError:
+                    payload = {}
+
+                if (
+                    isinstance(
+                        payload,
+                        dict,
+                    )
+                    and str(
+                        payload.get(
+                            "status",
+                            "",
+                        )
+                    ).casefold()
+                    == "ok"
+                ):
+                    return True
+
+        except (
+            urllib.error.HTTPError,
+            urllib.error.URLError,
+            TimeoutError,
+            OSError,
+        ):
+            pass
+
+        time.sleep(
+            0.25
+        )
+
+    return False
 
 def failure_detail() -> str:
     status, message = server_status()

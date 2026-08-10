@@ -86,13 +86,23 @@ class Handler(BaseHTTPRequestHandler):
         if not length:
             return {}
 
-        return json.loads(
-            self.rfile.read(
-                length
-            ).decode(
-                "utf-8"
+        try:
+            return json.loads(
+                self.rfile.read(
+                    length
+                ).decode(
+                    "utf-8"
+                )
             )
-        )
+        except json.JSONDecodeError:
+            self.send_json(
+                400,
+                {
+                    "error":
+                        "invalid JSON",
+                },
+            )
+            return None
 
     def do_GET(self):
         path = self.path.split(
@@ -153,6 +163,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/tasks":
             payload = self.read_json()
 
+            if payload is None:
+                return
+
             item = {
                 "id": 7,
                 "title": payload.get(
@@ -180,6 +193,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self):
         if self.path == "/api/tasks/7":
             payload = self.read_json()
+
+            if payload is None:
+                return
 
             if 7 not in ITEMS:
                 self.send_json(

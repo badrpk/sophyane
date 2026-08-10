@@ -83,8 +83,75 @@ def verify_full_stack_application(
         progress=progress,
     )
 
+    # SOPHYANE_FULL_STACK_BACKEND_SEMANTIC_HANDOFF_V2
+    #
+    # Runtime discovery has already grounded the actual generated service
+    # entrypoint. Validate that source before starting the service so a
+    # syntactically valid but architecturally unsafe backend cannot advance
+    # to mechanical acceptance.
+    entrypoint_path = (
+        workspace
+        / runtime.entrypoint
+    ).resolve()
+
+    workspace_root = (
+        workspace.resolve()
+    )
+
+    if (
+        entrypoint_path != workspace_root
+        and workspace_root not in entrypoint_path.parents
+    ):
+        return (
+            False,
+            "Generated backend semantic validation rejected "
+            "entrypoint outside workspace: "
+            f"{runtime.entrypoint}",
+        )
+
+    if not entrypoint_path.is_file():
+        return (
+            False,
+            "Generated backend semantic validation could not "
+            "read runtime entrypoint: "
+            f"{runtime.entrypoint}",
+        )
+
+    try:
+        backend_source = entrypoint_path.read_text(
+            encoding="utf-8",
+        )
+    except OSError as error:
+        return (
+            False,
+            "Generated backend semantic validation failed to "
+            "read runtime entrypoint: "
+            f"{type(error).__name__}: {error}",
+        )
+
+    semantic_defects = (
+        detect_backend_semantic_defects(
+            backend_source
+        )
+    )
+
+    if semantic_defects:
+        return (
+            False,
+            "Generated backend semantic validation failed: "
+            + ", ".join(
+                semantic_defects
+            ),
+        )
+
+    progress(
+        "Full-stack backend semantic validation passed: "
+        + runtime.entrypoint
+    )
+
     evidence: list[str] = [
         f"entrypoint={runtime.entrypoint}",
+        "backend_semantics=passed",
         f"base_url={runtime.base_url}",
         (
             "api_endpoints="
@@ -633,5 +700,187 @@ def verify_full_stack_application(
 
 
 __all__ = [
+    "detect_backend_semantic_defects",
     "verify_full_stack_application",
 ]
+
+
+def detect_backend_semantic_defects(
+    source: str,
+) -> tuple[str, ...]:
+    """Return deterministic defects in a stdlib full-stack backend.
+
+    SOPHYANE_FULL_STACK_BACKEND_SEMANTIC_GATE_V1
+
+    This validator intentionally checks architectural invariants that
+    Python syntax validation cannot prove.
+
+    It remains generic: it does not depend on a task-management domain.
+    """
+
+    defects: list[str] = []
+
+    text = str(
+        source
+        or ""
+    )
+
+    if not text.strip():
+        return (
+            "backend_source_missing",
+        )
+
+    # A threaded HTTP server must not share one module-global sqlite
+    # cursor/connection across request threads.
+    threaded_http = (
+        "ThreadingHTTPServer"
+        in text
+    )
+
+    sqlite_used = (
+        "sqlite3"
+        in text
+    )
+
+    if (
+        threaded_http
+        and sqlite_used
+    ):
+        connection_calls = text.count(
+            "sqlite3.connect("
+        )
+
+        has_connection_factory = any(
+            marker
+            in text
+            for marker in (
+                "def get_db(",
+                "def _get_db(",
+                "def db_connection(",
+                "def _db_connection(",
+                "def connect_db(",
+                "def _connect_db(",
+            )
+        )
+
+        module_global_connection = (
+            connection_calls == 1
+            and any(
+                marker
+                in text
+                for marker in (
+                    "conn = sqlite3.connect(",
+                    "connection = sqlite3.connect(",
+                    "db = sqlite3.connect(",
+                )
+            )
+        )
+
+        if (
+            module_global_connection
+            and not has_connection_factory
+        ):
+            defects.append(
+                "threaded_server_uses_shared_sqlite_connection"
+            )
+
+    # Full-stack JSON APIs require JSON-shaped client errors rather than
+    # BaseHTTPRequestHandler.send_error(), which emits HTML.
+    api_surface = (
+        "/api/"
+        in text
+    )
+
+    if api_surface:
+        has_json_response_helper = any(
+            marker
+            in text
+            for marker in (
+                "def send_json(",
+                "def _send_json(",
+                "def json_response(",
+                "def _json_response(",
+                "def write_json(",
+                "def _write_json(",
+            )
+        )
+
+        has_json_error_object = any(
+            marker
+            in text
+            for marker in (
+                '"error":',
+                "'error':",
+                '"errors":',
+                "'errors':",
+            )
+        )
+
+        uses_html_send_error = (
+            "send_error("
+            in text
+        )
+
+        if (
+            uses_html_send_error
+            and not (
+                has_json_response_helper
+                or has_json_error_object
+            )
+        ):
+            defects.append(
+                "api_errors_are_not_structured_json"
+            )
+
+    # SQLite persistence requests require explicit deterministic schema
+    # initialization.
+    if (
+        sqlite_used
+        and "CREATE TABLE"
+        not in text.upper()
+    ):
+        defects.append(
+            "sqlite_schema_initialization_missing"
+        )
+
+    # When an API implements modification operations, malformed JSON must
+    # have an explicit error path rather than escaping as an exception.
+    mutating_handler = any(
+        marker
+        in text
+        for marker in (
+            "def do_POST(",
+            "def do_PUT(",
+            "def do_PATCH(",
+        )
+    )
+
+    if mutating_handler:
+        parses_json = (
+            "json.loads("
+            in text
+        )
+
+        catches_json_decode = any(
+            marker
+            in text
+            for marker in (
+                "JSONDecodeError",
+                "except ValueError",
+                "except json.JSONDecodeError",
+            )
+        )
+
+        if (
+            parses_json
+            and not catches_json_decode
+        ):
+            defects.append(
+                "malformed_json_request_not_handled"
+            )
+
+    return tuple(
+        dict.fromkeys(
+            defects
+        )
+    )

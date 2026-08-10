@@ -36,7 +36,16 @@ class LocalGgufProvider(Provider):
         if cancelled():
             raise ProviderError("local generation cancelled")
         started_at = time.monotonic()
-        total_budget = max(20.0, min(float(self.timeout), 90.0))
+        # SOPHYANE_LOCAL_GGUF_GENERATION_BUDGET_V2
+        #
+        # self.timeout is the configured end-to-end provider generation
+        # budget. Do not silently clamp real on-device generation to
+        # 90 seconds: 7B GGUF coding turns can legitimately require
+        # several minutes on mobile hardware.
+        total_budget = max(
+            20.0,
+            float(self.timeout),
+        )
         system_prompt = (system_prompt or "")[:800]
         prompt = (prompt or "")[:4000]
         try:
@@ -130,13 +139,32 @@ class LocalGgufProvider(Provider):
                     {"role": "user", "content": prompt},
                 ],
                 "temperature": self.temperature,
-                # Browser artifacts commonly need more than the old 384-token cap.
-                # The user configuration still provides the outer bound.
-                "max_tokens": min(self.max_tokens, 768),
+                # SOPHYANE_LOCAL_GGUF_OUTPUT_BUDGET_V3
+                #
+                # Large coding actions routinely exceed the historical
+                # 768-token ceiling. Keep a conservative local-server
+                # ceiling for the current 2048-token context while allowing
+                # materially larger complete source-file actions.
+                #
+                # The configured max_tokens remains authoritative whenever
+                # it is lower than this local context-safe ceiling.
+                "max_tokens": min(
+                    self.max_tokens,
+                    1536,
+                ),
                 "stream": False,
             },
             headers={"Authorization": "Bearer local"},
-            timeout=request_timeout or min(self.timeout, 85),
+            # SOPHYANE_LOCAL_GGUF_HTTP_TIMEOUT_V2
+            #
+            # The caller may supply a small timeout for readiness/retry
+            # probes. A real generation request without an override gets
+            # the complete configured provider timeout.
+            timeout=(
+                request_timeout
+                if request_timeout is not None
+                else self.timeout
+            ),
         )
         try:
             content = response["choices"][0]["message"]["content"]

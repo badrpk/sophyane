@@ -14,6 +14,7 @@ import hashlib
 import http.server
 import json
 import os
+import re
 import signal
 import shutil
 import subprocess
@@ -32,6 +33,74 @@ VALID_ACTIONS = {
     "play_demo", "analyze_log", "verify", "check",
 }
 _BROWSER_SERVERS: dict[Path, tuple[http.server.ThreadingHTTPServer, threading.Thread, str]] = {}
+
+
+
+def _recover_quasi_json_file_action(
+    text: str,
+) -> dict[str, Any] | None:
+    """Recover only an unambiguous triple-quoted file action.
+
+    SOPHYANE_QUASI_JSON_FILE_ACTION_RECOVERY_V3
+
+    Some local coding models emit a JSON-shaped write_file or append_file
+    envelope but place source content inside Python triple quotes. That is
+    invalid JSON even though the action boundary is explicit.
+
+    Recovery is deliberately narrow:
+    - write_file or append_file only
+    - explicit path
+    - triple-double-quoted or triple-single-quoted content
+    - complete outer object
+    """
+    if not isinstance(text, str):
+        return None
+
+    value = text.strip()
+
+    if not value:
+        return None
+
+    pattern = (
+        r'\s*\{\s*'
+        r'["\']action["\']\s*:\s*["\']'
+        r'(?P<action>write_file|append_file)'
+        r'["\']\s*,\s*'
+        r'["\']path["\']\s*:\s*["\']'
+        r'(?P<path>[^"\'\r\n]+)'
+        r'["\']\s*,\s*'
+        r'["\']content["\']\s*:\s*'
+        r'(?P<quote>"""|\'\'\')'
+        r'(?P<content>.*?)'
+        r'(?P=quote)'
+        r'\s*\}\s*'
+    )
+
+    match = re.fullmatch(
+        pattern,
+        value,
+        flags=re.S,
+    )
+
+    if not match:
+        return None
+
+    file_path = match.group(
+        "path"
+    ).strip()
+
+    if not file_path:
+        return None
+
+    return {
+        "action": match.group(
+            "action"
+        ),
+        "path": file_path,
+        "content": match.group(
+            "content"
+        ),
+    }
 
 
 def coding_request_needs_language(message: str) -> bool:
@@ -56,7 +125,15 @@ def extract_plan(text: str) -> dict[str, Any] | None:
         try:
             value = json.loads(text[start : end + 1])
         except json.JSONDecodeError:
+            recovered = _recover_quasi_json_file_action(
+                text
+            )
+
+            if recovered is not None:
+                return recovered
+
             return None
+
     return value if isinstance(value, dict) else None
 
 

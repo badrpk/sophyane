@@ -80,13 +80,23 @@ class Handler(BaseHTTPRequestHandler):
         if not length:
             return {}
 
-        return json.loads(
-            self.rfile.read(
-                length
-            ).decode(
-                "utf-8"
+        try:
+            return json.loads(
+                self.rfile.read(
+                    length
+                ).decode(
+                    "utf-8"
+                )
             )
-        )
+        except json.JSONDecodeError:
+            self.send_json(
+                400,
+                {
+                    "error":
+                        "invalid JSON",
+                },
+            )
+            return None
 
     def do_GET(self):
         if self.path == "/":
@@ -138,6 +148,9 @@ class Handler(BaseHTTPRequestHandler):
 
         payload = self.read_json()
 
+        if payload is None:
+            return
+
         item_id = NEXT_ID
         NEXT_ID += 1
 
@@ -182,10 +195,15 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        payload = self.read_json()
+
+        if payload is None:
+            return
+
         ITEMS[
             item_id
         ].update(
-            self.read_json()
+            payload
         )
 
         self.send_json(
