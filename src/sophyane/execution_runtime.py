@@ -221,6 +221,40 @@ def _normalize_action(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
 
+    # SOPHYANE_RUNTIME_FILE_SHAPED_CREATE_ALIAS_V1
+    #
+    # Keep the runtime independently defensive: a file-shaped provider
+    # "create" action is a write_file operation. A bare create action remains
+    # unsupported because its intended resource type is ambiguous.
+    action_alias = str(
+        value.get("action")
+        or ""
+    ).strip().casefold()
+
+    file_path = str(
+        value.get("path")
+        or value.get("file")
+        or ""
+    ).strip()
+
+    has_file_content = (
+        "content" in value
+        or "text" in value
+    )
+
+    if (
+        action_alias == "create"
+        and file_path
+        and has_file_content
+    ):
+        normalized = dict(value)
+        normalized.pop(
+            "action",
+            None,
+        )
+        normalized["type"] = "write_file"
+        return normalized
+
     kind = str(value.get("type") or value.get("kind") or value.get("name") or "").strip().lower()
     if kind in {"answer", "final_answer", "reply"}:
         kind = "respond"
@@ -237,8 +271,8 @@ def _normalize_action(value: Any) -> dict[str, Any] | None:
         if action_kind in VALID_ACTIONS:
             normalized = dict(value)
             normalized["type"] = action_kind
-        normalized.pop("action", None)
-        return normalized
+            normalized.pop("action", None)
+            return normalized
     if isinstance(action_value, dict):
         nested = _normalize_action(action_value)
         if nested:

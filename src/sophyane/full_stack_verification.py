@@ -1,0 +1,637 @@
+"""Mechanical verification for generated full-stack applications.
+
+This module owns deterministic runtime verification after generated syntax
+and automated tests have passed.
+
+Generated service lifecycle is delegated exclusively to Sophyane Service
+Fabric. No alternate background-process ownership is allowed here.
+"""
+from __future__ import annotations
+
+import http.client
+import time
+from pathlib import Path
+from typing import Callable
+
+from sophyane.full_stack_runtime import (
+    discover_service_manifest,
+)
+from sophyane.full_stack_scenarios import (
+    discover_api_scenarios,
+    scenario_summary,
+)
+from sophyane.service_fabric.supervisor import (
+    ServiceSupervisor,
+)
+
+
+Progress = Callable[[str], None]
+
+
+def verify_full_stack_application(
+    workspace: Path,
+    progress: Progress | None = None,
+) -> tuple[bool, str]:
+    """Verify one generated full-stack application mechanically.
+
+    Verification currently proves:
+
+    - generated runtime discovery succeeds;
+    - Service Fabric owns process startup and teardown;
+    - the generated service becomes healthy;
+    - the configured frontend health path responds successfully;
+    - every grounded, static GET API endpoint responds successfully;
+    - non-GET endpoint contracts are preserved as evidence without
+      fabricating request bodies.
+
+    Mutation behavior remains the responsibility of the generated project's
+    own automated tests until a future grounded mutation scenario is available.
+    """
+    progress = progress or (
+        lambda _message:
+            None
+    )
+
+    try:
+        runtime, manifest = (
+            discover_service_manifest(
+                workspace,
+                name="generated-full-stack",
+            )
+        )
+
+    except Exception as error:
+        return (
+            False,
+            "Service Fabric runtime discovery failed: "
+            f"{type(error).__name__}: {error}",
+        )
+
+    endpoints = tuple(
+        runtime.api_endpoints
+    )
+
+    if not endpoints:
+        return (
+            False,
+            "Generated full-stack application exposed no "
+            "grounded API endpoint contract.",
+        )
+
+    supervisor = ServiceSupervisor(
+        workspace=workspace,
+        progress=progress,
+    )
+
+    evidence: list[str] = [
+        f"entrypoint={runtime.entrypoint}",
+        f"base_url={runtime.base_url}",
+        (
+            "api_endpoints="
+            + ", ".join(
+                f"{endpoint.method} {endpoint.path}"
+                for endpoint in endpoints
+            )
+        ),
+    ]
+
+    def request(
+        method: str,
+        path: str,
+        body: object | None = None,
+    ) -> tuple[
+        int,
+        str,
+        bytes,
+    ]:
+        import json
+
+        connection = (
+            http.client.HTTPConnection(
+                runtime.host,
+                runtime.port,
+                timeout=3,
+            )
+        )
+
+        encoded: bytes | None = None
+
+        headers: dict[
+            str,
+            str,
+        ] = {}
+
+        if body is not None:
+            encoded = json.dumps(
+                body,
+                ensure_ascii=False,
+            ).encode(
+                "utf-8"
+            )
+
+            headers[
+                "Content-Type"
+            ] = "application/json"
+
+        try:
+            connection.request(
+                method,
+                path,
+                body=encoded,
+                headers=headers,
+            )
+
+            response = (
+                connection.getresponse()
+            )
+
+            response_body = response.read(
+                4096
+            )
+
+            return (
+                int(
+                    response.status
+                ),
+                str(
+                    response.getheader(
+                        "Content-Type",
+                        "",
+                    )
+                ),
+                response_body,
+            )
+
+        finally:
+            connection.close()
+
+    try:
+        started = (
+            supervisor.start_manifest(
+                manifest
+            )
+        )
+
+        if not started:
+            return (
+                False,
+                "Service Fabric started no generated services.",
+            )
+
+        evidence.append(
+            "pid="
+            + str(
+                started[
+                    0
+                ].process.pid
+            )
+        )
+
+        deadline = (
+            time.monotonic()
+            + 6.0
+        )
+
+        last_status: list[
+            dict[str, object]
+        ] = []
+
+        while (
+            time.monotonic()
+            < deadline
+        ):
+            last_status = (
+                supervisor.status()
+            )
+
+            if (
+                len(
+                    last_status
+                )
+                == 1
+                and last_status[
+                    0
+                ].get(
+                    "alive"
+                )
+                is True
+                and last_status[
+                    0
+                ].get(
+                    "healthy"
+                )
+                is True
+            ):
+                break
+
+            if (
+                last_status
+                and last_status[
+                    0
+                ].get(
+                    "alive"
+                )
+                is False
+            ):
+                return (
+                    False,
+                    "Generated service exited before "
+                    "becoming healthy: "
+                    + repr(
+                        last_status[
+                            0
+                        ]
+                    ),
+                )
+
+            time.sleep(
+                0.1
+            )
+
+        else:
+            return (
+                False,
+                "Generated service did not become healthy: "
+                + repr(
+                    last_status
+                ),
+            )
+
+        status = (
+            last_status[
+                0
+            ]
+        )
+
+        evidence.append(
+            "health="
+            + str(
+                status.get(
+                    "health"
+                )
+            )
+        )
+
+        (
+            frontend_status,
+            frontend_type,
+            frontend_body,
+        ) = request(
+            "GET",
+            runtime.health_path,
+        )
+
+        frontend_bytes = len(
+            frontend_body
+        )
+
+        if not (
+            200
+            <= frontend_status
+            < 400
+        ):
+            return (
+                False,
+                "Frontend HTTP verification failed: "
+                f"{runtime.health_path} -> "
+                f"HTTP {frontend_status}",
+            )
+
+        evidence.append(
+            "frontend="
+            f"GET {runtime.health_path} "
+            f"status={frontend_status} "
+            f"content_type={frontend_type!r} "
+            f"bytes_sampled={frontend_bytes}"
+        )
+
+        get_endpoints = tuple(
+            endpoint
+            for endpoint
+            in endpoints
+            if (
+                endpoint.method
+                == "GET"
+                and "{"
+                not in endpoint.path
+                and "}"
+                not in endpoint.path
+            )
+        )
+
+        for endpoint in (
+            get_endpoints
+        ):
+            (
+                status_code,
+                content_type,
+                response_body,
+            ) = request(
+                "GET",
+                endpoint.path,
+            )
+
+            bytes_sampled = len(
+                response_body
+            )
+
+            if not (
+                200
+                <= status_code
+                < 400
+            ):
+                return (
+                    False,
+                    "Grounded API verification failed: "
+                    f"GET {endpoint.path} -> "
+                    f"HTTP {status_code}",
+                )
+
+            evidence.append(
+                "api="
+                f"GET {endpoint.path} "
+                f"status={status_code} "
+                f"content_type={content_type!r} "
+                f"bytes_sampled={bytes_sampled}"
+            )
+
+        mutation_endpoints = tuple(
+            endpoint
+            for endpoint
+            in endpoints
+            if (
+                endpoint.method
+                != "GET"
+            )
+        )
+
+        scenarios = discover_api_scenarios(
+            workspace
+        )
+
+        if scenarios:
+            evidence.append(
+                "grounded_scenarios="
+                + " | ".join(
+                    scenario_summary(
+                        scenario
+                    )
+                    for scenario
+                    in scenarios
+                )
+            )
+
+        executed_mutations: set[
+            tuple[str, str]
+        ] = set()
+
+        import json
+        import re
+
+        for scenario in scenarios:
+            bound_values: dict[
+                str,
+                object,
+            ] = {}
+
+            for step in scenario.steps:
+                # Ordinary GET endpoints are already verified through the
+                # runtime endpoint contract above. A scenario GET is executed
+                # here only when later scenario dataflow depends on its
+                # response, or when it contains a path binding that must be
+                # resolved as part of the scenario.
+                if (
+                    step.method == "GET"
+                    and not step.bindings
+                    and "{"
+                    not in step.path
+                    and "}"
+                    not in step.path
+                ):
+                    continue
+
+                resolved_path = step.path
+
+                placeholders = re.findall(
+                    r"\{([A-Za-z_][A-Za-z0-9_]*)\}",
+                    resolved_path,
+                )
+
+                for name in placeholders:
+                    if name not in bound_values:
+                        return (
+                            False,
+                            "Grounded scenario binding unavailable: "
+                            f"{name!r} required by "
+                            f"{step.method} {step.path}; "
+                            f"scenario={scenario.name}",
+                        )
+
+                    value = bound_values[
+                        name
+                    ]
+
+                    if not isinstance(
+                        value,
+                        (
+                            str,
+                            int,
+                        ),
+                    ):
+                        return (
+                            False,
+                            "Grounded scenario binding rejected: "
+                            f"{name!r} has unsupported type "
+                            f"{type(value).__name__}; "
+                            f"scenario={scenario.name}",
+                        )
+
+                    resolved_path = (
+                        resolved_path.replace(
+                            "{"
+                            + name
+                            + "}",
+                            str(
+                                value
+                            ),
+                        )
+                    )
+
+                status_code, content_type, response_body = (
+                    request(
+                        step.method,
+                        resolved_path,
+                        step.body,
+                    )
+                )
+
+                if step.expected_status:
+                    accepted = (
+                        status_code
+                        in step.expected_status
+                    )
+
+                else:
+                    accepted = (
+                        200
+                        <= status_code
+                        < 400
+                    )
+
+                if not accepted:
+                    return (
+                        False,
+                        "Grounded mutation verification failed: "
+                        f"{step.method} {resolved_path} -> "
+                        f"HTTP {status_code}; "
+                        f"expected={step.expected_status or '2xx/3xx'}; "
+                        f"scenario={scenario.name}",
+                    )
+
+                if step.method != "GET":
+                    executed_mutations.add(
+                        (
+                            step.method,
+                            step.path,
+                        )
+                    )
+
+                evidence.append(
+                    "scenario_api="
+                    f"{step.method} {resolved_path} "
+                    f"status={status_code} "
+                    f"content_type={content_type!r} "
+                    f"bytes_sampled={len(response_body)} "
+                    f"scenario={scenario.name}"
+                )
+
+                if step.bindings:
+                    try:
+                        payload = json.loads(
+                            response_body.decode(
+                                "utf-8"
+                            )
+                        )
+
+                    except (
+                        UnicodeDecodeError,
+                        json.JSONDecodeError,
+                    ) as error:
+                        return (
+                            False,
+                            "Grounded scenario response binding failed: "
+                            "response bindings require JSON object; "
+                            f"{type(error).__name__}: {error}",
+                        )
+
+                    if not isinstance(
+                        payload,
+                        dict,
+                    ):
+                        return (
+                            False,
+                            "Grounded scenario response binding failed: "
+                            "response JSON is not an object.",
+                        )
+
+                    resolved_bindings: dict[
+                        str,
+                        object,
+                    ] = {}
+
+                    # Resolve all required fields first so one response step is
+                    # bound atomically. A missing/invalid field cannot leave a
+                    # partially-grounded scenario state behind.
+                    for binding in step.bindings:
+                        if binding.field not in payload:
+                            return (
+                                False,
+                                "Grounded scenario response binding failed: "
+                                f"field {binding.field!r} absent; "
+                                f"binding={binding.name}",
+                            )
+
+                        value = payload[
+                            binding.field
+                        ]
+
+                        if not isinstance(
+                            value,
+                            (
+                                str,
+                                int,
+                            ),
+                        ):
+                            return (
+                                False,
+                                "Grounded scenario response binding failed: "
+                                f"field {binding.field!r} has unsupported "
+                                f"type {type(value).__name__}",
+                            )
+
+                        resolved_bindings[
+                            binding.name
+                        ] = value
+
+                    bound_values.update(
+                        resolved_bindings
+                    )
+
+                    for binding in step.bindings:
+                        evidence.append(
+                            "scenario_bind="
+                            f"{binding.name}<-response."
+                            f"{binding.field} "
+                            f"scenario={scenario.name}"
+                        )
+
+        uncovered_mutations = tuple(
+            endpoint
+            for endpoint
+            in mutation_endpoints
+            if (
+                endpoint.method,
+                endpoint.path,
+            )
+            not in executed_mutations
+        )
+
+        if uncovered_mutations:
+            evidence.append(
+                "mutation_contracts_unexecuted="
+                + ", ".join(
+                    f"{endpoint.method} "
+                    f"{endpoint.path}"
+                    for endpoint
+                    in uncovered_mutations
+                )
+                + " "
+                "(no grounded static request scenario)"
+            )
+
+        return (
+            True,
+            "\n".join(
+                evidence
+            ),
+        )
+
+    except Exception as error:
+        return (
+            False,
+            "\n".join(
+                evidence
+                + [
+                    "Service Fabric verification exception: "
+                    f"{type(error).__name__}: {error}"
+                ]
+            ),
+        )
+
+    finally:
+        supervisor.stop_all()
+
+
+__all__ = [
+    "verify_full_stack_application",
+]

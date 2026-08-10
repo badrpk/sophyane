@@ -122,6 +122,167 @@ def classify(request: str) -> CapabilityPlan:
             language = value
             break
 
+    # SOPHYANE_FULL_STACK_PRODUCT_CLASSIFIER_V1
+    #
+    # A request describing both browser-facing UI and server/data
+    # capabilities is a web software product, not an unspecified
+    # "portable desktop" task. Freeze that architecture before an LLM
+    # worker is consulted so the provider cannot silently turn a SaaS
+    # request into Swing, a CLI, or a static HTML mock-up.
+    web_surface = any(
+        marker in text
+        for marker in (
+            "saas",
+            "web frontend",
+            "web application",
+            "web app",
+            "browser frontend",
+            "responsive frontend",
+            "responsive web",
+        )
+    )
+
+    api_surface = any(
+        marker in text
+        for marker in (
+            "rest api",
+            "restful api",
+            "api endpoint",
+            "api endpoints",
+            "backend api",
+        )
+    )
+
+    persistent_surface = any(
+        marker in text
+        for marker in (
+            "persistent database",
+            "database",
+            "sqlite",
+            "postgres",
+            "postgresql",
+            "mysql",
+            "persistence",
+        )
+    )
+
+    test_surface = any(
+        marker in text
+        for marker in (
+            "automated tests",
+            "test suite",
+            "pytest",
+            "unit tests",
+            "integration tests",
+        )
+    )
+
+    crud_surface = any(
+        marker in text
+        for marker in (
+            "create/edit/delete",
+            "create, edit and delete",
+            "create edit delete",
+            "crud",
+        )
+    )
+
+    full_stack_score = sum(
+        (
+            web_surface,
+            api_surface,
+            persistent_surface,
+            test_surface,
+            crud_surface,
+        )
+    )
+
+    if (
+        "saas" in text
+        or full_stack_score >= 3
+    ):
+        full_stack_caps: list[str] = []
+
+        if web_surface:
+            full_stack_caps.append(
+                "responsive_web_frontend"
+            )
+
+        if api_surface:
+            full_stack_caps.append(
+                "rest_api"
+            )
+
+        if persistent_surface:
+            full_stack_caps.append(
+                "persistent_database"
+            )
+
+        if crud_surface:
+            full_stack_caps.append(
+                "crud"
+            )
+
+        if any(
+            marker in text
+            for marker in (
+                "validation",
+                "error handling",
+                "input validation",
+            )
+        ):
+            full_stack_caps.append(
+                "validation"
+            )
+
+        if test_surface:
+            full_stack_caps.append(
+                "automated_tests"
+            )
+
+        if any(
+            marker in text
+            for marker in (
+                "dashboard",
+                "statistics",
+                "analytics",
+            )
+        ):
+            full_stack_caps.append(
+                "dashboard"
+            )
+
+        if any(
+            marker in text
+            for marker in (
+                "search",
+                "filter",
+                "filtering",
+            )
+        ):
+            full_stack_caps.append(
+                "search_filtering"
+            )
+
+        # When the user did not dictate a language, use Python as the
+        # portable local-service baseline. Python + sqlite3 are suitable
+        # for Termux and do not imply Maven/Gradle/Node availability.
+        if not language:
+            language = "Python"
+
+        return CapabilityPlan(
+            "full_stack_web_application",
+            language,
+            "local web application",
+            tuple(
+                dict.fromkeys(
+                    full_stack_caps
+                )
+            ),
+            "FULL_STACK_PROVIDER_BOUNDED",
+            0.98,
+        )
+
     if any(x in text for x in ("android", "phone", "mobile")):
         target = "Android phone"
     elif "windows" in text:
@@ -393,6 +554,95 @@ def install_sli_capability_planner() -> None:
                 "- No mutation performed\n"
                 "- No browser opened\n"
                 "- No shell command selected by the provider"
+            )
+
+        if plan.builder == "FULL_STACK_PROVIDER_BOUNDED":
+            # SOPHYANE_FULL_STACK_RUNTIME_CONTRACT_V1
+            #
+            # SLI owns architecture. The provider is an implementation worker.
+            # The local Termux baseline intentionally depends only on Python
+            # stdlib + sqlite3 + browser JavaScript + pytest.
+            #
+            # This prevents provider drift into Swing/Maven/Gradle, static-only
+            # HTML, or a fake in-memory backend when the request requires a
+            # persistent full-stack local product.
+            contract = (
+                "\n\n"
+                "=== SOPHYANE FULL-STACK ARCHITECTURE CONTRACT ===\n"
+                "SLI has classified this request as a full-stack local web application.\n"
+                "You are an implementation worker inside this fixed architecture.\n\n"
+
+                "REQUIRED STACK:\n"
+                "- Python 3 standard library for the backend.\n"
+                "- Python sqlite3 module for persistent storage.\n"
+                "- http.server BaseHTTPRequestHandler or ThreadingHTTPServer for HTTP.\n"
+                "- HTML/CSS/vanilla JavaScript responsive frontend.\n"
+                "- pytest or Python unittest for automated tests.\n"
+                "- Bind application only to 127.0.0.1.\n\n"
+
+                "REQUIRED PRODUCT STRUCTURE:\n"
+                "- Multiple project files, not one giant file.\n"
+                "- A real backend server.\n"
+                "- A real persistent SQLite database file.\n"
+                "- REST-style JSON endpoints.\n"
+                "- Frontend must call the backend API.\n"
+                "- Seed/demo data must be inserted deterministically.\n"
+                "- Input validation and useful JSON errors are required.\n"
+                "- Tests must exercise backend behavior.\n"
+                "- The application must actually be run locally.\n"
+                "- API behavior must be mechanically verified.\n"
+                "- Frontend must be mechanically browser/HTTP verified.\n\n"
+
+                "FORBIDDEN ARCHITECTURE DRIFT:\n"
+                "- Do not use Java, Swing, Maven, Gradle, Android, Electron, or desktop GUI frameworks.\n"
+                "- Do not require Flask, FastAPI, Django, Uvicorn, npm packages, or external Python packages.\n"
+                "- Do not satisfy the request with only index.html.\n"
+                "- Do not use an in-memory-only database when persistence is requested.\n"
+                "- Do not replace the requested REST API with frontend-only localStorage.\n"
+                "- Do not return prose when an executable action is required.\n\n"
+
+                "ACTION PROTOCOL:\n"
+                "- Return exactly one executable JSON action at a time.\n"
+                "- Use only relative paths inside the active workspace.\n"
+                "- Use write_file for a new complete file.\n"
+                "- Use append_file only for a genuine continuation.\n"
+                "- Use run_command to run tests or start/verify the application.\n"
+                "- Never invoke unavailable tools such as mvn or gradle.\n"
+                "- Keep working until files, database, tests, API and frontend are verified.\n"
+                "=== END FULL-STACK ARCHITECTURE CONTRACT ===\n"
+            )
+
+            # SOPHYANE_FULL_STACK_CONTRACT_CHANNEL_FIX_V1
+            #
+            # initial_text is already-generated provider output. It is parsed
+            # by adaptive_execution as an executable action/artifact and must
+            # therefore remain byte-for-byte provider output. Appending the
+            # architecture contract here corrupts otherwise parseable JSON.
+            #
+            # original_request, on the other hand, is instruction context used
+            # by repair/follow-up provider prompts, so the fixed architecture
+            # contract belongs there.
+            bounded_initial = str(
+                initial_text or ""
+            )
+
+            bounded_request = (
+                str(original_request or "")
+                + contract
+            )
+
+            progress(
+                "SLI Full-Stack Contract: "
+                "Python stdlib + sqlite3 + HTTP + browser frontend + tests"
+            )
+
+            return original(
+                initial_text=bounded_initial,
+                original_request=bounded_request,
+                ask=ask,
+                workspace=workspace_path,
+                max_steps=max(max_steps, 32),
+                progress=progress,
             )
 
         if plan.builder != "CPP_ANDROID_SCAFFOLD":

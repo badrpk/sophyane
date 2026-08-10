@@ -20,8 +20,65 @@ def _files(workspace: Path) -> list[str]:
 
 
 def _browser_request(request: str) -> bool:
-    text = request.lower()
-    return any(word in text for word in ("browser", "website", "web app", "html", "game", "design", "touch controls"))
+    text = " ".join(
+        str(request or "").casefold().split()
+    )
+
+    # SOPHYANE_FULL_STACK_BROWSER_BOUNDARY_V1
+    #
+    # A browser frontend does not make a multi-layer software product a
+    # browser-only artifact. Explicit API + persistence requirements must
+    # remain in the multi-file adaptive execution loop.
+    full_stack_contract = (
+        "sophyane full-stack architecture contract"
+        in text
+    )
+
+    api_layer = any(
+        marker in text
+        for marker in (
+            "rest api",
+            "restful api",
+            "rest-style json",
+            "backend api",
+            "api endpoint",
+            "api endpoints",
+        )
+    )
+
+    persistence_layer = any(
+        marker in text
+        for marker in (
+            "persistent database",
+            "persistent local database",
+            "persistent sqlite",
+            "sqlite database",
+            "sqlite3",
+            "database file",
+        )
+    )
+
+    if (
+        full_stack_contract
+        or (
+            api_layer
+            and persistence_layer
+        )
+    ):
+        return False
+
+    return any(
+        word in text
+        for word in (
+            "browser",
+            "website",
+            "web app",
+            "html",
+            "game",
+            "design",
+            "touch controls",
+        )
+    )
 
 
 def _extract_html(text: str) -> str | None:
@@ -297,6 +354,125 @@ def _normalise_action(action: Any) -> dict[str, Any] | None:
         return None
 
     value = dict(action)
+
+    # SOPHYANE_ADAPTIVE_STRING_ACTION_CANONICALIZATION_V1
+    #
+    # Provider schemas frequently put the operation name in `action`
+    # instead of `type`. Canonicalize known executable operations before
+    # the older permissive normalization logic can return the raw object.
+    #
+    # Unknown string actions must NOT fall through as executable objects.
+    # In particular, bare `create` is ambiguous. It becomes write_file only
+    # when the structure proves that a file write was intended.
+    action_value = value.get("action")
+
+    if isinstance(action_value, str):
+        action_kind = action_value.strip().casefold()
+
+        if action_kind == "create":
+            file_path = str(
+                value.get("path")
+                or value.get("file")
+                or ""
+            ).strip()
+
+            has_file_content = (
+                "content" in value
+                or "text" in value
+            )
+
+            if (
+                file_path
+                and has_file_content
+            ):
+                canonical = dict(value)
+                canonical.pop(
+                    "action",
+                    None,
+                )
+                canonical["type"] = "write_file"
+                return canonical
+
+            # `create` could mean a directory, project, database, resource,
+            # account, file, etc. Do not guess without structural evidence.
+            return None
+
+        aliases = {
+            "write_file": "write_file",
+            "write": "write_file",
+            "create_file": "write_file",
+            "append_file": "append_file",
+            "append": "append_file",
+            "mkdir": "mkdir",
+            "make_directory": "mkdir",
+            "run_command": "run_command",
+            "run": "run_command",
+            "shell": "run_command",
+            "bash": "run_command",
+            "run_interactive": "run_interactive",
+            "interactive": "run_interactive",
+            "open_browser": "open_browser",
+            "browser": "open_browser",
+            "respond": "respond",
+            "response": "respond",
+            "answer": "respond",
+            "final_answer": "respond",
+            "reply": "respond",
+            "message": "respond",
+        }
+
+        canonical_kind = aliases.get(
+            action_kind
+        )
+
+        if canonical_kind is None:
+            return None
+
+        canonical = dict(value)
+        canonical.pop(
+            "action",
+            None,
+        )
+        canonical["type"] = canonical_kind
+        return canonical
+
+    # SOPHYANE_FILE_SHAPED_CREATE_ALIAS_V1
+    #
+    # Small local models commonly emit:
+    #
+    #   {"action":"create","path":"app.py","content":"..."}
+    #
+    # "create" by itself is ambiguous, but when both a concrete file path
+    # and file content are present the intent is structurally equivalent to
+    # write_file. Canonicalize that shape locally instead of spending another
+    # provider generation on schema repair.
+    action_alias = str(
+        value.get("action")
+        or ""
+    ).strip().casefold()
+
+    file_path = str(
+        value.get("path")
+        or value.get("file")
+        or ""
+    ).strip()
+
+    has_file_content = (
+        "content" in value
+        or "text" in value
+    )
+
+    if (
+        action_alias == "create"
+        and file_path
+        and has_file_content
+    ):
+        value.pop(
+            "action",
+            None,
+        )
+        value["type"] = "write_file"
+        return value
     kind = str(value.get("type") or value.get("kind") or "").strip().lower()
 
     aliases = {
@@ -528,6 +704,80 @@ def execution_prefix_for_repair(request: str) -> str:
         )
 
 
+def _full_stack_initial_bundle_prompt(
+    request: str,
+) -> str:
+    """Request one compact first-pass multi-file full-stack implementation."""
+
+    return (
+        "FULL-STACK INITIAL IMPLEMENTATION BUNDLE. "
+        "Return JSON only. No Markdown and no explanation. "
+        "Do NOT return one action. "
+        "Return one object with a top-level files array. "
+        "Each item must contain path and complete content. "
+        "Build the smallest runnable implementation that covers the whole "
+        "architecture in one response.\n\n"
+
+        "MANDATORY FILE SET:\n"
+        "- backend/app.py\n"
+        "- static/index.html\n"
+        "- static/app.js\n"
+        "- static/style.css\n"
+        "- tests/test_app.py\n"
+        "- README.md\n\n"
+
+        "STACK:\n"
+        "- Python standard library only.\n"
+        "- sqlite3 persistent database.\n"
+        "- BaseHTTPRequestHandler + ThreadingHTTPServer.\n"
+        "- Bind 127.0.0.1 only.\n"
+        "- HTML/CSS/vanilla JavaScript frontend.\n"
+        "- No Flask, FastAPI, Django, Uvicorn, Node packages, Java, "
+        "Maven or Gradle.\n\n"
+
+        "BACKEND MINIMUM:\n"
+        "- Initialize a SQLite database file.\n"
+        "- Projects and tasks tables.\n"
+        "- Deterministic seed/demo records.\n"
+        "- GET /api/projects\n"
+        "- GET /api/tasks\n"
+        "- POST /api/tasks\n"
+        "- PUT /api/tasks/{id}\n"
+        "- DELETE /api/tasks/{id}\n"
+        "- GET /api/stats\n"
+        "- Search/filter query support.\n"
+        "- Validate status, priority and required fields.\n"
+        "- Return useful JSON errors and HTTP status codes.\n"
+        "- Serve static/index.html and frontend assets.\n\n"
+
+        "FRONTEND MINIMUM:\n"
+        "- Responsive viewport.\n"
+        "- Dashboard statistics.\n"
+        "- Project/task UI.\n"
+        "- Create/edit/delete task interactions.\n"
+        "- todo / in progress / done status controls.\n"
+        "- priority and due date fields.\n"
+        "- search and filtering.\n"
+        "- fetch() calls to the real REST API.\n\n"
+
+        "TEST MINIMUM:\n"
+        "- Automated backend API tests.\n"
+        "- Exercise create, read, update, delete, validation and stats.\n\n"
+
+        "OUTPUT CONTRACT:\n"
+        "{\"files\":["
+        "{\"path\":\"backend/app.py\",\"content\":\"...\"},"
+        "{\"path\":\"static/index.html\",\"content\":\"...\"}"
+        "]}\n"
+        "Every file must be syntactically complete. "
+        "Keep implementation compact enough to fit this response. "
+        "Do not defer core requirements to later generations.\n\n"
+
+        "USER REQUEST:\n"
+        + str(request or "")
+    )
+
+
 def _compact_repair_prompt(request: str, files: list[str], result: str) -> str:
     existing = ", ".join(files[-40:]) if files else "(none)"
     return (
@@ -710,6 +960,10 @@ def _simple_file_write_request_completed(
     return True
 
 
+
+# SOPHYANE_FULL_STACK_SERVICE_FABRIC_CUTOVER_V1
+
+
 def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable[[str], Any],
                       workspace: Path | None = None, max_steps: int = 12,
                       progress: Callable[[str], None] | None = None) -> str:
@@ -747,6 +1001,55 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     # execution_prefix_for_repair() when another provider call is required.
     current = str(initial_text or "")
 
+    # SOPHYANE_FULL_STACK_BUNDLE_FIRST_V1
+    #
+    # Complex software products should not require one provider generation
+    # per tiny file. If the provider already returned a multi-file project
+    # bundle, materialize it immediately and move into deterministic
+    # verification. Provider calls are then reserved for targeted repair.
+    #
+    # This preserves the general adaptive loop while reducing slow local-LLM
+    # round trips on full-stack builds.
+    bundle_first_full_stack = (
+        "sophyane full-stack architecture contract"
+        in str(original_request or "").casefold()
+    )
+
+    # SOPHYANE_FULL_STACK_INITIAL_BUNDLE_V1
+    #
+    # Bundle-first must be active rather than merely opportunistic.
+    # The planning/approval provider output frequently contains only a small
+    # first action. For a classified full-stack build, make exactly one
+    # dedicated implementation call asking for the complete compact project
+    # skeleton before entering the iterative repair loop.
+    if bundle_first_full_stack:
+        try:
+            initial_bundle = ask(
+                _full_stack_initial_bundle_prompt(
+                    original_request
+                )
+            )
+
+            candidate = getattr(
+                initial_bundle,
+                "text",
+                str(initial_bundle),
+            )
+
+            if candidate.strip():
+                current = candidate
+                progress(
+                    "SLI Full-Stack Bundle-First: "
+                    "received dedicated initial implementation response"
+                )
+
+        except Exception as error:
+            progress(
+                "SLI Full-Stack Bundle-First request failed; "
+                "falling back to existing provider output: "
+                f"{type(error).__name__}: {error}"
+            )
+
     evidence: list[str] = []
     repairs = 0
     successful_commands: set[str] = set()
@@ -755,6 +1058,14 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     # Materialize that bundle once. Subsequent iterations must inspect, build,
     # test or perform targeted repairs instead of regenerating the project.
     markdown_bundle_written = False
+
+    # SOPHYANE_INITIAL_BUNDLE_MATERIALIZED_V1
+    #
+    # Track the semantic event rather than the provider serialization.
+    # A full-stack project may arrive as Markdown, {"files":[...]}, or another
+    # normalized batch representation. Deterministic verification must begin
+    # after any successful initial multi-file bundle, not only Markdown.
+    initial_bundle_materialized = False
 
     # Deterministic post-generation verification is a small state machine:
     # create an isolated project environment, install dependencies with an
@@ -766,24 +1077,124 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
         # the provider to emit a run_command action. Sophyane owns the next
         # deterministic step: install declared dependencies and execute tests.
         if deterministic_verification_stage == "prepare":
-            project_python = workspace / ".venv" / "bin" / "python"
-
-            if project_python.is_file():
-                deterministic_verification_stage = "install"
-            else:
+            # SOPHYANE_FULL_STACK_STDLIB_VERIFY_V1
+            #
+            # A classified full-stack local product has a fixed stdlib-only
+            # architecture. It must not create another virtualenv or install
+            # dependencies. Verify the generated Python directly with the
+            # already-running Sophyane interpreter.
+            if bundle_first_full_stack:
                 action = {
                     "type": "run_command",
                     "command": (
-                        f"{shlex.quote(sys.executable)} -m venv .venv"
+                        f"{shlex.quote(sys.executable)} -m compileall -q "
+                        "backend tests"
                     ),
-                    "timeout": 300,
-                    "deterministic_post_bundle_verification": "prepare",
+                    "timeout": 120,
+                    "deterministic_post_bundle_verification":
+                        "full_stack_syntax",
                 }
                 plan = None
-                deterministic_verification_stage = "prepare_running"
-                progress(
-                    "Creating isolated project virtual environment"
+                deterministic_verification_stage = (
+                    "full_stack_syntax_running"
                 )
+                progress(
+                    "SLI Full-Stack Verification: "
+                    "checking generated Python syntax"
+                )
+            else:
+                project_python = workspace / ".venv" / "bin" / "python"
+
+                if project_python.is_file():
+                    deterministic_verification_stage = "install"
+                else:
+                    action = {
+                        "type": "run_command",
+                        "command": (
+                            f"{shlex.quote(sys.executable)} -m venv .venv"
+                        ),
+                        "timeout": 300,
+                        "deterministic_post_bundle_verification": "prepare",
+                    }
+                    plan = None
+                    deterministic_verification_stage = "prepare_running"
+                    progress(
+                        "Creating isolated project virtual environment"
+                    )
+
+        elif deterministic_verification_stage == "full_stack_test":
+            action = {
+                "type": "run_command",
+                "command": (
+                    f"{shlex.quote(sys.executable)} -m pytest -q"
+                ),
+                "timeout": 300,
+                "deterministic_post_bundle_verification":
+                    "full_stack_test",
+            }
+            plan = None
+            deterministic_verification_stage = (
+                "full_stack_test_running"
+            )
+            progress(
+                "SLI Full-Stack Verification: "
+                "running generated automated tests"
+            )
+
+        elif deterministic_verification_stage == "full_stack_fabric":
+            progress(
+                "SLI Full-Stack Verification: "
+                "handing generated application lifecycle "
+                "to Service Fabric"
+            )
+
+            from sophyane.full_stack_verification import (
+                verify_full_stack_application,
+            )
+
+            ok, result = (
+                verify_full_stack_application(
+                    workspace,
+                    progress,
+                )
+            )
+
+            evidence.append(
+                "Service Fabric verification:\n"
+                + result
+            )
+
+            if ok:
+                evidence.append(
+                    "Full-stack deterministic verification passed: "
+                    "syntax, tests, Service Fabric lifecycle, "
+                    "frontend HTTP and grounded REST API."
+                )
+
+                return (
+                    "Project implementation and verification completed "
+                    "successfully.\n\nWorkspace: "
+                    + str(workspace)
+                    + "\n\nExecution evidence:\n"
+                    + "\n".join(evidence)
+                )
+
+            progress(
+                "SLI Full-Stack Verification: "
+                "Service Fabric verification failed; "
+                "entering targeted repair"
+            )
+
+            deterministic_verification_stage = ""
+
+            current = _compact_repair_prompt(
+                original_request,
+                _files(workspace),
+                result,
+            )
+
+            repairs = 0
+            continue
 
         elif deterministic_verification_stage == "install":
             project_python = workspace / ".venv" / "bin" / "python"
@@ -964,13 +1375,97 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             )
 
         ok, result = _execute(runtime, action, workspace, progress)
+
+        # SOPHYANE_PYTHON_WRITE_VALIDATION_GATE_V1
+        #
+        # A successful filesystem write is not enough to count as a
+        # successful coding step. Small local models may emit truncated or
+        # malformed Python. Validate newly written Python immediately before
+        # asking the provider for another action.
+        if (
+            ok
+            and kind in {"write_file", "append_file"}
+        ):
+            raw_path = str(
+                action.get("path")
+                or action.get("file")
+                or ""
+            ).strip()
+
+            if raw_path.lower().endswith(".py"):
+                candidate = (
+                    workspace
+                    / raw_path
+                ).resolve()
+
+                try:
+                    candidate.relative_to(
+                        workspace.resolve()
+                    )
+                except ValueError:
+                    ok = False
+                    result = (
+                        "Python validation rejected file outside "
+                        "the active workspace."
+                    )
+                else:
+                    if candidate.is_file():
+                        import py_compile
+
+                        try:
+                            py_compile.compile(
+                                str(candidate),
+                                doraise=True,
+                            )
+                        except py_compile.PyCompileError as error:
+                            ok = False
+                            result = (
+                                "Python syntax validation failed immediately "
+                                f"after writing {raw_path}.\n"
+                                f"{error.msg}\n"
+                                "Repair this exact file before creating "
+                                "any additional project files."
+                            )
+                            progress(
+                                "Python write validation failed: "
+                                f"{raw_path}"
+                            )
+                        else:
+                            progress(
+                                "Python write validation passed: "
+                                f"{raw_path}"
+                            )
         evidence.append(f"Step {step}: {result}")
 
         verification_phase = action.get(
             "deterministic_post_bundle_verification"
         )
 
-        if verification_phase == "prepare":
+        if (
+            verification_phase == "full_stack_syntax"
+            and ok
+        ):
+            deterministic_verification_stage = (
+                "full_stack_test"
+            )
+            progress(
+                "SLI Full-Stack Verification: "
+                "syntax passed"
+            )
+
+        elif (
+            verification_phase == "full_stack_test"
+            and ok
+        ):
+            deterministic_verification_stage = (
+                "full_stack_fabric"
+            )
+            progress(
+                "SLI Full-Stack Verification: "
+                "tests passed; Service Fabric owns runtime verification"
+            )
+
+        elif verification_phase == "prepare":
             if ok:
                 deterministic_verification_stage = "install"
                 current = ""
@@ -1056,6 +1551,41 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
         # allowance. A successful action proves recovery and resets the budget.
         if ok:
             repairs = 0
+
+            # SOPHYANE_FULL_STACK_BUNDLE_VERIFY_V1
+            #
+            # Once an initial full-stack multi-file bundle exists, Sophyane
+            # should verify locally before asking the model what to do next.
+            # SOPHYANE_JSON_BUNDLE_VERIFICATION_HANDOFF_V1
+            #
+            # Batch success is sufficient evidence that a normalized multi-file
+            # project bundle was materialized. Do not require the source format
+            # to have been Markdown.
+            if (
+                bundle_first_full_stack
+                and kind == "batch"
+            ):
+                children = action.get(
+                    "actions"
+                )
+
+                if (
+                    isinstance(children, list)
+                    and len(children) >= 2
+                ):
+                    initial_bundle_materialized = True
+
+            if (
+                bundle_first_full_stack
+                and initial_bundle_materialized
+                and not deterministic_verification_stage
+            ):
+                deterministic_verification_stage = "prepare"
+                progress(
+                    "SLI Full-Stack Verification: "
+                    "initial multi-file bundle materialized; "
+                    "deterministic verification owns next steps"
+                )
 
         if not ok:
             if repairs >= 2:
