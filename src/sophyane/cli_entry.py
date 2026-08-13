@@ -95,7 +95,56 @@ def _start_local_server_if_needed() -> None:
         print(f"◆ Local inference startup warning: {error}", file=sys.stderr, flush=True)
 
 
+
+# SOPHYANE_CANONICAL_WORKSPACE_V1
+def _canonicalize_launch_workspace() -> str | None:
+    """Move unsafe/default launch directories to the canonical Sophyane repo.
+
+    Explicit project directories are preserved.  This specifically prevents
+    WSL sessions launched from Windows System32 from becoming the execution
+    workspace for coding/build tasks.
+    """
+    import os
+    from pathlib import Path
+
+    cwd = Path.cwd()
+
+    normalized = str(cwd).replace("\\", "/").lower()
+
+    unsafe_launch = (
+        normalized.endswith("/windows/system32")
+        or normalized.endswith("/windows")
+        or normalized in {
+            "/mnt/c",
+            "/mnt/c/windows/system32",
+        }
+    )
+
+    if not unsafe_launch:
+        return None
+
+    candidates = (
+        Path.home() / "sophyane-repo",
+        Path.home() / "sophyane",
+    )
+
+    for candidate in candidates:
+        if (
+            candidate.is_dir()
+            and (
+                candidate / "pyproject.toml"
+            ).is_file()
+        ):
+            os.chdir(candidate)
+            return str(candidate)
+
+    return None
+
+
 def main() -> int:
+
+    # SOPHYANE_CANONICAL_WORKSPACE_CALL_V1
+    _canonicalize_launch_workspace()
     from sophyane.runtime_artifact_patch import install_artifact_patch
     from sophyane.runtime_browser_patch import install_browser_patch
     from sophyane.runtime_deep_agent_patch import install_deep_agent_runtime

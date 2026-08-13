@@ -23,23 +23,100 @@ def _load_llm() -> dict[str, Any]:
 
 
 def _local_candidate(config: dict[str, Any], llm: dict[str, Any]) -> tuple[str, str] | None:
-    provider = str(config.get("provider") or "").strip().lower()
-    model = str(config.get("model") or "").strip()
-    if provider in LOCAL_IDS:
-        return provider, model
-    providers = llm.get("providers") or {}
-    if isinstance(providers, dict):
-        for name in ("local_gguf",):
-            item = providers.get(name) or {}
-            if isinstance(item, dict) and item.get("enabled") is not False and item.get("model"):
-                return name, str(item["model"])
-    state_path = Path.home() / ".local/state/sophyane/gguf_runtime.json"
+    # SOPHYANE_LOCAL_RUNTIME_AUTHORITY_V1
+    #
+    # The validated GGUF runtime is authoritative for local-model identity.
+    # Provider/config metadata may lag behind after provisioning or model
+    # replacement and must not silently relabel the actual llama.cpp worker.
+    state_path = (
+        Path.home()
+        / ".local/state/sophyane/gguf_runtime.json"
+    )
+
     try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        state = json.loads(
+            state_path.read_text(
+                encoding="utf-8"
+            )
+        )
+    except (
+        OSError,
+        json.JSONDecodeError,
+    ):
         state = {}
-    if isinstance(state, dict) and state.get("gguf_path"):
-        return "local_gguf", str(state.get("model") or "local-gguf")
+
+    if isinstance(state, dict):
+        gguf_path = str(
+            state.get("gguf_path")
+            or ""
+        ).strip()
+
+        runtime_model = str(
+            state.get("model")
+            or ""
+        ).strip()
+
+        if gguf_path:
+            path = Path(
+                gguf_path
+            ).expanduser()
+
+            if path.is_file():
+                if not runtime_model:
+                    runtime_model = path.stem
+
+                return (
+                    "local_gguf",
+                    runtime_model,
+                )
+
+    # No validated runtime exists. Fall back to saved provider metadata.
+    provider = str(
+        config.get("provider")
+        or ""
+    ).strip().lower()
+
+    model = str(
+        config.get("model")
+        or ""
+    ).strip()
+
+    if (
+        provider in LOCAL_IDS
+        and model
+    ):
+        return (
+            provider,
+            model,
+        )
+
+    providers = (
+        llm.get("providers")
+        or {}
+    )
+
+    if isinstance(
+        providers,
+        dict,
+    ):
+        for name in (
+            "local_gguf",
+        ):
+            item = (
+                providers.get(name)
+                or {}
+            )
+
+            if (
+                isinstance(item, dict)
+                and item.get("enabled") is not False
+                and item.get("model")
+            ):
+                return (
+                    name,
+                    str(item["model"]),
+                )
+
     return None
 
 
@@ -103,22 +180,124 @@ def choose_startup_provider() -> dict[str, Any]:
         else:
             print("  ✗ Cloud API: none configured", file=sys.stderr)
 
+    # SOPHYANE_NONINTERACTIVE_SESSION_MODE_V1
+    #
+    # Interactive sessions retain the startup menu. Automation may select
+    # the same session semantics explicitly without pretending stdin is a TTY.
+    requested_mode = str(
+        os.environ.get("SOPHYANE_SESSION_MODE")
+        or ""
+    ).strip().lower()
+
     if not sys.stdin.isatty():
+        if requested_mode in {"sli_graph", "sli_chunks"}:
+            os.environ["SOPHYANE_SESSION_MODE"] = "sli_graph"
+            os.environ["SOPHYANE_SLI_GRAPH"] = "1"
+            os.environ["SOPHYANE_SLI_ONLY"] = "1"
+
+            updated = dict(config)
+            updated.update({
+                "company": "SLI",
+                "timeout": 60,
+            })
+
+            return updated
+
+        if requested_mode == "local_llm":
+            if not local:
+                return config
+
+            os.environ["SOPHYANE_LOCAL_ONLY"] = "1"
+            os.environ["SOPHYANE_DISABLE_CLOUD_FALLBACK"] = "1"
+
+            local_id, local_model = local
+
+            updated = dict(config)
+            updated.update({
+                "provider": local_id,
+                "model": local_model,
+                "company": "Local",
+                "timeout": 300,
+            })
+
+            llm["active_provider"] = local_id
+            llm["fallback_order"] = [local_id]
+            llm["allow_quality_escalation"] = False
+            llm["quality_rescue_provider"] = ""
+            llm["allow_local_fallbacks"] = False
+            llm["allow_cloud_local_rescue"] = False
+
+            return updated
+
+        if requested_mode == "cloud_llm":
+            if not clouds:
+                return config
+
+            cloud_id, label = clouds[0]
+
+            updated = dict(config)
+            updated.update({
+                "provider": cloud_id,
+                "model": _cloud_model(
+                    cloud_id,
+                    config,
+                    llm,
+                ),
+                "company": label,
+                "timeout": 180,
+            })
+
+            llm["active_provider"] = cloud_id
+
+            return updated
+
+        # SOPHYANE_NONINTERACTIVE_DEFAULT_RACE_V1
+        #
+        # No explicit automated mode means cooperative execution.
+        # Do not silently inherit a stale saved provider as execution policy.
+        os.environ["SOPHYANE_SESSION_MODE"] = "race"
+
         return config
 
     if local and clouds:
         print("\nStart this session with:", file=sys.stderr)
-        print("  1. SLI Graph — memory + internet, no LLM", file=sys.stderr)
-        print("  2. Local LLM — llama.cpp / GGUF on-device model", file=sys.stderr)
-        print(f"  3. Cloud LLM — use {clouds[0][1]}", file=sys.stderr)
-        print("  4. Continuous topic learning — acquire + embed until saturation/Ctrl+C", file=sys.stderr)
+        print(
+            "  1. Sophyane — intelligently decide between available capabilities",
+            file=sys.stderr,
+        )
+        print("  2. SLI Graph — memory + internet, no LLM", file=sys.stderr)
+        print("  3. Local LLM — llama.cpp / GGUF on-device model", file=sys.stderr)
+        print(f"  4. Cloud LLM — use {clouds[0][1]}", file=sys.stderr)
+        print(
+            "  5. Sophyane Learning — acquire + embed until saturation/Ctrl+C",
+            file=sys.stderr,
+        )
         while True:
-            answer = input("Select [1-4, default 1]: ").strip()
-            if answer in {"", "1", "2", "3", "4"}:
+            answer = input("Select [1-5, default 1]: ").strip()
+            if answer in {"", "1", "2", "3", "4", "5"}:
                 break
-            print("Enter 1, 2, 3, or 4.")
+            print("Enter 1, 2, 3, 4, or 5.")
 
         if answer in {"", "1"}:
+            # Sophyane owns execution policy in automatic mode.
+            # No provider/capability is forced at startup.
+            os.environ["SOPHYANE_SESSION_MODE"] = "race"
+
+            # Remove strict-mode flags that could otherwise constrain
+            # Sophyane's adaptive decision/race.
+            os.environ.pop("SOPHYANE_SLI_ONLY", None)
+            os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
+            os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
+            os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
+            os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
+
+            print(
+                "Mode: Sophyane Auto — adaptive capability selection + race",
+                file=sys.stderr,
+            )
+            return config
+
+        if answer == "2":
             os.environ["SOPHYANE_SESSION_MODE"] = "sli_graph"
             os.environ["SOPHYANE_SLI_GRAPH"] = "1"
             os.environ["SOPHYANE_SLI_ONLY"] = "1"
@@ -128,7 +307,7 @@ def choose_startup_provider() -> dict[str, Any]:
             print("Mode: SLI Graph + internet (no local/cloud LLM)", file=sys.stderr)
             return updated
 
-        if answer == "4":
+        if answer == "5":
             os.environ["SOPHYANE_SESSION_MODE"] = "sli_graph"
             os.environ["SOPHYANE_SLI_GRAPH"] = "1"
             os.environ["SOPHYANE_SLI_ONLY"] = "1"
@@ -146,8 +325,8 @@ def choose_startup_provider() -> dict[str, Any]:
             )
             return updated
 
-        if answer == "2":
-            # Option 2 is intentionally strict local-only mode.
+        if answer == "3":
+            # Option 3 is intentionally strict local-only mode.
             # Never consult, rescue through, or fall back to a cloud model.
             os.environ["SOPHYANE_SESSION_MODE"] = "local_llm"
             os.environ["SOPHYANE_LOCAL_ONLY"] = "1"
@@ -186,7 +365,7 @@ def choose_startup_provider() -> dict[str, Any]:
             )
             return updated
 
-        if answer == "3":
+        if answer == "4":
             os.environ["SOPHYANE_SESSION_MODE"] = "cloud_llm"
             cloud_id, label = clouds[0]
             updated = dict(config)

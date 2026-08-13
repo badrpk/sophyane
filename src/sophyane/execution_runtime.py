@@ -237,8 +237,8 @@ def _normalize_action(value: Any) -> dict[str, Any] | None:
         if action_kind in VALID_ACTIONS:
             normalized = dict(value)
             normalized["type"] = action_kind
-        normalized.pop("action", None)
-        return normalized
+            normalized.pop("action", None)
+            return normalized
     if isinstance(action_value, dict):
         nested = _normalize_action(action_value)
         if nested:

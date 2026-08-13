@@ -2,6 +2,7 @@
 """Sophyane command-line interface."""
 
 from __future__ import annotations
+import os
 
 # --- sophyane native fast-path hook ---
 try:
@@ -111,6 +112,35 @@ def load_runtime_config() -> dict[str, Any]:
 
 def create_provider(config: dict[str, Any]):
     """Create a provider with multi-backend fallback when available."""
+    # SOPHYANE_SESSION_PROVIDER_AUTHORITY_V1
+    # Session mode is authoritative at the provider-construction boundary.
+    # No downstream autonomous path may silently re-enable a provider
+    # forbidden by the selected session.
+    session_mode = str(
+        os.environ.get("SOPHYANE_SESSION_MODE")
+        or ""
+    ).strip().lower()
+
+    if session_mode in {"sli_graph", "sli_chunks"}:
+        raise RuntimeError(
+            "SLI-only session forbids LLM provider construction. "
+            "Route this request through the SLI execution path."
+        )
+
+    if session_mode == "local_llm":
+        config = dict(config)
+        config["provider"] = "local_gguf"
+
+        os.environ["SOPHYANE_LOCAL_ONLY"] = "1"
+        os.environ["SOPHYANE_DISABLE_CLOUD_FALLBACK"] = "1"
+
+    if session_mode == "cloud_llm":
+        config = dict(config)
+
+        # Cloud mode must not silently rescue through a local model.
+        os.environ["SOPHYANE_DISABLE_LOCAL_FALLBACK"] = "1"
+        os.environ["SOPHYANE_ALLOW_CLOUD_LOCAL_RESCUE"] = "0"
+
     loader = PluginLoader()
     try:
         from sophyane.providers.fallback import build_fallback_provider

@@ -14,8 +14,29 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _isolate_sophyane_production_sli(monkeypatch):
-    # SOPHYANE_PYTEST_PRODUCTION_SLI_ISOLATION_V1
+def _isolate_sophyane_production_sli(
+    monkeypatch,
+    tmp_path_factory,
+):
+    # SOPHYANE_PYTEST_PRODUCTION_SLI_ISOLATION_V3
+    #
+    # Ordinary pytest execution must never inherit either
+    # production PostgreSQL or the production SQLite path.
+    #
+    # Keep the isolated SLI database outside each test's
+    # tmp_path/workspace so filesystem tests observe only
+    # artifacts created by the test itself.
+    from sophyane import sli
+
+    isolated_root = tmp_path_factory.mktemp(
+        "sophyane-sli"
+    )
+
+    isolated_db = (
+        isolated_root
+        / "sli.db"
+    )
+
     monkeypatch.setenv(
         "SOPHYANE_SLI_BACKEND",
         "sqlite",
@@ -27,6 +48,12 @@ def _isolate_sophyane_production_sli(monkeypatch):
     monkeypatch.delenv(
         "SOPHYANE_POSTGRES_DSN",
         raising=False,
+    )
+
+    monkeypatch.setattr(
+        sli,
+        "DB_PATH",
+        isolated_db,
     )
 
 
