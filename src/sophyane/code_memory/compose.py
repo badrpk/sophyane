@@ -10,6 +10,7 @@ Uses:
 """
 from __future__ import annotations
 
+import ast
 import os
 
 import re
@@ -189,22 +190,440 @@ def compose_browser_from_chunks(message: str, chunks: list[CodeChunk]) -> tuple[
     return html, used
 
 
-def compose_python_from_chunks(chunks: list[CodeChunk]) -> tuple[str, list[str]]:
-    used = []
-    parts = []
-    for c in chunks:
-        if c.language != "python" and not (c.path or "").endswith(".py"):
+
+# SOPHYANE_PYTHON_FUTURE_IMPORT_NORMALIZATION_V1
+#
+# Independently valid Python modules may each contain __future__ imports.
+# When components are concatenated those imports can no longer remain at
+# their original offsets. Extract them from component bodies, preserve
+# feature order with stable deduplication, and emit one module preamble.
+def _split_python_future_imports(
+    source: str,
+) -> tuple[str, list[str]]:
+    try:
+        tree = ast.parse(source)
+    except (
+        SyntaxError,
+        ValueError,
+        TypeError,
+    ):
+        return source, []
+
+    future_nodes = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "__future__"
+    ]
+
+    if not future_nodes:
+        return source, []
+
+    features: list[str] = []
+
+    for node in future_nodes:
+        for alias in node.names:
+            feature = alias.name
+
+            if alias.asname:
+                feature = (
+                    f"{feature} as {alias.asname}"
+                )
+
+            if feature not in features:
+                features.append(feature)
+
+    source_lines = source.splitlines(
+        keepends=True,
+    )
+
+    remove_lines: set[int] = set()
+
+    for node in future_nodes:
+        start = node.lineno - 1
+        end = (
+            node.end_lineno
+            if node.end_lineno is not None
+            else node.lineno
+        )
+
+        remove_lines.update(
+            range(start, end)
+        )
+
+    body = "".join(
+        line
+        for index, line in enumerate(source_lines)
+        if index not in remove_lines
+    )
+
+    return body, features
+
+
+def _merge_python_future_features(
+    existing: list[str],
+    additions: list[str],
+) -> list[str]:
+    merged = list(existing)
+    seen = set(merged)
+
+    for feature in additions:
+        if feature in seen:
             continue
-        if _is_test_chunk(c):
+
+        seen.add(feature)
+        merged.append(feature)
+
+    return merged
+
+
+def _python_future_preamble(
+    features: list[str],
+) -> str:
+    if not features:
+        return ""
+
+    return (
+        "from __future__ import "
+        + ", ".join(features)
+    )
+
+
+def _assemble_python_parts(
+    parts: list[str],
+    future_features: list[str],
+) -> str:
+    body = "\n\n".join(parts)
+    preamble = _python_future_preamble(
+        future_features
+    )
+
+    if preamble and body:
+        return preamble + "\n\n" + body
+
+    return preamble or body
+
+
+def compose_python_from_chunks(
+    chunks: list[CodeChunk],
+    *,
+    root_ids: list[str] | None = None,
+) -> tuple[str, list[str]]:
+    """Assemble bounded, syntactically valid Python components."""
+
+    # SOPHYANE_PYTHON_AUTHORITATIVE_ROOTS_V2
+    #
+    # When semantic roots are known, assemble only those roots
+    # plus their transitive requires -> provides dependencies.
+    #
+    # root_ids=None intentionally preserves historical behavior.
+    if root_ids is not None:
+        requested_root_ids = {
+            str(chunk_id)
+            for chunk_id in root_ids
+        }
+
+        def _chunk_id(chunk):
+            return str(
+                getattr(chunk, "id", "")
+                or ""
+            )
+
+        def _meta_values(chunk, key):
+            meta = getattr(
+                chunk,
+                "meta",
+                None,
+            )
+
+            if not isinstance(meta, dict):
+                return set()
+
+            values = meta.get(
+                key,
+                (),
+            )
+
+            if isinstance(values, str):
+                values = (values,)
+
+            if not isinstance(
+                values,
+                (
+                    list,
+                    tuple,
+                    set,
+                    frozenset,
+                ),
+            ):
+                return set()
+
+            return {
+                str(value)
+                for value in values
+                if str(value)
+            }
+
+        by_id = {
+            _chunk_id(chunk): chunk
+            for chunk in chunks
+            if _chunk_id(chunk)
+        }
+
+        selected_ids = {
+            chunk_id
+            for chunk_id in requested_root_ids
+            if chunk_id in by_id
+        }
+
+        provides_by_id = {
+            chunk_id: _meta_values(
+                chunk,
+                "provides",
+            )
+            for chunk_id, chunk in by_id.items()
+        }
+
+        requires_by_id = {
+            chunk_id: _meta_values(
+                chunk,
+                "requires",
+            )
+            for chunk_id, chunk in by_id.items()
+        }
+
+        while True:
+            required = set()
+
+            for chunk_id in selected_ids:
+                required.update(
+                    requires_by_id.get(
+                        chunk_id,
+                        set(),
+                    )
+                )
+
+            provided = set()
+
+            for chunk_id in selected_ids:
+                provided.update(
+                    provides_by_id.get(
+                        chunk_id,
+                        set(),
+                    )
+                )
+
+            unresolved = required - provided
+
+            if not unresolved:
+                break
+
+            additions = []
+
+            # Preserve incoming semantic candidate order.
+            for chunk in chunks:
+                chunk_id = _chunk_id(chunk)
+
+                if (
+                    not chunk_id
+                    or chunk_id in selected_ids
+                ):
+                    continue
+
+                if (
+                    provides_by_id.get(
+                        chunk_id,
+                        set(),
+                    )
+                    & unresolved
+                ):
+                    additions.append(
+                        chunk_id
+                    )
+
+            if not additions:
+                break
+
+            selected_ids.update(
+                additions
+            )
+
+        chunks = [
+            chunk
+            for chunk in chunks
+            if _chunk_id(chunk) in selected_ids
+        ]
+
+
+    # SOPHYANE_PYTHON_COMPONENT_ASSEMBLY_V1
+    #
+    # Semantic retrieval may contain rich/compound evidence bundles.
+    # Those bundles are useful for retrieval but are not themselves
+    # executable Python modules. Only executable standalone component
+    # source is admitted here.
+    used: list[str] = []
+    parts: list[str] = []
+    future_import_features: list[str] = []
+
+    # SOPHYANE_PYTHON_AUTHORITATIVE_ROOT_BUDGET_V1
+    #
+    # Ordinary candidate composition retains the historical
+    # 32 KB ceiling. Explicit semantic root assembly receives
+    # a larger but still bounded envelope so independently
+    # valid authoritative roots are not silently treated as
+    # optional candidates solely because of aggregate size.
+    max_total_bytes = (
+        64 * 1024
+        if root_ids is not None
+        else 32_000
+    )
+    max_component_bytes = 16_000
+    total_bytes = 0
+
+    for chunk in chunks:
+        language = str(
+            getattr(chunk, "language", "")
+            or ""
+        ).lower()
+
+        chunk_path = str(
+            getattr(chunk, "path", "")
+            or ""
+        )
+
+        source = str(
+            getattr(chunk, "text", "")
+            or ""
+        )
+
+        if (
+            language != "python"
+            and not chunk_path.endswith(".py")
+        ):
             continue
-        # prefer module-level complete-ish files
-        if "::" in (c.path or "") and len(c.text) < 200:
+
+        if _is_test_chunk(chunk):
             continue
-        used.append(c.id)
-        parts.append(f"# from chunk {c.id} path={c.path}\n{c.text}")
-        if sum(len(p) for p in parts) > 8000:
-            break
-    return ("\n\n".join(parts), used)
+
+        # Rich/compound bundles contain retrieval metadata and multiple
+        # source files. They must be decomposed upstream rather than copied
+        # verbatim into one Python module.
+        if (
+            chunk_path.startswith("compound::")
+            or "/* RICH CHUNK:" in source
+            or "/* part:" in source
+        ):
+            continue
+
+        if not source.strip():
+            continue
+
+        (
+            source,
+            chunk_future_features,
+        ) = _split_python_future_imports(
+            source
+        )
+
+        if (
+            not source.strip()
+            and not chunk_future_features
+        ):
+            continue
+
+        component_bytes = len(
+            source.encode(
+                "utf-8",
+                errors="replace",
+            )
+        )
+
+        # One giant source file must not consume the entire component
+        # budget and prevent smaller capability implementations from
+        # participating.
+        if component_bytes > max_component_bytes:
+            continue
+
+        individual_source = (
+            _assemble_python_parts(
+                [source],
+                chunk_future_features,
+            )
+        )
+
+        try:
+            compile(
+                individual_source,
+                f"<chunk:{chunk.id}>",
+                "exec",
+            )
+        except (
+            SyntaxError,
+            ValueError,
+            TypeError,
+        ):
+            continue
+
+        decorated = (
+            f"# from chunk {chunk.id} "
+            f"path={chunk_path}\n"
+            f"{source}"
+        )
+
+        decorated_bytes = len(
+            decorated.encode(
+                "utf-8",
+                errors="replace",
+            )
+        )
+
+        if (
+            total_bytes + decorated_bytes
+            > max_total_bytes
+        ):
+            continue
+
+        # Validate incrementally. Future imports from independently
+        # valid modules are hoisted into one shared module preamble.
+        candidate_future_features = (
+            _merge_python_future_features(
+                future_import_features,
+                chunk_future_features,
+            )
+        )
+
+        candidate = _assemble_python_parts(
+            parts + [decorated],
+            candidate_future_features,
+        )
+
+        try:
+            compile(
+                candidate,
+                "<assembled>",
+                "exec",
+            )
+        except (
+            SyntaxError,
+            ValueError,
+            TypeError,
+        ):
+            continue
+
+        parts.append(decorated)
+        used.append(chunk.id)
+        future_import_features = (
+            candidate_future_features
+        )
+        total_bytes += decorated_bytes
+
+    return (
+        _assemble_python_parts(
+            parts,
+            future_import_features,
+        ),
+        used,
+    )
 
 
 def compose_from_request(
@@ -213,23 +632,84 @@ def compose_from_request(
     *,
     store: ChunkStore | None = None,
     progress: Callable[[str], None] | None = None,
-) -> tuple[str | None, list[str]]:
+    selected_ids: list[str] | None = None,
+root_ids=None) -> tuple[str | None, list[str]]:
     progress = progress or (lambda _m: None)
     store = store or ChunkStore()
-    ranked = retrieve_ranked(store, message, top_k=12)
+
+    # SOPHYANE_SEMANTIC_ASSEMBLY_BRIDGE_V1
+    #
+    # The semantic planner has already performed per-capability retrieval.
+    # Preserve that evidence across the assembly boundary instead of
+    # discarding it and performing an unrelated global top-k retrieval.
+    #
+    # Deduplication is stable so capability priority/order survives.
+    semantic_ranked = []
+    semantic_seen = set()
+
+    for chunk_id in selected_ids or []:
+        chunk_id = str(chunk_id)
+
+        if chunk_id in semantic_seen:
+            continue
+
+        chunk = store.chunks.get(chunk_id)
+        if chunk is None:
+            continue
+
+        semantic_seen.add(chunk_id)
+        semantic_ranked.append((chunk, 1.0))
+
+    if semantic_ranked:
+        ranked = semantic_ranked
+        progress(
+            "compose: semantic bridge selected "
+            f"{len(ranked)} capability chunks"
+        )
+    else:
+        ranked = retrieve_ranked(store, message, top_k=12)
     if not ranked:
         progress("compose: no ranked chunks")
         return None, []
 
     progress(f"compose: top={ranked[0][0].id} score={ranked[0][1]:.3f}")
-    chunks = _browser_safe_chunks([c for c, _ in ranked]) if 'browser' in str(globals().get('intent','')) or True else [c for c, _ in ranked]
+    # SOPHYANE_GENERIC_COMPOSER_ARTIFACT_AUTHORITY_V1
+    #
+    # Artifact family comes from request semantics, never from incidental
+    # retrieved languages.  The historical `or True` forced every request
+    # through browser-safe filtering and discarded Python candidates.
+    try:
+        from sophyane.sli_semantic_intelligence import (
+            infer_target,
+        )
+
+        _target_language, _target_artifact = infer_target(
+            message
+        )
+    except Exception:
+        _target_language = None
+        _target_artifact = None
+
+    _browser_request = (
+        _target_artifact
+        == "browser_application"
+        or _looks_web(message)
+    )
+
+    chunks = (
+        _browser_safe_chunks(
+            [c for c, _ in ranked]
+        )
+        if _browser_request
+        else [c for c, _ in ranked]
+    )
 
     workspace.mkdir(parents=True, exist_ok=True)
     used: list[str] = []
     written: list[Path] = []
     errors: list[str] = []
 
-    if _looks_web(message) or any(c.language == "html" for c in chunks[:5]):
+    if _browser_request:
         html, used = compose_browser_from_chunks(message, chunks)
         if not html:
             progress("compose: browser compose produced empty body")
@@ -248,7 +728,7 @@ def compose_from_request(
         target.write_text(html, encoding="utf-8")
         written.append(target)
     else:
-        py, used = compose_python_from_chunks(chunks)
+        py, used = compose_python_from_chunks(chunks, root_ids=root_ids)
         if not py:
             # fallback: write best single non-test chunk as-is if complete enough
             for c, s in ranked:

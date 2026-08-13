@@ -21,8 +21,132 @@ REPORT_NAME = ".sophyane-harness-report.json"
 def is_harness_execution_request(message: str) -> bool:
     """Return True for executable software tasks covered by harness policy."""
 
-    policy = classify(message)
-    return bool(policy.execution and not policy.filesystem_only)
+    # SOPHYANE_CODING_REPAIR_HARNESS_CLASSIFIER_V2
+    # Strong non-web software-repair objectives belong to the local
+    # harness rather than product/browser acquisition.
+    _normalized = " ".join(
+        str(message or "")
+        .lower()
+        .split()
+    )
+
+    _web_signals = (
+        "website",
+        "web page",
+        "webpage",
+        "web app",
+        "landing page",
+        "frontend",
+        "browser",
+        "html",
+        "dashboard",
+        "canvas",
+    )
+
+    _repair_signals = (
+        "pytest",
+        "jest",
+        "test suite",
+        "test suites",
+        "test failure",
+        "tests are authoritative",
+        "stack trace",
+        "stack traces",
+        "traceback",
+        "source file",
+        "source files",
+        "code patch",
+        "production code",
+        "repair the existing",
+        "repair existing",
+        "verification failed",
+        "verification checks",
+        "build turns green",
+        "re-run verification",
+    )
+
+    _action_signals = (
+        "repair",
+        "fix",
+        "patch",
+        "debug",
+        "diagnose",
+        "run tests",
+        "execute local test",
+        "re-run",
+        "rerun",
+    )
+
+    _has_web_signal = any(
+        term in _normalized
+        for term in _web_signals
+    )
+
+    # SOPHYANE_REPAIR_SIGNAL_CONCEPT_DEDUP_V1
+    #
+    # Count semantic repair concepts, not overlapping literal spellings.
+    # Previously "source files" counted both "source file" and
+    # "source files", and plural forms such as "test suites" and
+    # "stack traces" had the same defect. A generic construction request
+    # mentioning source files could therefore satisfy the >=2 repair gate
+    # without containing two independent repair signals.
+    _repair_signal_groups = (
+        ("pytest",),
+        ("jest",),
+        ("test suite", "test suites"),
+        ("test failure",),
+        ("tests are authoritative",),
+        ("stack trace", "stack traces"),
+        ("traceback",),
+        ("source file", "source files"),
+        ("code patch",),
+        ("production code",),
+        ("repair the existing", "repair existing"),
+        ("verification failed",),
+        ("verification checks",),
+        ("build turns green",),
+        ("re-run verification",),
+    )
+
+    _repair_hits = sum(
+        1
+        for group in _repair_signal_groups
+        if any(term in _normalized for term in group)
+    )
+
+    _action_hits = sum(
+        1
+        for term in _action_signals
+        if term in _normalized
+    )
+
+    if (
+        not _has_web_signal
+        and (
+            _repair_hits >= 2
+            or (
+                _repair_hits >= 1
+                and _action_hits >= 1
+            )
+        )
+    ):
+        return True
+
+    # SOPHYANE_HARNESS_SCOPE_GUARD_V1
+    #
+    # This fast path is deliberately narrower than the general execution
+    # policy.  The race harness currently owns bounded repair/test execution,
+    # while generic software construction belongs to the normal adaptive race
+    # where SLI, local and cloud producers can independently compete.
+    #
+    # Using broad policy.execution here caused requests such as "build an API"
+    # or "generate backend stubs" to enter the Python/TDD harness even though
+    # try_coding_request() could not claim them.  The harness then failed
+    # deterministically and poisoned subsequent repair rounds.
+    #
+    # Strong repair requests were returned above.  Everything else must remain
+    # available to the ordinary race rather than being captured here.
+    return False
 
 
 def _command_evidence(payload: Any) -> list[dict[str, Any]]:

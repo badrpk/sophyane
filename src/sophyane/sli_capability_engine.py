@@ -14,6 +14,8 @@ It never invokes a local or cloud language model.
 """
 from __future__ import annotations
 
+import ast
+
 import html
 import os
 import re
@@ -40,6 +42,7 @@ BUILD_TERMS = {
     "implement",
     "make",
     "produce",
+    "provide",
     "write",
     "design",
     "code",
@@ -113,12 +116,45 @@ def _contains_any(text: str, terms: Iterable[str]) -> bool:
 
 
 def is_preview_request(message: str) -> bool:
+    # SOPHYANE_TOKEN_AWARE_PREVIEW_V1
+    #
+    # Preview routing is especially sensitive because a false positive can
+    # redirect a non-browser task into preview/browser execution. Match
+    # preview vocabulary as lexical terms rather than arbitrary substrings:
+    # e.g. "run" must not match "long-running" and "it" must not match
+    # unrelated words containing those letters.
     normalized = _normalize(message)
 
-    has_action = _contains_any(normalized, PREVIEW_TERMS)
-    has_target = _contains_any(
-        normalized,
-        {
+    def contains_term(term: str) -> bool:
+        words = re.findall(
+            r"[a-z0-9]+(?:[-_][a-z0-9]+)*",
+            normalized,
+        )
+
+        if " " not in term:
+            return term in words
+
+        phrase = re.escape(term)
+        phrase = phrase.replace(
+            r"\ ",
+            r"\s+",
+        )
+
+        return bool(
+            re.search(
+                rf"(?<![a-z0-9]){phrase}(?![a-z0-9])",
+                normalized,
+            )
+        )
+
+    has_action = any(
+        contains_term(term)
+        for term in PREVIEW_TERMS
+    )
+
+    has_target = any(
+        contains_term(term)
+        for term in {
             "output",
             "result",
             "artifact",
@@ -130,7 +166,7 @@ def is_preview_request(message: str) -> bool:
             "game",
             "project",
             "it",
-        },
+        }
     )
 
     return has_action and has_target
@@ -142,8 +178,40 @@ def is_build_request(message: str) -> bool:
 
 
 def is_web_request(message: str) -> bool:
+    # SOPHYANE_TOKEN_AWARE_WEB_REQUEST_V1
+    #
+    # Short WEB_TERMS such as "ui" must be matched as lexical
+    # terms, not arbitrary substrings. Otherwise "suites" becomes
+    # a false UI/browser signal.
     normalized = _normalize(message)
-    return _contains_any(normalized, WEB_TERMS)
+
+    words = re.findall(
+        r"[a-z0-9]+(?:[-_][a-z0-9]+)*",
+        normalized,
+    )
+
+    def contains_term(term: str) -> bool:
+        term = _normalize(term)
+
+        if " " not in term:
+            return term in words
+
+        phrase = re.escape(term).replace(
+            r"\ ",
+            r"\s+",
+        )
+
+        return bool(
+            re.search(
+                rf"(?<![a-z0-9]){phrase}(?![a-z0-9])",
+                normalized,
+            )
+        )
+
+    return any(
+        contains_term(term)
+        for term in WEB_TERMS
+    )
 
 
 def is_interactive_request(message: str) -> bool:
@@ -294,10 +362,21 @@ def _looks_like_test(path: Path) -> bool:
     )
 
 
+
+# SOPHYANE_REQUEST_HTML_GATE_V2
+# index.html is a browser/web artifact requirement, not a universal
+# capability-acquisition requirement.
+
+
 def _score_web_candidate(
     request: str,
     files: list[Path],
 ) -> tuple[float, list[str]]:
+    # SOPHYANE_NON_WEB_SCORE_BYPASS_V1
+    # This scorer validates browser artifacts only.
+    if not is_web_request(request):
+        return 0.0, []
+
     issues: list[str] = []
     score = 0.0
 
@@ -609,6 +688,183 @@ def _score_general_candidate(
     return score, issues
 
 
+
+# SOPHYANE_EXECUTABLE_BEHAVIORAL_COHERENCE_V2
+#
+# Whole-file vocabulary can be supplied by dormant helpers or unrelated
+# assembled components. For Python CLI artifacts, independently inspect
+# the user-visible argparse contract of the effective entry-point function.
+#
+# This is intentionally static: candidate code is never imported/executed.
+
+_EXECUTABLE_COHERENCE_STOP_WORDS = {
+    "a", "an", "and", "as", "at", "be", "by", "for", "from",
+    "in", "into", "is", "it", "of", "on", "or", "that", "the",
+    "their", "this", "to", "with",
+    "provide", "create", "build", "implement", "make",
+    "explicit", "dynamically",
+}
+
+
+def _behavioral_terms(value: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(
+            r"[a-z][a-z0-9_+-]{2,}",
+            value.lower(),
+        )
+        if token not in _EXECUTABLE_COHERENCE_STOP_WORDS
+    }
+
+
+def _literal_string(node: ast.AST | None) -> str:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+
+    if isinstance(node, ast.JoinedStr):
+        values: list[str] = []
+
+        for item in node.values:
+            if (
+                isinstance(item, ast.Constant)
+                and isinstance(item.value, str)
+            ):
+                values.append(item.value)
+
+        return " ".join(values)
+
+    return ""
+
+
+def _python_cli_surface(source: str) -> str | None:
+    """
+    Return statically visible argparse interface text for the effective
+    top-level main() definition.
+
+    None means this is not recognizably an argparse CLI and therefore this
+    narrow gate should not make an acceptance decision.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+
+    mains = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "main"
+    ]
+
+    if not mains:
+        return None
+
+    # Python global-name semantics make the final top-level definition the
+    # effective main binding once module definition execution completes.
+    main_node = mains[-1]
+
+    pieces: list[str] = []
+
+    for node in ast.walk(main_node):
+        if not isinstance(node, ast.Call):
+            continue
+
+        func = node.func
+
+        # argparse.ArgumentParser(...)
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "ArgumentParser"
+        ):
+            for keyword in node.keywords:
+                if keyword.arg in {
+                    "description",
+                    "epilog",
+                    "prog",
+                }:
+                    value = _literal_string(keyword.value)
+                    if value:
+                        pieces.append(value)
+
+        # parser.add_argument(...)
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "add_argument"
+        ):
+            for arg in node.args:
+                value = _literal_string(arg)
+                if value:
+                    pieces.append(
+                        value.lstrip("-").replace("-", " ")
+                    )
+
+            for keyword in node.keywords:
+                if keyword.arg in {
+                    "help",
+                    "dest",
+                    "metavar",
+                }:
+                    value = _literal_string(keyword.value)
+                    if value:
+                        pieces.append(value)
+
+    if not pieces:
+        return None
+
+    return " ".join(pieces)
+
+
+def _python_executable_interface_incoherent(
+    request: str,
+    files: list[Path],
+) -> bool:
+    request_terms = _behavioral_terms(request)
+
+    if not request_terms:
+        return False
+
+    surfaces: list[str] = []
+
+    for candidate in files:
+        if candidate.suffix.lower() != ".py":
+            continue
+
+        try:
+            source = candidate.read_text(
+                encoding="utf-8",
+                errors="replace",
+            )
+        except OSError:
+            continue
+
+        surface = _python_cli_surface(source)
+
+        if surface:
+            surfaces.append(surface)
+
+    if not surfaces:
+        return False
+
+    surface_terms = _behavioral_terms(
+        " ".join(surfaces)
+    )
+
+    if not surface_terms:
+        return False
+
+    overlap = request_terms & surface_terms
+
+    # Require more than an incidental single shared term. This is an
+    # executable-interface coherence floor, not a whole-file relevance
+    # replacement.
+    minimum_matches = min(
+        2,
+        len(request_terms),
+    )
+
+    return len(overlap) < minimum_matches
+
+
 def evaluate_candidate(
     request: str,
     workspace: Path,
@@ -669,12 +925,30 @@ def evaluate_candidate(
             "assembler report indicates failure; artifact scored independently",
         )
 
+    if _python_executable_interface_incoherent(
+        request,
+        files,
+    ):
+        issues.append(
+            "executable interface is incoherent with request"
+        )
+
     fatal_issues = {
         "assembler produced no files",
         "missing index.html",
         "no JavaScript found",
         "placeholder implementation detected",
         "interactive request lacks sufficient input/event handling",
+        # SOPHYANE_BEHAVIORAL_COHERENCE_GATE_V1
+        #
+        # A substantial implementation file can exceed the general
+        # acceptance threshold from size/source-presence points alone.
+        # Once the generic scorer has established that request-to-artifact
+        # relevance is below its minimum relevance boundary, aggregate
+        # structural score must not convert that incoherent artifact into
+        # an accepted result.
+        "low artifact relevance",
+        "executable interface is incoherent with request",
     }
 
     has_fatal_issue = any(
@@ -725,6 +999,30 @@ def evaluate_candidate(
                     + ", ".join(missing[:10])
                 )
 
+                # SOPHYANE_MANDATORY_CAPABILITY_GATE_V1
+                #
+                # Aggregate score ranks otherwise-valid candidates. It must
+                # never convert an artifact missing a high-importance
+                # requirement into success.
+                importance_by_name = {
+                    requirement.name:
+                        float(requirement.importance)
+                    for requirement in semantic_plan.capabilities
+                }
+
+                mandatory_missing = [
+                    name
+                    for name in missing
+                    if importance_by_name.get(name, 0.0) >= 2.0
+                ]
+
+                if mandatory_missing:
+                    has_fatal_issue = True
+                    issues.append(
+                        "mandatory capabilities missing: "
+                        + ", ".join(mandatory_missing[:10])
+                    )
+
             if (
                 is_interactive_request(request)
                 and coverage < 0.75
@@ -749,6 +1047,187 @@ def evaluate_candidate(
     )
 
     return result
+
+
+# SOPHYANE_CAPABILITY_PRESERVING_FLATTEN_V4
+#
+# Semantic retrieval is organized by capability. Flattening one complete
+# capability before considering the next allows early requirements to
+# monopolize the finite downstream assembly budget.
+#
+# Preserve rank within each capability while interleaving rank positions
+# across capabilities. Deduplication is stable: the first semantic claim
+# on a chunk determines its position.
+def _capability_preserving_selected_ids(
+    semantic_plan,
+    semantic_matches,
+) -> list[str]:
+    if semantic_plan is None:
+        return []
+
+    requirements = list(
+        getattr(
+            semantic_plan,
+            "capabilities",
+            [],
+        )
+        or []
+    )
+
+    if not requirements:
+        return []
+
+    rows_by_capability = []
+
+    for requirement in requirements:
+        name = getattr(
+            requirement,
+            "name",
+            None,
+        )
+
+        rows = list(
+            (semantic_matches or {}).get(
+                name,
+                [],
+            )
+            or []
+        )
+
+        rows_by_capability.append(rows)
+
+    max_rank = max(
+        (
+            len(rows)
+            for rows in rows_by_capability
+        ),
+        default=0,
+    )
+
+    selected_ids: list[str] = []
+    seen: set[str] = set()
+
+    for rank_index in range(max_rank):
+        for rows in rows_by_capability:
+            if rank_index >= len(rows):
+                continue
+
+            row = rows[rank_index]
+
+            chunk_id = str(
+                getattr(
+                    row,
+                    "chunk_id",
+                    "",
+                )
+                or ""
+            )
+
+            if (
+                not chunk_id
+                or chunk_id in seen
+            ):
+                continue
+
+            seen.add(chunk_id)
+            selected_ids.append(chunk_id)
+
+    return selected_ids
+
+
+# SOPHYANE_AUTHORITATIVE_CAPABILITY_ROOTS_V1
+#
+# selected_ids represents the broader per-capability
+# candidate pool.  Authoritative roots are deliberately
+# narrower: the highest-ranked retrieved match for each
+# capability, in semantic-plan order, with stable
+# deduplication.
+def _capability_authoritative_root_ids(
+    plan,
+    matches_by_capability,
+):
+    if plan is None:
+        return []
+
+    requirements = getattr(
+        plan,
+        "capabilities",
+        (),
+    ) or ()
+
+    matches_by_capability = (
+        matches_by_capability
+        if isinstance(
+            matches_by_capability,
+            dict,
+        )
+        else {}
+    )
+
+    roots = []
+    seen = set()
+
+    for requirement in requirements:
+        capability = getattr(
+            requirement,
+            "name",
+            None,
+        )
+
+        if not capability:
+            continue
+
+        matches = (
+            matches_by_capability.get(
+                capability,
+                (),
+            )
+            or ()
+        )
+
+        if not matches:
+            continue
+
+        winner = matches[0]
+
+        chunk_id = getattr(
+            winner,
+            "chunk_id",
+            None,
+        )
+
+        if not chunk_id:
+            chunk = getattr(
+                winner,
+                "chunk",
+                None,
+            )
+
+            chunk_id = (
+                getattr(
+                    chunk,
+                    "id",
+                    None,
+                )
+                or getattr(
+                    chunk,
+                    "chunk_id",
+                    None,
+                )
+            )
+
+        if not chunk_id:
+            continue
+
+        chunk_id = str(chunk_id)
+
+        if chunk_id in seen:
+            continue
+
+        seen.add(chunk_id)
+        roots.append(chunk_id)
+
+    return roots
 
 
 def _clear_directory(path: Path) -> None:
@@ -873,12 +1352,29 @@ def generate_sli_artifact(
             _sli_os.environ["SOPHYANE_SLI_CANDIDATE_MODE"] = "1"
 
             try:
+                # SOPHYANE_SEMANTIC_ASSEMBLY_BRIDGE_V1
+                #
+                # Preserve per-capability semantic retrieval through the
+                # assembler boundary. Each capability contributes its ranked
+                # evidence; duplicate chunks are included only once.
+                semantic_selected_ids = (
+                    _capability_preserving_selected_ids(
+                        semantic_plan,
+                        semantic_matches,
+                    )
+                )
+
+                semantic_root_ids = _capability_authoritative_root_ids(
+                    semantic_plan,
+                    semantic_matches,
+                )
                 report, used = generate_from_request(
                     request,
                     candidate_workspace,
                     store=store,
                     progress=progress,
-                )
+                    selected_ids=semantic_selected_ids or None,
+                 root_ids=semantic_root_ids)
             finally:
                 if _previous_candidate_mode is None:
                     _sli_os.environ.pop(

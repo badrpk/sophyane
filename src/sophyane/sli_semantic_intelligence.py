@@ -418,6 +418,189 @@ CAPABILITY_ONTOLOGY: dict[str, dict[str, Any]] = {
         },
     },
 
+    # SOPHYANE_OPERATIONAL_CAPABILITY_ONTOLOGY_V1
+    "process_supervision": {
+        "concepts": {
+            "process",
+            "processes",
+            "background process",
+            "daemon",
+            "service",
+            "monitor",
+            "monitoring",
+            "supervise",
+            "supervision",
+            "pid",
+            "long-running",
+        },
+        "signals": {
+            "subprocess",
+            "popen",
+            "poll(",
+            "pid",
+            "psutil",
+            "process",
+            "kill(",
+            "terminate(",
+            "wait(",
+        },
+        "preferred_languages": {
+            "python",
+            "shell",
+            "bash",
+        },
+        "placements": {
+            "python_module",
+            "module",
+            "function",
+            "script",
+            "compound",
+        },
+    },
+
+    "log_diagnostics": {
+        "concepts": {
+            "log",
+            "logs",
+            "crash log",
+            "daemon log",
+            "stderr",
+            "stdout",
+            "diagnose",
+            "diagnostic",
+            "failure",
+        },
+        "signals": {
+            "read_text",
+            "open(",
+            "stderr",
+            "stdout",
+            "tail",
+            "journalctl",
+            "log",
+            "traceback",
+        },
+        "preferred_languages": {
+            "python",
+            "shell",
+            "bash",
+        },
+        "placements": {
+            "python_module",
+            "module",
+            "function",
+            "script",
+            "compound",
+        },
+    },
+
+    "resource_diagnostics": {
+        "concepts": {
+            "memory",
+            "out-of-memory",
+            "oom",
+            "resource",
+            "resources",
+            "cpu",
+            "memory pressure",
+            "diagnose",
+        },
+        "signals": {
+            "memory",
+            "rss",
+            "psutil",
+            "oom",
+            "resource",
+            "getrusage",
+            "/proc/",
+        },
+        "preferred_languages": {
+            "python",
+            "shell",
+            "bash",
+        },
+        "placements": {
+            "python_module",
+            "module",
+            "function",
+            "script",
+            "compound",
+        },
+    },
+
+    "network_port_diagnostics": {
+        "concepts": {
+            "port",
+            "port-binding",
+            "bind",
+            "binding",
+            "socket",
+            "listen",
+            "conflict",
+            "address in use",
+        },
+        "signals": {
+            "socket",
+            "bind(",
+            "listen(",
+            "ss ",
+            "netstat",
+            "lsof",
+            "address already in use",
+            "eaddrinuse",
+        },
+        "preferred_languages": {
+            "python",
+            "shell",
+            "bash",
+        },
+        "placements": {
+            "python_module",
+            "module",
+            "function",
+            "script",
+            "compound",
+        },
+    },
+
+    "safe_command_execution": {
+        "concepts": {
+            "shell",
+            "command",
+            "commands",
+            "script",
+            "scripts",
+            "execute",
+            "corrective",
+            "remediation",
+            "safe",
+            "safety",
+            "guardrails",
+        },
+        "signals": {
+            "subprocess.run",
+            "subprocess.Popen",
+            "shlex",
+            "shell=False",
+            "check=True",
+            "timeout=",
+            "allowlist",
+            "denylist",
+        },
+        "preferred_languages": {
+            "python",
+            "shell",
+            "bash",
+        },
+        "placements": {
+            "python_module",
+            "module",
+            "function",
+            "script",
+            "compound",
+        },
+    },
+
     "http_endpoint": {
         "concepts": {
             "api",
@@ -687,6 +870,49 @@ def infer_target(request: str) -> tuple[str | None, str | None]:
         }
     ):
         return "javascript", "javascript_application"
+
+    # SOPHYANE_GENERIC_OPERATIONAL_TARGET_V1
+    #
+    # Infer an executable software target from strong operational/tool
+    # construction evidence even when the user does not name a language.
+    #
+    # Keep informational daemon/process questions untyped.
+    constructive = any(
+        marker in text
+        for marker in (
+            "build ",
+            "create ",
+            "develop ",
+            "generate ",
+            "implement ",
+            "produce ",
+            "provide ",
+            "write ",
+            "construct ",
+        )
+    )
+
+    operational_software = any(
+        cue in text
+        for cue in (
+            "terminal agent",
+            "terminal-access agent",
+            "daemon monitoring",
+            "daemon tool",
+            "operations agent",
+            "operational agent",
+            "shell automation",
+            "automation tool",
+            "command-line tool",
+            "command line tool",
+            "process monitoring",
+            "background process",
+            "corrective shell",
+        )
+    )
+
+    if constructive and operational_software:
+        return "python", "python_application"
 
     return None, None
 
@@ -991,6 +1217,92 @@ def _chunk_semantic_score(
 
     if plan.target_language and language == plan.target_language:
         score += 0.7
+
+    # SOPHYANE_PYTHON_SEMANTIC_EXECUTION_FIT_V1
+    #
+    # Semantic relevance identifies WHAT code is useful. For a Python
+    # application, ranking must also account for whether that retrieved
+    # evidence can participate directly in executable composition.
+    #
+    # This deliberately changes ranking rather than bypassing it:
+    # request/capability overlap and ontology signals remain authoritative.
+    if (
+        plan.target_language == "python"
+        and language == "python"
+    ):
+        raw_source = str(
+            getattr(chunk, "text", "")
+            or ""
+        )
+
+        source_bytes = len(
+            raw_source.encode(
+                "utf-8",
+                errors="replace",
+            )
+        )
+
+        executable = False
+
+        if (
+            raw_source.strip()
+            and source_bytes <= 16_000
+            and not _is_test_chunk(chunk)
+        ):
+            try:
+                compile(
+                    raw_source,
+                    f"<semantic-chunk:{_chunk_id(chunk)}>",
+                    "exec",
+                )
+                executable = True
+            except (
+                SyntaxError,
+                ValueError,
+                TypeError,
+            ):
+                executable = False
+
+        if executable:
+            # Executable components that already fit the downstream Python
+            # assembler are substantially more useful than equally relevant
+            # whole repositories/modules that assembly must later discard.
+            score += 2.4
+
+            if (
+                placement == "function"
+                or "::" in str(
+                    getattr(chunk, "path", "")
+                    or ""
+                )
+            ):
+                score += 0.8
+
+            if source_bytes <= 4_000:
+                score += 0.5
+
+        elif source_bytes > 16_000:
+            # Oversized evidence remains retrievable, but should not dominate
+            # executable alternatives for artifact construction.
+            score -= min(
+                3.5,
+                1.5
+                + (
+                    source_bytes - 16_000
+                )
+                / 50_000,
+            )
+
+        if (
+            str(
+                getattr(chunk, "path", "")
+                or ""
+            ).startswith("compound::")
+            or "/* RICH CHUNK:" in raw_source
+        ):
+            # Rich bundles are excellent retrieval evidence but are not
+            # executable Python components themselves.
+            score -= 1.5
 
     if requirement.name in path:
         score += 0.5
@@ -1556,6 +1868,59 @@ def _strict_allowed_languages(plan, capability: str) -> set[str] | None:
     return None
 
 
+# SOPHYANE_STRICT_SIGNAL_BOUNDARIES_V3
+def _strict_signal_present(
+    text: str,
+    signal: str,
+) -> bool:
+    """Match one semantic signal without identifier-substring collisions.
+
+    Signals may intentionally contain syntax such as ``poll(``,
+    ``timeout=``, ``subprocess.run`` or ``/proc/``.  Boundary checks
+    therefore apply only to identifier-like edges of the signal rather
+    than tokenizing the entire source language.
+    """
+    import re
+
+    haystack = str(text or "")
+    needle = str(signal or "")
+
+    if not needle:
+        return False
+
+    escaped = re.escape(
+        needle
+    )
+
+    left_boundary = (
+        r"(?<![A-Za-z0-9_])"
+        if (
+            needle[0].isalnum()
+            or needle[0] == "_"
+        )
+        else ""
+    )
+
+    right_boundary = (
+        r"(?![A-Za-z0-9_])"
+        if (
+            needle[-1].isalnum()
+            or needle[-1] == "_"
+        )
+        else ""
+    )
+
+    return bool(
+        re.search(
+            left_boundary
+            + escaped
+            + right_boundary,
+            haystack,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _strict_signal_count(chunk, capability: str) -> int:
     text = _strict_chunk_text(chunk)
     signals = _STRICT_SIGNALS.get(capability)
@@ -1565,7 +1930,10 @@ def _strict_signal_count(chunk, capability: str) -> int:
         signals = tuple(definition.get("signals", ()))
 
     return sum(
-        str(signal).lower() in text
+        _strict_signal_present(
+            text,
+            str(signal),
+        )
         for signal in signals
     )
 
@@ -1579,6 +1947,252 @@ def _strict_minimum_signals(capability: str) -> int:
         return 2
 
     return 1
+
+
+# SOPHYANE_DISCRIMINATIVE_CAPABILITY_ADMISSION_V1
+#
+# Ontology signals are useful ranking evidence, but several signals are
+# intentionally broad vocabulary ("process", "log", "error", "if ", ...).
+# A broad token must not, by itself, prove that a chunk IMPLEMENTS the
+# requested capability.
+#
+# Strong signals describe an operation or mechanism characteristic of the
+# capability. Weak signals remain useful as supporting evidence and inside
+# _chunk_semantic_score(), but cannot independently establish admission.
+_STRICT_STRONG_SIGNALS = {
+    "log_diagnostics": {
+        "read_text",
+        "tail",
+        "journalctl",
+        "traceback",
+    },
+    "network_port_diagnostics": {
+        "eaddrinuse",
+        "address already in use",
+        "socket",
+        "netstat",
+        "lsof",
+        "bind(",
+        "listen(",
+    },
+    "process_supervision": {
+        "terminate(",
+        "poll(",
+        "psutil",
+        "pid",
+        "wait(",
+        "kill(",
+        "subprocess",
+        "popen",
+    },
+    "safe_command_execution": {
+        "timeout=",
+        "shell=false",
+        "shlex",
+        "subprocess.popen",
+        "allowlist",
+        "subprocess.run",
+        "check=true",
+        "denylist",
+    },
+    "resource_diagnostics": {
+        "rss",
+        "psutil",
+        "getrusage",
+        "/proc/",
+        "oom",
+    },
+    "entry_point": {
+        "__main__",
+        "domcontentloaded",
+        "window.onload",
+        "main(",
+    },
+    "error_handling": {
+        "except ",
+        "try:",
+        "catch",
+        "raise ",
+        "throw",
+    },
+    "rules_and_validation": {
+        "validate",
+        "incorrect",
+        "collision",
+    },
+}
+
+
+def _strict_signal_hits(
+    chunk,
+    capability: str,
+) -> set[str]:
+    """Return normalized ontology signals present in the chunk."""
+    text = _strict_chunk_text(chunk)
+    signals = _STRICT_SIGNALS.get(capability)
+
+    if not signals:
+        definition = CAPABILITY_ONTOLOGY.get(capability, {})
+        signals = tuple(definition.get("signals", ()))
+
+    return {
+        str(signal).lower()
+        for signal in signals
+        if _strict_signal_present(
+            text,
+            str(signal),
+        )
+    }
+
+
+def _strict_strong_signal_count(
+    chunk,
+    capability: str,
+) -> int:
+    hits = _strict_signal_hits(chunk, capability)
+    strong = {
+        str(signal).lower()
+        for signal in _STRICT_STRONG_SIGNALS.get(
+            capability,
+            set(),
+        )
+    }
+    return len(hits & strong)
+
+
+
+# SOPHYANE_BEHAVIORAL_CAPABILITY_ADMISSION_V2
+#
+# A behavioral capability is established by complementary evidence roles,
+# not by repeated vocabulary from one role.  For example, merely spawning
+# a process does not establish supervision; lifecycle observation/control
+# must also be present.
+#
+# Each tuple is one evidence role.  Every role must have at least one hit.
+_STRICT_BEHAVIORAL_EVIDENCE_GROUPS = {
+    "process_supervision": (
+        {
+            "popen",
+            "subprocess",
+            "pid",
+            "psutil",
+        },
+        {
+            "poll(",
+            "wait(",
+            "terminate(",
+            "kill(",
+        },
+    ),
+    "safe_command_execution": (
+        {
+            "subprocess.run",
+            "subprocess.popen",
+        },
+        {
+            "shell=false",
+            "timeout=",
+            "allowlist",
+            "denylist",
+            "shlex",
+        },
+    ),
+    "log_diagnostics": (
+        {
+            "journalctl",
+            "read_text",
+            "tail",
+        },
+        {
+            "log",
+            "stderr",
+            "stdout",
+            "traceback",
+        },
+    ),
+}
+
+
+def _strict_behavioral_group_hits(
+    chunk,
+    capability: str,
+) -> tuple[set[str], ...]:
+    """Return matching signals for each required behavioral evidence role."""
+    groups = _STRICT_BEHAVIORAL_EVIDENCE_GROUPS.get(
+        capability,
+        (),
+    )
+
+    if not groups:
+        return ()
+
+    text = _strict_chunk_text(chunk)
+
+    return tuple(
+        {
+            str(signal).lower()
+            for signal in group
+            if _strict_signal_present(
+                text,
+                str(signal),
+            )
+        }
+        for group in groups
+    )
+
+
+def _strict_has_behavioral_evidence(
+    chunk,
+    capability: str,
+) -> bool:
+    """Require evidence from every role defined for a behavioral capability."""
+    groups = _STRICT_BEHAVIORAL_EVIDENCE_GROUPS.get(
+        capability,
+    )
+
+    if not groups:
+        return True
+
+    hits = _strict_behavioral_group_hits(
+        chunk,
+        capability,
+    )
+
+    return bool(hits) and all(hits)
+
+
+def _strict_has_discriminative_evidence(
+    chunk,
+    capability: str,
+) -> bool:
+    """Whether evidence is specific enough to establish the capability."""
+    signal_count = _strict_signal_count(chunk, capability)
+
+    if signal_count < _strict_minimum_signals(capability):
+        return False
+
+    strong_signals = _STRICT_STRONG_SIGNALS.get(capability)
+
+    # Capabilities without a specialized evidence policy retain the existing
+    # ontology contract.
+    if not strong_signals:
+        return True
+
+    strong_count = _strict_strong_signal_count(
+        chunk,
+        capability,
+    )
+
+    if strong_count >= 1:
+        return _strict_has_behavioral_evidence(
+            chunk,
+            capability,
+        )
+
+    # Multiple broad signals may support ranking but are not sufficient to
+    # prove implementation of capabilities for which we have discriminative
+    # operational evidence.
+    return False
 
 
 # Preserve the original planner once.
@@ -1656,8 +2270,9 @@ def retrieve_for_capability(
             requirement.name,
         )
 
-        if signal_count < _strict_minimum_signals(
-            requirement.name
+        if not _strict_has_discriminative_evidence(
+            chunk,
+            requirement.name,
         ):
             continue
 
@@ -1676,9 +2291,20 @@ def retrieve_for_capability(
             plan,
         )
 
-        # Strong compatibility bonuses.
-        score += 2.0
-        score += min(signal_count * 0.65, 3.25)
+        # Strict admission already established capability compatibility.
+        # _chunk_semantic_score() already rewards ontology signal hits, so do
+        # not reward the same raw signal count a second time here.
+        score += 1.0
+
+        strong_signal_count = _strict_strong_signal_count(
+            chunk,
+            requirement.name,
+        )
+        if strong_signal_count:
+            score += min(
+                0.25 * strong_signal_count,
+                0.75,
+            )
 
         placement = _chunk_placement(chunk).lower()
         definition = CAPABILITY_ONTOLOGY.get(
@@ -1987,11 +2613,38 @@ def _final_compatible(
         ):
             return False
 
-    signals = _FINAL_SIGNALS.get(capability, ())
+    # SOPHYANE_FINAL_ONTOLOGY_SIGNAL_AUTHORITY_V2
+    #
+    # Strict final signals are capability-specific overrides, not a
+    # closed whitelist. New/general semantic capabilities inherit their
+    # executable evidence signals from the canonical ontology.
+    signals = _FINAL_SIGNALS.get(
+        capability
+    )
 
-    count = sum(signal in text for signal in signals)
+    if signals is None:
+        definition = CAPABILITY_ONTOLOGY.get(
+            capability,
+            {},
+        )
 
-    return count >= _final_minimum_signals(capability)
+        signals = tuple(
+            str(signal).lower()
+            for signal in definition.get(
+                "signals",
+                (),
+            )
+            if str(signal).strip()
+        )
+
+    count = sum(
+        signal in text
+        for signal in signals
+    )
+
+    return count >= _final_minimum_signals(
+        capability
+    )
 
 
 if "_FINAL_ORIGINAL_BUILD_PLAN" not in globals():
@@ -2040,83 +2693,17 @@ def retrieve_semantic_plan(
     *,
     per_capability: int = 6,
 ):
+    """Retrieve semantic evidence through the canonical capability boundary."""
     plan = build_semantic_plan(request)
-    output = {}
+    matches: dict[str, list[ChunkMatch]] = {}
 
     for requirement in plan.capabilities:
-        ranked = []
-
-        for chunk in store.chunks.values():
-            if not _final_compatible(
-                chunk,
-                plan,
-                requirement.name,
-            ):
-                continue
-
-            score = _chunk_semantic_score(
-                chunk,
-                requirement,
-                plan,
-            )
-
-            if score < 0.75:
-                continue
-
-            ranked.append((chunk, score))
-
-        ranked.sort(
-            key=lambda item: item[1],
-            reverse=True,
+        selected = retrieve_for_capability(
+            store,
+            plan,
+            requirement,
+            limit=per_capability,
         )
+        matches[requirement.name] = selected
 
-        selected = []
-        seen_paths = set()
-        seen_sources = {}
-
-        for chunk, score in ranked:
-            path = str(getattr(chunk, "path", "") or "")
-            source = str(getattr(chunk, "source", "") or "")
-            family = path.split("::")[0]
-
-            if family in seen_paths:
-                continue
-
-            if seen_sources.get(source, 0) >= 2:
-                continue
-
-            chunk_id = _chunk_id(chunk)
-
-            if not chunk_id:
-                continue
-
-            selected.append(
-                ChunkMatch(
-                    chunk_id=chunk_id,
-                    score=score,
-                    capability=requirement.name,
-                    language=str(
-                        getattr(chunk, "language", "") or ""
-                    ),
-                    path=path,
-                    placement=_chunk_placement(chunk),
-                    source=source,
-                )
-            )
-
-            seen_paths.add(family)
-            seen_sources[source] = seen_sources.get(source, 0) + 1
-
-            if len(selected) >= per_capability:
-                break
-
-        requirement.selected_ids = [
-            item.chunk_id for item in selected
-        ]
-        requirement.best_score = (
-            selected[0].score if selected else 0.0
-        )
-        requirement.covered = bool(selected)
-        output[requirement.name] = selected
-
-    return plan, output
+    return plan, matches

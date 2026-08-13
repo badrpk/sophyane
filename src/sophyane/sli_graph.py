@@ -80,6 +80,122 @@ class SLIState:
         self.trace.append(msg)
 
 
+# SOPHYANE_SLI_SOFTWARE_ARTIFACT_ROUTE_V1
+def _is_software_artifact_request(message: str) -> bool:
+    """Return True for constructive non-browser software artifacts.
+
+    This intentionally answers a different question from the grounded
+    Python-harness detector.  The harness detector identifies one of a
+    small set of deterministic contracts; this predicate identifies the
+    broader software-construction family that must not fall into browser
+    acquisition merely because no deterministic contract exists.
+    """
+
+    text = " ".join(
+        str(message or "")
+        .lower()
+        .split()
+    )
+
+    constructive = any(
+        marker in text
+        for marker in (
+            "build ",
+            "create ",
+            "develop ",
+            "generate ",
+            "implement ",
+            "produce ",
+            "write ",
+            "provide ",
+        )
+    )
+
+    if not constructive:
+        return False
+
+    # Reuse the existing semantic target inference whenever it has a
+    # confident non-browser answer.
+    try:
+        from sophyane.sli_semantic_intelligence import (
+            infer_target,
+        )
+
+        _language, artifact = infer_target(
+            message
+        )
+
+        if artifact == "browser_application":
+            return False
+
+        if artifact is not None:
+            return True
+
+    except Exception:
+        pass
+
+    # Generic language-neutral software artifacts that infer_target does
+    # not yet classify.  These are artifact-family cues, not benchmark-
+    # specific completion rules.
+    software_cues = (
+        "rest api",
+        " api ",
+        "api backend",
+        "backend",
+        "openapi",
+        "json schema",
+        "json schemas",
+        "schema specification",
+        "client sdk",
+        " sdk",
+        "test client",
+        "client script",
+        "mock server",
+        "mocking stub",
+        "backend stub",
+        "command line",
+        " cli",
+        "library",
+        "package",
+        "source code",
+        "module",
+    )
+
+    padded = " " + text + " "
+
+    if any(
+        cue in padded
+        for cue in software_cues
+    ):
+        return True
+
+    # SOPHYANE_SLI_SOFTWARE_ARTIFACT_ROUTE_V2
+    #
+    # Generic operational/developer software may be described by its
+    # execution surface and role rather than a language or API noun.
+    # Require a software-oriented head noun/phrase; never treat a bare
+    # occurrence of "agent", "terminal", "daemon" or "shell" as enough.
+    operational_artifact_cues = (
+        "terminal agent",
+        "terminal-access agent",
+        "daemon tool",
+        "daemon monitoring tool",
+        "shell automation",
+        "automation tool",
+        "operations agent",
+        "operational agent",
+        "monitoring tool",
+        "developer tool",
+        "command-line tool",
+        "command line tool",
+    )
+
+    return any(
+        cue in padded
+        for cue in operational_artifact_cues
+    )
+
+
 def classify(state: SLIState, progress: Progress) -> SLIState:
     q = (state.request or "").lower()
     progress(f"SLI-graph: classify «{state.request[:80]}»")
@@ -122,42 +238,26 @@ def classify(state: SLIState, progress: Progress) -> SLIState:
             from sophyane.sli_harness_orchestrator import (
                 is_harness_execution_request,
             )
+            from sophyane.code_memory.sli_product_app_compose import (
+                is_product_app_request,
+            )
+            from sophyane.code_memory.python_harness_compose import (
+                detect_python_harness_request,
+            )
 
             if is_email_platform_request(
                 state.request
             ):
                 state.route = "email_platform"
 
-            elif (
-                any(
-                    term in q
-                    for term in (
-                        "make",
-                        "create",
-                        "build",
-                        "develop",
-                        "generate",
-                        "implement",
-                        "design",
-                    )
-                )
-                and any(
-                    term in q
-                    for term in (
-                        "email service",
-                        "email app",
-                        "mail app",
-                        "mail service",
-                        "gmail",
-                        "webmail",
-                        "web app",
-                        "browser app",
-                        "dashboard",
-                        "workspace",
-                        "platform",
-                        "client",
-                    )
-                )
+            # SOPHYANE_SLI_CANONICAL_PRODUCT_ROUTING_V1
+            #
+            # Product/browser classification has one canonical predicate.
+            # Do not duplicate it here with broader substring rules such as
+            # "generate" + "client": those incorrectly classify backend/API,
+            # OpenAPI and test-client construction as browser product apps.
+            elif is_product_app_request(
+                state.request
             ):
                 state.route = "product_app"
 
@@ -166,20 +266,20 @@ def classify(state: SLIState, progress: Progress) -> SLIState:
             ):
                 state.route = "harness_execution"
 
-            elif any(
-                key in q
-                for key in (
-                    "python file",
-                    "audit_chain",
-                    "append_event",
-                    "verify_chain",
-                    "safe_members",
-                    "implement ",
-                    "fastapi",
-                    "policy_engine",
-                )
+            # Grounded deterministic Python harnesses retain their own
+            # narrow route.  Do not infer this route merely from generic
+            # words such as "implement" or "fastapi".
+            elif detect_python_harness_request(
+                state.request
             ):
                 state.route = "python_harness"
+
+            # Generic constructive software has its own artifact family.
+            # It must never inherit browser-only internet acquisition.
+            elif _is_software_artifact_request(
+                state.request
+            ):
+                state.route = "software_artifact"
 
             elif any(key in q for key in ("ping pong", "pong", "snake", "game", "canvas")):
                 state.route = "action_or_internet"
@@ -791,7 +891,22 @@ def run_sli_graph(
                 try_memory_router,
                 try_internet,
             ],
-            "python_harness": [try_python_harness, try_harness_execution, try_memory_router],
+            "python_harness": [
+                try_python_harness,
+                try_harness_execution,
+                try_memory_router,
+            ],
+
+            # SOPHYANE_SLI_SOFTWARE_ARTIFACT_PIPELINE_V1
+            #
+            # Until a non-browser internet-acquisition implementation exists,
+            # software artifacts may use grounded memory but MUST NOT fall
+            # through to internet_acquire.py, whose contract is explicitly
+            # browser/HTML oriented.
+            "software_artifact": [
+                try_memory_router,
+            ],
+
             "language_or_internet": [try_memory_router, try_internet],
             "action_or_internet": [try_memory_router, try_internet],
             "product_app": [
