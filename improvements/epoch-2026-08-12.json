@@ -1,40 +1,2384 @@
 {
   "day": "2026-08-12",
-  "exported_at": 1786509882.2146194,
-  "device": "runnervmvrwv9-aae95289",
+  "exported_at": 1786561180.2782578,
+  "device": "Badar-0da80220",
   "sophyane_version": "21.2.0",
   "chain_verify": {
     "ok": true,
-    "length": 1,
-    "tip": "e2b73d7b75e5dde323fac96464329e94e1ce60f099dc17e22ab1d230f0c704aa"
+    "length": 476,
+    "tip": "ad11d818184adfa203ab4d5f973aa9797b09d3a2cedda204a44919a6db717d57"
   },
-  "count": 1,
+  "count": 114,
   "blocks": [
     {
-      "index": 0,
-      "timestamp": 1786509882.214348,
+      "index": 362,
+      "timestamp": 1786553896.3276281,
       "proposal": {
-        "proposal_id": "311db1a0-3dbc-41c9-9ee0-9061ce199bc8",
+        "proposal_id": "19a04b70-f46a-47da-9cf0-e0370977cb63",
         "kind": "benchmark",
-        "title": "daily-ci-heartbeat",
-        "body": "Automated daily CI epoch for Sophyane continuous improvement catalog.",
-        "source_device": "runnervmvrwv9-aae95289",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
         "evidence": {
-          "workflow": "sophyane-daily-improve",
-          "verify": {
-            "ok": true,
-            "length": 0,
-            "message": "empty chain"
-          }
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
         },
         "score": 0.1,
-        "created_at": 1786509882.214346
+        "created_at": 1786553896.3276258
       },
-      "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-      "hash": "e2b73d7b75e5dde323fac96464329e94e1ce60f099dc17e22ab1d230f0c704aa",
-      "device": "runnervmvrwv9-aae95289",
+      "prev_hash": "7d4329e828e7b16002fff92ffebd9a59466b10761ca1a5b82266130d36c16bf2",
+      "hash": "066ad687bd16ff01cb7954c2a51dd70df171668c6e6163cfb4a645c924cc90c8",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 363,
+      "timestamp": 1786553906.1568258,
+      "proposal": {
+        "proposal_id": "7556383e-9371-468b-9a75-9143f85d499e",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1786553906.1568224
+      },
+      "prev_hash": "066ad687bd16ff01cb7954c2a51dd70df171668c6e6163cfb4a645c924cc90c8",
+      "hash": "6d6bdd731dc3701d12defa0e7869251aa5ad86a1f21fd7155544df37f5491787",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 364,
+      "timestamp": 1786553916.0261867,
+      "proposal": {
+        "proposal_id": "9359bf96-8a75-4f49-b192-382cbdcccce4",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786553916.0261855
+      },
+      "prev_hash": "6d6bdd731dc3701d12defa0e7869251aa5ad86a1f21fd7155544df37f5491787",
+      "hash": "3c79e7a932c7370ed449cb36389970e1edf8bbd6025419faaa4ac0d7874379d1",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 365,
+      "timestamp": 1786553916.0484765,
+      "proposal": {
+        "proposal_id": "bad0da68-f388-4ef4-8bec-2b001776ff58",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496264 loss=0.015624318 samples=121",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "dbf15656f8b0211f53a52b6962f3155d"
+        },
+        "score": 0.15,
+        "created_at": 1786553916.0484748
+      },
+      "prev_hash": "3c79e7a932c7370ed449cb36389970e1edf8bbd6025419faaa4ac0d7874379d1",
+      "hash": "fd93dd752120da74b3cae507475fa3109b8b99d4d32681fb677d520866e9ade4",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 366,
+      "timestamp": 1786553918.140011,
+      "proposal": {
+        "proposal_id": "3231377b-c2c5-48bc-bfbd-3e5e4d7f91d1",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1786553918.1400082
+      },
+      "prev_hash": "fd93dd752120da74b3cae507475fa3109b8b99d4d32681fb677d520866e9ade4",
+      "hash": "15aaa2a1d0ec10fc4a4df9ecdd71b84fd0bf52277efb1e7d0b57555e32bb0fa2",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 367,
+      "timestamp": 1786553918.6728733,
+      "proposal": {
+        "proposal_id": "0a9ad2ed-0156-401f-aa3f-215808f820a0",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496264 loss=0.015624316 samples=122",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "487c745831b514c00479e2bf7fbe4722"
+        },
+        "score": 0.15,
+        "created_at": 1786553918.6728718
+      },
+      "prev_hash": "15aaa2a1d0ec10fc4a4df9ecdd71b84fd0bf52277efb1e7d0b57555e32bb0fa2",
+      "hash": "e2637b0948f54206d9ebf1fe1b56bf4bf3b3041dc7d6c37dd528e6f560321a64",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 368,
+      "timestamp": 1786553918.6829007,
+      "proposal": {
+        "proposal_id": "715b6107-ac70-4571-967a-dcddea55f37c",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496264 loss=0.015624316 samples=122",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "487c745831b514c00479e2bf7fbe4722"
+        },
+        "score": 0.15,
+        "created_at": 1786553918.6828997
+      },
+      "prev_hash": "e2637b0948f54206d9ebf1fe1b56bf4bf3b3041dc7d6c37dd528e6f560321a64",
+      "hash": "fe718d8d7b010904123fb02302fc60e6016a9fed38bfd12ec47d8ebf37421257",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 369,
+      "timestamp": 1786553918.6997197,
+      "proposal": {
+        "proposal_id": "d12b4e3c-3a82-49a1-9127-9668a89b1cf1",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496264 loss=0.015624307 samples=123",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "ef3951ccaa08cd9e0a39aad5b96e9bba"
+        },
+        "score": 0.15,
+        "created_at": 1786553918.6997187
+      },
+      "prev_hash": "fe718d8d7b010904123fb02302fc60e6016a9fed38bfd12ec47d8ebf37421257",
+      "hash": "d627a9cc17d1794330d18175953e4fa32bbd72cb1ae308044465068d7c945512",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 370,
+      "timestamp": 1786555163.5848489,
+      "proposal": {
+        "proposal_id": "492f4214-0b7d-40c5-88af-00ca3fc606ed",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786555163.584848
+      },
+      "prev_hash": "d627a9cc17d1794330d18175953e4fa32bbd72cb1ae308044465068d7c945512",
+      "hash": "4525b0b3255cf6c58c433b46674cdb6ac813f2bac725e7d21d2b9a23377cb869",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 371,
+      "timestamp": 1786555476.6756868,
+      "proposal": {
+        "proposal_id": "40622b4f-78be-44a4-adf0-bf18dddba953",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786555476.6756852
+      },
+      "prev_hash": "4525b0b3255cf6c58c433b46674cdb6ac813f2bac725e7d21d2b9a23377cb869",
+      "hash": "397ab0d6e47f93b1250d037aaffcd764338519550bc44710198e2e4e3ae46404",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 372,
+      "timestamp": 1786555487.2049158,
+      "proposal": {
+        "proposal_id": "3aa23b68-f896-4ad0-ad90-d0923a03a368",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1786555487.2049127
+      },
+      "prev_hash": "397ab0d6e47f93b1250d037aaffcd764338519550bc44710198e2e4e3ae46404",
+      "hash": "5dec945591dd1ac52f157f293c2857020d343b9f0be98dbe56d8488e67a2e20f",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 373,
+      "timestamp": 1786555499.3851883,
+      "proposal": {
+        "proposal_id": "be8faecb-3d27-4d46-8c7b-62400cdba4b7",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786555499.385187
+      },
+      "prev_hash": "5dec945591dd1ac52f157f293c2857020d343b9f0be98dbe56d8488e67a2e20f",
+      "hash": "2d1f42479cd747cb668a99fd184bca9a7fe2083f8453836b12266bd18d191506",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 374,
+      "timestamp": 1786555499.4027095,
+      "proposal": {
+        "proposal_id": "6cbed1c6-e9a7-483d-a9bb-b74da01a1229",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496265 loss=0.015624301 samples=124",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "d4e34e7a7799b8a3f0a8d84d29b31922"
+        },
+        "score": 0.15,
+        "created_at": 1786555499.4027083
+      },
+      "prev_hash": "2d1f42479cd747cb668a99fd184bca9a7fe2083f8453836b12266bd18d191506",
+      "hash": "f6e918ab9d2a8cba320f9657d51201bd395b282588e3c6bc98ad6041c16484bc",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 375,
+      "timestamp": 1786555502.1594567,
+      "proposal": {
+        "proposal_id": "d04b7da2-a611-4ec0-895a-5387d575a782",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1786555502.1594543
+      },
+      "prev_hash": "f6e918ab9d2a8cba320f9657d51201bd395b282588e3c6bc98ad6041c16484bc",
+      "hash": "88069931daf3b6a6df72f740e1b48d5dec555b65000de8c0b7200f12b7c8c100",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 376,
+      "timestamp": 1786555502.9187317,
+      "proposal": {
+        "proposal_id": "34a01698-3131-4baf-ac0f-5c9926100877",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496265 loss=0.015624299 samples=125",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "7f4a47705fe11759edb86a1c56891195"
+        },
+        "score": 0.15,
+        "created_at": 1786555502.9187305
+      },
+      "prev_hash": "88069931daf3b6a6df72f740e1b48d5dec555b65000de8c0b7200f12b7c8c100",
+      "hash": "02ed6de7691de5380080b44e9099ac68e06b66855a80bac86d3cef4d9a13a1e0",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 377,
+      "timestamp": 1786555502.928076,
+      "proposal": {
+        "proposal_id": "f41caa16-f0ad-4377-94ba-c50909c4d151",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496265 loss=0.015624299 samples=125",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "7f4a47705fe11759edb86a1c56891195"
+        },
+        "score": 0.15,
+        "created_at": 1786555502.9280753
+      },
+      "prev_hash": "02ed6de7691de5380080b44e9099ac68e06b66855a80bac86d3cef4d9a13a1e0",
+      "hash": "fd902b7f7623172e4104de28cbfc5fe6b806a44a427de143bc98386452625ebf",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 378,
+      "timestamp": 1786555502.9443934,
+      "proposal": {
+        "proposal_id": "5a2bdf48-bcea-4f96-837a-73df7bd67812",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496265 loss=0.01562429 samples=126",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "55e4096affb00dddb4115d4cf34391ca"
+        },
+        "score": 0.15,
+        "created_at": 1786555502.9443924
+      },
+      "prev_hash": "fd902b7f7623172e4104de28cbfc5fe6b806a44a427de143bc98386452625ebf",
+      "hash": "8eff89912531e69431eb26b6d415b61736e402c99c7e0c1f53f4550860e9a672",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 379,
+      "timestamp": 1786556459.4114356,
+      "proposal": {
+        "proposal_id": "3c3dac32-5fc2-4628-aa2b-3faaf945bca3",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786556459.4114342
+      },
+      "prev_hash": "8eff89912531e69431eb26b6d415b61736e402c99c7e0c1f53f4550860e9a672",
+      "hash": "c552ed792c60c88366298d4ac42137c099a812b614b624daa72b08d101da5760",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 380,
+      "timestamp": 1786556471.994143,
+      "proposal": {
+        "proposal_id": "8cf85b35-d722-4815-9577-a7f97ef3e886",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1786556471.99414
+      },
+      "prev_hash": "c552ed792c60c88366298d4ac42137c099a812b614b624daa72b08d101da5760",
+      "hash": "6502777f157e721f44b317c9874bb7bbbb4379f493cf608e27112af9f7637d5d",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 381,
+      "timestamp": 1786556488.4125526,
+      "proposal": {
+        "proposal_id": "83968a82-1489-47e5-a3a0-233bb0e6c6c5",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786556488.4125519
+      },
+      "prev_hash": "6502777f157e721f44b317c9874bb7bbbb4379f493cf608e27112af9f7637d5d",
+      "hash": "d4897c5a1b0c63391ad519df9393753e4812dc8c9fd2f8a59b605963abdaed70",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 382,
+      "timestamp": 1786556488.4348083,
+      "proposal": {
+        "proposal_id": "44b992e8-3457-497f-8302-8ddb15cb7333",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496265 loss=0.015624284 samples=127",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "7b8d08f0863926f4d4d0b6ad4f51a737"
+        },
+        "score": 0.15,
+        "created_at": 1786556488.434807
+      },
+      "prev_hash": "d4897c5a1b0c63391ad519df9393753e4812dc8c9fd2f8a59b605963abdaed70",
+      "hash": "2e3f6fc53ad99c63e6f9f01407957e844856e02ad5b7b0dbd2e13c96cb279bcd",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 383,
+      "timestamp": 1786556678.4452243,
+      "proposal": {
+        "proposal_id": "d51c0273-5737-47a7-95f0-884444458bcc",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786556678.445222
+      },
+      "prev_hash": "2e3f6fc53ad99c63e6f9f01407957e844856e02ad5b7b0dbd2e13c96cb279bcd",
+      "hash": "7e7f8a5a014866729154d336d7756873549527d5230439d06953f801e52de433",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 384,
+      "timestamp": 1786556694.0188062,
+      "proposal": {
+        "proposal_id": "154f9748-73c6-4c2e-9c1d-1247bd7388be",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1786556694.0188026
+      },
+      "prev_hash": "7e7f8a5a014866729154d336d7756873549527d5230439d06953f801e52de433",
+      "hash": "bcd6d16b6bbce0122760fcf9af944f11b73a11ad539ced6a9c928669a5362ca6",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 385,
+      "timestamp": 1786556713.8521132,
+      "proposal": {
+        "proposal_id": "0d5a4254-c597-47f0-bdb8-d0e5c99da2c6",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786556713.8521116
+      },
+      "prev_hash": "bcd6d16b6bbce0122760fcf9af944f11b73a11ad539ced6a9c928669a5362ca6",
+      "hash": "aedec37869c910ec3049f8716445e296805b4ae41be826bd703282184d11a611",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 386,
+      "timestamp": 1786556713.8655672,
+      "proposal": {
+        "proposal_id": "9d14bea4-7d41-4630-8142-41bbeeb73df2",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496265 loss=0.015624277 samples=128",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "d3d9e0ffcca50e47a62ca0d2f15bc7dd"
+        },
+        "score": 0.15,
+        "created_at": 1786556713.8655658
+      },
+      "prev_hash": "aedec37869c910ec3049f8716445e296805b4ae41be826bd703282184d11a611",
+      "hash": "a4058a3c12db6463e3348f74426d3cab955e55aaa70b776d513ceb298d15057b",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 387,
+      "timestamp": 1786556716.506028,
+      "proposal": {
+        "proposal_id": "0a4d6c13-f7b8-4dfc-8401-c711e33a3a02",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1786556716.5060256
+      },
+      "prev_hash": "a4058a3c12db6463e3348f74426d3cab955e55aaa70b776d513ceb298d15057b",
+      "hash": "e75203e869388af4b11f6490485f09c41e653aac597254c47f2d92875eb88056",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 388,
+      "timestamp": 1786556716.9911163,
+      "proposal": {
+        "proposal_id": "b3eb918b-b3da-473e-8d5a-06dd432a63f3",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496265 loss=0.015624275 samples=129",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "708490f5d958256e5aa3d8ed84c2e975"
+        },
+        "score": 0.15,
+        "created_at": 1786556716.991115
+      },
+      "prev_hash": "e75203e869388af4b11f6490485f09c41e653aac597254c47f2d92875eb88056",
+      "hash": "ac0fc2f9016fb44249af8a614a485c858705be046e912d1b2f6e7ea39d203824",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 389,
+      "timestamp": 1786556717.001146,
+      "proposal": {
+        "proposal_id": "3e114673-2a1e-427e-9c24-7ee9025b2d0b",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496265 loss=0.015624275 samples=129",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "708490f5d958256e5aa3d8ed84c2e975"
+        },
+        "score": 0.15,
+        "created_at": 1786556717.0011446
+      },
+      "prev_hash": "ac0fc2f9016fb44249af8a614a485c858705be046e912d1b2f6e7ea39d203824",
+      "hash": "794b9c5522178ef2f6d48d268d01acf655de3e117f9538805733cd54a538154c",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 390,
+      "timestamp": 1786556717.0177257,
+      "proposal": {
+        "proposal_id": "992e8169-dec5-40ac-abb9-0f04fbee9697",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496265 loss=0.015624266 samples=130",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "bae457bd767bb35925c6370abfa8f928"
+        },
+        "score": 0.15,
+        "created_at": 1786556717.0177243
+      },
+      "prev_hash": "794b9c5522178ef2f6d48d268d01acf655de3e117f9538805733cd54a538154c",
+      "hash": "d960208788f591b67bc5275020c1397a6220fd90a2e77a47c52f37e6065a2bd5",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 391,
+      "timestamp": 1786557639.3707705,
+      "proposal": {
+        "proposal_id": "c0beb999-4371-4861-964c-8bac9318e0b8",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786557639.3707688
+      },
+      "prev_hash": "d960208788f591b67bc5275020c1397a6220fd90a2e77a47c52f37e6065a2bd5",
+      "hash": "ca56ff90b305129a236c4d64af1e232c8126b57ee05a7b40109e1086d5438b8f",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 392,
+      "timestamp": 1786557649.3591611,
+      "proposal": {
+        "proposal_id": "66ac8b62-a89e-4d7a-b714-47120b3991e8",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1786557649.359158
+      },
+      "prev_hash": "ca56ff90b305129a236c4d64af1e232c8126b57ee05a7b40109e1086d5438b8f",
+      "hash": "bfc04619c71f9adf6c968eaaadc1e9dec4cd2393e00a4c9d0582cd95b8e8c64d",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 393,
+      "timestamp": 1786557659.3108034,
+      "proposal": {
+        "proposal_id": "47df6627-3540-411d-8b3d-2a53fdbd4f7c",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786557659.3108025
+      },
+      "prev_hash": "bfc04619c71f9adf6c968eaaadc1e9dec4cd2393e00a4c9d0582cd95b8e8c64d",
+      "hash": "7ba5341e3608a87b83d9f447483fc422a3730ddd7ae4d5e73487172c956f4450",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 394,
+      "timestamp": 1786557659.3358614,
+      "proposal": {
+        "proposal_id": "50b5b762-1050-4f56-ad06-7fee414f221d",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.01562426 samples=131",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "217ca28079cd0f7b135e2e7748a89730"
+        },
+        "score": 0.15,
+        "created_at": 1786557659.335844
+      },
+      "prev_hash": "7ba5341e3608a87b83d9f447483fc422a3730ddd7ae4d5e73487172c956f4450",
+      "hash": "5deaa7317359b26ad3b35e9238d564ceb8e017311304e8962211c568bb28879f",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 395,
+      "timestamp": 1786557661.3622398,
+      "proposal": {
+        "proposal_id": "0eec0731-410a-4552-afde-06214e333215",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1786557661.3622384
+      },
+      "prev_hash": "5deaa7317359b26ad3b35e9238d564ceb8e017311304e8962211c568bb28879f",
+      "hash": "1bc2bd3f3e520ee6e09c03f01d0168318cb5d7600abcc625b30d72e9afafa88f",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 396,
+      "timestamp": 1786557661.8887002,
+      "proposal": {
+        "proposal_id": "b528ee1f-d046-4183-8fba-ca167f693e91",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624258 samples=132",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "9f212c147dae8304378a721c77ef1d77"
+        },
+        "score": 0.15,
+        "created_at": 1786557661.8886983
+      },
+      "prev_hash": "1bc2bd3f3e520ee6e09c03f01d0168318cb5d7600abcc625b30d72e9afafa88f",
+      "hash": "6869a7d9d9f592b6546017bb8f4e2e2bae117e05fab0d5e1be8f76283f136480",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 397,
+      "timestamp": 1786557661.8985398,
+      "proposal": {
+        "proposal_id": "c2e7cd69-4291-4bbe-9817-c8cac00efc25",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624258 samples=132",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "9f212c147dae8304378a721c77ef1d77"
+        },
+        "score": 0.15,
+        "created_at": 1786557661.8985384
+      },
+      "prev_hash": "6869a7d9d9f592b6546017bb8f4e2e2bae117e05fab0d5e1be8f76283f136480",
+      "hash": "b0bda9bed26b2ec68f59eee8c44384592c4854013f0b034607d33573d36096d7",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 398,
+      "timestamp": 1786557661.923142,
+      "proposal": {
+        "proposal_id": "5b9af471-51b1-4eef-9bdf-b9f28c81bc5f",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624249 samples=133",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "f57165cab6ec09086c2b2a701cb6fd55"
+        },
+        "score": 0.15,
+        "created_at": 1786557661.92314
+      },
+      "prev_hash": "b0bda9bed26b2ec68f59eee8c44384592c4854013f0b034607d33573d36096d7",
+      "hash": "ed31d59ee4fa5cf8ab2c828cb490bd071223ef1f409d866adfa4c5072c6f725d",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 399,
+      "timestamp": 1786557721.9203477,
+      "proposal": {
+        "proposal_id": "4f46c100-7d6e-477c-b4e7-c341c5825a6e",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786557721.920346
+      },
+      "prev_hash": "ed31d59ee4fa5cf8ab2c828cb490bd071223ef1f409d866adfa4c5072c6f725d",
+      "hash": "5e886c0e188cd6053f911aec11511a0e1e392cc6d1a16925e973bdb978cb4602",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 400,
+      "timestamp": 1786557732.0709732,
+      "proposal": {
+        "proposal_id": "049376c7-afcf-4b90-b052-4accd6878804",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1786557732.0709639
+      },
+      "prev_hash": "5e886c0e188cd6053f911aec11511a0e1e392cc6d1a16925e973bdb978cb4602",
+      "hash": "6837f660aeae913179c9213af466023a77aacf93a22a2c3ae50cc61a6e9a8fec",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 401,
+      "timestamp": 1786557750.5985243,
+      "proposal": {
+        "proposal_id": "ef1b1a9d-3772-4447-84c5-9089eb3d39a0",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786557750.5985231
+      },
+      "prev_hash": "6837f660aeae913179c9213af466023a77aacf93a22a2c3ae50cc61a6e9a8fec",
+      "hash": "1b49642c56c3cf788bb16c7ce97fb93a68fdc798f33ef8444d42f206c4265e12",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 402,
+      "timestamp": 1786557750.6105287,
+      "proposal": {
+        "proposal_id": "cc28b031-afcb-4599-9450-0cbbb5c0051f",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624243 samples=134",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "c972e39b800f67fc49c68bf1a0f7f404"
+        },
+        "score": 0.15,
+        "created_at": 1786557750.6105275
+      },
+      "prev_hash": "1b49642c56c3cf788bb16c7ce97fb93a68fdc798f33ef8444d42f206c4265e12",
+      "hash": "71f01398f5be38a1922f5b8d6744b0622e2212dc91c27da9e3403527828a96d5",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 403,
+      "timestamp": 1786557752.9053407,
+      "proposal": {
+        "proposal_id": "9dd1a129-c8e2-4459-abae-08a3fa17bcc2",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1786557752.9053385
+      },
+      "prev_hash": "71f01398f5be38a1922f5b8d6744b0622e2212dc91c27da9e3403527828a96d5",
+      "hash": "7341f65d50d20e6c75b2fa46abc2fd91fa3662c42b61d4b80328b29ffbdeb41e",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 404,
+      "timestamp": 1786557753.5720847,
+      "proposal": {
+        "proposal_id": "a0a96bda-1d74-449b-8f7b-546639acae0c",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624241 samples=135",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "d312b31b226f1fa3a6ee33c780484007"
+        },
+        "score": 0.15,
+        "created_at": 1786557753.5720837
+      },
+      "prev_hash": "7341f65d50d20e6c75b2fa46abc2fd91fa3662c42b61d4b80328b29ffbdeb41e",
+      "hash": "b1f037e28ffbc8fd9f15f179679ab8b0898c3ab72e48a635ce6662720a612208",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 405,
+      "timestamp": 1786557753.5807211,
+      "proposal": {
+        "proposal_id": "7b817328-bcc4-4033-aa0e-5f0365620d9b",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624241 samples=135",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "d312b31b226f1fa3a6ee33c780484007"
+        },
+        "score": 0.15,
+        "created_at": 1786557753.5807202
+      },
+      "prev_hash": "b1f037e28ffbc8fd9f15f179679ab8b0898c3ab72e48a635ce6662720a612208",
+      "hash": "d8152d904d269ca48fda91d5e8bc1bc72fd243592e6ce94351396704c1f900ac",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 406,
+      "timestamp": 1786557753.5949025,
+      "proposal": {
+        "proposal_id": "5097b794-78da-4b7d-89fc-43c4be90bfe2",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624232 samples=136",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "fad96ace63b1e07036910ea43d4ae1d6"
+        },
+        "score": 0.15,
+        "created_at": 1786557753.5949016
+      },
+      "prev_hash": "d8152d904d269ca48fda91d5e8bc1bc72fd243592e6ce94351396704c1f900ac",
+      "hash": "683f47c34fbcbde110f953333e6808a9a5333ea1e803d31f3b573de3c9c49176",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 407,
+      "timestamp": 1786558003.2195408,
+      "proposal": {
+        "proposal_id": "9b72cd01-9bb0-40f8-806e-db9b7159e14e",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786558003.2195387
+      },
+      "prev_hash": "683f47c34fbcbde110f953333e6808a9a5333ea1e803d31f3b573de3c9c49176",
+      "hash": "f388d393c46f8c622db2a9c97653db13aa0ea326647b9d7db954387b1eccc8b1",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 408,
+      "timestamp": 1786558030.5745685,
+      "proposal": {
+        "proposal_id": "d9036ee7-561b-41a2-8c3c-0ecfb464823f",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1786558030.5745661
+      },
+      "prev_hash": "f388d393c46f8c622db2a9c97653db13aa0ea326647b9d7db954387b1eccc8b1",
+      "hash": "ee3132b0c2960e0158eaace55144dcdbae44d44a5ea3038e9503649aabac012c",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 409,
+      "timestamp": 1786558051.9078274,
+      "proposal": {
+        "proposal_id": "9657ec45-4638-4cdb-b1f9-bc34fb9b39ab",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786558051.9078257
+      },
+      "prev_hash": "ee3132b0c2960e0158eaace55144dcdbae44d44a5ea3038e9503649aabac012c",
+      "hash": "cb964b914df3139b90634b074bbddf297591da7c6f7d0d67d09cea7c274274e0",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 410,
+      "timestamp": 1786558051.9280374,
+      "proposal": {
+        "proposal_id": "3c596211-57ec-4dee-9ab5-833c9f07b29c",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624226 samples=137",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "c0c0563f9670ae5516e99077bb609d4b"
+        },
+        "score": 0.15,
+        "created_at": 1786558051.9280355
+      },
+      "prev_hash": "cb964b914df3139b90634b074bbddf297591da7c6f7d0d67d09cea7c274274e0",
+      "hash": "3862306360d768202e5c39b0f3914c47312ebcca557525a079543e57f5fd7c87",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 411,
+      "timestamp": 1786558054.8570943,
+      "proposal": {
+        "proposal_id": "cbcae6f0-9c14-4def-9e7b-099d1f9cd2b3",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1786558054.857093
+      },
+      "prev_hash": "3862306360d768202e5c39b0f3914c47312ebcca557525a079543e57f5fd7c87",
+      "hash": "605b51ba6708a6847c2799093129f98647723f5d9c82d3f22165ed1645d22345",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 412,
+      "timestamp": 1786558055.4046466,
+      "proposal": {
+        "proposal_id": "1ee3215e-6861-4603-a2f0-c62a8a59c5c1",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624224 samples=138",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "d6060f1de34f0dd59f0e2baa1d4b5535"
+        },
+        "score": 0.15,
+        "created_at": 1786558055.4046443
+      },
+      "prev_hash": "605b51ba6708a6847c2799093129f98647723f5d9c82d3f22165ed1645d22345",
+      "hash": "c00cad862c9ddd5e58ebdfd706d02a49f4862765302dc6f001e8a18dd3d1d899",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 413,
+      "timestamp": 1786558055.4179444,
+      "proposal": {
+        "proposal_id": "4911cb96-67d7-4b1e-9b37-d7ea30b3af3d",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624224 samples=138",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "d6060f1de34f0dd59f0e2baa1d4b5535"
+        },
+        "score": 0.15,
+        "created_at": 1786558055.417942
+      },
+      "prev_hash": "c00cad862c9ddd5e58ebdfd706d02a49f4862765302dc6f001e8a18dd3d1d899",
+      "hash": "2644454adb2ba6aa67a60197e603b36e14a162f61f4348647dfc995f34a58a6b",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 414,
+      "timestamp": 1786558055.43829,
+      "proposal": {
+        "proposal_id": "de05bc6b-a457-4083-ac8b-4b0dc141ad8f",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624215 samples=139",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "1181f04f2485bb2d477724e7f6ce36ac"
+        },
+        "score": 0.15,
+        "created_at": 1786558055.4382885
+      },
+      "prev_hash": "2644454adb2ba6aa67a60197e603b36e14a162f61f4348647dfc995f34a58a6b",
+      "hash": "af27c6584b35b2bfa0c2d68920cfb627b69d1f7554772179f0319785afc89fb1",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 415,
+      "timestamp": 1786558296.2043867,
+      "proposal": {
+        "proposal_id": "e84d1403-693f-45ce-ba5f-ac383f0728ef",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786558296.204368
+      },
+      "prev_hash": "af27c6584b35b2bfa0c2d68920cfb627b69d1f7554772179f0319785afc89fb1",
+      "hash": "d318da834ccf683b98ecbb4c8f08023bbcf47500c075e061b69400da43e31f66",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 416,
+      "timestamp": 1786558306.507568,
+      "proposal": {
+        "proposal_id": "d6243209-a863-4d07-85c2-cf7cb945d6dd",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1786558306.5075643
+      },
+      "prev_hash": "d318da834ccf683b98ecbb4c8f08023bbcf47500c075e061b69400da43e31f66",
+      "hash": "c621beb5904ba5b070c92fe8f2b3119d0380dbb941f4419005258b126c0bf41d",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 417,
+      "timestamp": 1786558316.431892,
+      "proposal": {
+        "proposal_id": "dd16d93b-016d-47ba-9bc0-9813984134bc",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786558316.431891
+      },
+      "prev_hash": "c621beb5904ba5b070c92fe8f2b3119d0380dbb941f4419005258b126c0bf41d",
+      "hash": "85aad5c357add3efc31491a5db32de3d6e3366d2a154d103191b3c20bc5e356c",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 418,
+      "timestamp": 1786558316.4457686,
+      "proposal": {
+        "proposal_id": "7b912820-b656-4a07-b0fc-7f8105d1c9c8",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624209 samples=140",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "09460f913f475a52c0e57da689280474"
+        },
+        "score": 0.15,
+        "created_at": 1786558316.445767
+      },
+      "prev_hash": "85aad5c357add3efc31491a5db32de3d6e3366d2a154d103191b3c20bc5e356c",
+      "hash": "8bb2cccb5adca1bed0c732b9d7050cce44b37649d6a18f76391e387a162913a8",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 419,
+      "timestamp": 1786558318.6648753,
+      "proposal": {
+        "proposal_id": "628e935e-cf5b-419a-beba-51334f57ae21",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1786558318.6648738
+      },
+      "prev_hash": "8bb2cccb5adca1bed0c732b9d7050cce44b37649d6a18f76391e387a162913a8",
+      "hash": "d22952ce414167a353f5dbd6a495f713ff5fad68f3b2386484f69826514c50db",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 420,
+      "timestamp": 1786558319.2117107,
+      "proposal": {
+        "proposal_id": "da7473b1-2e36-4ac8-90c2-857c49ec0c3f",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624206 samples=141",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "f75e31ffccda9e5064437f899dabd54a"
+        },
+        "score": 0.15,
+        "created_at": 1786558319.2117095
+      },
+      "prev_hash": "d22952ce414167a353f5dbd6a495f713ff5fad68f3b2386484f69826514c50db",
+      "hash": "161e81eec1101b9963dab107642dc225d5045e6ebb04271ee36cb503e54913a2",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 421,
+      "timestamp": 1786558319.220847,
+      "proposal": {
+        "proposal_id": "2e0222ed-1e5c-4886-b286-6faf877d6de6",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624206 samples=141",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "f75e31ffccda9e5064437f899dabd54a"
+        },
+        "score": 0.15,
+        "created_at": 1786558319.220846
+      },
+      "prev_hash": "161e81eec1101b9963dab107642dc225d5045e6ebb04271ee36cb503e54913a2",
+      "hash": "f5befefca0ae8253904fc8e0c19a33010792f63371d7c75effcfa544e008229e",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 422,
+      "timestamp": 1786558319.2353468,
+      "proposal": {
+        "proposal_id": "cf2bb28d-2316-4cf4-b583-78a05fa68fa3",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624197 samples=142",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "3b9b0d6692fb97c5c2dd954e9bac30c7"
+        },
+        "score": 0.15,
+        "created_at": 1786558319.2353456
+      },
+      "prev_hash": "f5befefca0ae8253904fc8e0c19a33010792f63371d7c75effcfa544e008229e",
+      "hash": "e4498ada5d9d8f059f63065169ba4eef686e17fbed787dd0cc7cf9ac5d3a3de6",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 423,
+      "timestamp": 1786558530.502512,
+      "proposal": {
+        "proposal_id": "a2dbe0fe-9d79-402b-950a-2b6429ce935a",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786558530.5025105
+      },
+      "prev_hash": "e4498ada5d9d8f059f63065169ba4eef686e17fbed787dd0cc7cf9ac5d3a3de6",
+      "hash": "fd272dfd7058dac3cb4a08de4afc53adb6f2933624e554adb0c95766fa2c0a4f",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 424,
+      "timestamp": 1786558541.0833235,
+      "proposal": {
+        "proposal_id": "52043a1e-99af-4493-82ac-2906c4e45ab9",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1786558541.0833201
+      },
+      "prev_hash": "fd272dfd7058dac3cb4a08de4afc53adb6f2933624e554adb0c95766fa2c0a4f",
+      "hash": "72a65e6f6b37d1f076c3069d7075de7a8492cbffd382fe0869c1d703836643d6",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 425,
+      "timestamp": 1786558551.5452335,
+      "proposal": {
+        "proposal_id": "f0c4d351-127e-4f54-814a-e2f55a9d1703",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786558551.5452316
+      },
+      "prev_hash": "72a65e6f6b37d1f076c3069d7075de7a8492cbffd382fe0869c1d703836643d6",
+      "hash": "d3845737a5311187234b0a9219fadbc746580ef91464b600ac37263c83c9ba47",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 426,
+      "timestamp": 1786558551.55934,
+      "proposal": {
+        "proposal_id": "8defd719-6944-4921-89fe-a32a9f8f7333",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624191 samples=143",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "d535c6d03bd8ea396d928518a1152366"
+        },
+        "score": 0.15,
+        "created_at": 1786558551.5593393
+      },
+      "prev_hash": "d3845737a5311187234b0a9219fadbc746580ef91464b600ac37263c83c9ba47",
+      "hash": "3be3362f9fd8679237464ea64725f4a4a62ce15e69017970439cd390233dbbdd",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 427,
+      "timestamp": 1786558553.5789773,
+      "proposal": {
+        "proposal_id": "e82532e7-4520-411f-a989-5fc0fdf3d0d7",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1786558553.5789747
+      },
+      "prev_hash": "3be3362f9fd8679237464ea64725f4a4a62ce15e69017970439cd390233dbbdd",
+      "hash": "601ec4509f5b608415622376ed118799f64f2dfe8141fa797bf9c08b9d09ccaa",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 428,
+      "timestamp": 1786558554.2084181,
+      "proposal": {
+        "proposal_id": "3e386e14-d324-4871-a0d6-1ac398dbc5ae",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624189 samples=144",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "326a08d017a76cb5c7949daad2e3241f"
+        },
+        "score": 0.15,
+        "created_at": 1786558554.208417
+      },
+      "prev_hash": "601ec4509f5b608415622376ed118799f64f2dfe8141fa797bf9c08b9d09ccaa",
+      "hash": "df2483a2181cf6428a8419db5430c39bac96dd554bb218891d01cc787c1bde75",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 429,
+      "timestamp": 1786558554.2182496,
+      "proposal": {
+        "proposal_id": "aea5d752-85a6-4f3a-8bfa-08d7acb2ed94",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624189 samples=144",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "326a08d017a76cb5c7949daad2e3241f"
+        },
+        "score": 0.15,
+        "created_at": 1786558554.2182477
+      },
+      "prev_hash": "df2483a2181cf6428a8419db5430c39bac96dd554bb218891d01cc787c1bde75",
+      "hash": "0c85213ad37ea1dcd73235f7778a9538a1ee1e9e1f6288cc6b8c9bb2e0cbd1a5",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 430,
+      "timestamp": 1786558554.2338207,
+      "proposal": {
+        "proposal_id": "a5287740-f734-4d36-8d93-75d7c575b629",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.01562418 samples=145",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "b7c168f06a788b39cb77d6227f703247"
+        },
+        "score": 0.15,
+        "created_at": 1786558554.2338195
+      },
+      "prev_hash": "0c85213ad37ea1dcd73235f7778a9538a1ee1e9e1f6288cc6b8c9bb2e0cbd1a5",
+      "hash": "2a3b51c88598981c5a6e1d620e0517732eefdcedce7105d3aec1aa30f4c2b876",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 431,
+      "timestamp": 1786558646.6711688,
+      "proposal": {
+        "proposal_id": "28c7852a-0530-438d-a2c2-8a1b5d898260",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786558646.671167
+      },
+      "prev_hash": "2a3b51c88598981c5a6e1d620e0517732eefdcedce7105d3aec1aa30f4c2b876",
+      "hash": "8b011f30ed04ae2f9ee312ca689d95a04601a790a60ed0b1ebb58832eb83de16",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 432,
+      "timestamp": 1786558658.9661474,
+      "proposal": {
+        "proposal_id": "610b6da2-d61a-45de-be0d-7b7854e342e1",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1786558658.9661446
+      },
+      "prev_hash": "8b011f30ed04ae2f9ee312ca689d95a04601a790a60ed0b1ebb58832eb83de16",
+      "hash": "824eaf80422bac3b51af4d049eb7f2530d5ed71106cb1623609a8e623e4bad5a",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 433,
+      "timestamp": 1786558668.7466779,
+      "proposal": {
+        "proposal_id": "f4ddc47f-a740-4107-b4e5-6c277ca3e30b",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786558668.746676
+      },
+      "prev_hash": "824eaf80422bac3b51af4d049eb7f2530d5ed71106cb1623609a8e623e4bad5a",
+      "hash": "c089117c65256627f5f4767685130ffea6d315737cfb1f7359bd9e69c297d640",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 434,
+      "timestamp": 1786558668.761115,
+      "proposal": {
+        "proposal_id": "326af5d7-bf3d-4318-9704-c6fc09609fb3",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624174 samples=146",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "e0badae885448ca531338f3d03641275"
+        },
+        "score": 0.15,
+        "created_at": 1786558668.761114
+      },
+      "prev_hash": "c089117c65256627f5f4767685130ffea6d315737cfb1f7359bd9e69c297d640",
+      "hash": "a3bdad3f773733246334dc1cc45b477c5f3765d257109204bba48faa98b10eb2",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 435,
+      "timestamp": 1786558671.0272164,
+      "proposal": {
+        "proposal_id": "f9ac9f70-14d1-48d3-83d8-50e53610f1d9",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1786558671.027215
+      },
+      "prev_hash": "a3bdad3f773733246334dc1cc45b477c5f3765d257109204bba48faa98b10eb2",
+      "hash": "bf6d954a33d3639d48be002c6dc9b5aeaccde24510e675f02dd9aa35bd4192eb",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 436,
+      "timestamp": 1786558671.5080783,
+      "proposal": {
+        "proposal_id": "678d655d-5cb6-462d-be3c-05852338a0c2",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624172 samples=147",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "7499c834c607d8f104b829f79f848b09"
+        },
+        "score": 0.15,
+        "created_at": 1786558671.508077
+      },
+      "prev_hash": "bf6d954a33d3639d48be002c6dc9b5aeaccde24510e675f02dd9aa35bd4192eb",
+      "hash": "729c9372f357395c2f45708cee4c8fe16e726c2f0e2e0bb7520b72ba2692f107",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 437,
+      "timestamp": 1786558671.5171225,
+      "proposal": {
+        "proposal_id": "47a5056c-81d9-4eef-b40e-a822c45715dc",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624172 samples=147",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "7499c834c607d8f104b829f79f848b09"
+        },
+        "score": 0.15,
+        "created_at": 1786558671.5171208
+      },
+      "prev_hash": "729c9372f357395c2f45708cee4c8fe16e726c2f0e2e0bb7520b72ba2692f107",
+      "hash": "bf44315aa425a6b46c1978a81e711e2df11c74b423f2687ea33777d2cbdd9baa",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 438,
+      "timestamp": 1786558671.5321813,
+      "proposal": {
+        "proposal_id": "dd1be24f-6243-426b-98f2-d1dc2c8619f3",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624163 samples=148",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "94f4e9abea80b00fb248fd2265b1a20e"
+        },
+        "score": 0.15,
+        "created_at": 1786558671.5321803
+      },
+      "prev_hash": "bf44315aa425a6b46c1978a81e711e2df11c74b423f2687ea33777d2cbdd9baa",
+      "hash": "1254d7ad4841a1785d4d022a20a2a70fb7e892054030c83fbf7c693ada945244",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 439,
+      "timestamp": 1786558743.5805326,
+      "proposal": {
+        "proposal_id": "f61bb53c-f410-42bb-8be0-6fc74db7ef3b",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786558743.5805302
+      },
+      "prev_hash": "1254d7ad4841a1785d4d022a20a2a70fb7e892054030c83fbf7c693ada945244",
+      "hash": "e50bb89f5f488f4c385d22c52f2b5ee587aae1dc5e78563e201bc1b9e2b6f93e",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 440,
+      "timestamp": 1786558753.2987192,
+      "proposal": {
+        "proposal_id": "4f7e5fad-1125-441e-b436-6d04f3293c48",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1786558753.2987154
+      },
+      "prev_hash": "e50bb89f5f488f4c385d22c52f2b5ee587aae1dc5e78563e201bc1b9e2b6f93e",
+      "hash": "585df2d7680ddbe68939f61cb353a1d69db86cf8a1d4f97b24e8fdfdb6d9dde5",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 441,
+      "timestamp": 1786558765.4359202,
+      "proposal": {
+        "proposal_id": "daaf8d76-4308-4adc-a5e9-53dc4254395e",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786558765.435919
+      },
+      "prev_hash": "585df2d7680ddbe68939f61cb353a1d69db86cf8a1d4f97b24e8fdfdb6d9dde5",
+      "hash": "03f74c569ab0f97c7c485e116831e22a5ed367d91023f54cf731e594930e12e8",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 442,
+      "timestamp": 1786558765.448484,
+      "proposal": {
+        "proposal_id": "ca931009-627b-4de9-87d5-c8644411b5a6",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624157 samples=149",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "0d953672f685495e92c24f5bd342e7cd"
+        },
+        "score": 0.15,
+        "created_at": 1786558765.4484823
+      },
+      "prev_hash": "03f74c569ab0f97c7c485e116831e22a5ed367d91023f54cf731e594930e12e8",
+      "hash": "a09cb2af382d34c12b874fd12f4d2c229fe9ade8b2902e9afe897f8a6fbaa30a",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 443,
+      "timestamp": 1786558767.706472,
+      "proposal": {
+        "proposal_id": "d8b3a142-353a-4611-930f-b95571560f96",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1786558767.7064698
+      },
+      "prev_hash": "a09cb2af382d34c12b874fd12f4d2c229fe9ade8b2902e9afe897f8a6fbaa30a",
+      "hash": "8b53db301469fceb60f6d2dcd09c715f05ac8503902aafb82835a19741976c1f",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 444,
+      "timestamp": 1786558768.3588986,
+      "proposal": {
+        "proposal_id": "5e47c165-245e-4513-869d-e28d9bca510c",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624155 samples=150",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "53981bd5734d70b290ecf055b12c022a"
+        },
+        "score": 0.15,
+        "created_at": 1786558768.3588972
+      },
+      "prev_hash": "8b53db301469fceb60f6d2dcd09c715f05ac8503902aafb82835a19741976c1f",
+      "hash": "4d0f1a9bc59fb1855ab4d46d8e2c5b19846d8b352a613c7f4a4483398b57dc26",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 445,
+      "timestamp": 1786558768.3680892,
+      "proposal": {
+        "proposal_id": "53ca12af-df7a-44da-994a-9332ffd03736",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624155 samples=150",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "53981bd5734d70b290ecf055b12c022a"
+        },
+        "score": 0.15,
+        "created_at": 1786558768.368088
+      },
+      "prev_hash": "4d0f1a9bc59fb1855ab4d46d8e2c5b19846d8b352a613c7f4a4483398b57dc26",
+      "hash": "1eef3dbb7a4481cc40053422724d002b19144f99bd846517a249bcb69615592b",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 446,
+      "timestamp": 1786558768.3829663,
+      "proposal": {
+        "proposal_id": "d15732fd-45f5-44ac-85c3-84dbc42951c3",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624146 samples=151",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "30466c81d45f1efcdd0dc46060d2c753"
+        },
+        "score": 0.15,
+        "created_at": 1786558768.3829653
+      },
+      "prev_hash": "1eef3dbb7a4481cc40053422724d002b19144f99bd846517a249bcb69615592b",
+      "hash": "31e8d2e23a2ddfa0787ed170d0d690d30643b8b1fff1db36257f5eb3c391d490",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 447,
+      "timestamp": 1786558999.09477,
+      "proposal": {
+        "proposal_id": "04936092-a63a-4b98-9b89-2d54edaa8402",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786558999.0947685
+      },
+      "prev_hash": "31e8d2e23a2ddfa0787ed170d0d690d30643b8b1fff1db36257f5eb3c391d490",
+      "hash": "afeb738f6f50fb136de5fc80fa42a01d24d10b52689836538fb5aa800f0c3641",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 448,
+      "timestamp": 1786559009.3762028,
+      "proposal": {
+        "proposal_id": "88eb77ef-48a5-4312-b12b-c5f29bc3bc4d",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1786559009.3761983
+      },
+      "prev_hash": "afeb738f6f50fb136de5fc80fa42a01d24d10b52689836538fb5aa800f0c3641",
+      "hash": "b8da032bafdbf86d4bc908ad49a4860ca039a38e842fb9bfce4d2be5b65dfaac",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 449,
+      "timestamp": 1786559020.3289545,
+      "proposal": {
+        "proposal_id": "bd54c93c-2e83-4d2d-b766-a420bdd66d85",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786559020.3289533
+      },
+      "prev_hash": "b8da032bafdbf86d4bc908ad49a4860ca039a38e842fb9bfce4d2be5b65dfaac",
+      "hash": "eaa49bdae7764006746b91fbe89729242cbec896a4a6cebe9317520bb7a96a30",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 450,
+      "timestamp": 1786559020.3433447,
+      "proposal": {
+        "proposal_id": "e90c25e6-5cfe-4cf1-b6b9-9b50bb7a4e80",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.01562414 samples=152",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "1ad65eb71c7e00ba81715b13d123e538"
+        },
+        "score": 0.15,
+        "created_at": 1786559020.3433433
+      },
+      "prev_hash": "eaa49bdae7764006746b91fbe89729242cbec896a4a6cebe9317520bb7a96a30",
+      "hash": "59f9b5654ba7dc85dc3248535acd94a9acc991feed6ee050eaef85c27bff12d8",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 451,
+      "timestamp": 1786559022.3308108,
+      "proposal": {
+        "proposal_id": "ce0b7be7-64ee-4e6d-99c5-f6f55914384c",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1786559022.3308084
+      },
+      "prev_hash": "59f9b5654ba7dc85dc3248535acd94a9acc991feed6ee050eaef85c27bff12d8",
+      "hash": "4ae1ff648e9f1020c0a92f13320a09276449df339f508f894d7e61e89591ee6b",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 452,
+      "timestamp": 1786559022.8325343,
+      "proposal": {
+        "proposal_id": "2d20ca42-ebef-4f3a-a5ad-7b0090a8c1f4",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624138 samples=153",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "e9a41cffdbb4e2b389e138cad99f5799"
+        },
+        "score": 0.15,
+        "created_at": 1786559022.832533
+      },
+      "prev_hash": "4ae1ff648e9f1020c0a92f13320a09276449df339f508f894d7e61e89591ee6b",
+      "hash": "322b8e5e388fd81c80ec7959ea46db7cb3c8b8110683610ebffa24615d7290f0",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 453,
+      "timestamp": 1786559022.842979,
+      "proposal": {
+        "proposal_id": "86de9a3c-948a-478f-8760-29159b44dc8c",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624138 samples=153",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "e9a41cffdbb4e2b389e138cad99f5799"
+        },
+        "score": 0.15,
+        "created_at": 1786559022.8429775
+      },
+      "prev_hash": "322b8e5e388fd81c80ec7959ea46db7cb3c8b8110683610ebffa24615d7290f0",
+      "hash": "5ef34d0ea1b08568c30c0cde5021fa548fe15460a239578e8ecf4a5e13220355",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 454,
+      "timestamp": 1786559022.859614,
+      "proposal": {
+        "proposal_id": "558a46b8-2e8b-4c4a-9ed2-b7c76b1d1a2e",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624128 samples=154",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "4e151b1eb274183ab6b605eaad597ee1"
+        },
+        "score": 0.15,
+        "created_at": 1786559022.8596125
+      },
+      "prev_hash": "5ef34d0ea1b08568c30c0cde5021fa548fe15460a239578e8ecf4a5e13220355",
+      "hash": "aff2c38ec919cedbd97f98f910c4b164d1271947a40da043c32f37188d6ea48a",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 455,
+      "timestamp": 1786559093.3357887,
+      "proposal": {
+        "proposal_id": "20e22655-6db9-4f3a-b81a-5aba8d7dbb62",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786559093.335787
+      },
+      "prev_hash": "aff2c38ec919cedbd97f98f910c4b164d1271947a40da043c32f37188d6ea48a",
+      "hash": "45426e1abcd0017af47587fb184b194afb7163a5bbf17dc255db490a1ecfcd36",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 456,
+      "timestamp": 1786559104.1547368,
+      "proposal": {
+        "proposal_id": "1f4a148e-7da6-4c12-9d1c-fc9b72650371",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1786559104.1547337
+      },
+      "prev_hash": "45426e1abcd0017af47587fb184b194afb7163a5bbf17dc255db490a1ecfcd36",
+      "hash": "2d4b6c2a2fad927a3ba388fe8d7bf91d3334a9deec86dadc2d1b45bb399d28e1",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 457,
+      "timestamp": 1786559114.6847422,
+      "proposal": {
+        "proposal_id": "6b8938f2-f4da-4c95-8837-c6065fa7f5fa",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786559114.6847413
+      },
+      "prev_hash": "2d4b6c2a2fad927a3ba388fe8d7bf91d3334a9deec86dadc2d1b45bb399d28e1",
+      "hash": "4250c9cc4b49a87f9ae0d1e6b26044cc01e3b45f7689a59527c9c54cfaf91643",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 458,
+      "timestamp": 1786559114.6977296,
+      "proposal": {
+        "proposal_id": "d0f0eb42-6d62-4122-ab15-550441e9209e",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624122 samples=155",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "a66e635c781a7fb60700fa3785a826fe"
+        },
+        "score": 0.15,
+        "created_at": 1786559114.6977284
+      },
+      "prev_hash": "4250c9cc4b49a87f9ae0d1e6b26044cc01e3b45f7689a59527c9c54cfaf91643",
+      "hash": "5ec77243ebf060d2f7b935f775b057c85f0019021147aafa9e151744dd9a3785",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 459,
+      "timestamp": 1786559116.7582738,
+      "proposal": {
+        "proposal_id": "1276b25e-3bb3-48f9-be11-620963c40b01",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1786559116.758272
+      },
+      "prev_hash": "5ec77243ebf060d2f7b935f775b057c85f0019021147aafa9e151744dd9a3785",
+      "hash": "607d13b06d78053665f010fba534faa33b632a1b9d5a4147d1c60dfcde4a8bc2",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 460,
+      "timestamp": 1786559117.2198255,
+      "proposal": {
+        "proposal_id": "3c3b7a55-c6e3-47cb-a4c2-d37481285431",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.01562412 samples=156",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "18b8e168dffa2c477849c7db6d072eeb"
+        },
+        "score": 0.15,
+        "created_at": 1786559117.2198243
+      },
+      "prev_hash": "607d13b06d78053665f010fba534faa33b632a1b9d5a4147d1c60dfcde4a8bc2",
+      "hash": "3056ddb3a5d13615b886b60f4a27b9e121551539cba39121e5a186d29dcce934",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 461,
+      "timestamp": 1786559117.228821,
+      "proposal": {
+        "proposal_id": "7aea5043-abd5-4951-9256-9a4eeaa1803e",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.01562412 samples=156",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "18b8e168dffa2c477849c7db6d072eeb"
+        },
+        "score": 0.15,
+        "created_at": 1786559117.2288203
+      },
+      "prev_hash": "3056ddb3a5d13615b886b60f4a27b9e121551539cba39121e5a186d29dcce934",
+      "hash": "9abdeb911b3c0c1013f2c78b5cd3ff2f562e507c5ab55d8a65e21e79331cb185",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 462,
+      "timestamp": 1786559117.2444413,
+      "proposal": {
+        "proposal_id": "adc9406e-21e0-4ab9-956b-0d43e5a426b8",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624111 samples=157",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "9394b2e4122711b0f613371850f649c9"
+        },
+        "score": 0.15,
+        "created_at": 1786559117.2444406
+      },
+      "prev_hash": "9abdeb911b3c0c1013f2c78b5cd3ff2f562e507c5ab55d8a65e21e79331cb185",
+      "hash": "aa5b31f2e7a85f0f58d6af42b29c5f55c0aa5ed7a15aecbf0425523f955ea947",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 463,
+      "timestamp": 1786559183.3312697,
+      "proposal": {
+        "proposal_id": "85821f22-5d09-40c9-ad80-ad9e14fb61bc",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786559183.3312676
+      },
+      "prev_hash": "aa5b31f2e7a85f0f58d6af42b29c5f55c0aa5ed7a15aecbf0425523f955ea947",
+      "hash": "660810b46f6ba6afc5571499aad7211f268c32a427d60d9ffd80a065bfbbc70d",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 464,
+      "timestamp": 1786559195.2992947,
+      "proposal": {
+        "proposal_id": "1f97450f-e6ba-462a-a0ed-53879ca4e9b3",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1786559195.2992916
+      },
+      "prev_hash": "660810b46f6ba6afc5571499aad7211f268c32a427d60d9ffd80a065bfbbc70d",
+      "hash": "4a16e8a22f17288e61060ffc070d4d1eecd50f2d6fa837105d0e9e5c34ccaa88",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 465,
+      "timestamp": 1786559207.151053,
+      "proposal": {
+        "proposal_id": "f200c216-70f8-4525-ad8b-2ed855063fb5",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786559207.1510515
+      },
+      "prev_hash": "4a16e8a22f17288e61060ffc070d4d1eecd50f2d6fa837105d0e9e5c34ccaa88",
+      "hash": "781c5569618852ac668463bf98a78820c75052a531ea2bf43340d41427f89062",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 466,
+      "timestamp": 1786559207.164427,
+      "proposal": {
+        "proposal_id": "0e90a01e-6586-4dca-8ab2-260c28974297",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624105 samples=158",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "735ce7549258fdeebb87be82569f47e1"
+        },
+        "score": 0.15,
+        "created_at": 1786559207.164426
+      },
+      "prev_hash": "781c5569618852ac668463bf98a78820c75052a531ea2bf43340d41427f89062",
+      "hash": "767a16b19d0287436acfc6e8eae81e9911051b3dbf7b8156e564724a48cdc931",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 467,
+      "timestamp": 1786559209.4546099,
+      "proposal": {
+        "proposal_id": "9613f8e1-837b-463f-9773-16563a19e704",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1786559209.4546072
+      },
+      "prev_hash": "767a16b19d0287436acfc6e8eae81e9911051b3dbf7b8156e564724a48cdc931",
+      "hash": "97b5993ebe09f81460f556f20cf5e2fa1b79addd9da27b3b5a1f1b572ef8b295",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 468,
+      "timestamp": 1786559210.1999223,
+      "proposal": {
+        "proposal_id": "0f119698-5d59-4740-ac04-3be178514b59",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624103 samples=159",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "a3275f2c5792f48cd51e40f9d17b4ad2"
+        },
+        "score": 0.15,
+        "created_at": 1786559210.1999211
+      },
+      "prev_hash": "97b5993ebe09f81460f556f20cf5e2fa1b79addd9da27b3b5a1f1b572ef8b295",
+      "hash": "1671d0a2974f6be71c8e21744f7642f24432e1ce2117c6c93f7311eac8223795",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 469,
+      "timestamp": 1786559210.2132185,
+      "proposal": {
+        "proposal_id": "661f048f-85d9-4613-b79c-6f8e02e17cfd",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624103 samples=159",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "a3275f2c5792f48cd51e40f9d17b4ad2"
+        },
+        "score": 0.15,
+        "created_at": 1786559210.213216
+      },
+      "prev_hash": "1671d0a2974f6be71c8e21744f7642f24432e1ce2117c6c93f7311eac8223795",
+      "hash": "1585d1e979f584fd95e5568515beff585b0ab6405e2445aef25d477eb7b1bc86",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 470,
+      "timestamp": 1786559210.2319944,
+      "proposal": {
+        "proposal_id": "89ccab55-50b1-4129-bb7c-3d73fb6de765",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624094 samples=160",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "a223f7eca62fb0c3a7b83e54778584cf"
+        },
+        "score": 0.15,
+        "created_at": 1786559210.2319925
+      },
+      "prev_hash": "1585d1e979f584fd95e5568515beff585b0ab6405e2445aef25d477eb7b1bc86",
+      "hash": "34752be8fc9e372282399a470c6280143e483a7f07c8a586de033577bf98c26e",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 471,
+      "timestamp": 1786561143.7509897,
+      "proposal": {
+        "proposal_id": "c5120a09-3622-4b88-8a79-db92bbf11620",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786561143.7509882
+      },
+      "prev_hash": "34752be8fc9e372282399a470c6280143e483a7f07c8a586de033577bf98c26e",
+      "hash": "a3e3504cb58a20cbc2d9aa63049256fbb432b6e285812818d1833075d225dc93",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 472,
+      "timestamp": 1786561159.189618,
+      "proposal": {
+        "proposal_id": "9e298602-ccd9-44b4-86d6-8cbfebb4d883",
+        "kind": "benchmark",
+        "title": "audit",
+        "body": "feature audit heartbeat",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.05,
+        "created_at": 1786561159.1896138
+      },
+      "prev_hash": "a3e3504cb58a20cbc2d9aa63049256fbb432b6e285812818d1833075d225dc93",
+      "hash": "0fbd55c9b307655c91c6bb5b8a22a5425cdb93380cd343a5aaebe3ecaaf86fd8",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 473,
+      "timestamp": 1786561176.6782405,
+      "proposal": {
+        "proposal_id": "49c6418c-c1ad-48ec-a9d7-90bbcd9df1d5",
+        "kind": "benchmark",
+        "title": "appliance-boot",
+        "body": "Booted Sophyane appliance v21.2.0 on linux/x86_64",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "network_online": true,
+          "profile": null,
+          "ethernet": true,
+          "wifi": false
+        },
+        "score": 0.1,
+        "created_at": 1786561176.6782384
+      },
+      "prev_hash": "0fbd55c9b307655c91c6bb5b8a22a5425cdb93380cd343a5aaebe3ecaaf86fd8",
+      "hash": "ae861fb23e20658647721a305b79a1814bc74f487a69b3cfb07e85ea64ec834b",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 474,
+      "timestamp": 1786561176.739917,
+      "proposal": {
+        "proposal_id": "7d9d9346-ee7c-4859-8b1a-0c907c48fd27",
+        "kind": "train",
+        "title": "continual-local-step",
+        "body": "C++ PEFT local step round=496266 loss=0.015624088 samples=161",
+        "source_device": "Badar-0da80220",
+        "evidence": {
+          "base_hash": "197c5b557527da64a928700f3bb508f2",
+          "weights": "6bb35b318c6aee16b57c05510963969c"
+        },
+        "score": 0.15,
+        "created_at": 1786561176.7399156
+      },
+      "prev_hash": "ae861fb23e20658647721a305b79a1814bc74f487a69b3cfb07e85ea64ec834b",
+      "hash": "abdafa6d665e8ca7ede60b9c7742ebc7b2c26836bc8938a8f38ef564a1d5f5f6",
+      "device": "Badar-0da80220",
+      "version": "21.2.0"
+    },
+    {
+      "index": 475,
+      "timestamp": 1786561180.2705762,
+      "proposal": {
+        "proposal_id": "e8614a37-622e-4c48-95cd-346cc07ce102",
+        "kind": "fact",
+        "title": "test-proposal",
+        "body": "body for chain",
+        "source_device": "Badar-0da80220",
+        "evidence": {},
+        "score": 0.2,
+        "created_at": 1786561180.2705746
+      },
+      "prev_hash": "abdafa6d665e8ca7ede60b9c7742ebc7b2c26836bc8938a8f38ef564a1d5f5f6",
+      "hash": "ad11d818184adfa203ab4d5f973aa9797b09d3a2cedda204a44919a6db717d57",
+      "device": "Badar-0da80220",
       "version": "21.2.0"
     }
   ],
-  "merkle_root": "e2b73d7b75e5dde323fac96464329e94e1ce60f099dc17e22ab1d230f0c704aa"
+  "merkle_root": "c8a29e14a9b8b5ca3db1f6f2b1c404a1082a83f451797dc9434a243f482c1d69"
 }
