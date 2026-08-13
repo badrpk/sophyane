@@ -1,4 +1,4 @@
-# Download Sophyane 21.2.0
+# Download Sophyane 21.2.1
 
 This is the single download page for every supported device.
 
