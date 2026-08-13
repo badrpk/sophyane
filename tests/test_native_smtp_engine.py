@@ -134,10 +134,9 @@ def _authenticated_send(
 
 def test_native_smtp_receives_real_message(
     monkeypatch,
+    postgres_test_dsn,
 ) -> None:
-    dsn = os.environ[
-        "SOPHYANE_POSTGRES_DSN"
-    ]
+    dsn = postgres_test_dsn
 
     schema = (
         "smtp_test_"
@@ -208,10 +207,9 @@ def test_native_smtp_receives_real_message(
 
 def test_submission_requires_authentication(
     monkeypatch,
+    postgres_test_dsn,
 ) -> None:
-    dsn = os.environ[
-        "SOPHYANE_POSTGRES_DSN"
-    ]
+    dsn = postgres_test_dsn
 
     schema = (
         "smtp_auth_test_"

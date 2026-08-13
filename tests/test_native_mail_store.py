@@ -32,10 +32,9 @@ def _drop_schema(
 
 def test_account_hash_and_postgres_mail_round_trip(
     monkeypatch,
+    postgres_test_dsn,
 ) -> None:
-    dsn = os.environ[
-        "SOPHYANE_POSTGRES_DSN"
-    ]
+    dsn = postgres_test_dsn
 
     schema = (
         "mail_store_test_"

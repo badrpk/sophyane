@@ -1086,9 +1086,21 @@ def _sophyane_latest_file_result() -> str:
 
 
 class ObservableTUI:
-    def __init__(self, *, config: dict[str, Any], ask: Any, handle_internal: Any) -> None:
+    def __init__(
+        self,
+        *,
+        config: dict[str, Any],
+        ask: Any,
+        handle_internal: Any,
+        dispatch_user_request: Any | None = None,
+    ) -> None:
         self.config = config
+        # `ask` is deliberately the low-level provider callback used by
+        # call_provider() and structured execution refinement.
         self.ask = ask
+        # Auto/Race mode instead owns the original user request at the
+        # terminal boundary.  It must never be installed as `ask`.
+        self.dispatch_user_request = dispatch_user_request
         self.handle_internal = handle_internal
         self.active_workspace: Path | None = None
         self.active_request = ""
@@ -1402,6 +1414,32 @@ class ObservableTUI:
                     self._native_choice_selected = ""
                     continue
 
+            # SOPHYANE_AUTO_TOP_LEVEL_DISPATCH_V1
+            #
+            # Auto mode owns the ORIGINAL user request here.  Do not first
+            # rewrite it into "Answer directly", "Execute:", semantic prompts,
+            # or structured-loop repair prompts.  Those are low-level provider
+            # concerns and would recursively launch another adaptive race.
+            if self.dispatch_user_request is not None:
+                try:
+                    response = self.dispatch_user_request(message)
+                    text = getattr(response, "text", str(response))
+                    self.last_raw = text
+                except Exception as error:  # noqa: BLE001
+                    self.emit(
+                        "system",
+                        f"Adaptive dispatch error: {error}",
+                    )
+                    continue
+
+                self.history.extend([
+                    ("user", message[:300]),
+                    ("assistant", text[:500]),
+                ])
+                self.history = self.history[-4:]
+                self.emit("Sophyane", text)
+                continue
+
             quick = _simple_chat_reply(message)
             if quick is not None:
                 # SOPHYANE_NATIVE_CHOICE_STATE_STORE
@@ -1565,13 +1603,161 @@ validate the returned filesystem evidence.
 
 
 def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
-    from sophyane.agent import SophyaneAgent
+    from pathlib import Path
+
+    from sophyane.agent import AgentResponse, SophyaneAgent
     from sophyane.logging_config import configure_logging
     from sophyane.main import create_provider, handle_internal_command
     from sophyane.memory import MemoryStore
+    from sophyane.v13_cli import (
+        _execution_session_mode,
+        _run_adaptive_race_request,
+    )
 
     logger = configure_logging(verbose)
-    agent = SophyaneAgent(create_provider(config), MemoryStore(), logger)
-    return ObservableTUI(config=config, ask=agent.ask, handle_internal=handle_internal_command).run()
+    session_mode = _execution_session_mode()
 
+    dispatch_user_request = None
 
+    # SOPHYANE_OBSERVABLE_TUI_AUTO_TOP_LEVEL_DISPATCH_V2
+    #
+    # Auto owns the original user request.  Its SLI/local/cloud race workers
+    # construct their own isolated capabilities/providers, so constructing a
+    # conventional fallback provider here would be redundant and could
+    # reintroduce startup/fallback failures before the race even begins.
+    if session_mode == "race":
+        workspace = Path.cwd().resolve()
+        tui_holder = {}
+
+        def ask(message: str) -> AgentResponse:
+            raise RuntimeError(
+                "Auto mode low-level provider callback was invoked. "
+                "Original user requests must use dispatch_user_request()."
+            )
+
+        def dispatch_user_request(message: str) -> AgentResponse:
+            # SOPHYANE_AUTO_RACE_LEARNING_HANDOFF_V1
+            #
+            # Auto mode bypasses run_structured_loop and therefore also
+            # bypasses runtime_orchestration_patch.learning_loop. Capture
+            # the authoritative workspace transition here so every
+            # successful top-level adaptive race can be learned exactly
+            # once after verified execution has completed.
+            import time
+            import uuid
+
+            from sophyane.runtime_orchestration_patch import _snapshot
+
+            before = _snapshot(workspace)
+            started = time.monotonic()
+
+            result = _run_adaptive_race_request(
+                message,
+                workspace=workspace,
+                config=config,
+                progress=tui_holder["app"].progress,
+            )
+
+            if result.get("ok"):
+                try:
+                    from sophyane.sli_learner import learn_execution
+                    from sophyane.sli_schema import ensure_current_schema
+
+                    ensure_current_schema()
+
+                    winner = result.get("winner")
+                    worker = getattr(winner, "worker", None)
+
+                    learning_result = (
+                        str(result.get("answer") or "").strip()
+                        or (
+                            "Adaptive race completed successfully"
+                            + (
+                                f" via {worker}."
+                                if worker
+                                else "."
+                            )
+                            + f" Attempts: {result.get('attempts', 0)}."
+                            + f" Applied: {len(result.get('applied') or [])}."
+                        )
+                    )
+
+                    learned = learn_execution(
+                        trace_id=(
+                            "auto-race-"
+                            + uuid.uuid4().hex[:12]
+                        ),
+                        request=message,
+                        workspace_before=before,
+                        workspace_after=_snapshot(workspace),
+                        status="succeeded",
+                        reward=1.0,
+                        result=learning_result,
+                        elapsed_seconds=(
+                            time.monotonic() - started
+                        ),
+                    )
+
+                    tui_holder["app"].progress(
+                        "SLI recorded adaptive race execution "
+                        f"{learned.get('trace_id')} "
+                        "reward="
+                        f"{float(learned.get('quality_reward', 0.0)):+.2f}"
+                    )
+
+                except Exception as error:  # noqa: BLE001
+                    tui_holder["app"].progress(
+                        "SLI adaptive race recording skipped safely: "
+                        f"{type(error).__name__}: {error}"
+                    )
+                direct_answer = str(
+                    result.get("answer") or ""
+                ).strip()
+
+                if direct_answer:
+                    return AgentResponse(direct_answer)
+
+                winner = result.get("winner")
+                worker = getattr(winner, "worker", None)
+
+                summary = (
+                    "Adaptive race completed successfully"
+                    + (
+                        f" via {worker}."
+                        if worker
+                        else "."
+                    )
+                    + f" Attempts: {result.get('attempts', 0)}."
+                    + f" Applied: {len(result.get('applied') or [])}."
+                )
+                return AgentResponse(summary)
+
+            error = str(
+                result.get("error")
+                or "adaptive race produced no verified result"
+            )
+            return AgentResponse(
+                f"Adaptive race failed safely: {error}"
+            )
+
+    else:
+        # Explicit provider modes retain the conventional provider-backed
+        # SophyaneAgent path.
+        agent = SophyaneAgent(
+            create_provider(config),
+            MemoryStore(),
+            logger,
+        )
+        ask = agent.ask
+
+    app = ObservableTUI(
+        config=config,
+        ask=ask,
+        handle_internal=handle_internal_command,
+        dispatch_user_request=dispatch_user_request,
+    )
+
+    if session_mode == "race":
+        tui_holder["app"] = app
+
+    return app.run()

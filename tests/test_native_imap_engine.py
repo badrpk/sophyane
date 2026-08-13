@@ -106,10 +106,9 @@ def _client(
 
 def test_real_imap_login_select_search_fetch(
     monkeypatch,
+    postgres_test_dsn,
 ) -> None:
-    dsn = os.environ[
-        "SOPHYANE_POSTGRES_DSN"
-    ]
+    dsn = postgres_test_dsn
 
     schema = (
         "imap_test_"

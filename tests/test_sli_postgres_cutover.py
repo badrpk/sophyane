@@ -88,10 +88,9 @@ def _source(
 def test_prepare_verify_and_rollback_without_runtime_cutover(
     tmp_path: Path,
     monkeypatch,
+    postgres_test_dsn,
 ) -> None:
-    dsn = os.environ[
-        "SOPHYANE_POSTGRES_DSN"
-    ]
+    dsn = postgres_test_dsn
 
     schema = (
         "sli_cutover_test_"
@@ -183,10 +182,9 @@ def test_prepare_verify_and_rollback_without_runtime_cutover(
 def test_prepare_refuses_existing_schema(
     tmp_path: Path,
     monkeypatch,
+    postgres_test_dsn,
 ) -> None:
-    dsn = os.environ[
-        "SOPHYANE_POSTGRES_DSN"
-    ]
+    dsn = postgres_test_dsn
 
     schema = (
         "sli_cutover_test_"
@@ -245,6 +243,7 @@ def test_prepare_refuses_existing_schema(
 def test_synchronize_postgres_to_sqlite_appends_exact_delta(
     tmp_path,
     monkeypatch,
+    postgres_test_dsn,
 ):
     monkeypatch.setenv(
         "SOPHYANE_SLI_ATOMIC_LEARNING",
@@ -444,6 +443,7 @@ def test_synchronize_postgres_to_sqlite_appends_exact_delta(
 
 def test_synchronize_postgres_to_sqlite_is_idempotent(
     tmp_path,
+    postgres_test_dsn,
 ):
     import sqlite3
 
@@ -538,6 +538,7 @@ def test_synchronize_postgres_to_sqlite_is_idempotent(
 
 def test_synchronize_postgres_to_sqlite_refuses_conflict(
     tmp_path,
+    postgres_test_dsn,
 ):
     import sqlite3
 
@@ -638,8 +639,9 @@ def test_synchronize_postgres_to_sqlite_refuses_conflict(
             store.drop_schema()
 
 
-def test_synchronize_postgres_to_sqlite_refuses_noncontiguous_memory_ids(
+def test_synchronize_postgres_to_sqlite_accepts_forward_id_gap(
     tmp_path,
+    postgres_test_dsn,
 ):
     import sqlite3
 
@@ -691,58 +693,234 @@ def test_synchronize_postgres_to_sqlite_refuses_noncontiguous_memory_ids(
             store=store,
         )
 
+        baseline = store.export_snapshot()
+
         payload = dict(
-            store.export_snapshot()[
+            baseline[
                 "memories"
             ][-1]
         )
 
-        payload[
-            "id"
-        ] = (
-            int(
-                payload["id"]
-            )
+        highest_id = int(
+            payload["id"]
+        )
+
+        sparse_id = (
+            highest_id
             + 2
         )
 
         payload[
+            "id"
+        ] = sparse_id
+
+        payload[
             "request"
-        ] = "non-contiguous rollback row"
+        ] = "forward-gap rollback row"
 
         store.import_memory(
             payload
         )
 
-        before = sqlite_snapshot(
-            sqlite_path
+        result = cutover.synchronize_postgres_to_sqlite(
+            sqlite_path=sqlite_path,
+            store=store,
         )
 
-        import pytest
-
-        with pytest.raises(
-            RuntimeError,
-            match="not one contiguous append-only sequence",
-        ):
-            cutover.synchronize_postgres_to_sqlite(
-                sqlite_path=sqlite_path,
-                store=store,
-            )
+        assert result["state"] == "synchronized"
+        assert result["memories_added"] == 1
 
         after = sqlite_snapshot(
             sqlite_path
         )
 
-        assert before == after
+        ids = {
+            int(row["id"])
+            for row in after["memories"]
+        }
+
+        assert sparse_id in ids
+        assert (
+            highest_id + 1
+        ) not in ids
+
+        assert after == store.export_snapshot()
 
     finally:
         if store.schema_exists():
             store.drop_schema()
 
 
+def test_synchronize_postgres_to_sqlite_accepts_event20_style_sparse_append(
+    tmp_path,
+    postgres_test_dsn,
+):
+    import sqlite3
+
+    from sophyane import sli
+    import sophyane.sli_cutover as cutover
+    from sophyane.sli_migrate_postgres import (
+        migrate,
+        sqlite_snapshot,
+    )
+    from sophyane.sli_postgres import (
+        PostgresSLIStore,
+    )
+
+    sqlite_path = (
+        tmp_path
+        / "event20-sparse.db"
+    )
+
+    source = sqlite3.connect(
+        f"file:{sli.DB_PATH.resolve()}?mode=ro",
+        uri=True,
+    )
+
+    target = sqlite3.connect(
+        sqlite_path
+    )
+
+    try:
+        source.backup(
+            target
+        )
+
+    finally:
+        target.close()
+        source.close()
+
+    schema = (
+        "sli_cutover_test_event20_sparse_"
+        + __import__("uuid").uuid4().hex[:12]
+    )
+
+    store = PostgresSLIStore(
+        schema=schema,
+    )
+
+    try:
+        migrate(
+            sqlite_path=sqlite_path,
+            store=store,
+        )
+
+        baseline = sqlite_snapshot(
+            sqlite_path
+        )
+
+        highest_sqlite_id = max(
+            int(row["id"])
+            for row in baseline["memories"]
+        )
+
+        #
+        # Reproduce the important Event #20 topology:
+        #
+        # SQLite ends at N.
+        # PostgreSQL receives one legitimate new memory at N+6.
+        # IDs N+1 through N+5 do not need to exist.
+        #
+        sparse_id = (
+            highest_sqlite_id
+            + 6
+        )
+
+        payload = dict(
+            store.export_snapshot()[
+                "memories"
+            ][-1]
+        )
+
+        payload["id"] = sparse_id
+        payload["request"] = (
+            "event20 sparse append regression"
+        )
+
+        store.import_memory(
+            payload
+        )
+
+        result = (
+            cutover.synchronize_postgres_to_sqlite(
+                sqlite_path=sqlite_path,
+                store=store,
+            )
+        )
+
+        print(
+            "SYNC_RESULT =",
+            result,
+        )
+
+        after = sqlite_snapshot(
+            sqlite_path
+        )
+
+        pg_after = store.export_snapshot()
+
+        ids = sorted(
+            int(row["id"])
+            for row in after["memories"]
+        )
+
+        print(
+            "HIGHEST_SQLITE_BEFORE =",
+            highest_sqlite_id,
+        )
+
+        print(
+            "SPARSE_ID =",
+            sparse_id,
+        )
+
+        print(
+            "IDS_AFTER =",
+            ids,
+        )
+
+        assert sparse_id in ids
+
+        for missing_id in range(
+            highest_sqlite_id + 1,
+            sparse_id,
+        ):
+            assert missing_id not in ids
+
+        assert after == pg_after
+
+        #
+        # A second synchronization must be a no-op.
+        #
+        second = (
+            cutover.synchronize_postgres_to_sqlite(
+                sqlite_path=sqlite_path,
+                store=store,
+            )
+        )
+
+        print(
+            "SECOND_SYNC_RESULT =",
+            second,
+        )
+
+        final = sqlite_snapshot(
+            sqlite_path
+        )
+
+        assert final == after
+        assert final == store.export_snapshot()
+
+    finally:
+        if store.schema_exists():
+            store.drop_schema()
+
+
+
 def test_rollback_synchronized_preserves_postgres_only_learning(
     tmp_path,
     monkeypatch,
+    postgres_test_dsn,
 ):
     monkeypatch.setenv(
         "SOPHYANE_SLI_ATOMIC_LEARNING",
