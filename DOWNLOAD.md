@@ -1,4 +1,4 @@
-# Download Sophyane 21.1.2
+# Download Sophyane 21.2.0
 
 This is the single download page for every supported device.
 
@@ -17,8 +17,7 @@ model:
 - installer launchers are recreated so an older executable cannot shadow the
   newly installed release.
 
-Running the same command again is therefore the supported upgrade path. You do
-not need to uninstall Sophyane manually first.
+Running the same command again is therefore the supported upgrade path. You do not need to uninstall Sophyane manually first.
 
 ## Linux, macOS, ChromeOS Linux, Android Termux, and UserLAnd
 
