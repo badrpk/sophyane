@@ -34,6 +34,19 @@ _PY_REQUEST = re.compile(
 )
 
 
+# SOPHYANE_EXISTING_PYTEST_REPAIR_V1
+#
+# Existing-code repair is intentionally separate from creation.
+# Creation may construct a RED source/test pair. Existing repair
+# treats the already-present pytest suite as immutable authority.
+_PY_REPAIR_REQUEST = re.compile(
+    r"\b(?:repair|fix|correct|debug|update)\s+"
+    r"(?P<filename>[A-Za-z0-9_.-]+\.py)\b"
+    r"(?P<rest>.*)",
+    re.I | re.S,
+)
+
+
 _BUILD_CUES = re.compile(
     r"\b(?:compile|build|run|execute|test)\b",
     re.I,
@@ -3400,6 +3413,583 @@ def _python_action(
     )
 
 
+
+
+# SOPHYANE_REPAIR_TRANSACTION_V1
+
+@dataclass
+class _RepairTransaction:
+    """Transactional authority boundary for existing-code repair."""
+
+    workspace: Path
+    writable: set[Path]
+    protected: set[Path]
+    snapshot: dict[Path, bytes]
+
+    @classmethod
+    def begin(
+        cls,
+        *,
+        workspace: Path,
+        writable: set[Path],
+        protected: set[Path],
+    ) -> "_RepairTransaction":
+        all_paths = (
+            writable
+            | protected
+        )
+
+        snapshot = {
+            path: (
+                path.read_bytes()
+                if path.exists()
+                else b""
+            )
+            for path in all_paths
+        }
+
+        return cls(
+            workspace=workspace,
+            writable=writable,
+            protected=protected,
+            snapshot=snapshot,
+        )
+
+    def protected_changes(self) -> list[str]:
+        changed: list[str] = []
+
+        for path in sorted(
+            self.protected,
+            key=lambda item: str(item),
+        ):
+            before = self.snapshot[path]
+
+            if not path.exists():
+                changed.append(
+                    str(
+                        path.relative_to(
+                            self.workspace
+                        )
+                    )
+                )
+                continue
+
+            if path.read_bytes() != before:
+                changed.append(
+                    str(
+                        path.relative_to(
+                            self.workspace
+                        )
+                    )
+                )
+
+        return changed
+
+    def unexpected_files(
+        self,
+        *,
+        before_files: set[Path],
+    ) -> list[str]:
+        now = {
+            path
+            for path in self.workspace.rglob("*")
+            if path.is_file()
+            and "__pycache__" not in path.parts
+            and ".pytest_cache" not in path.parts
+        }
+
+        allowed_new = (
+            self.writable
+            | self.protected
+        )
+
+        unexpected = (
+            now
+            - before_files
+            - allowed_new
+        )
+
+        return sorted(
+            str(
+                path.relative_to(
+                    self.workspace
+                )
+            )
+            for path in unexpected
+        )
+
+    def rollback(self) -> None:
+        for path, content in self.snapshot.items():
+            if content:
+                path.parent.mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
+
+                path.write_bytes(
+                    content
+                )
+
+            elif path.exists():
+                path.unlink()
+
+    def verify_authority(self) -> None:
+        changed = self.protected_changes()
+
+        if changed:
+            raise RuntimeError(
+                "Repair violated immutable authority: "
+                + ", ".join(changed)
+            )
+
+
+def _python_existing_pytest_repair_action(
+    request: str,
+    match: re.Match[str],
+    workspace: Path,
+    *,
+    memory_context: object | None = None,
+) -> CodingResult:
+    """Repair one existing Python module under immutable existing pytest."""
+
+    filename = match.group(
+        "filename"
+    )
+
+    target = _safe_child(
+        workspace,
+        filename,
+    )
+
+    if not target.is_file():
+        return CodingResult(
+            handled=True,
+            ok=False,
+            capability=(
+                "development."
+                "python_existing_pytest_repair"
+            ),
+            summary=(
+                f"Existing repair target {filename} does not exist."
+            ),
+            workspace=str(workspace),
+            files=[],
+            evidence=[],
+            error="Existing production target is missing.",
+        )
+
+    requested = _requested_python_function(
+        request
+    )
+
+    if requested is None:
+        return CodingResult(
+            handled=True,
+            ok=False,
+            capability=(
+                "development."
+                "python_existing_pytest_repair"
+            ),
+            summary=(
+                "Existing repair requires an explicit "
+                "requested function signature."
+            ),
+            workspace=str(workspace),
+            files=[],
+            evidence=[],
+            error=(
+                "Could not extract requested function signature."
+            ),
+        )
+
+    function_name, _parameters = requested
+
+    test_files = sorted(
+        path
+        for path in workspace.glob(
+            "test_*.py"
+        )
+        if path.is_file()
+    )
+
+    if not test_files:
+        return CodingResult(
+            handled=True,
+            ok=False,
+            capability=(
+                "development."
+                "python_existing_pytest_repair"
+            ),
+            summary=(
+                "Existing repair requires an existing pytest suite."
+            ),
+            workspace=str(workspace),
+            files=[target.name],
+            evidence=[],
+            error="No existing test_*.py files were found.",
+        )
+
+    # Existing tests are external authority. The model never receives
+    # filesystem write authority; nevertheless snapshot every test and
+    # fail closed if anything changes.
+    immutable_tests = {
+        path: path.read_bytes()
+        for path in test_files
+    }
+
+    original_source = target.read_text(
+        encoding="utf-8"
+    )
+
+    # SOPHYANE_EXISTING_REPAIR_TRANSACTION_WIRING_V1
+    #
+    # Existing repair is transactional:
+    # - only the requested production target is writable;
+    # - every existing test is immutable authority;
+    # - all other pre-existing Python files are protected;
+    # - failed bounded repair restores the original snapshot.
+    protected_paths = set(
+        test_files
+    )
+
+    protected_paths.update(
+        candidate
+        for candidate in workspace.glob("*.py")
+        if (
+            candidate.is_file()
+            and candidate != target
+        )
+    )
+
+    transaction = _RepairTransaction.begin(
+        workspace=workspace,
+        writable={
+            target,
+        },
+        protected=protected_paths,
+    )
+
+    files_before_transaction = {
+        candidate
+        for candidate in workspace.rglob("*")
+        if candidate.is_file()
+        and "__pycache__" not in candidate.parts
+        and ".pytest_cache" not in candidate.parts
+    }
+
+    evidence: list[CommandEvidence] = []
+
+    pytest_command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "-q",
+        *[
+            path.name
+            for path in test_files
+        ],
+    ]
+
+    baseline = _run(
+        pytest_command,
+        cwd=workspace,
+        timeout=120,
+    )
+
+    evidence.append(
+        baseline
+    )
+
+    if baseline.exit_code == 0:
+        return CodingResult(
+            handled=True,
+            ok=False,
+            capability=(
+                "development."
+                "python_existing_pytest_repair"
+            ),
+            summary=(
+                "Existing pytest suite is already GREEN; "
+                "no objective repair target was observed."
+            ),
+            workspace=str(workspace),
+            files=[target.name],
+            evidence=evidence,
+            error=(
+                "Repair refused because objective baseline "
+                "pytest did not demonstrate a failure."
+            ),
+        )
+
+    _record_svr_pytest_outcome(
+        correct=False,
+        phase="existing_red",
+        exit_code=baseline.exit_code,
+        stdout=baseline.stdout,
+    )
+
+    failure_output = (
+        baseline.stdout
+        + "\n"
+        + baseline.stderr
+    )
+
+    current_source = original_source
+    last_error = ""
+    last_diagnosis = ""
+
+    # Put the target module's conventional test first when available,
+    # then append the rest of the regression suite. This gives the repair
+    # worker local evidence first while preserving full-suite authority.
+    expected_test_name = (
+        f"test_{Path(filename).stem}.py"
+    )
+
+    ordered_tests = sorted(
+        test_files,
+        key=lambda path: (
+            path.name != expected_test_name,
+            path.name,
+        ),
+    )
+
+    test_source = "\n\n".join(
+        (
+            f"# FILE: {path.name}\n"
+            + path.read_text(
+                encoding="utf-8"
+            )
+        )
+        for path in ordered_tests
+    )
+
+    for attempt in range(3):
+        # Verify test authority before every repair call.
+        try:
+            transaction.verify_authority()
+        except RuntimeError as error:
+            transaction.rollback()
+
+            return CodingResult(
+                handled=True,
+                ok=False,
+                capability=(
+                    "development."
+                    "python_existing_pytest_repair"
+                ),
+                summary=(
+                    "Existing repair stopped because "
+                    "transaction authority was violated."
+                ),
+                workspace=str(workspace),
+                files=[target.name],
+                evidence=evidence,
+                error=str(error),
+            )
+
+        try:
+            diagnosis, repaired_source = (
+                _adaptive_repair_source(
+                    request=request,
+                    filename=filename,
+                    function_name=function_name,
+                    current_source=current_source,
+                    test_source=test_source,
+                    failure_output=failure_output,
+                    prior_error=last_error,
+                    memory_context=memory_context,
+                    repair_round=attempt,
+                )
+            )
+
+            before_ast = ast.dump(
+                ast.parse(
+                    current_source
+                ),
+                include_attributes=False,
+            )
+
+            after_ast = ast.dump(
+                ast.parse(
+                    repaired_source
+                ),
+                include_attributes=False,
+            )
+
+            if before_ast == after_ast:
+                raise ValueError(
+                    "Repair produced no semantic source change."
+                )
+
+            target.write_text(
+                repaired_source,
+                encoding="utf-8",
+            )
+
+            transaction.verify_authority()
+
+            unexpected = transaction.unexpected_files(
+                before_files=files_before_transaction,
+            )
+
+            if unexpected:
+                raise ValueError(
+                    "Repair created unauthorized file(s): "
+                    + ", ".join(unexpected)
+                )
+
+            pycache = (
+                workspace
+                / "__pycache__"
+            )
+
+            if pycache.is_dir():
+                shutil.rmtree(
+                    pycache,
+                    ignore_errors=True,
+                )
+
+            green_started = (
+                time.perf_counter()
+            )
+
+            result = _run(
+                pytest_command,
+                cwd=workspace,
+                timeout=120,
+            )
+
+            _record_adaptive_model_call(
+                phase="existing_green_pytest",
+                round_index=attempt,
+                attempt_index=attempt,
+                temperature=0.0,
+                latency_seconds=(
+                    time.perf_counter()
+                    - green_started
+                ),
+                outcome=(
+                    "passed"
+                    if result.exit_code == 0
+                    else "failed"
+                ),
+                error=(
+                    ""
+                    if result.exit_code == 0
+                    else (
+                        result.stdout
+                        + "\n"
+                        + result.stderr
+                    )[-800:]
+                ),
+            )
+
+            evidence.append(
+                result
+            )
+
+            _record_svr_pytest_outcome(
+                correct=(
+                    result.exit_code == 0
+                ),
+                phase=(
+                    "existing_green"
+                    if result.exit_code == 0
+                    else "existing_repair_red"
+                ),
+                exit_code=result.exit_code,
+                stdout=result.stdout,
+            )
+
+            last_diagnosis = diagnosis
+
+            if result.exit_code == 0:
+                # One final immutable-authority check before accepting.
+                transaction.verify_authority()
+
+                unexpected = transaction.unexpected_files(
+                    before_files=files_before_transaction,
+                )
+
+                if unexpected:
+                    raise ValueError(
+                        "Unauthorized file(s) existed before "
+                        "GREEN acceptance: "
+                        + ", ".join(unexpected)
+                    )
+
+                return CodingResult(
+                    handled=True,
+                    ok=True,
+                    capability=(
+                        "development."
+                        "python_existing_pytest_repair"
+                    ),
+                    summary=(
+                        f"Repaired existing {target.name} under "
+                        "immutable existing pytest authority; "
+                        "objectively observed RED and full-suite GREEN. "
+                        "Diagnosis: "
+                        f"{last_diagnosis[:300]}"
+                    ),
+                    workspace=str(workspace),
+                    files=[target.name],
+                    evidence=evidence,
+                )
+
+            current_source = repaired_source
+
+            failure_output = (
+                result.stdout
+                + "\n"
+                + result.stderr
+            )
+
+            last_error = (
+                _evidence_grounded_diagnosis(
+                    "",
+                    failure_output,
+                )
+            )
+
+        except Exception as error:
+            last_error = str(
+                error
+            )
+
+            # A rejected candidate must not contaminate the next round.
+            # Restore the requested production file to the last known
+            # source while immutable authority remains transaction-owned.
+            target.write_text(
+                current_source,
+                encoding="utf-8",
+            )
+
+    # Fail closed transactionally if bounded repair cannot establish
+    # full-suite GREEN.
+    transaction.rollback()
+
+    return CodingResult(
+        handled=True,
+        ok=False,
+        capability=(
+            "development."
+            "python_existing_pytest_repair"
+        ),
+        summary=(
+            "Existing pytest repair exhausted bounded attempts "
+            "without full-suite GREEN; original source restored."
+        ),
+        workspace=str(workspace),
+        files=[target.name],
+        evidence=evidence,
+        error=(
+            last_error
+            or failure_output[-2000:]
+        ),
+    )
+
+
 def try_coding_request(
     request: str,
     *,
@@ -3416,6 +4006,39 @@ def try_coding_request(
     cpp = _CPP_REQUEST.search(text)
     if cpp:
         return _cpp_action(text, cpp, root)
+
+    repair = _PY_REPAIR_REQUEST.search(text)
+
+    if repair:
+        if (
+            _TDD_CUES.search(text)
+            and _REPAIR_CUES.search(text)
+        ):
+            return _python_existing_pytest_repair_action(
+                text,
+                repair,
+                root,
+                memory_context=memory_context,
+            )
+
+        return CodingResult(
+            handled=True,
+            ok=False,
+            capability=(
+                "development."
+                "python_existing_pytest_repair"
+            ),
+            summary=(
+                "Existing Python repair requires objective "
+                "pytest/repair instructions."
+            ),
+            workspace=str(root),
+            files=[],
+            evidence=[],
+            error=(
+                "Repair request lacked pytest/TDD authority cues."
+            ),
+        )
 
     python = _PY_REQUEST.search(text)
     if python:

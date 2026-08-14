@@ -1,31 +1,35 @@
-from sophyane.execution_runtime import _normalize_action
+from sophyane.execution_runtime import (
+    _normalize_action,
+)
 
 
 def test_invalid_string_action_does_not_raise_unbound_local() -> None:
-    value = {
-        "action": "build_project",
-        "goal": "Create a SaaS",
-    }
+    result = _normalize_action(
+        {
+            "action": "not_a_real_action",
+        }
+    )
 
-    assert _normalize_action(value) is None
+    assert result is None
 
 
 def test_valid_string_action_is_normalized() -> None:
-    value = {
-        "action": "write_file",
-        "path": "app.py",
-        "content": "print('ok')",
+    result = _normalize_action(
+        {
+            "action": "write_file",
+            "path": "README.md",
+            "content": "hello",
+        }
+    )
+
+    assert result == {
+        "type": "write_file",
+        "path": "README.md",
+        "content": "hello",
     }
 
-    result = _normalize_action(value)
 
-    assert result is not None
-    assert result["type"] == "write_file"
-    assert "action" not in result
-    assert result["path"] == "app.py"
-
-
-def test_answer_alias_becomes_respond() -> None:
+def test_string_answer_alias_becomes_respond() -> None:
     result = _normalize_action(
         {
             "action": "answer",
@@ -33,9 +37,10 @@ def test_answer_alias_becomes_respond() -> None:
         }
     )
 
-    assert result is not None
-    assert result["type"] == "respond"
-    assert "action" not in result
+    assert result == {
+        "type": "respond",
+        "message": "done",
+    }
 
 
 def test_nested_action_still_normalizes() -> None:
@@ -51,3 +56,20 @@ def test_nested_action_still_normalizes() -> None:
     assert result is not None
     assert result["type"] == "run_command"
     assert result["command"] == "python3 -V"
+
+
+def test_invalid_string_action_can_fall_through_to_nested_action() -> None:
+    result = _normalize_action(
+        {
+            "action": "invalid",
+            "next_action": {
+                "type": "respond",
+                "message": "fallback",
+            },
+        }
+    )
+
+    assert result == {
+        "type": "respond",
+        "message": "fallback",
+    }

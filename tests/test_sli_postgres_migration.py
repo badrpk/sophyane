@@ -133,10 +133,9 @@ def _source_database(
 
 def test_sqlite_to_postgres_migration_is_exact_and_idempotent(
     tmp_path: Path,
+    postgres_test_dsn,
 ) -> None:
-    dsn = os.environ[
-        "SOPHYANE_POSTGRES_DSN"
-    ]
+    dsn = postgres_test_dsn
 
     schema = (
         "sli_phase2g_"

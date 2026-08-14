@@ -102,10 +102,9 @@ def _drop_schema(
 def mail_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    postgres_test_dsn,
 ):
-    dsn = os.environ[
-        "SOPHYANE_POSTGRES_DSN"
-    ]
+    dsn = postgres_test_dsn
 
     schema = (
         "mail_v4_test_"

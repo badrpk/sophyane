@@ -9,7 +9,7 @@ description = "Local-first AI software engineering platform with durable executi
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-authors = [{name = "Badar Uzaman"}]
+authors = [{name = "Badar Uzaman", email = "badrpk@gmail.com"}]
 keywords = ["ai", "coding-agent", "repository", "semantic-index", "self-repair", "multi-agent", "llm", "autonomous", "local-ai", "validated-execution", "local-first", "sandbox", "provider-dispatch", "subagents", "evaluation", "tracing", "compaction", "coi", "mcp", "orchestration", "release-gate", "audit", "benchmark", "sli", "lstm", "intent-routing", "state-graph", "checkpointing", "durable-execution", "browser-verification", "software-engineering"]
 classifiers = [
   "Development Status :: 4 - Beta",

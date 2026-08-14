@@ -80,11 +80,73 @@ def test_option_two_disables_all_cloud_fallbacks(
         lambda: True,
     )
 
-    with patch(
-        "builtins.input",
-        return_value="2",
-    ):
-        startup_policy.choose_startup_provider()
+    # Current five-mode startup menu:
+    #   2 = SLI Graph
+    #   3 = strict Local LLM
+    #
+    # choose_startup_provider() intentionally writes session policy
+    # directly into os.environ. Preserve the caller's environment
+    # explicitly so this test cannot leak its selected mode into
+    # later tests in the same pytest process.
+    env_keys = (
+        "SOPHYANE_SESSION_MODE",
+        "SOPHYANE_SLI_GRAPH",
+        "SOPHYANE_SLI_ONLY",
+        "SOPHYANE_LOCAL_ONLY",
+        "SOPHYANE_DISABLE_CLOUD_FALLBACK",
+    )
+
+    missing = object()
+    original_env = {
+        key: startup_policy.os.environ.get(
+            key,
+            missing,
+        )
+        for key in env_keys
+    }
+
+    try:
+        for key in env_keys:
+            startup_policy.os.environ.pop(
+                key,
+                None,
+            )
+
+        with patch(
+            "builtins.input",
+            return_value="3",
+        ):
+            startup_policy.choose_startup_provider()
+
+        assert (
+            startup_policy.os.environ[
+                "SOPHYANE_SESSION_MODE"
+            ]
+            == "local_llm"
+        )
+        assert (
+            startup_policy.os.environ[
+                "SOPHYANE_LOCAL_ONLY"
+            ]
+            == "1"
+        )
+        assert (
+            startup_policy.os.environ[
+                "SOPHYANE_DISABLE_CLOUD_FALLBACK"
+            ]
+            == "1"
+        )
+    finally:
+        for key, value in original_env.items():
+            if value is missing:
+                startup_policy.os.environ.pop(
+                    key,
+                    None,
+                )
+            else:
+                startup_policy.os.environ[
+                    key
+                ] = value
 
     saved = json.loads(
         llm_file.read_text(encoding="utf-8")

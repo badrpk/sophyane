@@ -418,6 +418,189 @@ CAPABILITY_ONTOLOGY: dict[str, dict[str, Any]] = {
         },
     },
 
+    # SOPHYANE_OPERATIONAL_CAPABILITY_ONTOLOGY_V1
+    "process_supervision": {
+        "concepts": {
+            "process",
+            "processes",
+            "background process",
+            "daemon",
+            "service",
+            "monitor",
+            "monitoring",
+            "supervise",
+            "supervision",
+            "pid",
+            "long-running",
+        },
+        "signals": {
+            "subprocess",
+            "popen",
+            "poll(",
+            "pid",
+            "psutil",
+            "process",
+            "kill(",
+            "terminate(",
+            "wait(",
+        },
+        "preferred_languages": {
+            "python",
+            "shell",
+            "bash",
+        },
+        "placements": {
+            "python_module",
+            "module",
+            "function",
+            "script",
+            "compound",
+        },
+    },
+
+    "log_diagnostics": {
+        "concepts": {
+            "log",
+            "logs",
+            "crash log",
+            "daemon log",
+            "stderr",
+            "stdout",
+            "diagnose",
+            "diagnostic",
+            "failure",
+        },
+        "signals": {
+            "read_text",
+            "open(",
+            "stderr",
+            "stdout",
+            "tail",
+            "journalctl",
+            "log",
+            "traceback",
+        },
+        "preferred_languages": {
+            "python",
+            "shell",
+            "bash",
+        },
+        "placements": {
+            "python_module",
+            "module",
+            "function",
+            "script",
+            "compound",
+        },
+    },
+
+    "resource_diagnostics": {
+        "concepts": {
+            "memory",
+            "out-of-memory",
+            "oom",
+            "resource",
+            "resources",
+            "cpu",
+            "memory pressure",
+            "diagnose",
+        },
+        "signals": {
+            "memory",
+            "rss",
+            "psutil",
+            "oom",
+            "resource",
+            "getrusage",
+            "/proc/",
+        },
+        "preferred_languages": {
+            "python",
+            "shell",
+            "bash",
+        },
+        "placements": {
+            "python_module",
+            "module",
+            "function",
+            "script",
+            "compound",
+        },
+    },
+
+    "network_port_diagnostics": {
+        "concepts": {
+            "port",
+            "port-binding",
+            "bind",
+            "binding",
+            "socket",
+            "listen",
+            "conflict",
+            "address in use",
+        },
+        "signals": {
+            "socket",
+            "bind(",
+            "listen(",
+            "ss ",
+            "netstat",
+            "lsof",
+            "address already in use",
+            "eaddrinuse",
+        },
+        "preferred_languages": {
+            "python",
+            "shell",
+            "bash",
+        },
+        "placements": {
+            "python_module",
+            "module",
+            "function",
+            "script",
+            "compound",
+        },
+    },
+
+    "safe_command_execution": {
+        "concepts": {
+            "shell",
+            "command",
+            "commands",
+            "script",
+            "scripts",
+            "execute",
+            "corrective",
+            "remediation",
+            "safe",
+            "safety",
+            "guardrails",
+        },
+        "signals": {
+            "subprocess.run",
+            "subprocess.Popen",
+            "shlex",
+            "shell=False",
+            "check=True",
+            "timeout=",
+            "allowlist",
+            "denylist",
+        },
+        "preferred_languages": {
+            "python",
+            "shell",
+            "bash",
+        },
+        "placements": {
+            "python_module",
+            "module",
+            "function",
+            "script",
+            "compound",
+        },
+    },
+
     "http_endpoint": {
         "concepts": {
             "api",
@@ -687,6 +870,49 @@ def infer_target(request: str) -> tuple[str | None, str | None]:
         }
     ):
         return "javascript", "javascript_application"
+
+    # SOPHYANE_GENERIC_OPERATIONAL_TARGET_V1
+    #
+    # Infer an executable software target from strong operational/tool
+    # construction evidence even when the user does not name a language.
+    #
+    # Keep informational daemon/process questions untyped.
+    constructive = any(
+        marker in text
+        for marker in (
+            "build ",
+            "create ",
+            "develop ",
+            "generate ",
+            "implement ",
+            "produce ",
+            "provide ",
+            "write ",
+            "construct ",
+        )
+    )
+
+    operational_software = any(
+        cue in text
+        for cue in (
+            "terminal agent",
+            "terminal-access agent",
+            "daemon monitoring",
+            "daemon tool",
+            "operations agent",
+            "operational agent",
+            "shell automation",
+            "automation tool",
+            "command-line tool",
+            "command line tool",
+            "process monitoring",
+            "background process",
+            "corrective shell",
+        )
+    )
+
+    if constructive and operational_software:
+        return "python", "python_application"
 
     return None, None
 
@@ -1067,6 +1293,64 @@ def build_semantic_plan(request: str) -> SemanticPlan:
             if requirement.name not in forbidden
         ]
 
+    # SOPHYANE_OPERATIONAL_PLAN_BOUNDARY_V1
+    #
+    # Operational ontology concepts intentionally include broad vocabulary
+    # such as "command", "process", "log", and "script". Those terms improve
+    # retrieval once an operational software task is established, but must
+    # not independently turn unrelated browser, Rust, documentation, or
+    # general programming requests into operational-agent plans.
+    operational_capabilities = {
+        "process_supervision",
+        "log_diagnostics",
+        "resource_diagnostics",
+        "network_port_diagnostics",
+        "safe_command_execution",
+    }
+
+    operational_request = any(
+        cue in text
+        for cue in (
+            "terminal agent",
+            "terminal-access agent",
+            "daemon monitoring",
+            "daemon monitor",
+            "daemon crash",
+            "daemon log",
+            "daemon logs",
+            "background process",
+            "background processes",
+            "process monitoring",
+            "process monitor",
+            "process supervision",
+            "operations agent",
+            "operational agent",
+            "automation tool",
+            "shell automation",
+            "corrective shell",
+            "corrective command",
+            "corrective commands",
+            "safe corrective",
+            "port-binding",
+            "port binding",
+            "out-of-memory",
+            "memory pressure",
+            "crash log",
+            "crash logs",
+        )
+    )
+
+    if (
+        plan.target_language != "python"
+        or plan.target_artifact != "python_application"
+        or not operational_request
+    ):
+        plan.capabilities = [
+            requirement
+            for requirement in plan.capabilities
+            if requirement.name not in operational_capabilities
+        ]
+
     return plan
 
 
@@ -1145,6 +1429,92 @@ def _chunk_semantic_score(
 
     if plan.target_language and language == plan.target_language:
         score += 0.7
+
+    # SOPHYANE_PYTHON_SEMANTIC_EXECUTION_FIT_V1
+    #
+    # Semantic relevance identifies WHAT code is useful. For a Python
+    # application, ranking must also account for whether that retrieved
+    # evidence can participate directly in executable composition.
+    #
+    # This deliberately changes ranking rather than bypassing it:
+    # request/capability overlap and ontology signals remain authoritative.
+    if (
+        plan.target_language == "python"
+        and language == "python"
+    ):
+        raw_source = str(
+            getattr(chunk, "text", "")
+            or ""
+        )
+
+        source_bytes = len(
+            raw_source.encode(
+                "utf-8",
+                errors="replace",
+            )
+        )
+
+        executable = False
+
+        if (
+            raw_source.strip()
+            and source_bytes <= 16_000
+            and not _is_test_chunk(chunk)
+        ):
+            try:
+                compile(
+                    raw_source,
+                    f"<semantic-chunk:{_chunk_id(chunk)}>",
+                    "exec",
+                )
+                executable = True
+            except (
+                SyntaxError,
+                ValueError,
+                TypeError,
+            ):
+                executable = False
+
+        if executable:
+            # Executable components that already fit the downstream Python
+            # assembler are substantially more useful than equally relevant
+            # whole repositories/modules that assembly must later discard.
+            score += 2.4
+
+            if (
+                placement == "function"
+                or "::" in str(
+                    getattr(chunk, "path", "")
+                    or ""
+                )
+            ):
+                score += 0.8
+
+            if source_bytes <= 4_000:
+                score += 0.5
+
+        elif source_bytes > 16_000:
+            # Oversized evidence remains retrievable, but should not dominate
+            # executable alternatives for artifact construction.
+            score -= min(
+                3.5,
+                1.5
+                + (
+                    source_bytes - 16_000
+                )
+                / 50_000,
+            )
+
+        if (
+            str(
+                getattr(chunk, "path", "")
+                or ""
+            ).startswith("compound::")
+            or "/* RICH CHUNK:" in raw_source
+        ):
+            # Rich bundles are excellent retrieval evidence but are not
+            # executable Python components themselves.
+            score -= 1.5
 
     if requirement.name in path:
         score += 0.5
@@ -1613,6 +1983,479 @@ _FRAMEWORK_INTERNAL_PATHS = {
 # FINAL STRICT SEMANTIC EVIDENCE BOUNDARY
 # This definition intentionally overrides earlier retrieval functions.
 
+
+
+# ============================================================
+# SOPHYANE_STRICT_COMPATIBILITY_RECOVERY_V1
+#
+# Restored from origin/main during semantic merge recovery.
+# The local _final_* V3 implementation remains production
+# authority; these strict helpers preserve the public/test
+# discriminative-admission contract introduced remotely.
+# ============================================================
+
+_STRICT_SIGNALS = {
+    "document_shell": (
+        "<!doctype",
+        "<html",
+        "<body",
+    ),
+    "presentation": (
+        "<style",
+        "display:",
+        "grid",
+        "flex",
+        "class=",
+    ),
+    "application_state": (
+        "let ",
+        "const ",
+        "state",
+        "score",
+        "current",
+    ),
+    "user_input": (
+        "addeventlistener",
+        "onclick",
+        "onkeydown",
+        "keydown",
+        "keyup",
+        "pointerdown",
+        "touchstart",
+        "<input",
+        "<button",
+    ),
+    "rendering": (
+        "<canvas",
+        "getcontext",
+        "fillrect",
+        "drawimage",
+        "innerhtml",
+        "textcontent",
+        "appendchild",
+        "render",
+        "draw",
+    ),
+    "time_loop": (
+        "requestanimationframe",
+        "setinterval",
+        "settimeout",
+        "animate",
+        "tick",
+        "gameLoop".lower(),
+    ),
+    "rules_and_validation": (
+        "if ",
+        "correct",
+        "incorrect",
+        "answer",
+        "validate",
+        "collision",
+        "match",
+        "check",
+    ),
+    "progress_feedback": (
+        "score",
+        "progress",
+        "feedback",
+        "status",
+        "message",
+        "textcontent",
+    ),
+    "lifecycle_control": (
+        "restart",
+        "reset",
+        "initialize",
+        "init(",
+        "start",
+        "next",
+    ),
+    "data_model": (
+        "const ",
+        "let ",
+        "array",
+        "items",
+        "data",
+        "questions",
+        "sentences",
+        "words",
+        "json",
+    ),
+    "entry_point": (
+        "domcontentloaded",
+        "window.onload",
+        "<script",
+        "__main__",
+        "main(",
+        "initialize",
+        "init(",
+    ),
+    "http_endpoint": (
+        "@app.get",
+        "@app.post",
+        "fastapi(",
+        "apirouter(",
+        "app.get(",
+        "app.post(",
+        "jsonresponse",
+    ),
+    "error_handling": (
+        "try:",
+        "except ",
+        "raise ",
+    ),
+}
+
+_STRICT_STRONG_SIGNALS = {
+    "log_diagnostics": {
+        "read_text",
+        "tail",
+        "journalctl",
+        "traceback",
+    },
+    "network_port_diagnostics": {
+        "eaddrinuse",
+        "address already in use",
+        "socket",
+        "netstat",
+        "lsof",
+        "bind(",
+        "listen(",
+    },
+    "process_supervision": {
+        "terminate(",
+        "poll(",
+        "psutil",
+        "pid",
+        "wait(",
+        "kill(",
+        "subprocess",
+        "popen",
+    },
+    "safe_command_execution": {
+        "timeout=",
+        "shell=false",
+        "shlex",
+        "subprocess.popen",
+        "allowlist",
+        "subprocess.run",
+        "check=true",
+        "denylist",
+    },
+    "resource_diagnostics": {
+        "rss",
+        "psutil",
+        "getrusage",
+        "/proc/",
+        "oom",
+    },
+    "entry_point": {
+        "__main__",
+        "domcontentloaded",
+        "window.onload",
+        "main(",
+    },
+    "error_handling": {
+        "except ",
+        "try:",
+        "catch",
+        "raise ",
+        "throw",
+    },
+    "rules_and_validation": {
+        "validate",
+        "incorrect",
+        "collision",
+    },
+}
+
+_STRICT_BEHAVIORAL_EVIDENCE_GROUPS = {
+    "process_supervision": (
+        {
+            "popen",
+            "subprocess",
+            "pid",
+            "psutil",
+        },
+        {
+            "poll(",
+            "wait(",
+            "terminate(",
+            "kill(",
+        },
+    ),
+    "safe_command_execution": (
+        {
+            "subprocess.run",
+            "subprocess.popen",
+        },
+        {
+            "shell=false",
+            "timeout=",
+            "allowlist",
+            "denylist",
+            "shlex",
+        },
+    ),
+    "log_diagnostics": (
+        {
+            "journalctl",
+            "read_text",
+            "tail",
+        },
+        {
+            "log",
+            "stderr",
+            "stdout",
+            "traceback",
+        },
+    ),
+}
+
+def _strict_normalize_language(value) -> str:
+    language = str(value or "").strip().lower()
+
+    aliases = {
+        "js": "javascript",
+        "ts": "typescript",
+        "py": "python",
+        "htm": "html",
+    }
+
+    return aliases.get(language, language)
+
+def _strict_chunk_text(chunk) -> str:
+    return str(getattr(chunk, "text", "") or "").lower()
+
+def _strict_chunk_path(chunk) -> str:
+    return str(getattr(chunk, "path", "") or "").lower()
+
+def _strict_is_disallowed_chunk(chunk) -> bool:
+    path = _strict_chunk_path(chunk)
+    name = Path(path.split("::")[0]).name.lower()
+
+    if (
+        name.startswith("test_")
+        or name.endswith("_test.py")
+        or name.endswith(".test.js")
+    ):
+        return True
+
+    return any(part in path for part in _DISALLOWED_PATH_PARTS)
+
+def _strict_is_framework_internal(chunk) -> bool:
+    path = _strict_chunk_path(chunk).replace("\\", "/")
+    return any(part in path for part in _FRAMEWORK_INTERNAL_PATHS)
+
+def _strict_allowed_languages(plan, capability: str) -> set[str] | None:
+    if plan.target_artifact == "browser_application":
+        return _BROWSER_CAPABILITY_LANGUAGES.get(
+            capability,
+            _BROWSER_LANGUAGES,
+        )
+
+    if plan.target_language == "python":
+        return _PYTHON_CAPABILITY_LANGUAGES.get(
+            capability,
+            {"python"},
+        )
+
+    if plan.target_language:
+        return {str(plan.target_language).lower()}
+
+    return None
+
+def _strict_signal_present(
+    text: str,
+    signal: str,
+) -> bool:
+    """Match one semantic signal without identifier-substring collisions.
+
+    Signals may intentionally contain syntax such as ``poll(``,
+    ``timeout=``, ``subprocess.run`` or ``/proc/``.  Boundary checks
+    therefore apply only to identifier-like edges of the signal rather
+    than tokenizing the entire source language.
+    """
+    import re
+
+    haystack = str(text or "")
+    needle = str(signal or "")
+
+    if not needle:
+        return False
+
+    escaped = re.escape(
+        needle
+    )
+
+    left_boundary = (
+        r"(?<![A-Za-z0-9_])"
+        if (
+            needle[0].isalnum()
+            or needle[0] == "_"
+        )
+        else ""
+    )
+
+    right_boundary = (
+        r"(?![A-Za-z0-9_])"
+        if (
+            needle[-1].isalnum()
+            or needle[-1] == "_"
+        )
+        else ""
+    )
+
+    return bool(
+        re.search(
+            left_boundary
+            + escaped
+            + right_boundary,
+            haystack,
+            flags=re.IGNORECASE,
+        )
+    )
+
+def _strict_signal_count(chunk, capability: str) -> int:
+    text = _strict_chunk_text(chunk)
+    signals = _STRICT_SIGNALS.get(capability)
+
+    if not signals:
+        definition = CAPABILITY_ONTOLOGY.get(capability, {})
+        signals = tuple(definition.get("signals", ()))
+
+    return sum(
+        _strict_signal_present(
+            text,
+            str(signal),
+        )
+        for signal in signals
+    )
+
+def _strict_minimum_signals(capability: str) -> int:
+    if capability in {
+        "user_input",
+        "application_state",
+        "rules_and_validation",
+    }:
+        return 2
+
+    return 1
+
+def _strict_signal_hits(
+    chunk,
+    capability: str,
+) -> set[str]:
+    """Return normalized ontology signals present in the chunk."""
+    text = _strict_chunk_text(chunk)
+    signals = _STRICT_SIGNALS.get(capability)
+
+    if not signals:
+        definition = CAPABILITY_ONTOLOGY.get(capability, {})
+        signals = tuple(definition.get("signals", ()))
+
+    return {
+        str(signal).lower()
+        for signal in signals
+        if _strict_signal_present(
+            text,
+            str(signal),
+        )
+    }
+
+def _strict_strong_signal_count(
+    chunk,
+    capability: str,
+) -> int:
+    hits = _strict_signal_hits(chunk, capability)
+    strong = {
+        str(signal).lower()
+        for signal in _STRICT_STRONG_SIGNALS.get(
+            capability,
+            set(),
+        )
+    }
+    return len(hits & strong)
+
+def _strict_behavioral_group_hits(
+    chunk,
+    capability: str,
+) -> tuple[set[str], ...]:
+    """Return matching signals for each required behavioral evidence role."""
+    groups = _STRICT_BEHAVIORAL_EVIDENCE_GROUPS.get(
+        capability,
+        (),
+    )
+
+    if not groups:
+        return ()
+
+    text = _strict_chunk_text(chunk)
+
+    return tuple(
+        {
+            str(signal).lower()
+            for signal in group
+            if _strict_signal_present(
+                text,
+                str(signal),
+            )
+        }
+        for group in groups
+    )
+
+def _strict_has_behavioral_evidence(
+    chunk,
+    capability: str,
+) -> bool:
+    """Require evidence from every role defined for a behavioral capability."""
+    groups = _STRICT_BEHAVIORAL_EVIDENCE_GROUPS.get(
+        capability,
+    )
+
+    if not groups:
+        return True
+
+    hits = _strict_behavioral_group_hits(
+        chunk,
+        capability,
+    )
+
+    return bool(hits) and all(hits)
+
+def _strict_has_discriminative_evidence(
+    chunk,
+    capability: str,
+) -> bool:
+    """Whether evidence is specific enough to establish the capability."""
+    signal_count = _strict_signal_count(chunk, capability)
+
+    if signal_count < _strict_minimum_signals(capability):
+        return False
+
+    strong_signals = _STRICT_STRONG_SIGNALS.get(capability)
+
+    # Capabilities without a specialized evidence policy retain the existing
+    # ontology contract.
+    if not strong_signals:
+        return True
+
+    strong_count = _strict_strong_signal_count(
+        chunk,
+        capability,
+    )
+
+    if strong_count >= 1:
+        return _strict_has_behavioral_evidence(
+            chunk,
+            capability,
+        )
+
+    # Multiple broad signals may support ranking but are not sufficient to
+    # prove implementation of capabilities for which we have discriminative
+    # operational evidence.
+    return False
+
 _FINAL_BROWSER_ALLOWED = {
     "document_shell": {"html"},
     "presentation": {"html", "css", "javascript", "typescript"},
@@ -1785,6 +2628,323 @@ def _final_minimum_signals(capability: str) -> int:
     return 1
 
 
+
+# SOPHYANE_FINAL_DISCRIMINATIVE_ADMISSION_V3
+#
+# Capability admission belongs directly to the canonical final compatibility
+# policy. The historical _strict_* wrapper generation is intentionally absent.
+
+_FINAL_STRONG_SIGNALS = {
+    "process_supervision": {
+        "poll(",
+        "terminate(",
+        "wait(",
+        "kill(",
+        "psutil",
+    },
+    "log_diagnostics": {
+        "read_text",
+        "tail",
+        "journalctl",
+        "open(",
+    },
+    "resource_diagnostics": {
+        "rss",
+        "psutil",
+        "getrusage",
+        "/proc/",
+        "oom",
+    },
+    "network_port_diagnostics": {
+        "socket",
+        "bind(",
+        "listen(",
+        "connect_ex",
+        "netstat",
+        "lsof",
+        "eaddrinuse",
+        "address already in use",
+    },
+    "safe_command_execution": {
+        "shell=false",
+        "timeout=",
+        "allowlist",
+        "denylist",
+        "shlex",
+    },
+    "rules_and_validation": {
+        "validate",
+        "incorrect",
+        "collision",
+        "raise ",
+    },
+}
+
+
+def _final_signal_present(
+    text: str,
+    signal: str,
+) -> bool:
+    """Match a semantic signal without identifier-substring collisions."""
+
+    haystack = str(
+        text or ""
+    )
+
+    needle = str(
+        signal or ""
+    )
+
+    if not needle:
+        return False
+
+    escaped = re.escape(
+        needle
+    )
+
+    left = (
+        r"(?<![A-Za-z0-9_])"
+        if (
+            needle[0].isalnum()
+            or needle[0] == "_"
+        )
+        else ""
+    )
+
+    right = (
+        r"(?![A-Za-z0-9_])"
+        if (
+            needle[-1].isalnum()
+            or needle[-1] == "_"
+        )
+        else ""
+    )
+
+    return bool(
+        re.search(
+            left
+            + escaped
+            + right,
+            haystack,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _final_capability_signals(
+    capability: str,
+) -> tuple[str, ...]:
+    """Return canonical signals, falling back to the ontology."""
+
+    explicit = _FINAL_SIGNALS.get(
+        capability
+    )
+
+    if explicit is not None:
+        return tuple(
+            str(signal).lower()
+            for signal in explicit
+            if str(signal).strip()
+        )
+
+    definition = CAPABILITY_ONTOLOGY.get(
+        capability,
+        {},
+    )
+
+    return tuple(
+        str(signal).lower()
+        for signal in definition.get(
+            "signals",
+            (),
+        )
+        if str(signal).strip()
+    )
+
+
+def _final_signal_hits(
+    text: str,
+    capability: str,
+) -> set[str]:
+    return {
+        signal
+        for signal in _final_capability_signals(
+            capability
+        )
+        if _final_signal_present(
+            text,
+            signal,
+        )
+    }
+
+
+def _final_discriminative_evidence(
+    text: str,
+    capability: str,
+) -> bool:
+    """Require behavior-specific evidence for broad semantic capabilities."""
+
+    hits = _final_signal_hits(
+        text,
+        capability,
+    )
+
+    if len(hits) < _final_minimum_signals(
+        capability
+    ):
+        return False
+
+    low = str(
+        text or ""
+    ).lower()
+
+    if capability == "process_supervision":
+        process_evidence = any(
+            _final_signal_present(
+                low,
+                signal,
+            )
+            for signal in (
+                "subprocess",
+                "popen",
+                "pid",
+                "psutil",
+            )
+        )
+
+        lifecycle_evidence = any(
+            _final_signal_present(
+                low,
+                signal,
+            )
+            for signal in (
+                "poll(",
+                "terminate(",
+                "wait(",
+                "kill(",
+            )
+        )
+
+        return (
+            process_evidence
+            and lifecycle_evidence
+        )
+
+    if capability == "log_diagnostics":
+        access_evidence = any(
+            _final_signal_present(
+                low,
+                signal,
+            )
+            for signal in (
+                "read_text",
+                "tail",
+                "journalctl",
+                "open(",
+            )
+        )
+
+        diagnostic_evidence = any(
+            _final_signal_present(
+                low,
+                signal,
+            )
+            for signal in (
+                "traceback",
+                "error",
+                "exception",
+                "oom",
+                "log",
+            )
+        )
+
+        return (
+            access_evidence
+            and diagnostic_evidence
+        )
+
+    if capability == "resource_diagnostics":
+        return any(
+            _final_signal_present(
+                low,
+                signal,
+            )
+            for signal in (
+                "rss",
+                "psutil",
+                "getrusage",
+                "/proc/",
+                "oom",
+            )
+        )
+
+    if capability == "network_port_diagnostics":
+        return any(
+            _final_signal_present(
+                low,
+                signal,
+            )
+            for signal in (
+                "socket",
+                "bind(",
+                "listen(",
+                "connect_ex",
+                "netstat",
+                "lsof",
+                "eaddrinuse",
+                "address already in use",
+            )
+        )
+
+    if capability == "safe_command_execution":
+        command_execution = any(
+            _final_signal_present(
+                low,
+                signal,
+            )
+            for signal in (
+                "subprocess.run",
+                "subprocess.popen",
+            )
+        )
+
+        safety_controls = sum(
+            _final_signal_present(
+                low,
+                signal,
+            )
+            for signal in (
+                "shell=false",
+                "timeout=",
+                "allowlist",
+                "denylist",
+                "shlex",
+                "check=true",
+            )
+        )
+
+        return (
+            command_execution
+            and safety_controls >= 2
+        )
+
+    if capability == "rules_and_validation":
+        return any(
+            _final_signal_present(
+                low,
+                signal,
+            )
+            for signal in (
+                "validate",
+                "incorrect",
+                "collision",
+                "raise ",
+            )
+        )
+
+    return True
+
+
 def _final_compatible(
     chunk,
     plan,
@@ -1818,8 +2978,12 @@ def _final_compatible(
         ):
             return False
 
-    signals = _FINAL_SIGNALS.get(capability, ())
-
-    count = sum(signal in text for signal in signals)
-
-    return count >= _final_minimum_signals(capability)
+    # SOPHYANE_FINAL_ONTOLOGY_SIGNAL_AUTHORITY_V3
+    #
+    # Specialized capabilities retain _FINAL_SIGNALS overrides; new semantic
+    # capabilities inherit executable signals from CAPABILITY_ONTOLOGY.
+    # Admission itself remains behavioral/discriminative.
+    return _final_discriminative_evidence(
+        text,
+        capability,
+    )

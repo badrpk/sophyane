@@ -392,6 +392,278 @@ def _execution_policy(timeout: float, enabled: bool) -> str:
     return AUTONOMOUS_WORKER_POLICY.replace("10 seconds", f"{max(0.0, timeout):g} seconds")
 
 
+
+# SOPHYANE_SEMANTIC_GENERATION_BUDGET_POLICY_V1
+def _semantic_generation_budget(
+    prompt: str,
+    system: str,
+) -> int | None:
+    """Return the local output ceiling for compact semantic calls.
+
+    None preserves the provider's normal generation budget.
+    """
+    generic_artifact_call = bool(
+        re.search(
+            r"""["']mode["']\s*:\s*["']generic_artifact_generation["']""",
+            prompt,
+            flags=re.IGNORECASE,
+        )
+    )
+
+    planner_call = (
+        "planner" in system.lower()
+        and (
+            '"instruction"' in prompt
+            or '"planner_reset"' in prompt
+            or '"required_schema"' in prompt
+        )
+        and not generic_artifact_call
+    )
+
+    adaptive_action_call = (
+        "ADAPTIVE EXECUTION REPAIR FOR THE CURRENT TASK"
+        in prompt
+    )
+
+    adaptive_artifact_call = (
+        adaptive_action_call
+        and (
+            "complete content" in prompt
+            or "complete file content" in prompt
+            or "Keep file content in each response" in prompt
+            or "write_file with the first chunk" in prompt
+            or "append_file for later chunks" in prompt
+        )
+    )
+
+    if planner_call:
+        return 256
+
+    if (
+        adaptive_action_call
+        and not adaptive_artifact_call
+    ):
+        return 320
+
+    return None
+
+
+
+# SOPHYANE_ADAPTIVE_RACE_DISPATCH_POLICY_V1
+def _execution_session_mode() -> str:
+    """Resolve execution authority for this process.
+
+    Explicit diagnostic modes remain authoritative.
+    Otherwise Sophyane uses the cooperative adaptive race.
+    """
+    import os
+
+    mode = str(
+        os.environ.get(
+            "SOPHYANE_SESSION_MODE"
+        )
+        or ""
+    ).strip().lower()
+
+    aliases = {
+        "1": "sli_graph",
+        "sli": "sli_graph",
+        "sli_chunks": "sli_graph",
+
+        "2": "local_llm",
+        "local": "local_llm",
+
+        "3": "cloud_llm",
+        "cloud": "cloud_llm",
+        "gemini": "cloud_llm",
+
+        "0": "race",
+        "adaptive": "race",
+        "auto": "race",
+        "cooperative": "race",
+    }
+
+    mode = aliases.get(
+        mode,
+        mode,
+    )
+
+    if mode in {
+        "sli_graph",
+        "local_llm",
+        "cloud_llm",
+        "race",
+    }:
+        return mode
+
+    return "race"
+
+
+def _should_use_adaptive_race() -> bool:
+    return (
+        _execution_session_mode()
+        == "race"
+    )
+
+
+
+# SOPHYANE_ADAPTIVE_RACE_EXECUTION_BRIDGE_V2
+def _winner_direct_answer(winner) -> str:
+    if winner is None:
+        return ""
+
+    proposal = getattr(
+        winner,
+        "value",
+        None,
+    )
+
+    payload = getattr(
+        proposal,
+        "payload",
+        None,
+    )
+
+    if isinstance(payload, str):
+        return payload.strip()
+
+    if not isinstance(payload, dict):
+        return ""
+
+    for key in (
+        "answer",
+        "response",
+        "message",
+        "content",
+        "report",
+    ):
+        value = payload.get(key)
+
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    action = payload.get("action")
+
+    if isinstance(action, dict):
+        action_type = str(
+            action.get("type")
+            or action.get("action")
+            or ""
+        ).strip().lower()
+
+        if action_type in {
+            "respond",
+            "reply",
+            "final_answer",
+        }:
+            value = (
+                action.get("message")
+                or action.get("content")
+                or ""
+            )
+
+            if str(value).strip():
+                return str(value).strip()
+
+    return ""
+
+
+def _auto_request_requires_execution(
+    request: str,
+) -> bool:
+    # Reuse Sophyane's established TUI execution-intent policy.
+    from sophyane.tui_v2 import (
+        _execution_requested,
+    )
+
+    return bool(
+        _execution_requested(
+            str(request)
+        )
+    )
+
+
+def _run_adaptive_race_request(
+    request: str,
+    *,
+    workspace,
+    config: dict,
+    progress=None,
+    timeout: float = 180.0,
+):
+    """Run Auto mode with intent-aware finalization."""
+
+    if _auto_request_requires_execution(request):
+        from sophyane.race_execution import (
+            _semantic_completion_judgement,
+            run_race_apply_verify,
+        )
+
+        result = run_race_apply_verify(
+            request,
+            workspace=workspace,
+            config=config,
+            progress=progress,
+            max_rounds=3,
+            race_timeout=timeout,
+            semantic_judge=(
+                _semantic_completion_judgement
+            ),
+        )
+
+        return {
+            "ok": bool(result.ok),
+            "mode": "execution",
+            "winner": result.winner,
+            "answer": "",
+            "attempts": result.attempts,
+            "applied": result.applied,
+            "verifications": result.verifications,
+            "error": result.error,
+        }
+
+    from sophyane.race_orchestrator import (
+        run_adaptive_race,
+    )
+
+    result = run_adaptive_race(
+        request,
+        workspace=workspace,
+        config=config,
+        progress=progress,
+        timeout=timeout,
+        mode="answer",
+    )
+
+    winner = result.winner
+    answer = _winner_direct_answer(
+        winner
+    )
+
+    if winner is None:
+        error = "answer race produced no valid winner"
+    elif not answer:
+        error = (
+            "answer race winner produced no "
+            "user-facing response"
+        )
+    else:
+        error = None
+
+    return {
+        "ok": bool(
+            winner is not None
+            and answer
+        ),
+        "mode": "answer",
+        "winner": winner,
+        "answer": answer,
+        "attempts": 1,
+        "applied": [],
+        "verifications": [],
+        "error": error,
+    }
+
 def main() -> int:
     ensure_directories()
     parser = build_parser()
@@ -1039,6 +1311,67 @@ def main() -> int:
         return 0 if response.text else 2
 
     def backend(prompt: str, system: str) -> str:
+        """Generate with a compact budget for structured planner calls.
+
+        The strict planner only needs a small JSON decision.  Local GGUF
+        providers are comparatively slow, so letting planner calls inherit
+        the artifact-sized output budget wastes latency.  Preserve the
+        provider's normal budget for artifact/code generation.
+        """
+        semantic_budget = _semantic_generation_budget(
+            prompt,
+            system,
+        )
+
+        if (
+            semantic_budget is not None
+            and str(config.get("provider") or "").lower()
+            == "local_gguf"
+        ):
+            budgeted_generate = getattr(
+                provider,
+                "generate_with_budget",
+                None,
+            )
+
+            if callable(
+                budgeted_generate
+            ):
+                return budgeted_generate(
+                    prompt,
+                    system,
+                    max_tokens=semantic_budget,
+                )
+
+            # Single-provider bootstrap fallback: no composite wrapper
+            # exists, so constrain the provider directly and restore it.
+            if hasattr(
+                provider,
+                "max_tokens",
+            ):
+                original_max_tokens = (
+                    provider.max_tokens
+                )
+
+                try:
+                    provider.max_tokens = min(
+                        int(
+                            original_max_tokens
+                            or semantic_budget
+                        ),
+                        semantic_budget,
+                    )
+
+                    return provider.generate(
+                        prompt,
+                        system,
+                    )
+
+                finally:
+                    provider.max_tokens = (
+                        original_max_tokens
+                    )
+
         return provider.generate(prompt, system)
 
     if args.single_agent or args.multi_agent:

@@ -82,13 +82,28 @@ def is_product_app_request(
         for cue in _EMAIL_PRODUCT_CUES
     )
 
+    # SOPHYANE_CANONICAL_PRODUCT_PREDICATE_V2
+    #
+    # Explicit browser/web application nouns are already strong positive
+    # evidence of a browser product when paired with a construction verb.
+    # Do not require an additional noun such as "dashboard" or "client".
+    #
+    # More generic nouns such as "application" and "service" still require
+    # a second product-oriented cue so backend/API/service construction
+    # cannot accidentally become a browser product.
+    explicit_browser_product = any(
+        cue in text
+        for cue in (
+            "web app",
+            "browser app",
+        )
+    )
+
     broader_product = (
         any(
             cue in text
             for cue in (
-                "web app",
                 "website",
-                "browser app",
                 "application",
                 "service",
             )
@@ -100,7 +115,6 @@ def is_product_app_request(
                 "workspace",
                 "client",
                 "platform",
-                "service",
                 "management",
                 "crm",
                 "calendar",
@@ -112,6 +126,7 @@ def is_product_app_request(
 
     return constructive and (
         email_product
+        or explicit_browser_product
         or broader_product
     )
 

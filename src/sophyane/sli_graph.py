@@ -222,6 +222,13 @@ def _is_software_artifact_request(request: str) -> bool:
             "module",
             "package",
             "daemon",
+            "operations agent",
+            "operation agent",
+            "process monitoring",
+            "service monitoring",
+            "monitor services",
+            "port conflict",
+            "port conflicts",
             "developer tool",
             "automation tool",
             "execution journal",
@@ -308,6 +315,22 @@ def classify(state: SLIState, progress: Progress) -> SLIState:
             ):
                 state.route = "email_platform"
 
+            elif is_harness_execution_request(
+                state.request
+            ):
+                state.route = "harness_execution"
+
+            # Generic constructive non-browser software must outrank
+            # historical product/python heuristics such as "client",
+            # "implement " and "fastapi".
+            elif _is_software_artifact_request(
+                state.request
+            ):
+                # SOPHYANE_LOCAL_SOFTWARE_ARTIFACT_ROUTE_V1
+                # Non-browser code generation must never fall into
+                # HTML/index.html acquisition.
+                state.route = "software_artifact"
+
             elif (
                 any(
                     term in q
@@ -341,11 +364,6 @@ def classify(state: SLIState, progress: Progress) -> SLIState:
             ):
                 state.route = "product_app"
 
-            elif is_harness_execution_request(
-                state.request
-            ):
-                state.route = "harness_execution"
-
             elif any(
                 key in q
                 for key in (
@@ -361,14 +379,6 @@ def classify(state: SLIState, progress: Progress) -> SLIState:
             ):
                 state.route = "python_harness"
 
-            elif _is_software_artifact_request(
-                state.request
-            ):
-                # SOPHYANE_LOCAL_SOFTWARE_ARTIFACT_ROUTE_V1
-                # Non-browser code generation must never fall into
-                # HTML/index.html acquisition.
-                state.route = "software_artifact"
-
             elif any(key in q for key in ("ping pong", "pong", "snake", "game", "canvas")):
                 state.route = "action_or_internet"
             elif any(key in q for key in ("missing word", "missing letter", "quiz", "cloze")):
@@ -382,6 +392,7 @@ def classify(state: SLIState, progress: Progress) -> SLIState:
     progress(f"SLI-graph: route={state.route}")
     state.log(f"route={state.route}")
     return state
+
 
 
 def _ok(state: SLIState) -> None:
@@ -1201,6 +1212,7 @@ def run_sli_graph(
         return state
     finally:
         _GRAPH_DEPTH = max(0, _GRAPH_DEPTH - 1)
+
 
 
 def try_sli_graph(message: str, workspace=None, progress=None) -> str | None:

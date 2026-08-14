@@ -1,3 +1,3 @@
-"""Single source of truth for Sophyane's version."""
+"""Sophyane package version."""
 
 __version__ = "21.4.0"

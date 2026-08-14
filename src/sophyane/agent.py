@@ -339,12 +339,59 @@ class SophyaneAgent:
             )
         return AgentResponse(text)
 
+
+# SOPHYANE_TOOL_SUMMARY_BOUND_V1
+def _bounded_tool_context(
+    value: object,
+    *,
+    limit: int = 24000,
+) -> str:
+    """Bound tool output before it can re-enter model/action context."""
+    text = str(
+        value
+        if value is not None
+        else ""
+    )
+
+    if len(text) <= limit:
+        return text
+
+    head = max(
+        1000,
+        int(limit * 0.70),
+    )
+
+    tail = max(
+        1000,
+        limit - head,
+    )
+
+    omitted = (
+        len(text)
+        - head
+        - tail
+    )
+
+    return (
+        text[:head]
+        + "\n\n"
+        + (
+            "[SOPHYANE TOOL OUTPUT TRUNCATED: "
+            f"{omitted} characters omitted]"
+        )
+        + "\n\n"
+        + text[-tail:]
+    )
+
+
     def _summarize_tool(
         self,
         request: str,
         output: str,
         tool_name: str,
     ) -> AgentResponse:
+        # Bound potentially enormous local tool/project dumps before model summarization or fallback propagation.
+        output = _bounded_tool_context(output)
         prompt = f"""The user requested:
 
 {request}

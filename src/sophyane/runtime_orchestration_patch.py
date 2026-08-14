@@ -14,17 +14,67 @@ from pathlib import Path
 from typing import Any
 
 
+_SNAPSHOT_EXCLUDED_PARTS = frozenset(
+    {
+        ".git",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".tox",
+        ".nox",
+        "node_modules",
+    }
+)
+
+_SNAPSHOT_EXCLUDED_SUFFIXES = (
+    ".pyc",
+    ".pyo",
+)
+
+
 def _snapshot(root: Path) -> dict[str, str]:
+    """Return hashes for durable workspace files only.
+
+    The learner consumes this as ``dict[relative_path, sha256_hex]``.
+    Runtime metadata, dependency trees, VCS internals, and interpreter
+    caches are excluded because they are not user-created workspace
+    artifacts and can change independently of an execution request.
+    """
     output: dict[str, str] = {}
+
     if not root.exists():
         return output
+
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
+
         try:
-            output[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
-        except (OSError, ValueError):
+            relative = path.relative_to(root)
+        except ValueError:
             continue
+
+        if any(
+            part in _SNAPSHOT_EXCLUDED_PARTS
+            for part in relative.parts
+        ):
+            continue
+
+        if relative.name.endswith(
+            _SNAPSHOT_EXCLUDED_SUFFIXES
+        ):
+            continue
+
+        try:
+            output[str(relative)] = hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
+        except OSError:
+            continue
+
     return output
 
 

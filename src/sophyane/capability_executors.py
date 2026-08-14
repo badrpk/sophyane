@@ -67,12 +67,12 @@ _EXACT_FILE_WRITE_RE = re.compile(
     r"""
     \b(?:create|write|make)\s+
     (?:a\s+|the\s+)?
-    (?:file\s+)?
+    (?:file\s+)?(?:named\s+)?
     (?P<filename>[A-Za-z0-9_.-]+\.[A-Za-z0-9_-]+)
     .*?
     \b(?:containing|with)\s+
-    (?:exactly\s+)?
-    (?P<content>[A-Za-z0-9_.:-]+)
+    (?:exactly\s*:?\s*)?
+    (?P<content>[^\r\n]+?)(?=\s+(?:with\s+no\s+newline|without\s+a\s+newline|read\s+the\s+file\s+back|read\s+it\s+back|verify\s+it\s+byte-for-byte|verify\s+it|and\s+respond\b)|\s*$)
     """,
     re.I | re.S | re.X,
 )
@@ -81,7 +81,7 @@ _EXACT_FILE_WRITE_RE = re.compile(
 def _parse_exact_file_write(
     message: str,
 ) -> tuple[str, str] | None:
-    """Extract a plain workspace filename and exact one-token content."""
+    """Extract a plain workspace filename and exact single-line content."""
     text = _normalise(message)
     match = _EXACT_FILE_WRITE_RE.search(text)
 

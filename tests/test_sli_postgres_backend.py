@@ -32,10 +32,10 @@ def _drop_schema(
             )
 
 
-def test_postgres_sli_record_recommend_stats_and_trace() -> None:
-    dsn = os.environ[
-        "SOPHYANE_POSTGRES_DSN"
-    ]
+def test_postgres_sli_record_recommend_stats_and_trace(
+    postgres_test_dsn,
+) -> None:
+    dsn = postgres_test_dsn
 
     schema = (
         "sli_backend_test_"
@@ -218,10 +218,10 @@ def test_postgres_sli_record_recommend_stats_and_trace() -> None:
         )
 
 
-def test_postgres_atomic_learner_event_idempotency() -> None:
-    dsn = os.environ[
-        "SOPHYANE_POSTGRES_DSN"
-    ]
+def test_postgres_atomic_learner_event_idempotency(
+    postgres_test_dsn,
+) -> None:
+    dsn = postgres_test_dsn
 
     schema = (
         "sli_atomic_event_test_"
@@ -450,10 +450,10 @@ def test_postgres_atomic_learner_event_idempotency() -> None:
         )
 
 
-def test_postgres_atomic_learner_event_rolls_back_before_key_commit() -> None:
-    dsn = os.environ[
-        "SOPHYANE_POSTGRES_DSN"
-    ]
+def test_postgres_atomic_learner_event_rolls_back_before_key_commit(
+    postgres_test_dsn,
+) -> None:
+    dsn = postgres_test_dsn
 
     schema = (
         "sli_atomic_rollback_test_"
@@ -594,13 +594,13 @@ def test_postgres_atomic_learner_event_rolls_back_before_key_commit() -> None:
         )
 
 
-def test_postgres_atomic_same_payload_concurrent_callers() -> None:
+def test_postgres_atomic_same_payload_concurrent_callers(
+    postgres_test_dsn,
+) -> None:
     from concurrent.futures import ThreadPoolExecutor
     import threading
 
-    dsn = os.environ[
-        "SOPHYANE_POSTGRES_DSN"
-    ]
+    dsn = postgres_test_dsn
 
     schema = (
         "sli_atomic_same_race_"
@@ -829,13 +829,13 @@ def test_postgres_atomic_same_payload_concurrent_callers() -> None:
         )
 
 
-def test_postgres_atomic_conflicting_concurrent_callers() -> None:
+def test_postgres_atomic_conflicting_concurrent_callers(
+    postgres_test_dsn,
+) -> None:
     from concurrent.futures import ThreadPoolExecutor
     import threading
 
-    dsn = os.environ[
-        "SOPHYANE_POSTGRES_DSN"
-    ]
+    dsn = postgres_test_dsn
 
     schema = (
         "sli_atomic_conflict_race_"
@@ -1103,15 +1103,14 @@ def test_postgres_atomic_conflicting_concurrent_callers() -> None:
 def test_atomic_learner_integration_mirror_failure_retry(
     monkeypatch,
     tmp_path,
+    postgres_test_dsn,
 ) -> None:
     import sophyane.sli_backend as backend
     import sophyane.sli_cutover as cutover
     import sophyane.sli_learner as learner
     from sophyane import sli as sqlite_sli
 
-    dsn = os.environ[
-        "SOPHYANE_POSTGRES_DSN"
-    ]
+    dsn = postgres_test_dsn
 
     schema = (
         "sli_atomic_integration_"
@@ -1474,13 +1473,12 @@ def test_atomic_learner_integration_mirror_failure_retry(
 
 def test_atomic_learner_integration_conflicting_retry_fails_before_mirror(
     monkeypatch,
+    postgres_test_dsn,
 ) -> None:
     import sophyane.sli_backend as backend
     import sophyane.sli_learner as learner
 
-    dsn = os.environ[
-        "SOPHYANE_POSTGRES_DSN"
-    ]
+    dsn = postgres_test_dsn
 
     schema = (
         "sli_atomic_integration_conflict_"

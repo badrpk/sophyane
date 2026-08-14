@@ -514,23 +514,20 @@ def synchronize_postgres_to_sqlite(
         default=0,
     )
 
-    expected_new_ids = list(
-        range(
-            highest_sqlite_id + 1,
-            highest_sqlite_id
-            + len(
-                new_memory_ids
-            )
-            + 1,
-        )
-    )
+    non_append_memory_ids = [
+        memory_id
+        for memory_id in new_memory_ids
+        if memory_id <= highest_sqlite_id
+    ]
 
-    if new_memory_ids != expected_new_ids:
+    if non_append_memory_ids:
         raise RuntimeError(
-            "PostgreSQL-only memory IDs are not one contiguous "
-            "append-only sequence after SQLite: "
-            f"expected {expected_new_ids!r}, "
-            f"found {new_memory_ids!r}."
+            "PostgreSQL-only memory IDs are not append-only "
+            "after SQLite: "
+            f"highest SQLite memory ID is "
+            f"{highest_sqlite_id!r}; "
+            f"found historical PostgreSQL-only IDs "
+            f"{non_append_memory_ids!r}."
         )
 
     new_trace_ids = sorted(

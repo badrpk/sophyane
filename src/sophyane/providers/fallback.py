@@ -86,6 +86,106 @@ class FallbackProvider(Provider):
                 totals[key] += int(usage.get(key, 0) or 0)
         return {"available": available, **totals}
 
+    # SOPHYANE_FALLBACK_GENERATION_BUDGET_V1
+    def generate_with_budget(
+        self,
+        prompt: str,
+        system_prompt: str,
+        *,
+        max_tokens: int,
+    ) -> str:
+        """Generate with a temporary output-token ceiling.
+
+        The fallback wrapper and its child providers are distinct
+        instances. A semantic caller therefore cannot safely constrain
+        generation by mutating only ``self.max_tokens``.
+
+        Apply the ceiling transactionally to every provider participating
+        in this single fallback attempt, then restore all original values
+        even when generation raises.
+        """
+        budget = max(
+            1,
+            int(max_tokens),
+        )
+
+        wrapper_original = self.max_tokens
+
+        child_originals: list[
+            tuple[
+                Provider,
+                object,
+            ]
+        ] = []
+
+        try:
+            self.max_tokens = min(
+                int(
+                    self.max_tokens
+                    or budget
+                ),
+                budget,
+            )
+
+            for _, provider in self._providers:
+                if not hasattr(
+                    provider,
+                    "max_tokens",
+                ):
+                    continue
+
+                original = getattr(
+                    provider,
+                    "max_tokens",
+                )
+
+                child_originals.append(
+                    (
+                        provider,
+                        original,
+                    )
+                )
+
+                try:
+                    current = int(
+                        original
+                        or budget
+                    )
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+                    current = budget
+
+                setattr(
+                    provider,
+                    "max_tokens",
+                    min(
+                        current,
+                        budget,
+                    ),
+                )
+
+            return self.generate(
+                prompt,
+                system_prompt,
+            )
+
+        finally:
+            self.max_tokens = (
+                wrapper_original
+            )
+
+            for (
+                provider,
+                original,
+            ) in child_originals:
+                setattr(
+                    provider,
+                    "max_tokens",
+                    original,
+                )
+
     def generate(self, prompt: str, system_prompt: str) -> str:
         errors: list[str] = []
 

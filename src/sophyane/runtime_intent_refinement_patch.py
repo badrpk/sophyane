@@ -189,6 +189,47 @@ def install_intent_refinement() -> None:
 
             self.emit("You", message)
 
+            # SOPHYANE_AUTO_EFFECTIVE_TUI_AUTHORITY_V1
+            #
+            # install_intent_refinement() replaces ObservableTUI.run at
+            # runtime. Therefore Auto authority must exist in this effective
+            # run() as well as in the base TUI implementation.
+            #
+            # A handled top-level request is terminal at this boundary:
+            # refinement, simple-chat routing, and low-level provider access
+            # must not run afterward.
+            dispatch = getattr(
+                self,
+                "dispatch_user_request",
+                None,
+            )
+            if callable(dispatch):
+                response = dispatch(message)
+
+                # Auto dispatch returns the completed user-facing response,
+                # not merely a boolean handled flag.
+                if response is not None:
+                    text = getattr(
+                        response,
+                        "text",
+                        str(response),
+                    )
+
+                    self.last_raw = text
+
+                    self.history.extend([
+                        ("user", message[:300]),
+                        ("assistant", text[:500]),
+                    ])
+                    self.history = self.history[-4:]
+
+                    self.emit(
+                        "Sophyane",
+                        text,
+                    )
+
+                    continue
+
             # SOPHYANE_ACTIVE_NATIVE_CHOICE_DISPATCH
             normalized_choice = " ".join(message.casefold().split())
 
