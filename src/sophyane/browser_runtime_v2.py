@@ -109,8 +109,18 @@ def _wait_for_server(
     base: str,
     process: subprocess.Popen[bytes],
     *,
-    timeout: float = 4.0,
+    timeout: float | None = None,
 ) -> None:
+    if timeout is None:
+        # GitHub-hosted macOS ARM64 runners can take substantially
+        # longer than Linux/Windows before a freshly spawned
+        # ``python -m http.server`` begins accepting loopback TCP.
+        # Keep the existing fast failure bound elsewhere.
+        timeout = (
+            45.0
+            if sys.platform == "darwin"
+            else 4.0
+        )
     deadline = (
         time.monotonic()
         + timeout
