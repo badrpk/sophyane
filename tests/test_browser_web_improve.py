@@ -9,6 +9,7 @@ from sophyane.self_improve.ledger import (
     propose_improvement,
     verify_chain,
 )
+import sophyane.self_improve.ledger as improvement_ledger
 from sophyane.web_intel import fetch_url, scrape_for_improvement
 
 
@@ -30,16 +31,47 @@ def test_fetch_example_com() -> None:
     assert result.content_hash
 
 
-def test_improvement_chain() -> None:
+def test_improvement_chain(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ledger_path = tmp_path / "improvement-ledger.jsonl"
+    epoch_dir = tmp_path / "epochs"
+    repo_improvements = tmp_path / "repo-improvements"
+
+    monkeypatch.setattr(
+        improvement_ledger,
+        "LEDGER_PATH",
+        ledger_path,
+    )
+    monkeypatch.setattr(
+        improvement_ledger,
+        "EPOCH_DIR",
+        epoch_dir,
+    )
+    monkeypatch.setattr(
+        improvement_ledger,
+        "REPO_IMPROVEMENTS",
+        repo_improvements,
+    )
+
     before = chain_tip()["length"]
-    out = propose_improvement("fact", "test-proposal", "body for chain", score=0.2)
+    out = propose_improvement(
+        "fact",
+        "test-proposal",
+        "body for chain",
+        score=0.2,
+    )
     assert out["ok"] is True
+
     verify = verify_chain()
     assert verify["ok"] is True
     assert chain_tip()["length"] == before + 1
+
     epoch = export_daily_epoch()
     assert "merkle_root" in epoch
     assert epoch["count"] >= 0
+    assert repo_improvements.exists()
 
 
 def test_scrape_for_improvement_bundle() -> None:

@@ -110,6 +110,7 @@ def test_explicit_path_remains_sqlite_under_postgres_selection(
 
 def test_explicit_postgres_selection_reads_prepared_schema(
     monkeypatch,
+    postgres_test_dsn,
 ) -> None:
     monkeypatch.setenv(
         "SOPHYANE_SLI_BACKEND",
@@ -133,10 +134,16 @@ def test_explicit_postgres_selection_reads_prepared_schema(
 
 def test_postgres_public_read_parity(
     monkeypatch,
+    postgres_test_dsn,
 ) -> None:
     monkeypatch.delenv(
         "SOPHYANE_SLI_BACKEND",
         raising=False,
+    )
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {},
     )
 
     with sli_backend.connect() as sqlite_db:
@@ -487,6 +494,12 @@ def test_explicit_sqlite_path_remains_sqlite_even_when_persistent_postgres(
     import sophyane.sli_backend as sli_backend
 
     path = tmp_path / "explicit.db"
+
+    # The global pytest isolation fixture redirects DB_PATH
+    # to a fresh disposable SQLite location. Initialize that
+    # isolated database before opening it read-only for backup.
+    with sli.connect():
+        pass
 
     source = sqlite3.connect(
         f"file:{sli.DB_PATH.resolve()}?mode=ro",
