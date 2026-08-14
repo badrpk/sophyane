@@ -900,32 +900,162 @@ def install(
         "_queries"
     )
 
+    original_public_queries = namespace.get(
+        "build_search_queries"
+    )
+
+    # SOPHYANE_LANGUAGE_QUERY_DOMAIN_BOUNDARY_V1
+    def _explicit_nonbrowser_language_request(
+        request: str,
+    ) -> bool:
+        """Identify source-code searches whose language must be preserved.
+
+        Browser-oriented semantic query expansion is useful for browser
+        products, but must not contaminate explicit C++, Python, Rust, etc.
+        repository discovery.
+        """
+        normalized = " ".join(
+            str(request or "").casefold().split()
+        )
+
+        browser_markers = (
+            "website",
+            "web site",
+            "webpage",
+            "web page",
+            "browser app",
+            "browser application",
+            "html",
+            "javascript",
+            "canvas",
+            "landing page",
+        )
+
+        if any(
+            marker in normalized
+            for marker in browser_markers
+        ):
+            return False
+
+        language_markers = (
+            "c++",
+            " cpp ",
+            "cpp ",
+            " cxx ",
+            ".cpp",
+            "std::",
+            "clang++",
+            "g++",
+            "python",
+            ".py",
+            "pytest",
+            "rust",
+            ".rs",
+            "cargo",
+            "golang",
+            " go ",
+            ".go",
+            "java",
+            ".java",
+            "kotlin",
+            ".kt",
+            "swift",
+            ".swift",
+        )
+
+        return any(
+            marker in normalized
+            for marker in language_markers
+        )
+
+    def _deduplicated_queries(
+        values,
+        *,
+        maximum: int = 10,
+    ) -> list[str]:
+        output: list[str] = []
+
+        for value in values or []:
+            query = " ".join(
+                str(value or "").split()
+            )
+
+            if (
+                query
+                and query not in output
+            ):
+                output.append(
+                    query
+                )
+
+            if len(output) >= maximum:
+                break
+
+        return output
+
     def upgraded_queries(
         request: str,
     ) -> list[str]:
+        # Explicit non-browser languages already have domain-aware builders
+        # in internet_acquire. Do not prepend generic browser semantic
+        # searches such as HTML/JavaScript/canvas to those requests.
+        if _explicit_nonbrowser_language_request(
+            request
+        ):
+            preferred = (
+                original_public_queries
+                if callable(original_public_queries)
+                else original_queries
+            )
+
+            if callable(preferred):
+                try:
+                    return _deduplicated_queries(
+                        preferred(request),
+                        maximum=10,
+                    )
+                except Exception:
+                    pass
+
+            # A failure in the language-aware builder must degrade to the
+            # legacy query builder, not to browser semantic expansion.
+            if (
+                callable(original_queries)
+                and original_queries is not preferred
+            ):
+                try:
+                    return _deduplicated_queries(
+                        original_queries(request),
+                        maximum=10,
+                    )
+                except Exception:
+                    pass
+
+            return []
+
         queries = semantic_queries(
             request,
             maximum=10,
         )
 
-        if callable(
-            original_queries
-        ):
+        preferred = (
+            original_public_queries
+            if callable(original_public_queries)
+            else original_queries
+        )
+
+        if callable(preferred):
             try:
-                for query in original_queries(
-                    request
-                ):
-                    if (
-                        query
-                        and query not in queries
-                    ):
-                        queries.append(
-                            query
-                        )
+                queries.extend(
+                    preferred(request)
+                )
             except Exception:
                 pass
 
-        return queries[:10]
+        return _deduplicated_queries(
+            queries,
+            maximum=10,
+        )
 
     namespace["_queries"] = (
         upgraded_queries

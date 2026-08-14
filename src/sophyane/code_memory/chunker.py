@@ -27,8 +27,19 @@ _JS_FN = re.compile(
 
 def _lang(path: Path) -> str:
     return {
-        ".py": "python", ".js": "javascript", ".ts": "typescript",
-        ".html": "html", ".css": "css", ".cpp": "cpp", ".h": "cpp", ".rs": "rust",
+        ".py": "python",
+        ".js": "javascript",
+        ".ts": "typescript",
+        ".html": "html",
+        ".css": "css",
+        ".cpp": "cpp",
+        ".cc": "cpp",
+        ".cxx": "cpp",
+        ".h": "cpp",
+        ".hpp": "cpp",
+        ".hh": "cpp",
+        ".hxx": "cpp",
+        ".rs": "rust",
     }.get(path.suffix.lower(), "")
 
 def _infer_html(text: str, path: str) -> list[RawChunk]:
@@ -120,7 +131,21 @@ def chunk_file(path: Path) -> list[RawChunk]:
 def iter_source_files(root: Path) -> Iterator[Path]:
     root = root.expanduser().resolve()
     skip = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build"}
-    for pat in ("*.py", "*.js", "*.ts", "*.html", "*.css", "*.cpp", "*.h", "*.rs"):
+    for pat in (
+        "*.py",
+        "*.js",
+        "*.ts",
+        "*.html",
+        "*.css",
+        "*.cpp",
+        "*.cc",
+        "*.cxx",
+        "*.h",
+        "*.hpp",
+        "*.hh",
+        "*.hxx",
+        "*.rs",
+    ):
         for p in root.rglob(pat):
             if any(part in skip for part in p.parts):
                 continue

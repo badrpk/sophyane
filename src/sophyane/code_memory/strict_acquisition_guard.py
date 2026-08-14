@@ -1109,20 +1109,16 @@ def install(
                     ignore_errors=True,
                 )
 
-            # Remove every possible stale product from the real workspace.
-            for existing in list(
-                final_workspace.iterdir()
-            ):
-                if existing.is_dir():
-                    shutil.rmtree(
-                        existing,
-                        ignore_errors=True,
-                    )
-                else:
-                    existing.unlink(
-                        missing_ok=True,
-                    )
-
+            # SOPHYANE_NON_DESTRUCTIVE_ACQUISITION_FAILURE_V1
+            #
+            # Every acquisition attempt runs in an isolated temporary
+            # workspace. If all candidates fail validation, leave the real
+            # workspace untouched. A previously validated artifact belongs
+            # to the user's active project and must never be destroyed by an
+            # unrelated or misclassified follow-up request.
+            #
+            # Replacement of the real workspace remains allowed only above,
+            # after a candidate passes strict behavioural validation.
             failure_report = "\n".join(
                 [
                     "SLI strict acquisition failed.",
@@ -1132,7 +1128,8 @@ def install(
                         "  - " + failure
                         for failure in failures
                     ),
-                    "Files: none",
+                    "New files promoted: none",
+                    "Existing workspace preserved: True",
                     "Success: False",
                     "No invalid artifact was learned or previewed.",
                     "No LLM fallback was used.",

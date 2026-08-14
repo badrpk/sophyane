@@ -205,133 +205,132 @@ def _get_json(url: str, timeout: int = 25) -> dict:
 
 
 def _queries(request: str) -> list[str]:
+    """Return language-aware fallback searches.
+
+    This legacy search layer must preserve explicit language intent instead of
+    injecting JavaScript/browser vocabulary into every request.
+    """
+    normalized = " ".join(
+        str(request or "").casefold().split()
+    )
+
     concepts = _tokens(request)
     primary = concepts[:6]
 
-    queries = [
-        " ".join(primary + ["javascript", "html5"]),
-        " ".join(primary[:4] + ["canvas", "javascript"]),
-        " ".join(primary[:3] + ["browser", "source", "javascript"]),
-    ]
+    cpp_request = any(
+        marker in normalized
+        for marker in (
+            "c++",
+            " cpp ",
+            "cpp ",
+            " cxx ",
+            ".cpp",
+            "std::",
+        )
+    )
+
+    browser_request = any(
+        marker in normalized
+        for marker in (
+            "website",
+            "webpage",
+            "web page",
+            "browser",
+            "html",
+            "javascript",
+            "canvas",
+        )
+    )
+
+    if cpp_request and not browser_request:
+        queries = [
+            " ".join(
+                primary
+                + [
+                    "C++",
+                    "concurrency",
+                    "source",
+                ]
+            ),
+            " ".join(
+                primary[:4]
+                + [
+                    "std::thread",
+                    "std::mutex",
+                    "C++",
+                ]
+            ),
+            " ".join(
+                primary[:4]
+                + [
+                    "deterministic",
+                    "replay",
+                    "C++",
+                ]
+            ),
+        ]
+
+    elif browser_request:
+        queries = [
+            " ".join(
+                primary
+                + [
+                    "javascript",
+                    "html5",
+                ]
+            ),
+            " ".join(
+                primary[:4]
+                + [
+                    "canvas",
+                    "javascript",
+                ]
+            ),
+            " ".join(
+                primary[:3]
+                + [
+                    "browser",
+                    "source",
+                    "javascript",
+                ]
+            ),
+        ]
+
+    else:
+        queries = [
+            " ".join(
+                primary
+                + [
+                    "source",
+                    "code",
+                ]
+            ),
+            " ".join(
+                primary[:4]
+                + [
+                    "implementation",
+                ]
+            ),
+        ]
 
     result: list[str] = []
 
-    for query in list(queries)[:MAX_IDENTITY_QUERIES]:
-        query = " ".join(query.split())
+    for query in list(
+        queries
+    )[:MAX_IDENTITY_QUERIES]:
+        query = " ".join(
+            query.split()
+        )
 
-        if query and query not in result:
-            result.append(query)
+        if (
+            query
+            and query not in result
+        ):
+            result.append(
+                query
+            )
 
     return result
-
-
-def search_repositories(
-    request: str,
-    *,
-    progress: Progress | None = None,
-) -> list[Repository]:
-    progress = _progress(progress)
-    request_tokens = set(_tokens(request))
-    found: dict[str, Repository] = {}
-
-    for query in _queries(request):
-        progress(f"SLI web search: {query}")
-
-        encoded = urllib.parse.urlencode(
-            {
-                "q": f"{query} in:name,description,readme fork:false archived:false",
-                "sort": "stars",
-                "order": "desc",
-                "per_page": str(MAX_RESULTS_PER_QUERY),
-            }
-        )
-
-        try:
-            payload = _get_json(
-                "https://api.github.com/search/repositories?" + encoded
-            )
-        except Exception as error:
-            progress(
-                f"SLI web search error: {type(error).__name__}: {error}"
-            )
-            continue
-
-        progress(
-            "SLI web search results: "
-            f"{int(payload.get('total_count') or 0)}"
-        )
-
-        for item in payload.get("items", []):
-            if not isinstance(item, dict):
-                continue
-
-            full_name = str(item.get("full_name") or "")
-            clone_url = str(item.get("clone_url") or "")
-            description = str(item.get("description") or "")
-            size_kb = int(item.get("size") or 0)
-            stars = int(item.get("stargazers_count") or 0)
-
-            if (
-                not full_name
-                or not clone_url
-                or size_kb <= 0
-                or size_kb > MAX_REPOSITORY_KB
-            ):
-                continue
-
-            licence = str(
-                (item.get("license") or {}).get("spdx_id") or ""
-            ).lower()
-
-            repository_tokens = set(
-                _tokens(full_name.replace("/", " ") + " " + description)
-            )
-
-            overlap = len(request_tokens & repository_tokens)
-
-            score = (
-                overlap * 25.0
-                + min(stars, 50_000) / 5_000
-                - min(size_kb, MAX_REPOSITORY_KB) / MAX_REPOSITORY_KB
-            )
-
-            candidate = Repository(
-                full_name=full_name,
-                clone_url=clone_url,
-                default_branch=str(item.get("default_branch") or "main"),
-                description=description,
-                stars=stars,
-                size_kb=size_kb,
-                api_licence=licence,
-                query=query,
-                score=score,
-            )
-
-            previous = found.get(full_name)
-
-            if previous is None or candidate.score > previous.score:
-                found[full_name] = candidate
-
-    ranked = sorted(
-        found.values(),
-        key=lambda item: (
-            -item.score,
-            -item.stars,
-            item.size_kb,
-            item.full_name,
-        ),
-    )
-
-    progress(f"SLI repository candidates: {len(ranked)}")
-
-    for item in ranked[:10]:
-        progress(
-            f"  {item.full_name}: score={item.score:.2f}, "
-            f"stars={item.stars}, size={item.size_kb}KB, "
-            f"licence={item.api_licence or 'inspect-after-clone'}"
-        )
-
-    return ranked[:MAX_REPOSITORIES]
 
 
 def _cache_name(repository: Repository) -> str:
@@ -396,35 +395,6 @@ def clone_repository(
         return None
 
     return destination
-
-
-def _detected_licence(root: Path, api_licence: str) -> str | None:
-    if api_licence in PERMISSIVE_SPDX:
-        return api_licence
-
-    licence_files = [
-        path
-        for path in root.iterdir()
-        if path.is_file()
-        and path.name.lower().startswith(
-            ("license", "licence", "copying")
-        )
-    ]
-
-    for path in licence_files[:5]:
-        try:
-            text = path.read_text(
-                encoding="utf-8",
-                errors="ignore",
-            ).lower()[:100_000]
-        except OSError:
-            continue
-
-        for marker, licence in LICENCE_MARKERS.items():
-            if marker in text:
-                return licence
-
-    return None
 
 
 def _browser_files(root: Path) -> list[Path]:
@@ -712,8 +682,14 @@ def acquire_for_request(
     *,
     progress: Progress | None = None,
 ) -> dict:
-    progress = _progress(progress)
+    """Acquire repositories and choose a semantically grounded entry point."""
+
+    progress = _progress(
+        progress
+    )
+
     started = time.time()
+
     repositories = search_repositories(
         request,
         progress=progress,
@@ -723,6 +699,9 @@ def acquire_for_request(
     candidates: list[Candidate] = []
     total_added = 0
 
+    # --------------------------------------------------------
+    # Former GEN1: repository acquisition and initial scoring.
+    # --------------------------------------------------------
     for repository in repositories:
         root = clone_repository(
             repository,
@@ -742,9 +721,12 @@ def acquire_for_request(
                 f"SLI repository skipped: {repository.full_name}: "
                 "no verified permissive licence"
             )
+
             continue
 
-        files = _browser_files(root)
+        files = _browser_files(
+            root
+        )
 
         progress(
             f"SLI repository accepted: {repository.full_name}; "
@@ -761,22 +743,36 @@ def acquire_for_request(
         )
 
         total_added += int(
-            ingest_report.get("chunks_added") or 0
+            ingest_report.get(
+                "chunks_added"
+            )
+            or 0
         )
 
         accepted_repositories.append(
             {
-                "repository": repository.full_name,
-                "licence": licence,
-                "browser_files": len(files),
-                "ingest": ingest_report,
+                "repository":
+                    repository.full_name,
+
+                "licence":
+                    licence,
+
+                "browser_files":
+                    len(files),
+
+                "ingest":
+                    ingest_report,
             }
         )
 
         for html_path in [
             path
             for path in files
-            if path.suffix.lower() in {".html", ".htm"}
+            if path.suffix.lower()
+            in {
+                ".html",
+                ".htm",
+            }
         ][:80]:
             document = _inline_document(
                 html_path,
@@ -794,8 +790,12 @@ def acquire_for_request(
 
             candidates.append(
                 Candidate(
-                    repository=repository.full_name,
-                    source_path=str(html_path),
+                    repository=(
+                        repository.full_name
+                    ),
+                    source_path=str(
+                        html_path
+                    ),
                     score=score,
                     document=document,
                     issues=issues,
@@ -805,56 +805,409 @@ def acquire_for_request(
     candidates.sort(
         key=lambda item: (
             -item.score,
-            len(item.issues),
+            len(
+                item.issues
+            ),
             item.repository,
             item.source_path,
         )
     )
 
-    best = candidates[0] if candidates else None
+    initial_best = (
+        candidates[0]
+        if candidates
+        else None
+    )
 
     event = {
-        "request": request,
-        "queries": _queries(request),
-        "repositories_found": len(repositories),
-        "repositories_accepted": accepted_repositories,
-        "chunks_added": total_added,
-        "candidates": [
-            {
-                "repository": item.repository,
-                "source_path": item.source_path,
-                "score": item.score,
-                "issues": item.issues,
-            }
-            for item in candidates[:20]
-        ],
-        "best": (
-            {
-                "repository": best.repository,
-                "source_path": best.source_path,
-                "score": best.score,
-                "issues": best.issues,
-            }
-            if best
-            else None
-        ),
-        "elapsed_seconds": round(time.time() - started, 3),
-        "timestamp": time.time(),
+        "request":
+            request,
+
+        "queries":
+            _queries(
+                request
+            ),
+
+        "repositories_found":
+            len(
+                repositories
+            ),
+
+        "repositories_accepted":
+            accepted_repositories,
+
+        "chunks_added":
+            total_added,
+
+        "candidates":
+            [
+                {
+                    "repository":
+                        item.repository,
+
+                    "source_path":
+                        item.source_path,
+
+                    "score":
+                        item.score,
+
+                    "issues":
+                        item.issues,
+                }
+                for item
+                in candidates[:20]
+            ],
+
+        "best":
+            (
+                {
+                    "repository":
+                        initial_best.repository,
+
+                    "source_path":
+                        initial_best.source_path,
+
+                    "score":
+                        initial_best.score,
+
+                    "issues":
+                        initial_best.issues,
+                }
+                if initial_best
+                else None
+            ),
+
+        "elapsed_seconds":
+            round(
+                time.time()
+                - started,
+                3,
+            ),
+
+        "timestamp":
+            time.time(),
     }
 
-    MEMORY.mkdir(parents=True, exist_ok=True)
+    # --------------------------------------------------------
+    # Former GEN2: semantic entry-point reranking.
+    # --------------------------------------------------------
+    existing_candidates = list(
+        event.get(
+            "candidates",
+            [],
+        )
+        or []
+    )
 
-    with EVENTS.open("a", encoding="utf-8") as handle:
-        handle.write(
-            json.dumps(event, ensure_ascii=False) + "\n"
+    original_best = event.get(
+        "best"
+    )
+
+    if (
+        isinstance(
+            original_best,
+            dict,
+        )
+        and original_best
+        not in existing_candidates
+    ):
+        existing_candidates.append(
+            original_best
         )
 
-    return {
-        "event": event,
-        "best_document": best.document if best else None,
-        "best_score": best.score if best else None,
-        "best_issues": best.issues if best else [],
-    }
+    reranked = []
+
+    for candidate in existing_candidates:
+        if not isinstance(
+            candidate,
+            dict,
+        ):
+            continue
+
+        source_path = str(
+            candidate.get(
+                "source_path",
+                "",
+            )
+            or ""
+        )
+
+        if not source_path:
+            continue
+
+        from pathlib import Path as _Path
+
+        candidate_path = _Path(
+            source_path
+        )
+
+        if not candidate_path.is_file():
+            continue
+
+        repository_root = (
+            _sli_repository_root(
+                candidate_path
+            )
+        )
+
+        if repository_root is None:
+            continue
+
+        try:
+            document = _inline_document(
+                candidate_path,
+                repository_root,
+            )
+
+        except Exception:
+            document = None
+
+        if not document:
+            continue
+
+        repository_name = str(
+            candidate.get(
+                "repository",
+                "",
+            )
+            or ""
+        )
+
+        score, issues, matched = (
+            _sli_candidate_semantic_score(
+                request=request,
+                repository=repository_name,
+                source_path=source_path,
+                document=document,
+                original_score=float(
+                    candidate.get(
+                        "score",
+                        0.0,
+                    )
+                    or 0.0
+                ),
+            )
+        )
+
+        reranked.append(
+            {
+                "repository":
+                    repository_name,
+
+                "source_path":
+                    source_path,
+
+                "score":
+                    score,
+
+                "issues":
+                    issues,
+
+                "matched_identity":
+                    matched,
+
+                "_document":
+                    document,
+            }
+        )
+
+    reranked.sort(
+        key=lambda candidate: (
+            -float(
+                candidate[
+                    "score"
+                ]
+            ),
+            len(
+                candidate[
+                    "issues"
+                ]
+            ),
+            len(
+                candidate[
+                    "_document"
+                ]
+            ),
+            candidate[
+                "repository"
+            ],
+            candidate[
+                "source_path"
+            ],
+        )
+    )
+
+    if progress:
+        progress(
+            "SLI semantic entry-point ranking:"
+        )
+
+        for candidate in reranked[:10]:
+            progress(
+                "  "
+                + candidate[
+                    "repository"
+                ]
+                + " :: "
+                + candidate[
+                    "source_path"
+                ]
+                + " score="
+                + f"{candidate['score']:.1f}"
+                + " identity="
+                + (
+                    ",".join(
+                        candidate[
+                            "matched_identity"
+                        ]
+                    )
+                    or "none"
+                )
+                + (
+                    " issues="
+                    + ";".join(
+                        candidate[
+                            "issues"
+                        ]
+                    )
+                    if candidate[
+                        "issues"
+                    ]
+                    else ""
+                )
+            )
+
+    accepted = [
+        candidate
+        for candidate
+        in reranked
+        if (
+            candidate[
+                "score"
+            ]
+            >= 70.0
+            and candidate[
+                "matched_identity"
+            ]
+            and not any(
+                issue.startswith(
+                    "test/documentation"
+                )
+                for issue
+                in candidate[
+                    "issues"
+                ]
+            )
+        )
+    ]
+
+    if not accepted:
+        event[
+            "best"
+        ] = None
+
+        event[
+            "candidates"
+        ] = [
+            {
+                key:
+                    value
+                for key, value
+                in candidate.items()
+                if key
+                != "_document"
+            }
+            for candidate
+            in reranked[:20]
+        ]
+
+        result = {
+            "event":
+                event,
+
+            "best_document":
+                None,
+
+            "best_score":
+                None,
+
+            "best_issues":
+                [
+                    (
+                        "no semantically grounded "
+                        "runnable entry point"
+                    )
+                ],
+        }
+
+    else:
+        best = accepted[0]
+
+        event[
+            "best"
+        ] = {
+            key:
+                value
+            for key, value
+            in best.items()
+            if key
+            != "_document"
+        }
+
+        event[
+            "candidates"
+        ] = [
+            {
+                key:
+                    value
+                for key, value
+                in candidate.items()
+                if key
+                != "_document"
+            }
+            for candidate
+            in reranked[:20]
+        ]
+
+        result = {
+            "event":
+                event,
+
+            "best_document":
+                best[
+                    "_document"
+                ],
+
+            "best_score":
+                best[
+                    "score"
+                ],
+
+            "best_issues":
+                best[
+                    "issues"
+                ],
+        }
+
+    # Preserve GEN1 event persistence after the final semantic decision.
+    MEMORY.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with EVENTS.open(
+        "a",
+        encoding="utf-8",
+    ) as handle:
+        handle.write(
+            json.dumps(
+                event,
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+
+    return result
 
 
 def acquire_and_build(
@@ -863,50 +1216,103 @@ def acquire_and_build(
     *,
     progress: Progress | None = None,
 ) -> str:
-    progress = _progress(progress)
-    workspace = Path(workspace)
-    workspace.mkdir(parents=True, exist_ok=True)
+    """Acquire, compose and validate the final browser artifact."""
+
+    progress = _progress(
+        progress
+    )
+
+    workspace = Path(
+        workspace
+    )
+
+    workspace.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    artifact = (
+        workspace
+        / "index.html"
+    )
+
+    # Preserve the former relevance-guard behavior: an artifact from an
+    # earlier request must never survive into a new acquisition attempt.
+    artifact.unlink(
+        missing_ok=True
+    )
 
     result = acquire_for_request(
         request,
         progress=progress,
     )
 
-    event = result["event"]
-    document = result["best_document"]
-    score = result["best_score"]
+    event = result[
+        "event"
+    ]
+
+    document = result[
+        "best_document"
+    ]
+
+    score = result[
+        "best_score"
+    ]
 
     if document is None:
         return "\n".join(
             [
                 "SLI grounded internet acquisition failed.",
-                f"Repositories found: {event['repositories_found']}",
+                (
+                    "Repositories found: "
+                    f"{event['repositories_found']}"
+                ),
                 (
                     "Repositories accepted: "
                     f"{len(event['repositories_accepted'])}"
                 ),
-                f"Chunks added: {event['chunks_added']}",
+                (
+                    "Chunks added: "
+                    f"{event['chunks_added']}"
+                ),
                 "No relevant HTML entry point passed materialization.",
                 "No downloaded code was executed.",
                 "No LLM fallback was used.",
             ]
         )
 
-    if score is None or score < 45:
+    if (
+        score is None
+        or score < 45
+    ):
         return "\n".join(
             [
-                "SLI grounded internet acquisition found candidates, "
-                "but relevance validation failed.",
+                (
+                    "SLI grounded internet acquisition found candidates, "
+                    "but relevance validation failed."
+                ),
                 f"Best score: {score}",
-                "Issues: " + "; ".join(result["best_issues"]),
-                f"Chunks added: {event['chunks_added']}",
+                (
+                    "Issues: "
+                    + "; ".join(
+                        result[
+                            "best_issues"
+                        ]
+                    )
+                ),
+                (
+                    "Chunks added: "
+                    f"{event['chunks_added']}"
+                ),
                 "No downloaded code was executed.",
                 "No LLM fallback was used.",
             ]
         )
 
-    output = workspace / "index.html"
-    output.write_text(document, encoding="utf-8")
+    artifact.write_text(
+        document,
+        encoding="utf-8",
+    )
 
     report = "\n".join(
         [
@@ -921,7 +1327,10 @@ def acquire_and_build(
                 f"{event['best']['source_path']}"
             ),
             f"Relevance score: {score:.1f}",
-            f"Chunks added to SLI memory: {event['chunks_added']}",
+            (
+                "Chunks added to SLI memory: "
+                f"{event['chunks_added']}"
+            ),
             "Local CSS/JavaScript dependencies: inlined where available",
             "Files: index.html",
             "Success: True",
@@ -932,15 +1341,45 @@ def acquire_and_build(
         ]
     )
 
+    # Preserve the former GEN2 post-composition relevance gate.
+    relevant, matched = (
+        _sli_artifact_matches_request(
+            request,
+            artifact,
+        )
+    )
+
+    if not relevant:
+        artifact.unlink(
+            missing_ok=True,
+        )
+
+        return (
+            "SLI acquired and composed a browser artifact, but rejected it "
+            "as unrelated to the request.\n"
+            "Request identity terms: "
+            f"{', '.join(_sli_request_identity_terms(request)) or 'none'}\n"
+            f"Matched identity terms: {', '.join(matched) or 'none'}\n"
+            "The artifact was not opened.\n"
+            "No LLM fallback was used."
+        )
+
     try:
-        from sophyane.sli_capability_engine import preview_sli_artifact
+        from sophyane.sli_capability_engine import (
+            preview_sli_artifact,
+        )
 
         preview = preview_sli_artifact(
             workspace,
             progress=progress,
         )
 
-        report += "\n" + str(preview)
+        report += (
+            "\n"
+            + str(
+                preview
+            )
+        )
 
     except Exception as error:
         report += (
@@ -960,8 +1399,6 @@ __all__ = [
 
 # SOPHYANE_REQUEST_RELEVANCE_GUARD_V1
 # Prevent stale or wrong-family applications from being reported/opened.
-
-_acquire_and_build_before_relevance_guard = acquire_and_build
 
 
 def _sli_request_identity_terms(request: str) -> list[str]:
@@ -1031,54 +1468,6 @@ def _sli_artifact_matches_request(
     return len(matched) >= required, matched
 
 
-def acquire_and_build(
-    request,
-    workspace,
-    *,
-    progress=None,
-):
-    from pathlib import Path as _Path
-
-    target = _Path(workspace)
-    artifact = target / "index.html"
-
-    # Remove stale artifacts before acquisition.
-    artifact.unlink(
-        missing_ok=True,
-    )
-
-    report = _acquire_and_build_before_relevance_guard(
-        request,
-        target,
-        progress=progress,
-    )
-
-    if not artifact.is_file():
-        return report
-
-    relevant, matched = _sli_artifact_matches_request(
-        request,
-        artifact,
-    )
-
-    if not relevant:
-        artifact.unlink(
-            missing_ok=True,
-        )
-
-        return (
-            "SLI acquired and composed a browser artifact, but rejected it "
-            "as unrelated to the request.\n"
-            f"Request identity terms: "
-            f"{', '.join(_sli_request_identity_terms(request)) or 'none'}\n"
-            f"Matched identity terms: {', '.join(matched) or 'none'}\n"
-            "The artifact was not opened.\n"
-            "No LLM fallback was used."
-        )
-
-    return report
-
-
 # RANK_FILTER_V2
 def filter_and_sort_candidates(cands, request: str):
     """Prefer small pong-named repos; drop giant tutorial monorepos."""
@@ -1112,9 +1501,6 @@ def filter_and_sort_candidates(cands, request: str):
 #   * documentation, benchmark and collection repositories are penalized;
 #   * browser behavior remains necessary but is not treated as semantic proof;
 #   * no application-specific rules or templates are embedded here.
-
-_search_repositories_before_semantic_rank = search_repositories
-_acquire_for_request_before_semantic_rank = acquire_for_request
 
 
 def _sli_identity_terms(request: str) -> list[str]:
@@ -1272,94 +1658,6 @@ def _sli_repository_semantic_score(
         score -= 20.0
 
     return score
-
-
-def search_repositories(
-    request: str,
-    *,
-    progress=None,
-):
-    global MAX_REPOSITORIES
-
-    # Ask the original search for a broader pool, then rank semantically.
-    previous_limit = MAX_REPOSITORIES
-    MAX_REPOSITORIES = max(
-        int(previous_limit),
-        20,
-    )
-
-    try:
-        repositories = (
-            _search_repositories_before_semantic_rank(
-                request,
-                progress=progress,
-            )
-        )
-    finally:
-        MAX_REPOSITORIES = previous_limit
-
-    ranked = sorted(
-        repositories,
-        key=lambda repository: (
-            -_sli_repository_semantic_score(
-                repository,
-                request,
-            ),
-            -int(
-                getattr(
-                    repository,
-                    "stars",
-                    0,
-                )
-                or 0
-            ),
-            int(
-                getattr(
-                    repository,
-                    "size_kb",
-                    0,
-                )
-                or 0
-            ),
-            str(
-                getattr(
-                    repository,
-                    "full_name",
-                    "",
-                )
-            ).lower(),
-        ),
-    )
-
-    selected = ranked[
-        : max(
-            4,
-            int(previous_limit),
-        )
-    ]
-
-    if progress:
-        progress(
-            "SLI semantic repository ranking:"
-        )
-
-        for repository in selected:
-            progress(
-                "  "
-                + str(
-                    getattr(
-                        repository,
-                        "full_name",
-                        "",
-                    )
-                )
-                + ": semantic_score="
-                + (
-                    f"{_sli_repository_semantic_score(repository, request):.2f}"
-                )
-            )
-
-    return selected
 
 
 def _sli_repository_root(path):
@@ -1614,322 +1912,10 @@ def _sli_candidate_semantic_score(
     return score, issues, matched
 
 
-def acquire_for_request(
-    request: str,
-    *,
-    progress=None,
-):
-    result = (
-        _acquire_for_request_before_semantic_rank(
-            request,
-            progress=progress,
-        )
-    )
-
-    event = dict(
-        result.get(
-            "event",
-            {},
-        )
-        or {}
-    )
-
-    existing_candidates = list(
-        event.get(
-            "candidates",
-            [],
-        )
-        or []
-    )
-
-    # Include the original best even when the event candidate list was short.
-    original_best = event.get(
-        "best"
-    )
-
-    if (
-        isinstance(
-            original_best,
-            dict,
-        )
-        and original_best not in existing_candidates
-    ):
-        existing_candidates.append(
-            original_best
-        )
-
-    reranked = []
-
-    for candidate in existing_candidates:
-        if not isinstance(
-            candidate,
-            dict,
-        ):
-            continue
-
-        source_path = str(
-            candidate.get(
-                "source_path",
-                "",
-            )
-            or ""
-        )
-
-        if not source_path:
-            continue
-
-        from pathlib import Path as _Path
-
-        path = _Path(source_path)
-
-        if not path.is_file():
-            continue
-
-        repository_root = _sli_repository_root(
-            path
-        )
-
-        if repository_root is None:
-            continue
-
-        try:
-            document = _inline_document(
-                path,
-                repository_root,
-            )
-        except Exception:
-            document = None
-
-        if not document:
-            continue
-
-        repository = str(
-            candidate.get(
-                "repository",
-                "",
-            )
-            or ""
-        )
-
-        score, issues, matched = (
-            _sli_candidate_semantic_score(
-                request=request,
-                repository=repository,
-                source_path=source_path,
-                document=document,
-                original_score=float(
-                    candidate.get(
-                        "score",
-                        0.0,
-                    )
-                    or 0.0
-                ),
-            )
-        )
-
-        reranked.append(
-            {
-                "repository": repository,
-                "source_path": source_path,
-                "score": score,
-                "issues": issues,
-                "matched_identity": matched,
-                "_document": document,
-            }
-        )
-
-    reranked.sort(
-        key=lambda candidate: (
-            -float(
-                candidate["score"]
-            ),
-            len(
-                candidate["issues"]
-            ),
-            len(
-                candidate["_document"]
-            ),
-            candidate["repository"],
-            candidate["source_path"],
-        )
-    )
-
-    if progress:
-        progress(
-            "SLI semantic entry-point ranking:"
-        )
-
-        for candidate in reranked[:10]:
-            progress(
-                "  "
-                + candidate["repository"]
-                + " :: "
-                + candidate["source_path"]
-                + " score="
-                + f"{candidate['score']:.1f}"
-                + " identity="
-                + (
-                    ",".join(
-                        candidate[
-                            "matched_identity"
-                        ]
-                    )
-                    or "none"
-                )
-                + (
-                    " issues="
-                    + ";".join(
-                        candidate["issues"]
-                    )
-                    if candidate["issues"]
-                    else ""
-                )
-            )
-
-    accepted = [
-        candidate
-        for candidate in reranked
-        if (
-            candidate["score"] >= 70.0
-            and candidate[
-                "matched_identity"
-            ]
-            and not any(
-                issue.startswith(
-                    "test/documentation"
-                )
-                for issue in candidate[
-                    "issues"
-                ]
-            )
-        )
-    ]
-
-    if not accepted:
-        result["best_document"] = None
-        result["best_score"] = None
-        result["best_issues"] = [
-            "no semantically grounded runnable entry point"
-        ]
-
-        event["best"] = None
-        event["candidates"] = [
-            {
-                key: value
-                for key, value in candidate.items()
-                if key != "_document"
-            }
-            for candidate in reranked[:20]
-        ]
-
-        result["event"] = event
-
-        return result
-
-    best = accepted[0]
-
-    event["best"] = {
-        key: value
-        for key, value in best.items()
-        if key != "_document"
-    }
-
-    event["candidates"] = [
-        {
-            key: value
-            for key, value in candidate.items()
-            if key != "_document"
-        }
-        for candidate in reranked[:20]
-    ]
-
-    result["event"] = event
-    result["best_document"] = best[
-        "_document"
-    ]
-    result["best_score"] = best[
-        "score"
-    ]
-    result["best_issues"] = best[
-        "issues"
-    ]
-
-    return result
-
 # SOPHYANE_IDENTITY_FIRST_SEARCH_V4
 #
 # Search is driven by request identity before stars or generic browser terms.
 # This is generic: no application or game name is hardcoded.
-
-_search_repositories_before_identity_v4 = search_repositories
-
-
-def build_search_queries(
-    request: str,
-) -> list[str]:
-    """Build exact and progressively broader repository queries."""
-
-    import re as _re
-
-    stop = {
-        "a", "an", "and", "app", "application",
-        "browser", "build", "complete", "contained",
-        "create", "develop", "design", "for", "from",
-        "game", "generate", "html", "implement", "in",
-        "index", "interactive", "make", "one", "page",
-        "playable", "please", "project", "self",
-        "simple", "the", "to", "using", "web",
-        "webpage", "website", "with",
-    }
-
-    terms: list[str] = []
-
-    for token in re.findall(
-        r"[a-z][a-z0-9_-]{1,}",
-        str(request or "").lower(),
-    ):
-        token = token.strip("-_")
-
-        if (
-            len(token) >= 2
-            and token not in stop
-            and token not in terms
-        ):
-            terms.append(token)
-
-    if not terms:
-        terms = ["canvas"]
-
-    identity = terms[:4]
-    phrase = " ".join(identity)
-    hyphenated = "-".join(identity)
-    compact = "".join(identity)
-
-    queries = [
-        f'"{phrase}" in:name',
-        f'{hyphenated} in:name',
-        f'{phrase} in:name,description',
-        f'{phrase} canvas javascript in:name,description',
-        f'{phrase} html5 javascript in:name,description',
-    ]
-
-    # A compact variant helps requests whose repository names join words.
-    if len(identity) > 1:
-        queries.append(
-            f'{compact} in:name'
-        )
-
-    output: list[str] = []
-
-    for query in queries:
-        query = " ".join(
-            query.split()
-        )
-
-        if query and query not in output:
-            output.append(query)
-
-    return output
 
 
 def _sli_identity_terms_v4(
@@ -2130,6 +2116,19 @@ def search_repositories(
     *,
     progress=None,
 ):
+    """Search, rank and merge repositories using the final acquisition policy.
+
+    Consolidated behavior:
+
+    1. execute identity-first GitHub repository discovery;
+    2. preserve language-aware runtime query generation;
+    3. merge remote results with compatible cached repositories;
+    4. deduplicate by repository identity;
+    5. rank by semantic score/size;
+    6. apply permissive-SPDX ranking when the licence gate is available.
+
+    strict_acquisition_guard remains the intentional outer runtime wrapper.
+    """
     import urllib.parse as _parse
 
     terms = _sli_identity_terms_v4(
@@ -2138,174 +2137,313 @@ def search_repositories(
 
     found = {}
 
-    for query in build_search_queries(
-        request
-    ):
-        if progress:
-            progress(
-                "SLI identity search: "
-                + query
-            )
+    # --------------------------------------------------------
+    # Former GEN3: identity-first remote repository discovery.
+    # --------------------------------------------------------
 
-        encoded = _parse.urlencode(
-            {
-                "q": (
-                    query
-                    + " fork:false archived:false"
-                ),
-                # Deliberately omit sort=stars.
-                # GitHub's default is best-match relevance.
-                "order": "desc",
-                "per_page": "30",
-            }
-        )
-
-        try:
-            payload = _sli_github_json_v4(
-                "https://api.github.com/"
-                "search/repositories?"
-                + encoded
-            )
-        except Exception as error:
+    try:
+        for query in build_search_queries(
+            request
+        ):
             if progress:
                 progress(
-                    "SLI identity search error: "
-                    f"{type(error).__name__}: "
-                    f"{error}"
+                    "SLI identity search: "
+                    + query
                 )
-            continue
 
-        items = payload.get(
-            "items",
-            [],
-        )
-
-        if progress:
-            progress(
-                "SLI identity results: "
-                + str(len(items))
+            encoded = _parse.urlencode(
+                {
+                    "q": (
+                        query
+                        + " fork:false archived:false"
+                    ),
+                    # GitHub default ordering is best-match relevance.
+                    "order": "desc",
+                    "per_page": "30",
+                }
             )
 
-        for item in items:
-            if not isinstance(
-                item,
-                dict,
-            ):
-                continue
-
-            full_name = str(
-                item.get("full_name")
-                or ""
-            )
-
-            clone_url = str(
-                item.get("clone_url")
-                or ""
-            )
-
-            if not full_name or not clone_url:
-                continue
-
-            size_kb = int(
-                item.get("size")
-                or 0
-            )
-
-            if (
-                size_kb <= 0
-                or size_kb > 120000
-            ):
-                continue
-
-            semantic_score = (
-                _sli_repository_identity_score_v4(
-                    item,
-                    terms,
+            try:
+                payload = _sli_github_json_v4(
+                    "https://api.github.com/"
+                    "search/repositories?"
+                    + encoded
                 )
-            )
 
-            # No identity = no clone.
-            if semantic_score < 0:
-                continue
-
-            licence = str(
-                (
-                    item.get("license")
-                    or {}
-                ).get("spdx_id")
-                or ""
-            ).lower()
-
-            repository = Repository(
-                full_name=full_name,
-                clone_url=clone_url,
-                default_branch=str(
-                    item.get(
-                        "default_branch"
+            except Exception as error:
+                if progress:
+                    progress(
+                        "SLI identity search error: "
+                        f"{type(error).__name__}: "
+                        f"{error}"
                     )
-                    or "main"
-                ),
-                description=str(
-                    item.get("description")
-                    or ""
-                ),
-                stars=int(
+
+                continue
+
+            items = payload.get(
+                "items",
+                [],
+            )
+
+            if progress:
+                progress(
+                    "SLI identity results: "
+                    + str(
+                        len(
+                            items
+                        )
+                    )
+                )
+
+            for item in items:
+                if not isinstance(
+                    item,
+                    dict,
+                ):
+                    continue
+
+                full_name = str(
                     item.get(
-                        "stargazers_count"
+                        "full_name"
+                    )
+                    or ""
+                )
+
+                clone_url = str(
+                    item.get(
+                        "clone_url"
+                    )
+                    or ""
+                )
+
+                if (
+                    not full_name
+                    or not clone_url
+                ):
+                    continue
+
+                size_kb = int(
+                    item.get(
+                        "size"
                     )
                     or 0
-                ),
-                size_kb=size_kb,
-                api_licence=licence,
-                query=query,
-                score=semantic_score,
+                )
+
+                if (
+                    size_kb <= 0
+                    or size_kb > 120000
+                ):
+                    continue
+
+                semantic_score = (
+                    _sli_repository_identity_score_v4(
+                        item,
+                        terms,
+                    )
+                )
+
+                # No request identity = no clone.
+                if semantic_score < 0:
+                    continue
+
+                licence = str(
+                    (
+                        item.get(
+                            "license"
+                        )
+                        or {}
+                    ).get(
+                        "spdx_id"
+                    )
+                    or ""
+                ).lower()
+
+                repository = Repository(
+                    full_name=full_name,
+                    clone_url=clone_url,
+                    default_branch=str(
+                        item.get(
+                            "default_branch"
+                        )
+                        or "main"
+                    ),
+                    description=str(
+                        item.get(
+                            "description"
+                        )
+                        or ""
+                    ),
+                    stars=int(
+                        item.get(
+                            "stargazers_count"
+                        )
+                        or 0
+                    ),
+                    size_kb=size_kb,
+                    api_licence=licence,
+                    query=query,
+                    score=semantic_score,
+                )
+
+                previous = found.get(
+                    full_name
+                )
+
+                if (
+                    previous is None
+                    or repository.score
+                    > previous.score
+                ):
+                    found[
+                        full_name
+                    ] = repository
+
+    except Exception as error:
+        # Former GEN4 treated total remote-search failure as a
+        # recoverable condition and continued with local cache.
+        if progress:
+            progress(
+                "SLI remote search unavailable: "
+                f"{type(error).__name__}: {error}"
             )
 
-            previous = found.get(
-                full_name
-            )
 
-            if (
-                previous is None
-                or repository.score
-                > previous.score
-            ):
-                found[full_name] = repository
+    # --------------------------------------------------------
+    # Former GEN4: merge compatible cached repositories.
+    # --------------------------------------------------------
+
+    cached = _sli_cached_repositories_v5(
+        request
+    )
+
+    by_name = {}
+
+    for repository in (
+        list(
+            found.values()
+        )
+        + list(
+            cached
+        )
+    ):
+        previous = by_name.get(
+            repository.full_name
+        )
+
+        if (
+            previous is None
+            or repository.score
+            > previous.score
+        ):
+            by_name[
+                repository.full_name
+            ] = repository
+
 
     ranked = sorted(
-        found.values(),
+        by_name.values(),
         key=lambda repository: (
             -repository.score,
             repository.size_kb,
-            -repository.stars,
-            repository.full_name.lower(),
+            repository.full_name,
         ),
     )
 
-    # Keep acquisition bounded.
-    selected = ranked[:8]
 
-    if progress:
-        progress(
-            "SLI identity-first repositories:"
-        )
+    # --------------------------------------------------------
+    # Former V8 wrapper: permissive SPDX repositories first.
+    # --------------------------------------------------------
 
-        for repository in selected:
-            progress(
-                "  "
-                + repository.full_name
-                + " score="
-                + f"{repository.score:.1f}"
-                + " size="
-                + str(repository.size_kb)
-                + "KB licence="
-                + (
-                    repository.api_licence
-                    or "inspect-after-clone"
+    sorter = globals().get(
+        "_sli_sort_repos_v8"
+    )
+
+    if callable(
+        sorter
+    ):
+        try:
+            ranked = list(
+                sorter(
+                    ranked
                 )
             )
 
-    return selected
+            if progress:
+                progress(
+                    "SLI clone ranking: "
+                    "SPDX-permissive first, then size/score"
+                )
+
+                for repository in ranked[:8]:
+                    progress(
+                        "  rank "
+                        + str(
+                            getattr(
+                                repository,
+                                "full_name",
+                                repository,
+                            )
+                        )
+                        + " licence="
+                        + (
+                            str(
+                                getattr(
+                                    repository,
+                                    "api_licence",
+                                    "",
+                                )
+                                or "none"
+                            )
+                        )
+                        + " size="
+                        + str(
+                            getattr(
+                                repository,
+                                "size_kb",
+                                "?",
+                            )
+                        )
+                        + "KB score="
+                        + (
+                            f"{float(getattr(repository, 'score', 0) or 0):.1f}"
+                        )
+                    )
+
+        except Exception as error:
+            if progress:
+                progress(
+                    "SLI rank warning: "
+                    + str(
+                        error
+                    )
+                )
+
+
+    if progress:
+        authenticated = bool(
+            _sli_api_token_v5()
+        )
+
+        progress(
+            "SLI GitHub authentication: "
+            + (
+                "authenticated"
+                if authenticated
+                else "unauthenticated"
+            )
+        )
+
+        progress(
+            "SLI remote/cache repositories: "
+            + str(
+                len(
+                    ranked
+                )
+            )
+        )
+
+
+    return ranked[:8]
 
 # SOPHYANE_RATE_LIMIT_CACHE_V5
 #
@@ -2325,18 +2463,58 @@ import urllib.request as _sli_urlrequest
 from pathlib import Path as _SliPath
 
 
-_sli_search_before_v5 = search_repositories
-_sli_licence_before_v5 = _detected_licence
+def _sli_code_memory_state_root_v1():
+    """Return the active persistent code-memory state directory.
 
-_SLI_SEARCH_CACHE = (
-    MEMORY
-    / "github_search_cache"
-)
+    SOPHYANE_HOME overrides the default Sophyane state root. This must be
+    resolved at call time so tests, isolated runtimes and user-selected state
+    directories never leak GitHub transport state into one another.
+    """
+    configured = str(
+        _sli_os.environ.get(
+            "SOPHYANE_HOME",
+            "",
+        )
+        or ""
+    ).strip()
 
-_SLI_RATE_STATE = (
-    MEMORY
-    / "github_rate_state.json"
-)
+    if configured:
+        return (
+            Path(
+                configured
+            ).expanduser()
+            / "code_memory"
+        )
+
+    return (
+        Path.home()
+        / ".local"
+        / "share"
+        / "sophyane"
+        / "code_memory"
+    )
+
+
+def _sli_invalid_token_file_v1():
+    return (
+        _sli_code_memory_state_root_v1()
+        / "github_invalid_token.json"
+    )
+
+
+def _sli_rate_state_file_v1():
+    return (
+        _sli_code_memory_state_root_v1()
+        / "github_rate_state.json"
+    )
+
+
+def _sli_search_cache_dir_v1():
+    return (
+        _sli_code_memory_state_root_v1()
+        / "github_search_cache"
+    )
+
 
 _SLI_SEARCH_TTL = 24 * 60 * 60
 
@@ -2376,32 +2554,155 @@ def _sli_identity_v5(
 def build_search_queries(
     request: str,
 ) -> list[str]:
-    """Use two identity-rich searches instead of repeated broad queries."""
+    """Build language-aware repository searches from explicit user intent.
+
+    Browser vocabulary must be added only for browser requests. Explicit C++,
+    Python, Rust, Java and similar software requests retain their language
+    identity during repository discovery.
+    """
+    normalized = " ".join(
+        str(request or "").casefold().split()
+    )
 
     terms = _sli_identity_v5(
         request
     )
 
     if not terms:
-        terms = ["canvas"]
+        terms = ["software"]
 
-    phrase = " ".join(terms)
-    hyphenated = "-".join(terms)
+    phrase = " ".join(terms[:6])
+    hyphenated = "-".join(terms[:6])
 
-    queries = [
-        f'"{phrase}" in:name',
-        (
-            f'{hyphenated} canvas javascript '
-            'in:name,description'
-        ),
-    ]
+    # SOPHYANE_LANGUAGE_AWARE_ACQUISITION_V1
+    cpp_request = any(
+        marker in normalized
+        for marker in (
+            "c++",
+            " cpp ",
+            "cpp ",
+            " cxx ",
+            ".cpp",
+            "std::",
+            "clang++",
+            "g++",
+        )
+    )
+
+    python_request = any(
+        marker in normalized
+        for marker in (
+            "python",
+            ".py",
+            "pytest",
+        )
+    )
+
+    rust_request = any(
+        marker in normalized
+        for marker in (
+            "rust",
+            "cargo",
+            ".rs",
+        )
+    )
+
+    browser_request = any(
+        marker in normalized
+        for marker in (
+            "website",
+            "web site",
+            "webpage",
+            "web page",
+            "browser app",
+            "browser application",
+            "html",
+            "javascript",
+            "canvas",
+            "landing page",
+        )
+    )
+
+    queries: list[str] = []
+
+    if cpp_request and not browser_request:
+        queries.extend(
+            [
+                f'"{phrase}" C++ in:name,description,readme',
+                (
+                    f'{hyphenated} cpp '
+                    'in:name,description,readme'
+                ),
+                (
+                    f'{phrase} C++ std::thread std::mutex '
+                    'in:name,description,readme'
+                ),
+                (
+                    f'{phrase} deterministic replay concurrency C++ '
+                    'in:name,description,readme'
+                ),
+            ]
+        )
+
+    elif python_request and not browser_request:
+        queries.extend(
+            [
+                f'"{phrase}" Python in:name,description,readme',
+                (
+                    f'{hyphenated} python '
+                    'in:name,description,readme'
+                ),
+            ]
+        )
+
+    elif rust_request and not browser_request:
+        queries.extend(
+            [
+                f'"{phrase}" Rust in:name,description,readme',
+                (
+                    f'{hyphenated} rust cargo '
+                    'in:name,description,readme'
+                ),
+            ]
+        )
+
+    elif browser_request:
+        queries.extend(
+            [
+                f'"{phrase}" in:name',
+                (
+                    f'{hyphenated} canvas javascript '
+                    'in:name,description'
+                ),
+            ]
+        )
+
+    else:
+        queries.extend(
+            [
+                f'"{phrase}" in:name',
+                (
+                    f'{phrase} source code '
+                    'in:name,description,readme'
+                ),
+            ]
+        )
 
     return list(
-        dict.fromkeys(queries)
+        dict.fromkeys(
+            " ".join(query.split())
+            for query in queries
+            if query.strip()
+        )
     )
 
 
 def _sli_api_token_v5() -> str:
+    """Return a GitHub token unless this state root has rejected it."""
+
+    if _sli_token_marked_invalid_v1():
+        return ""
+
     token = (
         _sli_os.environ.get(
             "GITHUB_TOKEN"
@@ -2414,7 +2715,9 @@ def _sli_api_token_v5() -> str:
     if token:
         return token.strip()
 
-    if not shutil.which("gh"):
+    if not shutil.which(
+        "gh"
+    ):
         return ""
 
     try:
@@ -2469,7 +2772,7 @@ def _sli_cache_path_v5(
     ).hexdigest()
 
     return (
-        _SLI_SEARCH_CACHE
+        _sli_search_cache_dir_v1()
         / f"{digest}.json"
     )
 
@@ -2528,7 +2831,7 @@ def _sli_write_cache_v5(
     url: str,
     payload: dict,
 ) -> None:
-    _SLI_SEARCH_CACHE.mkdir(
+    _sli_search_cache_dir_v1().mkdir(
         parents=True,
         exist_ok=True,
     )
@@ -2565,12 +2868,12 @@ def _sli_write_cache_v5(
 
 
 def _sli_rate_state_v5() -> dict:
-    if not _SLI_RATE_STATE.is_file():
+    if not _sli_rate_state_file_v1().is_file():
         return {}
 
     try:
         return _sli_json.loads(
-            _SLI_RATE_STATE.read_text(
+            _sli_rate_state_file_v1().read_text(
                 encoding="utf-8",
             )
         )
@@ -2584,12 +2887,12 @@ def _sli_set_rate_state_v5(
     reset: int,
     reason: str,
 ) -> None:
-    _SLI_RATE_STATE.parent.mkdir(
+    _sli_rate_state_file_v1().parent.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    _SLI_RATE_STATE.write_text(
+    _sli_rate_state_file_v1().write_text(
         _sli_json.dumps(
             {
                 "reset":
@@ -2611,6 +2914,47 @@ def _sli_set_rate_state_v5(
 def _sli_github_json_v5(
     url: str,
 ):
+    """Fetch GitHub JSON with cache, rate-limit and invalid-token recovery."""
+
+    # A credential already proven invalid in this SOPHYANE_HOME must not be
+    # sent again. Preserve the former outer-wrapper behavior: fresh cache
+    # first, otherwise one unauthenticated request.
+    if _sli_token_marked_invalid_v1():
+        cached = _sli_read_cache_v5(
+            url
+        )
+
+        if cached is not None:
+            return cached
+
+        request = _sli_urlrequest.Request(
+            url,
+            headers=(
+                _sli_api_headers_without_auth_v1()
+            ),
+        )
+
+        with _sli_urlrequest.urlopen(
+            request,
+            timeout=25,
+        ) as response:
+            payload = _sli_json.loads(
+                response.read().decode(
+                    "utf-8",
+                    errors="replace",
+                )
+            )
+
+        _sli_write_cache_v5(
+            url,
+            payload,
+        )
+
+        return payload
+
+    # --------------------------------------------------------
+    # Fresh-cache fast path from the original transport layer.
+    # --------------------------------------------------------
     cached = _sli_read_cache_v5(
         url
     )
@@ -2618,7 +2962,13 @@ def _sli_github_json_v5(
     if cached is not None:
         return cached
 
-    rate_state = _sli_rate_state_v5()
+    # --------------------------------------------------------
+    # Persisted rate-limit state.
+    # --------------------------------------------------------
+    rate_state = (
+        _sli_rate_state_v5()
+    )
+
     reset = int(
         rate_state.get(
             "reset",
@@ -2667,6 +3017,48 @@ def _sli_github_json_v5(
                 )
             )
 
+        _sli_write_cache_v5(
+            url,
+            payload,
+        )
+
+        return payload
+
+    except _sli_urlerror.HTTPError as error:
+        # ----------------------------------------------------
+        # Former outer invalid-token wrapper behavior.
+        # ----------------------------------------------------
+        if error.code == 401:
+            _sli_mark_invalid_token_v1(
+                "GitHub API returned HTTP 401"
+            )
+
+            stale = _sli_read_cache_v5(
+                url,
+                allow_stale=True,
+            )
+
+            if stale is not None:
+                return stale
+
+            retry = _sli_urlrequest.Request(
+                url,
+                headers=(
+                    _sli_api_headers_without_auth_v1()
+                ),
+            )
+
+            with _sli_urlrequest.urlopen(
+                retry,
+                timeout=25,
+            ) as response:
+                payload = _sli_json.loads(
+                    response.read().decode(
+                        "utf-8",
+                        errors="replace",
+                    )
+                )
+
             _sli_write_cache_v5(
                 url,
                 payload,
@@ -2674,13 +3066,19 @@ def _sli_github_json_v5(
 
             return payload
 
-    except _sli_urlerror.HTTPError as error:
-        reset_header = error.headers.get(
-            "x-ratelimit-reset"
+        # ----------------------------------------------------
+        # Former base transport 403/429 rate-limit behavior.
+        # ----------------------------------------------------
+        reset_header = (
+            error.headers.get(
+                "x-ratelimit-reset"
+            )
         )
 
-        retry_after = error.headers.get(
-            "retry-after"
+        retry_after = (
+            error.headers.get(
+                "retry-after"
+            )
         )
 
         now = int(
@@ -2692,6 +3090,7 @@ def _sli_github_json_v5(
                 reset = int(
                     reset_header
                 )
+
             except ValueError:
                 reset = now + 60
 
@@ -2703,6 +3102,7 @@ def _sli_github_json_v5(
                         retry_after
                     )
                 )
+
             except ValueError:
                 reset = now + 60
 
@@ -2715,7 +3115,9 @@ def _sli_github_json_v5(
         }:
             _sli_set_rate_state_v5(
                 reset=reset,
-                reason=f"HTTP {error.code}",
+                reason=(
+                    f"HTTP {error.code}"
+                ),
             )
 
             stale = _sli_read_cache_v5(
@@ -2856,244 +3258,22 @@ def _sli_cached_repositories_v5(
     return output[:8]
 
 
-def search_repositories(
-    request: str,
-    *,
-    progress=None,
-):
-    try:
-        repositories = (
-            _sli_search_before_v5(
-                request,
-                progress=progress,
-            )
-        )
-
-    except Exception as error:
-        if progress:
-            progress(
-                "SLI remote search unavailable: "
-                f"{type(error).__name__}: {error}"
-            )
-
-        repositories = []
-
-    cached = _sli_cached_repositories_v5(
-        request
-    )
-
-    by_name = {}
-
-    for repository in (
-        list(repositories)
-        + cached
-    ):
-        previous = by_name.get(
-            repository.full_name
-        )
-
-        if (
-            previous is None
-            or repository.score
-            > previous.score
-        ):
-            by_name[
-                repository.full_name
-            ] = repository
-
-    ranked = sorted(
-        by_name.values(),
-        key=lambda repository: (
-            -repository.score,
-            repository.size_kb,
-            repository.full_name,
-        ),
-    )
-
-    if progress:
-        authenticated = bool(
-            _sli_api_token_v5()
-        )
-
-        progress(
-            "SLI GitHub authentication: "
-            + (
-                "authenticated"
-                if authenticated
-                else "unauthenticated"
-            )
-        )
-
-        progress(
-            "SLI remote/cache repositories: "
-            + str(
-                len(ranked)
-            )
-        )
-
-    return ranked[:8]
-
-
-def _detected_licence(
-    root,
-    api_licence,
-):
-    detected = (
-        _sli_licence_before_v5(
-            root,
-            api_licence,
-        )
-    )
-
-    if detected:
-        return detected
-
-    root = _SliPath(root)
-
-    # Check common licence files up to two directories deep.
-    candidates = []
-
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-
-        try:
-            relative = path.relative_to(
-                root
-            )
-        except ValueError:
-            continue
-
-        if len(
-            relative.parts
-        ) > 3:
-            continue
-
-        name = path.name.lower()
-
-        if name.startswith(
-            (
-                "license",
-                "licence",
-                "copying",
-            )
-        ):
-            candidates.append(
-                path
-            )
-
-    markers = {
-        "mit license":
-            "mit",
-
-        "apache license":
-            "apache-2.0",
-
-        "bsd 2-clause":
-            "bsd-2-clause",
-
-        "bsd 3-clause":
-            "bsd-3-clause",
-
-        "isc license":
-            "isc",
-
-        "mozilla public license":
-            "mpl-2.0",
-
-        "the unlicense":
-            "unlicense",
-    }
-
-    for candidate in candidates[:20]:
-        try:
-            text = candidate.read_text(
-                encoding="utf-8",
-                errors="ignore",
-            ).lower()[:150000]
-        except OSError:
-            continue
-
-        for marker, licence in markers.items():
-            if marker in text:
-                return licence
-
-    # package.json often declares the repository licence.
-    for package in root.rglob(
-        "package.json"
-    ):
-        try:
-            relative = package.relative_to(
-                root
-            )
-
-            if len(
-                relative.parts
-            ) > 3:
-                continue
-
-            data = _sli_json.loads(
-                package.read_text(
-                    encoding="utf-8",
-                    errors="replace",
-                )
-            )
-
-        except Exception:
-            continue
-
-        licence = str(
-            data.get("license")
-            or ""
-        ).strip().lower()
-
-        aliases = {
-            "mit":
-                "mit",
-
-            "apache-2.0":
-                "apache-2.0",
-
-            "bsd-2-clause":
-                "bsd-2-clause",
-
-            "bsd-3-clause":
-                "bsd-3-clause",
-
-            "isc":
-                "isc",
-
-            "mpl-2.0":
-                "mpl-2.0",
-
-            "unlicense":
-                "unlicense",
-        }
-
-        if licence in aliases:
-            return aliases[licence]
-
-    return None
-
 # SOPHYANE_INVALID_TOKEN_FALLBACK_V1
 #
 # A configured token is not necessarily valid. On HTTP 401, retry the same
 # request once without Authorization and remember that the credential failed.
-
-_sli_github_json_before_invalid_token_fallback = _sli_github_json_v5
-_SLI_INVALID_TOKEN_FILE = MEMORY / "github_invalid_token.json"
 
 
 def _sli_mark_invalid_token_v1(error: str) -> None:
     import json as _json
     import time as _time
 
-    _SLI_INVALID_TOKEN_FILE.parent.mkdir(
+    _sli_invalid_token_file_v1().parent.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    _SLI_INVALID_TOKEN_FILE.write_text(
+    _sli_invalid_token_file_v1().write_text(
         _json.dumps(
             {
                 "invalid": True,
@@ -3106,14 +3286,14 @@ def _sli_mark_invalid_token_v1(error: str) -> None:
 
 
 def _sli_token_marked_invalid_v1() -> bool:
-    if not _SLI_INVALID_TOKEN_FILE.is_file():
+    if not _sli_invalid_token_file_v1().is_file():
         return False
 
     try:
         import json as _json
 
         data = _json.loads(
-            _SLI_INVALID_TOKEN_FILE.read_text(
+            _sli_invalid_token_file_v1().read_text(
                 encoding="utf-8",
             )
         )
@@ -3132,114 +3312,8 @@ def _sli_api_headers_without_auth_v1() -> dict[str, str]:
     }
 
 
-def _sli_github_json_v5(url: str):
-    import json as _json
-    import urllib.error as _urlerror
-    import urllib.request as _urlrequest
-
-    # When a previous request proved the configured credential invalid,
-    # avoid repeatedly sending it.
-    if _sli_token_marked_invalid_v1():
-        cached = _sli_read_cache_v5(url)
-
-        if cached is not None:
-            return cached
-
-        request = _urlrequest.Request(
-            url,
-            headers=_sli_api_headers_without_auth_v1(),
-        )
-
-        with _urlrequest.urlopen(
-            request,
-            timeout=25,
-        ) as response:
-            payload = _json.loads(
-                response.read().decode(
-                    "utf-8",
-                    errors="replace",
-                )
-            )
-
-        _sli_write_cache_v5(url, payload)
-        return payload
-
-    try:
-        return _sli_github_json_before_invalid_token_fallback(url)
-
-    except _urlerror.HTTPError as error:
-        if error.code != 401:
-            raise
-
-        _sli_mark_invalid_token_v1(
-            "GitHub API returned HTTP 401"
-        )
-
-        # Retry once with no Authorization header.
-        cached = _sli_read_cache_v5(
-            url,
-            allow_stale=True,
-        )
-
-        if cached is not None:
-            return cached
-
-        request = _urlrequest.Request(
-            url,
-            headers=_sli_api_headers_without_auth_v1(),
-        )
-
-        with _urlrequest.urlopen(
-            request,
-            timeout=25,
-        ) as response:
-            payload = _json.loads(
-                response.read().decode(
-                    "utf-8",
-                    errors="replace",
-                )
-            )
-
-        _sli_write_cache_v5(url, payload)
-        return payload
-
-
 # Earlier search code resolves this global name at execution time.
-_sli_github_json_v4 = _sli_github_json_v5
 
-
-def _sli_api_token_v5() -> str:
-    """Return a token only when it has not already failed authentication."""
-
-    if _sli_token_marked_invalid_v1():
-        return ""
-
-    token = (
-        _sli_os.environ.get("GITHUB_TOKEN")
-        or _sli_os.environ.get("GH_TOKEN")
-    )
-
-    if token:
-        return token.strip()
-
-    if not shutil.which("gh"):
-        return ""
-
-    try:
-        result = _sli_subprocess.run(
-            ["gh", "auth", "token"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-    except Exception:
-        return ""
-
-    if result.returncode != 0:
-        return ""
-
-    return result.stdout.strip()
 
 # SOPHYANE_ACQUISITION_INTELLIGENCE_V1
 from sophyane.code_memory.acquisition_intelligence import (
@@ -3280,27 +3354,6 @@ def _detected_licence(root, api_licence=""):
     return None
 
 # Wrap search_repositories to SPDX-rank results
-if "search_repositories" in globals() and _sli_sort_repos_v8 is not None:
-    _sli_search_repos_before_v8 = search_repositories
-
-    def search_repositories(request, *args, progress=None, **kwargs):
-        repos = _sli_search_repos_before_v8(request, *args, progress=progress, **kwargs)
-        try:
-            ranked = _sli_sort_repos_v8(repos)
-            if progress:
-                progress("SLI clone ranking: SPDX-permissive first, then size/score")
-                for r in ranked[:8]:
-                    progress(
-                        f"  rank {getattr(r, 'full_name', r)} "
-                        f"licence={getattr(r, 'api_licence', '') or 'none'} "
-                        f"size={getattr(r, 'size_kb', '?')}KB "
-                        f"score={getattr(r, 'score', 0):.1f}"
-                    )
-            return ranked
-        except Exception as e:
-            if progress:
-                progress(f"SLI rank warning: {e}")
-            return repos
 
 # SOPHYANE_STRICT_ACQUISITION_GUARD_V1
 # This hook must remain after every earlier acquisition/licence patch.
