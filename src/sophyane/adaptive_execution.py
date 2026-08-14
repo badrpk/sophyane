@@ -705,77 +705,152 @@ def execution_prefix_for_repair(request: str) -> str:
 
 
 def _full_stack_initial_bundle_prompt(
-    request: str,
+    original_request: str,
 ) -> str:
-    """Request one compact first-pass multi-file full-stack implementation."""
+    """Request the first bounded full-stack implementation increment.
+
+    SOPHYANE_FULL_STACK_CONTEXT_DECOMPOSITION_V1
+
+    SLI owns project decomposition. The provider owns only one compact,
+    context-safe implementation increment at a time.
+
+    The first increment establishes the executable backend foundation.
+    Subsequent frontend, tests and documentation increments are requested
+    only after the runtime has materialized and validated earlier files.
+    """
+    request = str(
+        original_request
+        or ""
+    ).strip()
 
     return (
-        "FULL-STACK INITIAL IMPLEMENTATION BUNDLE. "
-        "Return JSON only. No Markdown and no explanation. "
-        "Do NOT return one action. "
-        "Return one object with a top-level files array. "
-        "Each item must contain path and complete content. "
-        "Build the smallest runnable implementation that covers the whole "
-        "architecture in one response.\n\n"
+        "FULL-STACK IMPLEMENTATION INCREMENT 1.\n"
+        "Return exactly one executable JSON action.\n"
+        "No Markdown. No explanation. No multiple files.\n\n"
 
-        "MANDATORY FILE SET:\n"
-        "- backend/app.py\n"
-        "- static/index.html\n"
-        "- static/app.js\n"
-        "- static/style.css\n"
-        "- tests/test_app.py\n"
-        "- README.md\n\n"
+        "SLI owns the project plan and later increments. "
+        "Your only task in this generation is backend/app.py.\n\n"
 
-        "STACK:\n"
+        "ACTION CONTRACT:\n"
+        "{\"action\":{\"type\":\"write_file\","
+        "\"path\":\"backend/app.py\","
+        "\"content\":\"...complete Python source...\"}}\n\n"
+
+        "BACKEND REQUIREMENTS:\n"
         "- Python standard library only.\n"
         "- sqlite3 persistent database.\n"
-        "- BaseHTTPRequestHandler + ThreadingHTTPServer.\n"
-        "- Bind 127.0.0.1 only.\n"
-        "- HTML/CSS/vanilla JavaScript frontend.\n"
-        "- No Flask, FastAPI, Django, Uvicorn, Node packages, Java, "
-        "Maven or Gradle.\n\n"
+        "- ThreadingHTTPServer.\n"
+        "- BaseHTTPRequestHandler.\n"
+        "- Bind to 127.0.0.1 only.\n"
+        "- Deterministic schema initialization.\n"
+        "- Deterministic seed/demo rows.\n"
+        "- GET /api/projects.\n"
+        "- GET /api/tasks.\n"
+        "- POST /api/tasks.\n"
+        "- PUT /api/tasks/{id}.\n"
+        "- DELETE /api/tasks/{id}.\n"
+        "- GET /api/stats.\n"
+        "- Search/filter query handling.\n"
+        "- Validate required fields, status and priority.\n"
+        "- Structured JSON errors with useful HTTP codes.\n"
+        "- Per-request SQLite connections safe for "
+        "ThreadingHTTPServer.\n"
+        "- Serve static files if the static directory exists.\n\n"
 
-        "BACKEND MINIMUM:\n"
-        "- Initialize a SQLite database file.\n"
-        "- Projects and tasks tables.\n"
-        "- Deterministic seed/demo records.\n"
-        "- GET /api/projects\n"
-        "- GET /api/tasks\n"
-        "- POST /api/tasks\n"
-        "- PUT /api/tasks/{id}\n"
-        "- DELETE /api/tasks/{id}\n"
-        "- GET /api/stats\n"
-        "- Search/filter query support.\n"
-        "- Validate status, priority and required fields.\n"
-        "- Return useful JSON errors and HTTP status codes.\n"
-        "- Serve static/index.html and frontend assets.\n\n"
-
-        "FRONTEND MINIMUM:\n"
-        "- Responsive viewport.\n"
-        "- Dashboard statistics.\n"
-        "- Project/task UI.\n"
-        "- Create/edit/delete task interactions.\n"
-        "- todo / in progress / done status controls.\n"
-        "- priority and due date fields.\n"
-        "- search and filtering.\n"
-        "- fetch() calls to the real REST API.\n\n"
-
-        "TEST MINIMUM:\n"
-        "- Automated backend API tests.\n"
-        "- Exercise create, read, update, delete, validation and stats.\n\n"
-
-        "OUTPUT CONTRACT:\n"
-        "{\"files\":["
-        "{\"path\":\"backend/app.py\",\"content\":\"...\"},"
-        "{\"path\":\"static/index.html\",\"content\":\"...\"}"
-        "]}\n"
-        "Every file must be syntactically complete. "
-        "Keep implementation compact enough to fit this response. "
-        "Do not defer core requirements to later generations.\n\n"
+        "Do not generate frontend files, tests, README, "
+        "requirements.txt or prose in this turn.\n"
+        "Do not use Flask, FastAPI, Django or third-party packages.\n"
+        "The Python file must be syntactically complete and executable.\n\n"
 
         "USER REQUEST:\n"
-        + str(request or "")
+        + request
     )
+
+
+
+def _full_stack_next_increment_prompt(
+    original_request: str,
+    files: list[str],
+) -> str | None:
+    """Choose the next deterministic full-stack artifact.
+
+    SOPHYANE_FULL_STACK_CONTEXT_DECOMPOSITION_V1
+    """
+    existing = {
+        str(path).replace("\\", "/")
+        for path in files
+    }
+
+    increments = (
+        (
+            "static/index.html",
+            (
+                "Create static/index.html only. "
+                "Return exactly one write_file JSON action. "
+                "Build a responsive task-management interface with "
+                "dashboard statistics, project/task controls, forms, "
+                "search/filter controls and hooks for static/app.js. "
+                "Do not include JavaScript implementation inline unless "
+                "required for minimal bootstrapping."
+            ),
+        ),
+        (
+            "static/app.js",
+            (
+                "Create static/app.js only. "
+                "Return exactly one write_file JSON action. "
+                "Use vanilla JavaScript fetch() against the real REST API. "
+                "Implement loading, create, edit, delete, status changes, "
+                "priority/due-date handling, dashboard refresh, search and "
+                "filtering. No localStorage replacement for backend state."
+            ),
+        ),
+        (
+            "static/style.css",
+            (
+                "Create static/style.css only. "
+                "Return exactly one write_file JSON action. "
+                "Provide a compact responsive layout for the existing "
+                "task-management frontend. No external CSS frameworks."
+            ),
+        ),
+        (
+            "tests/test_app.py",
+            (
+                "Create tests/test_app.py only. "
+                "Return exactly one write_file JSON action. "
+                "Use pytest or unittest with only available Python "
+                "dependencies. Exercise backend CRUD, validation, stats, "
+                "and search/filter behavior against isolated temporary "
+                "storage where practical."
+            ),
+        ),
+        (
+            "README.md",
+            (
+                "Create README.md only. "
+                "Return exactly one write_file JSON action. "
+                "Document startup, test command, local URL, architecture "
+                "and persistence behavior concisely."
+            ),
+        ),
+    )
+
+    for relative_path, instruction in increments:
+        if relative_path not in existing:
+            return (
+                "FULL-STACK IMPLEMENTATION NEXT INCREMENT.\\n"
+                "SLI owns decomposition. Implement only the requested "
+                "artifact.\\n"
+                "No Markdown wrapper. No prose outside the JSON action.\\n\\n"
+                + instruction
+                + "\\n\\nExisting project files:\\n- "
+                + "\\n- ".join(sorted(existing))
+                + "\\n\\nOriginal user request:\\n"
+                + str(original_request or "").strip()
+            )
+
+    return None
 
 
 def _compact_repair_prompt(request: str, files: list[str], result: str) -> str:
@@ -1596,8 +1671,68 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             continue
         if kind in {"respond", "message", "open_browser", "browser"}:
             return (result or "Completed.") + "\n\nExecution evidence:\n" + "\n".join(evidence)
-        response = ask(_compact_repair_prompt(original_request, _files(workspace), result))
-        current = getattr(response, "text", str(response))
+        # SOPHYANE_FULL_STACK_CONTEXT_DECOMPOSITION_V1
+        #
+        # A successful full-stack file write advances the deterministic
+        # artifact manifest before asking the model for another generic action.
+        # This keeps each local generation bounded to one file and prevents
+        # whole-project regeneration inside a 2048-token context.
+        if (
+            bundle_first_full_stack
+            and ok
+            and kind in {"write_file", "append_file"}
+        ):
+            next_increment = (
+                _full_stack_next_increment_prompt(
+                    original_request,
+                    _files(workspace),
+                )
+            )
+
+            if next_increment is not None:
+                progress(
+                    "SLI Full-Stack Decomposition: "
+                    "requesting next bounded artifact"
+                )
+
+                response = ask(
+                    next_increment
+                )
+
+                current = getattr(
+                    response,
+                    "text",
+                    str(response),
+                )
+
+                continue
+
+            initial_bundle_materialized = True
+
+            if not deterministic_verification_stage:
+                deterministic_verification_stage = "prepare"
+
+            progress(
+                "SLI Full-Stack Decomposition: "
+                "required artifact manifest complete; "
+                "deterministic verification owns next steps"
+            )
+
+            current = ""
+            continue
+
+        response = ask(
+            _compact_repair_prompt(
+                original_request,
+                _files(workspace),
+                result,
+            )
+        )
+        current = getattr(
+            response,
+            "text",
+            str(response),
+        )
     return "Stopped after bounded execution loop.\n\n" + "\n".join(evidence)
 
 

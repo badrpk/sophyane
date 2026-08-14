@@ -21,24 +21,65 @@ def test_create_file_string_action_is_write_file() -> None:
     assert "action" not in result
 
 
-def test_initial_bundle_prompt_demands_multifile_project() -> None:
+def test_initial_bundle_prompt_demands_context_safe_backend_increment() -> None:
     prompt = adaptive._full_stack_initial_bundle_prompt(
         "Build a project-management SaaS."
     ).lower()
 
-    assert "top-level files array" in prompt
-    assert "backend/app.py" in prompt
-    assert "static/index.html" in prompt
-    assert "static/app.js" in prompt
-    assert "static/style.css" in prompt
-    assert "tests/test_app.py" in prompt
-    assert "sqlite3" in prompt
-    assert "threadinghttpserver" in prompt
-    assert "get /api/projects" in prompt
-    assert "post /api/tasks" in prompt
-    assert "put /api/tasks/{id}" in prompt
-    assert "delete /api/tasks/{id}" in prompt
-    assert "fetch()" in prompt
+    assert (
+        "full-stack implementation increment 1"
+        in prompt
+    )
+
+    assert (
+        "exactly one executable json action"
+        in prompt
+    )
+
+    assert (
+        "backend/app.py"
+        in prompt
+    )
+
+    assert (
+        "no multiple files"
+        in prompt
+    )
+
+    # Increment 1 is intentionally one bounded backend artifact.
+    # Frontend, tests and documentation belong to deterministic
+    # later increments and must not compete for this context window.
+    assert (
+        "static/index.html only"
+        not in prompt
+    )
+
+    assert (
+        "static/app.js only"
+        not in prompt
+    )
+
+    assert (
+        "static/style.css only"
+        not in prompt
+    )
+
+    assert (
+        "tests/test_app.py only"
+        not in prompt
+    )
+
+    assert (
+        "readme.md only"
+        not in prompt
+    )
+
+    assert (
+        "top-level files array"
+        not in prompt
+    )
+
+
 
 
 def test_full_stack_runtime_requests_bundle_before_actions(
@@ -126,7 +167,17 @@ def test_full_stack_runtime_requests_bundle_before_actions(
     assert calls
 
     assert (
-        "full-stack initial implementation bundle"
+        "full-stack implementation increment 1"
+        in calls[0].lower()
+    )
+
+    assert (
+        "backend/app.py"
+        in calls[0].lower()
+    )
+
+    assert (
+        "exactly one executable json action"
         in calls[0].lower()
     )
 
@@ -184,7 +235,7 @@ def test_normal_non_full_stack_does_not_force_bundle(
     ).is_file()
 
     assert not any(
-        "full-stack initial implementation bundle"
+        "full-stack implementation increment 1"
         in prompt.lower()
         for prompt in calls
     )
