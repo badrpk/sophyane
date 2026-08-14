@@ -113,27 +113,50 @@ def _contains_any(text: str, terms: Iterable[str]) -> bool:
 
 
 def is_preview_request(message: str) -> bool:
+    """Recognize explicit browser-artifact control requests.
+
+    This classifier intentionally avoids substring matching. Words such as
+    "replay" must not match "play", and "bit"/"unit" must not match "it".
+    """
+    import re
+
     normalized = _normalize(message)
 
-    has_action = _contains_any(normalized, PREVIEW_TERMS)
-    has_target = _contains_any(
+    if not normalized:
+        return False
+
+    # SOPHYANE_CANONICAL_PREVIEW_INTENT_V1
+    action = re.search(
+        r"\b(?:open|preview|launch|show|view|run|test|play|reopen)\b",
         normalized,
-        {
-            "output",
-            "result",
-            "artifact",
-            "browser",
-            "page",
-            "website",
-            "web app",
-            "html",
-            "game",
-            "project",
-            "it",
-        },
     )
 
-    return has_action and has_target
+    target = re.search(
+        r"\b(?:output|result|artifact|browser|page|website|web\s+app|html|game|project)\b",
+        normalized,
+    )
+
+    if action and target:
+        return True
+
+    # Compact pronoun controls are legitimate:
+    #   open it
+    #   preview this
+    #   show that in browser
+    #
+    # Longer software/test instructions containing "it" are not.
+    pronoun_control = re.fullmatch(
+        r"(?:please\s+)?"
+        r"(?:open|preview|launch|show|view|run|test|play|reopen)"
+        r"\s+(?:this|it|that)"
+        r"(?:\s+(?:in\s+)?(?:the\s+)?browser)?"
+        r"[.!?]?",
+        normalized,
+    )
+
+    return bool(pronoun_control)
+
+
 
 
 def is_build_request(message: str) -> bool:

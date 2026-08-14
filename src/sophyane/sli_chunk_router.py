@@ -13,35 +13,49 @@ def _normalise(message: str) -> str:
 
 
 def _is_preview(message: str) -> bool:
+    """Recognize explicit browser-artifact control requests.
+
+    Use semantic word boundaries so words such as "replay" do not match
+    "play", and words such as "bit" do not match the pronoun "it".
+    """
+    import re
+
     text = _normalise(message)
 
-    actions = (
-        "open",
-        "preview",
-        "launch",
-        "show",
-        "view",
-        "run",
-        "test",
-        "play",
+    if not text:
+        return False
+
+    # SOPHYANE_SLI_PREVIEW_WORD_BOUNDARY_V2
+    action = re.search(
+        r"\b(?:open|preview|launch|show|view|run|test|play|reopen)\b",
+        text,
     )
 
-    targets = (
-        "output",
-        "result",
-        "artifact",
-        "browser",
-        "page",
-        "website",
-        "html",
-        "game",
-        "it",
+    target = re.search(
+        r"\b(?:output|result|artifact|browser|page|website|html|game)\b",
+        text,
     )
 
-    return (
-        any(action in text for action in actions)
-        and any(target in text for target in targets)
+    if action and target:
+        return True
+
+    # Compact pronoun controls such as:
+    #   open it
+    #   preview this
+    #   show it in browser
+    # are legitimate preview operations.
+    pronoun_control = re.fullmatch(
+        r"(?:please\s+)?"
+        r"(?:open|preview|launch|show|view|run|test|play|reopen)"
+        r"\s+(?:this|it|that)"
+        r"(?:\s+(?:in\s+)?(?:the\s+)?browser)?"
+        r"[.!?]?",
+        text,
     )
+
+    return bool(pronoun_control)
+
+
 
 
 def _is_build(message: str) -> bool:

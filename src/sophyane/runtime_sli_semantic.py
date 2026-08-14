@@ -53,6 +53,8 @@ _KNOWN = _ACTIONS | _ARTIFACTS | _TECHNOLOGIES | {
 _SEMANTIC_MEMORY = {
     "mak3": ("make", 0.999),
     "maek": ("make", 0.98),
+    "mske": ("make", 0.98),
+    "mkae": ("make", 0.98),
     "craete": ("create", 0.98),
     "websit": ("website", 0.98),
     "webiste": ("website", 0.98),

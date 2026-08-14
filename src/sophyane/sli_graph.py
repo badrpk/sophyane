@@ -16,6 +16,63 @@ def _p(progress: Progress | None) -> Progress:
     return progress or (lambda _m: None)
 
 
+# SOPHYANE_SLI_GRAPH_EXISTING_BROWSER_FAST_PATH_V1
+def _existing_artifact_browser_request(request: str) -> bool:
+    """Recognize commands that operate only on the current browser artifact.
+
+    These requests must never trigger SLI retrieval or acquisition. They are
+    control-plane operations on an already generated project.
+    """
+
+    text = " ".join(
+        str(request or "").casefold().split()
+    )
+
+    exact = {
+        "open this in browser",
+        "open it in browser",
+        "open in browser",
+        "open this",
+        "open it",
+        "open output",
+        "open the output",
+        "open demo",
+        "open the demo",
+        "open website",
+        "open the website",
+        "open site",
+        "open the site",
+        "preview this",
+        "preview it",
+        "preview output",
+        "preview the output",
+        "preview website",
+        "preview the website",
+        "show it",
+        "show this in browser",
+        "show it in browser",
+        "reopen it",
+        "reopen this",
+        "reopen in browser",
+    }
+
+    if text in exact:
+        return True
+
+    # Accept natural variants only when the browser target is explicit.
+    if text.startswith(
+        (
+            "open ",
+            "reopen ",
+            "preview ",
+            "show ",
+        )
+    ) and "browser" in text:
+        return True
+
+    return False
+
+
 def _workspace_snapshot(
     workspace: Path,
 ) -> dict[str, Any]:
@@ -78,6 +135,129 @@ class SLIState:
 
     def log(self, msg: str) -> None:
         self.trace.append(msg)
+
+
+# SOPHYANE_LOCAL_SOFTWARE_ARTIFACT_ROUTE_V1
+def _is_software_artifact_request(request: str) -> bool:
+    """Recognize constructive non-browser code/software requests.
+
+    SLI Graph has browser-oriented internet acquisition. Requests for source
+    code, code snippets, libraries, APIs, CLIs, replay systems, concurrency
+    tooling, etc. must never enter that browser acquisition path.
+    """
+
+    text = " ".join(
+        str(request or "").casefold().split()
+    )
+
+    if not text:
+        return False
+
+    # Explicit browser/UI products remain owned by product/browser routing.
+    browser_targets = (
+        "website",
+        "web site",
+        "webpage",
+        "web page",
+        "web app",
+        "browser app",
+        "browser application",
+        "html page",
+        "landing page",
+        "dashboard",
+    )
+
+    if any(target in text for target in browser_targets):
+        return False
+
+    constructive = any(
+        token in text
+        for token in (
+            "build ",
+            "create ",
+            "develop ",
+            "design ",
+            "generate ",
+            "implement ",
+            "produce ",
+            "provide ",
+            "write ",
+            "give me ",
+            "show ",
+        )
+    )
+
+    code_request = any(
+        cue in text
+        for cue in (
+            "code snippet",
+            "complete code",
+            "source code",
+            "python code",
+            "c++ code",
+            "cpp code",
+            "code example",
+            "implementation example",
+            "working example",
+            "executable example",
+            "python script",
+            "c++ implementation",
+            "cpp implementation",
+            "python implementation",
+        )
+    )
+
+    software_target = any(
+        cue in text
+        for cue in (
+            "rest api",
+            "api backend",
+            "backend",
+            "openapi",
+            "json schema",
+            "client sdk",
+            "command line",
+            " cli",
+            "library",
+            "module",
+            "package",
+            "daemon",
+            "developer tool",
+            "automation tool",
+            "execution journal",
+            "execution journaling",
+            "deterministic replay",
+            "replay system",
+            "race condition",
+            "thread interleaving",
+            "thread interleavings",
+            "threading",
+            "async api",
+            "concurrency",
+        )
+    )
+
+    # Informational questions should remain memory/internet knowledge queries.
+    informational_prefixes = (
+        "what is ",
+        "what are ",
+        "explain ",
+        "tell me about ",
+        "describe ",
+        "how does ",
+        "how do ",
+        "why ",
+    )
+
+    informational = text.startswith(informational_prefixes)
+
+    if informational and not code_request:
+        return False
+
+    return bool(
+        code_request
+        or (constructive and software_target)
+    )
 
 
 def classify(state: SLIState, progress: Progress) -> SLIState:
@@ -180,6 +360,14 @@ def classify(state: SLIState, progress: Progress) -> SLIState:
                 )
             ):
                 state.route = "python_harness"
+
+            elif _is_software_artifact_request(
+                state.request
+            ):
+                # SOPHYANE_LOCAL_SOFTWARE_ARTIFACT_ROUTE_V1
+                # Non-browser code generation must never fall into
+                # HTML/index.html acquisition.
+                state.route = "software_artifact"
 
             elif any(key in q for key in ("ping pong", "pong", "snake", "game", "canvas")):
                 state.route = "action_or_internet"
@@ -766,6 +954,82 @@ def run_sli_graph(
         root = Path(workspace or (Path.cwd() / ".sophyane-workspace"))
         root.mkdir(parents=True, exist_ok=True)
         state = SLIState(request=request, workspace=str(root))
+
+        # SOPHYANE_SLI_GRAPH_EXISTING_BROWSER_FAST_PATH_V1
+        #
+        # Opening or previewing the current product is a control operation,
+        # not a retrieval task. Resolve it before classify(), memory search,
+        # internet acquisition, promotion, or learning.
+        if _existing_artifact_browser_request(request):
+            state.route = "existing_artifact_browser"
+
+            artifact = root / "index.html"
+
+            if not artifact.is_file():
+                state.success = False
+                state.report = (
+                    "Success: False\n"
+                    "Browser launch blocked: the current workspace has no "
+                    "index.html artifact.\n"
+                    "SLI retrieval used: False\n"
+                    "Internet acquisition used: False\n"
+                    "LLM used: False\n"
+                )
+                state.seconds = round(
+                    time.perf_counter() - started,
+                    3,
+                )
+                state.meta["terminal"] = True
+                state.log(
+                    "existing-browser-fast-path artifact-missing"
+                )
+                return state
+
+            try:
+                from sophyane.browser_runtime_v2 import (
+                    open_verified_browser,
+                )
+
+                opened, evidence = open_verified_browser(
+                    root,
+                    progress,
+                )
+
+            except Exception as error:
+                opened = False
+                evidence = (
+                    "Browser fast-path error: "
+                    f"{type(error).__name__}: {error}"
+                )
+
+            state.success = bool(opened)
+            state.files = ["index.html"]
+            state.seconds = round(
+                time.perf_counter() - started,
+                3,
+            )
+            state.meta["terminal"] = True
+            state.meta["browser_fast_path"] = True
+
+            state.report = (
+                f"Success: {state.success}\n"
+                f"Artifact: {artifact}\n"
+                f"{evidence}\n"
+                "SLI retrieval used: False\n"
+                "Internet acquisition used: False\n"
+                "LLM used: False\n"
+                "SLI-graph route: existing_artifact_browser; "
+                f"seconds: {state.seconds}; "
+                "promoted: False; chunks_added: 0\n"
+            )
+
+            state.log(
+                "existing-browser-fast-path "
+                f"success={state.success}"
+            )
+
+            return state
+
         state = classify(state, progress)
 
         learning_routes = {
@@ -797,6 +1061,14 @@ def run_sli_graph(
             "product_app": [
                 try_product_reuse,
                 try_product_app,
+            ],
+            # SOPHYANE_LOCAL_SOFTWARE_ARTIFACT_ROUTE_V1
+            #
+            # internet_acquire is browser/index.html oriented. Generic
+            # software/code requests may reuse grounded SLI memory here,
+            # but must never call browser acquisition.
+            "software_artifact": [
+                try_memory_router,
             ],
             "memory_then_internet": [try_memory_router, try_internet],
         }

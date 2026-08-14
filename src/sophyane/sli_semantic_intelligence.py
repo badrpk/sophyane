@@ -750,23 +750,53 @@ def _capability_importance(
 
 
 def build_semantic_plan(request: str) -> SemanticPlan:
-    concepts = extract_concepts(request)
-    concept_set = set(concepts)
-    text = normalize(request)
-    target_language, target_artifact = infer_target(request)
+    """Build the final domain-aware semantic capability plan.
 
-    requirements: list[CapabilityRequirement] = []
+    This is the consolidated form of the historical three-generation planner:
+
+    1. infer request concepts, target language/artifact and capabilities;
+    2. remove capabilities outside browser/Python target domains;
+    3. retain HTTP endpoint duties only for explicit HTTP/API-server requests.
+
+    No snapshot aliases or wrapper generations are required.
+    """
+    concepts = extract_concepts(
+        request
+    )
+
+    concept_set = set(
+        concepts
+    )
+
+    text = normalize(
+        request
+    )
+
+    target_language, target_artifact = infer_target(
+        request
+    )
+
+    requirements: list[
+        CapabilityRequirement
+    ] = []
 
     for name, definition in CAPABILITY_ONTOLOGY.items():
         ontology_concepts = {
-            normalize(value)
-            for value in definition["concepts"]
+            normalize(
+                value
+            )
+            for value in definition[
+                "concepts"
+            ]
         }
 
         overlap_terms = {
             term
             for term in ontology_concepts
-            if term in text or term in concept_set
+            if (
+                term in text
+                or term in concept_set
+            )
         }
 
         if not overlap_terms:
@@ -775,15 +805,23 @@ def build_semantic_plan(request: str) -> SemanticPlan:
         importance = _capability_importance(
             name,
             request,
-            len(overlap_terms),
+            len(
+                overlap_terms
+            ),
         )
 
         query_terms = sorted(
-            set(concepts)
+            set(
+                concepts
+            )
             | ontology_concepts
             | {
-                signal.strip("<>{}():; ")
-                for signal in definition["signals"]
+                signal.strip(
+                    "<>{}():; "
+                )
+                for signal in definition[
+                    "signals"
+                ]
             }
         )
 
@@ -791,7 +829,9 @@ def build_semantic_plan(request: str) -> SemanticPlan:
             CapabilityRequirement(
                 name=name,
                 importance=importance,
-                reasons=sorted(overlap_terms),
+                reasons=sorted(
+                    overlap_terms
+                ),
                 query=" ".join(
                     term
                     for term in query_terms
@@ -800,9 +840,12 @@ def build_semantic_plan(request: str) -> SemanticPlan:
             )
         )
 
-    required_names = {item.name for item in requirements}
+    required_names = {
+        item.name
+        for item in requirements
+    }
 
-    # Generic architectural dependencies.
+    # Generic architectural dependencies for browser artifacts.
     if target_artifact == "browser_application":
         dependency_names = {
             "document_shell",
@@ -855,13 +898,18 @@ def build_semantic_plan(request: str) -> SemanticPlan:
                 "item",
             }
         ):
-            dependency_names.add("data_model")
+            dependency_names.add(
+                "data_model"
+            )
 
         for name in dependency_names:
             if name in required_names:
                 continue
 
-            definition = CAPABILITY_ONTOLOGY[name]
+            definition = CAPABILITY_ONTOLOGY[
+                name
+            ]
+
             requirements.append(
                 CapabilityRequirement(
                     name=name,
@@ -870,13 +918,25 @@ def build_semantic_plan(request: str) -> SemanticPlan:
                         request,
                         0,
                     ),
-                    reasons=["architectural dependency"],
+                    reasons=[
+                        "architectural dependency"
+                    ],
                     query=(
-                        " ".join(concepts)
+                        " ".join(
+                            concepts
+                        )
                         + " "
-                        + " ".join(definition["concepts"])
+                        + " ".join(
+                            definition[
+                                "concepts"
+                            ]
+                        )
                         + " "
-                        + " ".join(definition["signals"])
+                        + " ".join(
+                            definition[
+                                "signals"
+                            ]
+                        )
                     ),
                 )
             )
@@ -885,35 +945,129 @@ def build_semantic_plan(request: str) -> SemanticPlan:
         "python_application",
         "javascript_application",
     }:
-        for name in {"entry_point", "error_handling"}:
-            if name in {item.name for item in requirements}:
+        for name in {
+            "entry_point",
+            "error_handling",
+        }:
+            if name in {
+                item.name
+                for item in requirements
+            }:
                 continue
 
-            definition = CAPABILITY_ONTOLOGY[name]
+            definition = CAPABILITY_ONTOLOGY[
+                name
+            ]
+
             requirements.append(
                 CapabilityRequirement(
                     name=name,
                     importance=1.2,
-                    reasons=["architectural dependency"],
+                    reasons=[
+                        "architectural dependency"
+                    ],
                     query=(
-                        " ".join(concepts)
+                        " ".join(
+                            concepts
+                        )
                         + " "
-                        + " ".join(definition["signals"])
+                        + " ".join(
+                            definition[
+                                "signals"
+                            ]
+                        )
                     ),
                 )
             )
 
     requirements.sort(
-        key=lambda item: (-item.importance, item.name)
+        key=lambda item: (
+            -item.importance,
+            item.name,
+        )
     )
 
-    return SemanticPlan(
+    plan = SemanticPlan(
         request=request,
         concepts=concepts,
         capabilities=requirements,
         target_language=target_language,
         target_artifact=target_artifact,
     )
+
+    # SOPHYANE_API_SERVER_SEMANTICS_V1
+    #
+    # Mentioning an API does not automatically mean that Sophyane is being
+    # asked to construct an HTTP server. Endpoint capability is retained only
+    # for explicit API/server construction language.
+    explicit_http_server = any(
+        marker in text
+        for marker in (
+            "rest api",
+            "restful api",
+            "http endpoint",
+            "http endpoints",
+            "api endpoint",
+            "api endpoints",
+            "build an api",
+            "build a python api",
+            "create an api",
+            "create a python api",
+            "fastapi",
+            "flask api",
+            "web api",
+            "get endpoint",
+            "post endpoint",
+            "get and post endpoints",
+            "server endpoint",
+        )
+    )
+
+    if not explicit_http_server:
+        plan.capabilities = [
+            requirement
+            for requirement in plan.capabilities
+            if (
+                requirement.name
+                != "http_endpoint"
+            )
+        ]
+
+    # Domain boundary: browser artifacts do not acquire server/backend
+    # responsibilities.
+    if plan.target_artifact == "browser_application":
+        forbidden = {
+            "http_endpoint",
+            "web_server",
+            "error_handling",
+        }
+
+        plan.capabilities = [
+            requirement
+            for requirement in plan.capabilities
+            if requirement.name not in forbidden
+        ]
+
+    # Domain boundary: Python artifacts do not acquire browser-document
+    # responsibilities.
+    elif plan.target_language == "python":
+        forbidden = {
+            "document_shell",
+            "presentation",
+            "rendering",
+            "user_input",
+            "time_loop",
+            "progress_feedback",
+            "lifecycle_control",
+        }
+
+        plan.capabilities = [
+            requirement
+            for requirement in plan.capabilities
+            if requirement.name not in forbidden
+        ]
+
+    return plan
 
 
 def _chunk_id(chunk: Any) -> str:
@@ -1028,9 +1182,23 @@ def retrieve_for_capability(
     limit: int = 6,
     minimum_score: float = 0.75,
 ) -> list[ChunkMatch]:
-    matches: list[ChunkMatch] = []
+    """Retrieve final-policy compatible evidence for one capability.
+
+    This is the consolidated form of the active retrieval policy formerly
+    embedded directly in retrieve_semantic_plan(). Compatibility is decided
+    by _final_compatible(); semantic score, threshold and diversity behavior
+    are preserved exactly.
+    """
+    ranked: list[tuple[object, float]] = []
 
     for chunk in store.chunks.values():
+        if not _final_compatible(
+            chunk,
+            plan,
+            requirement.name,
+        ):
+            continue
+
         score = _chunk_semantic_score(
             chunk,
             requirement,
@@ -1040,56 +1208,100 @@ def retrieve_for_capability(
         if score < minimum_score:
             continue
 
-        matches.append(
-            ChunkMatch(
-                chunk_id=_chunk_id(chunk),
-                score=score,
-                capability=requirement.name,
-                language=str(
-                    getattr(chunk, "language", "") or ""
-                ),
-                path=str(
-                    getattr(chunk, "path", "") or ""
-                ),
-                placement=_chunk_placement(chunk),
-                source=str(
-                    getattr(chunk, "source", "") or ""
-                ),
+        ranked.append(
+            (
+                chunk,
+                score,
             )
         )
 
-    matches.sort(
-        key=lambda item: item.score,
+    ranked.sort(
+        key=lambda item: item[1],
         reverse=True,
     )
 
-    # Diversity selection: avoid filling every capability with chunks from
-    # the same source/path family.
     selected: list[ChunkMatch] = []
     seen_paths: set[str] = set()
     seen_sources: dict[str, int] = {}
 
-    for match in matches:
-        path_family = match.path.split("::")[0]
-        source_count = seen_sources.get(match.source, 0)
+    for chunk, score in ranked:
+        path = str(
+            getattr(
+                chunk,
+                "path",
+                "",
+            )
+            or ""
+        )
 
-        if path_family in seen_paths:
+        source = str(
+            getattr(
+                chunk,
+                "source",
+                "",
+            )
+            or ""
+        )
+
+        family = path.split(
+            "::"
+        )[0]
+
+        if family in seen_paths:
             continue
 
-        if source_count >= 2:
+        if seen_sources.get(
+            source,
+            0,
+        ) >= 2:
             continue
 
-        selected.append(match)
-        seen_paths.add(path_family)
-        seen_sources[match.source] = source_count + 1
+        chunk_id = _chunk_id(
+            chunk
+        )
+
+        if not chunk_id:
+            continue
+
+        selected.append(
+            ChunkMatch(
+                chunk_id=chunk_id,
+                score=score,
+                capability=requirement.name,
+                language=str(
+                    getattr(
+                        chunk,
+                        "language",
+                        "",
+                    )
+                    or ""
+                ),
+                path=path,
+                placement=_chunk_placement(
+                    chunk
+                ),
+                source=source,
+            )
+        )
+
+        seen_paths.add(
+            family
+        )
+
+        seen_sources[source] = (
+            seen_sources.get(
+                source,
+                0,
+            )
+            + 1
+        )
 
         if len(selected) >= limit:
             break
 
     requirement.selected_ids = [
-        match.chunk_id
-        for match in selected
-        if match.chunk_id
+        item.chunk_id
+        for item in selected
     ]
 
     requirement.best_score = (
@@ -1100,7 +1312,6 @@ def retrieve_for_capability(
 
     requirement.covered = bool(
         selected
-        and requirement.best_score >= minimum_score
     )
 
     return selected
@@ -1112,18 +1323,28 @@ def retrieve_semantic_plan(
     *,
     per_capability: int = 6,
 ) -> tuple[SemanticPlan, dict[str, list[ChunkMatch]]]:
-    plan = build_semantic_plan(request)
-    matches: dict[str, list[ChunkMatch]] = {}
+    """Retrieve compatible evidence for every requirement in a semantic plan."""
+    plan = build_semantic_plan(
+        request
+    )
+
+    output: dict[
+        str,
+        list[ChunkMatch],
+    ] = {}
 
     for requirement in plan.capabilities:
-        matches[requirement.name] = retrieve_for_capability(
+        output[
+            requirement.name
+        ] = retrieve_for_capability(
             store,
             plan,
             requirement,
             limit=per_capability,
+            minimum_score=0.75,
         )
 
-    return plan, matches
+    return plan, output
 
 
 def capability_contract(
@@ -1363,117 +1584,6 @@ _PYTHON_CAPABILITY_LANGUAGES = {
     "persistence": {"python"},
 }
 
-_STRICT_SIGNALS = {
-    "document_shell": (
-        "<!doctype",
-        "<html",
-        "<body",
-    ),
-    "presentation": (
-        "<style",
-        "display:",
-        "grid",
-        "flex",
-        "class=",
-    ),
-    "application_state": (
-        "let ",
-        "const ",
-        "state",
-        "score",
-        "current",
-    ),
-    "user_input": (
-        "addeventlistener",
-        "onclick",
-        "onkeydown",
-        "keydown",
-        "keyup",
-        "pointerdown",
-        "touchstart",
-        "<input",
-        "<button",
-    ),
-    "rendering": (
-        "<canvas",
-        "getcontext",
-        "fillrect",
-        "drawimage",
-        "innerhtml",
-        "textcontent",
-        "appendchild",
-        "render",
-        "draw",
-    ),
-    "time_loop": (
-        "requestanimationframe",
-        "setinterval",
-        "settimeout",
-        "animate",
-        "tick",
-        "gameLoop".lower(),
-    ),
-    "rules_and_validation": (
-        "if ",
-        "correct",
-        "incorrect",
-        "answer",
-        "validate",
-        "collision",
-        "match",
-        "check",
-    ),
-    "progress_feedback": (
-        "score",
-        "progress",
-        "feedback",
-        "status",
-        "message",
-        "textcontent",
-    ),
-    "lifecycle_control": (
-        "restart",
-        "reset",
-        "initialize",
-        "init(",
-        "start",
-        "next",
-    ),
-    "data_model": (
-        "const ",
-        "let ",
-        "array",
-        "items",
-        "data",
-        "questions",
-        "sentences",
-        "words",
-        "json",
-    ),
-    "entry_point": (
-        "domcontentloaded",
-        "window.onload",
-        "<script",
-        "__main__",
-        "main(",
-        "initialize",
-        "init(",
-    ),
-    "http_endpoint": (
-        "@app.get",
-        "@app.post",
-        "fastapi(",
-        "apirouter(",
-        "app.get(",
-        "app.post(",
-        "jsonresponse",
-    ),
-    "error_handling": (
-        "try:",
-        "except ",
-        "raise ",
-    ),
-}
 
 _DISALLOWED_PATH_PARTS = {
     "/tests/",
@@ -1497,286 +1607,7 @@ _FRAMEWORK_INTERNAL_PATHS = {
 }
 
 
-def _strict_normalize_language(value) -> str:
-    language = str(value or "").strip().lower()
-
-    aliases = {
-        "js": "javascript",
-        "ts": "typescript",
-        "py": "python",
-        "htm": "html",
-    }
-
-    return aliases.get(language, language)
-
-
-def _strict_chunk_text(chunk) -> str:
-    return str(getattr(chunk, "text", "") or "").lower()
-
-
-def _strict_chunk_path(chunk) -> str:
-    return str(getattr(chunk, "path", "") or "").lower()
-
-
-def _strict_is_disallowed_chunk(chunk) -> bool:
-    path = _strict_chunk_path(chunk)
-    name = Path(path.split("::")[0]).name.lower()
-
-    if (
-        name.startswith("test_")
-        or name.endswith("_test.py")
-        or name.endswith(".test.js")
-    ):
-        return True
-
-    return any(part in path for part in _DISALLOWED_PATH_PARTS)
-
-
-def _strict_is_framework_internal(chunk) -> bool:
-    path = _strict_chunk_path(chunk).replace("\\", "/")
-    return any(part in path for part in _FRAMEWORK_INTERNAL_PATHS)
-
-
-def _strict_allowed_languages(plan, capability: str) -> set[str] | None:
-    if plan.target_artifact == "browser_application":
-        return _BROWSER_CAPABILITY_LANGUAGES.get(
-            capability,
-            _BROWSER_LANGUAGES,
-        )
-
-    if plan.target_language == "python":
-        return _PYTHON_CAPABILITY_LANGUAGES.get(
-            capability,
-            {"python"},
-        )
-
-    if plan.target_language:
-        return {str(plan.target_language).lower()}
-
-    return None
-
-
-def _strict_signal_count(chunk, capability: str) -> int:
-    text = _strict_chunk_text(chunk)
-    signals = _STRICT_SIGNALS.get(capability)
-
-    if not signals:
-        definition = CAPABILITY_ONTOLOGY.get(capability, {})
-        signals = tuple(definition.get("signals", ()))
-
-    return sum(
-        str(signal).lower() in text
-        for signal in signals
-    )
-
-
-def _strict_minimum_signals(capability: str) -> int:
-    if capability in {
-        "user_input",
-        "application_state",
-        "rules_and_validation",
-    }:
-        return 2
-
-    return 1
-
-
 # Preserve the original planner once.
-if "_SLI_ORIGINAL_BUILD_SEMANTIC_PLAN" not in globals():
-    _SLI_ORIGINAL_BUILD_SEMANTIC_PLAN = build_semantic_plan
-
-
-def build_semantic_plan(request: str) -> SemanticPlan:
-    """Build a plan and remove capabilities outside the target domain."""
-    plan = _SLI_ORIGINAL_BUILD_SEMANTIC_PLAN(request)
-
-    if plan.target_artifact == "browser_application":
-        forbidden = {
-            "http_endpoint",
-            "web_server",
-            "error_handling",
-        }
-
-        plan.capabilities = [
-            requirement
-            for requirement in plan.capabilities
-            if requirement.name not in forbidden
-        ]
-
-    elif plan.target_language == "python":
-        # A Python API request must not acquire browser-document duties.
-        forbidden = {
-            "document_shell",
-            "presentation",
-            "rendering",
-            "user_input",
-            "time_loop",
-            "progress_feedback",
-            "lifecycle_control",
-        }
-
-        plan.capabilities = [
-            requirement
-            for requirement in plan.capabilities
-            if requirement.name not in forbidden
-        ]
-
-    return plan
-
-
-def retrieve_for_capability(
-    store,
-    plan: SemanticPlan,
-    requirement: CapabilityRequirement,
-    *,
-    limit: int = 6,
-    minimum_score: float = 0.75,
-) -> list[ChunkMatch]:
-    """Retrieve only chunks compatible with target language and role."""
-    allowed_languages = _strict_allowed_languages(
-        plan,
-        requirement.name,
-    )
-
-    ranked: list[tuple[object, float]] = []
-
-    for chunk in store.chunks.values():
-        if _strict_is_disallowed_chunk(chunk):
-            continue
-
-        language = _strict_normalize_language(
-            getattr(chunk, "language", "")
-        )
-
-        if allowed_languages and language not in allowed_languages:
-            continue
-
-        signal_count = _strict_signal_count(
-            chunk,
-            requirement.name,
-        )
-
-        if signal_count < _strict_minimum_signals(
-            requirement.name
-        ):
-            continue
-
-        # API assembly must use endpoint implementations, not framework
-        # implementation internals.
-        if (
-            plan.target_language == "python"
-            and requirement.name == "http_endpoint"
-            and _strict_is_framework_internal(chunk)
-        ):
-            continue
-
-        score = _chunk_semantic_score(
-            chunk,
-            requirement,
-            plan,
-        )
-
-        # Strong compatibility bonuses.
-        score += 2.0
-        score += min(signal_count * 0.65, 3.25)
-
-        placement = _chunk_placement(chunk).lower()
-        definition = CAPABILITY_ONTOLOGY.get(
-            requirement.name,
-            {},
-        )
-
-        if placement in definition.get("placements", set()):
-            score += 0.75
-
-        # Penalize huge compiled vendor bundles: useful as acquisition
-        # sources, poor as reusable composition units.
-        text_size = len(str(getattr(chunk, "text", "") or ""))
-
-        if text_size > 100_000:
-            score -= 2.5
-        elif text_size > 40_000:
-            score -= 1.2
-
-        if score >= minimum_score:
-            ranked.append((chunk, score))
-
-    ranked.sort(
-        key=lambda item: item[1],
-        reverse=True,
-    )
-
-    selected: list[ChunkMatch] = []
-    seen_paths: set[str] = set()
-    seen_sources: dict[str, int] = {}
-
-    for chunk, score in ranked:
-        path = str(getattr(chunk, "path", "") or "")
-        path_family = path.split("::")[0]
-        source = str(getattr(chunk, "source", "") or "")
-
-        if path_family in seen_paths:
-            continue
-
-        if seen_sources.get(source, 0) >= 2:
-            continue
-
-        chunk_id = _chunk_id(chunk)
-
-        if not chunk_id:
-            continue
-
-        selected.append(
-            ChunkMatch(
-                chunk_id=chunk_id,
-                score=score,
-                capability=requirement.name,
-                language=str(
-                    getattr(chunk, "language", "") or ""
-                ),
-                path=path,
-                placement=_chunk_placement(chunk),
-                source=source,
-            )
-        )
-
-        seen_paths.add(path_family)
-        seen_sources[source] = seen_sources.get(source, 0) + 1
-
-        if len(selected) >= limit:
-            break
-
-    requirement.selected_ids = [
-        match.chunk_id for match in selected
-    ]
-    requirement.best_score = (
-        selected[0].score if selected else 0.0
-    )
-    requirement.covered = bool(selected)
-
-    return selected
-
-
-def retrieve_semantic_plan(
-    store,
-    request: str,
-    *,
-    per_capability: int = 6,
-):
-    """Retrieve a plan whose coverage means compatible evidence exists."""
-    plan = build_semantic_plan(request)
-    matches: dict[str, list[ChunkMatch]] = {}
-
-    for requirement in plan.capabilities:
-        selected = retrieve_for_capability(
-            store,
-            plan,
-            requirement,
-            limit=per_capability,
-        )
-        matches[requirement.name] = selected
-
-    return plan, matches
 
 
 # FINAL STRICT SEMANTIC EVIDENCE BOUNDARY
@@ -1992,131 +1823,3 @@ def _final_compatible(
     count = sum(signal in text for signal in signals)
 
     return count >= _final_minimum_signals(capability)
-
-
-if "_FINAL_ORIGINAL_BUILD_PLAN" not in globals():
-    _FINAL_ORIGINAL_BUILD_PLAN = build_semantic_plan
-
-
-def build_semantic_plan(request: str) -> SemanticPlan:
-    plan = _FINAL_ORIGINAL_BUILD_PLAN(request)
-
-    if plan.target_artifact == "browser_application":
-        forbidden = {
-            "http_endpoint",
-            "web_server",
-            "error_handling",
-        }
-
-        plan.capabilities = [
-            requirement
-            for requirement in plan.capabilities
-            if requirement.name not in forbidden
-        ]
-
-    elif plan.target_language == "python":
-        forbidden = {
-            "document_shell",
-            "presentation",
-            "rendering",
-            "user_input",
-            "time_loop",
-            "progress_feedback",
-            "lifecycle_control",
-        }
-
-        plan.capabilities = [
-            requirement
-            for requirement in plan.capabilities
-            if requirement.name not in forbidden
-        ]
-
-    return plan
-
-
-def retrieve_semantic_plan(
-    store,
-    request: str,
-    *,
-    per_capability: int = 6,
-):
-    plan = build_semantic_plan(request)
-    output = {}
-
-    for requirement in plan.capabilities:
-        ranked = []
-
-        for chunk in store.chunks.values():
-            if not _final_compatible(
-                chunk,
-                plan,
-                requirement.name,
-            ):
-                continue
-
-            score = _chunk_semantic_score(
-                chunk,
-                requirement,
-                plan,
-            )
-
-            if score < 0.75:
-                continue
-
-            ranked.append((chunk, score))
-
-        ranked.sort(
-            key=lambda item: item[1],
-            reverse=True,
-        )
-
-        selected = []
-        seen_paths = set()
-        seen_sources = {}
-
-        for chunk, score in ranked:
-            path = str(getattr(chunk, "path", "") or "")
-            source = str(getattr(chunk, "source", "") or "")
-            family = path.split("::")[0]
-
-            if family in seen_paths:
-                continue
-
-            if seen_sources.get(source, 0) >= 2:
-                continue
-
-            chunk_id = _chunk_id(chunk)
-
-            if not chunk_id:
-                continue
-
-            selected.append(
-                ChunkMatch(
-                    chunk_id=chunk_id,
-                    score=score,
-                    capability=requirement.name,
-                    language=str(
-                        getattr(chunk, "language", "") or ""
-                    ),
-                    path=path,
-                    placement=_chunk_placement(chunk),
-                    source=source,
-                )
-            )
-
-            seen_paths.add(family)
-            seen_sources[source] = seen_sources.get(source, 0) + 1
-
-            if len(selected) >= per_capability:
-                break
-
-        requirement.selected_ids = [
-            item.chunk_id for item in selected
-        ]
-        requirement.best_score = (
-            selected[0].score if selected else 0.0
-        )
-        requirement.covered = bool(selected)
-        output[requirement.name] = selected
-
-    return plan, output

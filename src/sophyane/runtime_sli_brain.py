@@ -60,8 +60,38 @@ def _profile(message: str) -> str:
 
 
 def _route(message: str, has_project: bool) -> str:
-    text = message.lower()
+    text = " ".join(str(message or "").lower().split())
 
+    # SOPHYANE_EXISTING_ARTIFACT_BROWSER_FAST_PATH_V1
+    #
+    # Browser follow-ups such as "open this in browser" operate on the
+    # already verified active project. They must be classified before the
+    # generic capability registry, otherwise "browser" can become a new
+    # execution/acquisition request.
+    if has_project:
+        browser_followup = (
+            re.match(
+                r"^\s*(?:open|reopen|preview|show)\b",
+                text,
+            )
+            and any(
+                marker in text
+                for marker in (
+                    "browser",
+                    "this",
+                    "it",
+                    "output",
+                    "demo",
+                    "website",
+                    "site",
+                    "page",
+                    "project",
+                )
+            )
+        )
+
+        if browser_followup:
+            return "continue_project"
 
     # CapabilityRegistry owns integration/FS routing hints.
     try:

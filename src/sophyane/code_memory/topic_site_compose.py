@@ -13,6 +13,7 @@ import json
 import mimetypes
 import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -81,35 +82,422 @@ def extract_topic(request: str) -> str:
 
 
 def is_topic_site_request(request: str) -> bool:
-    value = _normalise(request).lower()
-    has_build = any(term in value for term in ("make", "create", "build", "design", "generate", "develop"))
-    has_site = any(term in value for term in ("website", "webpage", "informational site", "information site"))
-    interactive = ("game", "calculator", "dashboard", "editor", "quiz", "simulation", "visualizer", "todo", "kanban")
-    return has_build and has_site and not any(x in value for x in interactive) and bool(extract_topic(request))
+    # Route against Sophyane's shared deterministic semantic normalization.
+    #
+    # This deliberately uses analyze(), not resolve(): preflight routing must
+    # remain local, bounded and provider-independent. Known spelling repairs
+    # such as "maek" -> "make" can therefore reach the same capability without
+    # adding typo-specific behavior to the website builder itself.
+    try:
+        from sophyane.runtime_sli_semantic import analyze
+
+        ledger = analyze(request)
+        value = _normalise(ledger.normalized).lower()
+    except Exception:
+        # Semantic normalization must never make basic routing unavailable.
+        value = _normalise(request).lower()
+
+    has_build = any(
+        term in value
+        for term in (
+            "make",
+            "create",
+            "build",
+            "design",
+            "generate",
+            "develop",
+        )
+    )
+    has_site = any(
+        term in value
+        for term in (
+            "website",
+            "webpage",
+            "informational site",
+            "information site",
+        )
+    )
+    interactive = (
+        "game",
+        "calculator",
+        "dashboard",
+        "editor",
+        "quiz",
+        "simulation",
+        "visualizer",
+        "todo",
+        "kanban",
+    )
+
+    return (
+        has_build
+        and has_site
+        and not any(term in value for term in interactive)
+        and bool(extract_topic(request))
+    )
 
 
-def _api_json(base: str, parameters: dict[str, str], timeout: int = 25) -> dict:
-    query = urllib.parse.urlencode({**parameters, "format": "json", "formatversion": "2", "origin": "*"})
+def _api_json(
+    base: str,
+    parameters: dict[str, str],
+    timeout: int = 25,
+) -> dict:
+    """Call MediaWiki with bounded retry for transient throttling.
+
+    429 and transient 5xx responses are transport conditions rather
+    than semantic retrieval failures. Respect Retry-After when present
+    and otherwise use a short bounded exponential delay.
+    """
+
+    query = urllib.parse.urlencode(
+        {
+            **parameters,
+            "format": "json",
+            "formatversion": "2",
+            "origin": "*",
+        }
+    )
+
     request = urllib.request.Request(
         base + "?" + query,
-        headers={"User-Agent": "Sophyane-SLI-Rich-Topic-Site/2.0", "Accept": "application/json"},
+        headers={
+            "User-Agent":
+                "Sophyane-SLI-Rich-Topic-Site/2.0",
+            "Accept":
+                "application/json",
+        },
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8", errors="replace"))
+
+    attempts = 4
+
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(
+                request,
+                timeout=timeout,
+            ) as response:
+                return json.loads(
+                    response.read().decode(
+                        "utf-8",
+                        errors="replace",
+                    )
+                )
+
+        except urllib.error.HTTPError as error:
+            transient = (
+                error.code == 429
+                or 500 <= error.code <= 599
+            )
+
+            if (
+                not transient
+                or attempt >= attempts - 1
+            ):
+                raise
+
+            retry_after = (
+                error.headers.get(
+                    "Retry-After",
+                    ""
+                )
+                if error.headers
+                else ""
+            )
+
+            try:
+                delay = float(
+                    retry_after
+                )
+            except (
+                TypeError,
+                ValueError,
+            ):
+                delay = float(
+                    min(
+                        2 ** (attempt + 1),
+                        8,
+                    )
+                )
+
+            # Keep retry bounded even if a remote endpoint provides an
+            # unexpectedly large Retry-After value.
+            delay = max(
+                0.5,
+                min(
+                    delay,
+                    12.0,
+                ),
+            )
+
+            time.sleep(
+                delay
+            )
+
+    raise RuntimeError(
+        "MediaWiki request exhausted retry budget"
+    )
+
+
 
 
 def _search_title(topic: str) -> str:
-    payload = _api_json(WIKIPEDIA_API, {
-        "action": "query", "list": "search", "srsearch": topic, "srnamespace": "0", "srlimit": "5",
-    })
-    results = payload.get("query", {}).get("search", [])
-    if not results:
-        raise RuntimeError(f"No encyclopedic source was found for: {topic}")
-    wanted = set(re.findall(r"[a-z0-9]+", topic.lower()))
-    return str(max(results, key=lambda item: (
-        str(item.get("title", "")).lower() == topic.lower(),
-        len(wanted & set(re.findall(r"[a-z0-9]+", str(item.get("title", "")).lower()))),
-    ))["title"])
+    """Resolve a request to the best encyclopedic primary subject.
+
+    Exact named subjects retain precedence. Generic plural and
+    instructional wording may resolve to the corresponding canonical
+    subject rather than to an entity that merely contains the same word.
+    """
+
+    raw = _normalise(
+        str(topic or "")
+    ).strip(" .,:;-")
+
+    if not raw:
+        raise RuntimeError(
+            "No topic was supplied."
+        )
+
+    low = raw.lower()
+
+    def tokens(value: str) -> list[str]:
+        return re.findall(
+            r"[a-z0-9]+",
+            value.lower(),
+        )
+
+    def singular(word: str) -> str:
+        # Deliberately conservative morphology. This is not intended
+        # to be an English stemmer; it only normalises common generic
+        # subject plurals for retrieval comparison.
+        if (
+            len(word) > 4
+            and word.endswith("ies")
+        ):
+            return word[:-3] + "y"
+
+        if (
+            len(word) > 4
+            and word.endswith("ses")
+            and not word.endswith("sses")
+        ):
+            return word[:-2]
+
+        if (
+            len(word) > 3
+            and word.endswith("s")
+            and not word.endswith(
+                (
+                    "ss",
+                    "us",
+                    "is",
+                )
+            )
+        ):
+            return word[:-1]
+
+        return word
+
+    def canonical_words(
+        value: str,
+    ) -> tuple[str, ...]:
+        return tuple(
+            singular(word)
+            for word in tokens(value)
+        )
+
+    # For procedural requests, retrieve the underlying subject in
+    # addition to the literal phrase. Examples:
+    #   "tea making"       -> candidate query "tea"
+    #   "coffee brewing"   -> candidate query "coffee"
+    #   "bread preparation"-> candidate query "bread"
+    #
+    # Do not apply this to "python programming": programming is a
+    # semantic qualifier there rather than merely an instruction verb.
+    subject = ""
+
+    procedural = re.match(
+        r"^(.+?)\s+"
+        r"(?:making|preparation|preparing|brewing|"
+        r"cooking|manufacturing|production)$",
+        low,
+    )
+
+    if procedural:
+        subject = _normalise(
+            procedural.group(1)
+        ).strip(" .,:;-")
+
+    how_to = re.match(
+        r"^how\s+to\s+"
+        r"(?:make|prepare|brew|cook|produce)\s+(.+)$",
+        low,
+    )
+
+    if how_to:
+        subject = _normalise(
+            how_to.group(1)
+        ).strip(" .,:;-")
+
+    queries: list[str] = []
+
+    def add_query(value: str) -> None:
+        value = _normalise(value).strip()
+
+        if (
+            value
+            and value.lower()
+            not in {
+                q.lower()
+                for q in queries
+            }
+        ):
+            queries.append(value)
+
+    add_query(raw)
+
+    if subject:
+        add_query(subject)
+
+    raw_words = tokens(raw)
+
+    # A one-word plural generic topic should also search its canonical
+    # singular form. This makes "computers" capable of finding
+    # "Computer" without hard-coding either subject.
+    if len(raw_words) == 1:
+        singular_topic = singular(
+            raw_words[0]
+        )
+
+        if singular_topic != raw_words[0]:
+            add_query(
+                singular_topic
+            )
+
+    combined: dict[str, dict] = {}
+
+    for query in queries:
+        payload = _api_json(
+            WIKIPEDIA_API,
+            {
+                "action": "query",
+                "list": "search",
+                "srsearch": query,
+                "srnamespace": "0",
+                "srlimit": "10",
+            },
+        )
+
+        for item in (
+            payload
+            .get("query", {})
+            .get("search", [])
+        ):
+            title = str(
+                item.get("title")
+                or ""
+            ).strip()
+
+            if title:
+                combined.setdefault(
+                    title,
+                    item,
+                )
+
+    if not combined:
+        raise RuntimeError(
+            "No encyclopedic source was found "
+            f"for: {topic}"
+        )
+
+    requested_words = canonical_words(
+        raw
+    )
+
+    subject_words = (
+        canonical_words(subject)
+        if subject
+        else ()
+    )
+
+    requested_set = set(
+        requested_words
+    )
+
+    def score(
+        item: dict,
+    ) -> tuple:
+        title = str(
+            item.get("title")
+            or ""
+        ).strip()
+
+        title_low = title.lower()
+        title_words = canonical_words(
+            title
+        )
+        title_set = set(
+            title_words
+        )
+
+        exact_request = (
+            title_low == low
+        )
+
+        exact_subject = bool(
+            subject
+            and title_low
+            == subject.lower()
+        )
+
+        # Canonical title equality permits a generic plural request
+        # such as "computers" to match the singular encyclopedia
+        # subject "Computer".
+        canonical_request = (
+            title_words
+            == requested_words
+        )
+
+        canonical_subject = bool(
+            subject_words
+            and title_words
+            == subject_words
+        )
+
+        overlap = len(
+            requested_set
+            & title_set
+        )
+
+        # Generic one-concept pages are preferable to a named entity
+        # that merely contains the same concept. This only applies when
+        # the user did NOT explicitly request that named title.
+        concise_generic = int(
+            len(requested_words) == 1
+            and len(title_words) == 1
+            and overlap == 1
+        )
+
+        return (
+            int(exact_request),
+            int(exact_subject),
+            int(canonical_request),
+            int(canonical_subject),
+            concise_generic,
+            overlap,
+            -abs(
+                len(title_words)
+                - len(requested_words)
+            ),
+            -len(title_words),
+        )
+
+    return str(
+        max(
+            combined.values(),
+            key=score,
+        )["title"]
+    )
+
 
 
 def _download_data_uri(url: str | None) -> str | None:

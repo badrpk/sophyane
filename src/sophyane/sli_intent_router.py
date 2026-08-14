@@ -35,13 +35,15 @@ _NEW_PRODUCT = re.compile(
 )
 _CONTINUATION = re.compile(
     r"^\s*(?:add|remove|change|update|improve|fix|repair|patch|modify|replace|style|"
-    r"resize|enlarge|reduce|reopen|test|run|continue|resume)\b",
+    r"resize|enlarge|reduce|reopen|open|preview|test|run|continue|resume)\b",
     re.I,
 )
 _CURRENT_REFERENCES = (
     "this project", "same project", "current project", "existing project", "this app",
     "this website", "this game", "the game", "the website", "the app", "previous output",
-    "above", "it in browser", "open it", "test it", "run it", "make it", "its ",
+    "above", "it in browser", "this in browser", "open it", "open this",
+    "open output", "open demo", "preview it", "preview this", "show it",
+    "show this in browser", "test it", "run it", "make it", "its ",
 )
 
 

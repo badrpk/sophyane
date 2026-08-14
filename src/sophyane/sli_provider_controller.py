@@ -186,7 +186,16 @@ class SLIProviderController:
                 local_provider=local,
             )
 
-            action = svr.action
+            # Objective artifact validation is authoritative once
+            # every deterministic defect has cleared. The SVR remains
+            # advisory for defective or incomplete candidates, but must
+            # not manufacture another repair turn for a defect-free
+            # artifact already accepted by the base controller.
+            if base_action == "accept" and not defects:
+                action = "accept"
+            else:
+                action = svr.action
+
             confidence = svr.confidence
 
             reason = (
