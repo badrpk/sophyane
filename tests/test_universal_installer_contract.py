@@ -30,4 +30,11 @@ def test_download_page_documents_supported_upgrade_contract() -> None:
 
     assert "replace-the-runtime, preserve-the-user" in text
     assert "current GitHub `main`" in text
-    assert "do not need to uninstall Sophyane manually first" in text
+    normalized = " ".join(
+        text.split()
+    )
+
+    assert (
+        "do not need to uninstall Sophyane manually first"
+        in normalized
+    )
