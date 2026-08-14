@@ -262,16 +262,23 @@ class ServiceSupervisor:
             + name
         )
 
-        try:
-            os.killpg(
-                process.pid,
-                signal.SIGTERM,
-            )
-
-        except (
-            ProcessLookupError,
-            PermissionError,
+        if (
+            os.name == "posix"
+            and hasattr(os, "killpg")
         ):
+            try:
+                os.killpg(
+                    process.pid,
+                    signal.SIGTERM,
+                )
+
+            except (
+                ProcessLookupError,
+                PermissionError,
+            ):
+                process.terminate()
+
+        else:
             process.terminate()
 
         try:
@@ -280,16 +287,23 @@ class ServiceSupervisor:
             )
 
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(
-                    process.pid,
-                    signal.SIGKILL,
-                )
-
-            except (
-                ProcessLookupError,
-                PermissionError,
+            if (
+                os.name == "posix"
+                and hasattr(os, "killpg")
             ):
+                try:
+                    os.killpg(
+                        process.pid,
+                        signal.SIGKILL,
+                    )
+
+                except (
+                    ProcessLookupError,
+                    PermissionError,
+                ):
+                    process.kill()
+
+            else:
                 process.kill()
 
             process.wait(

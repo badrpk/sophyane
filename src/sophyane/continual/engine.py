@@ -29,9 +29,22 @@ OPT_IN_FILE = STATE_DIR / "opt_in.json"
 GLOBAL_DIR = STATE_DIR / "global_adapter"
 LOCAL_DIR = STATE_DIR / "local_adapter"
 PEERS_DIR = STATE_DIR / "peer_deltas"
+_CORE_EXECUTABLE = (
+    "sophyane-train-core.exe"
+    if os.name == "nt"
+    else "sophyane-train-core"
+)
+
 CORE_BIN_CANDIDATES = [
-    Path.home() / ".local" / "bin" / "sophyane-train-core",
-    Path(__file__).resolve().parents[3] / "sdk" / "cpp" / "continual" / "build" / "sophyane-train-core",
+    Path.home() / ".local" / "bin" / _CORE_EXECUTABLE,
+    (
+        Path(__file__).resolve().parents[3]
+        / "sdk"
+        / "cpp"
+        / "continual"
+        / "build"
+        / _CORE_EXECUTABLE
+    ),
 ]
 
 
@@ -43,14 +56,38 @@ def _ensure_dirs() -> None:
 
 
 def _cpp_sources() -> Path:
-    # package layout: src/sophyane/continual → parents[3] = repo root when editable
-    for p in (
-        Path(__file__).resolve().parents[3] / "sdk" / "cpp" / "continual",
-        Path.home() / ".local" / "share" / "sophyane" / "current" / "sdk" / "cpp" / "continual",
-    ):
-        if (p / "src" / "train_core.cpp").exists():
-            return p
-    return Path(__file__).resolve().parents[3] / "sdk" / "cpp" / "continual"
+    """Locate the C++ continual-training source payload.
+
+    Installed distributions carry a package-local copy.  The repository
+    candidate preserves compatibility with editable/source checkouts.
+    """
+    package_local = Path(__file__).resolve().parent / "cpp"
+    repo_local = (
+        Path(__file__).resolve().parents[3]
+        / "sdk"
+        / "cpp"
+        / "continual"
+    )
+    deployed = (
+        Path.home()
+        / ".local"
+        / "share"
+        / "sophyane"
+        / "current"
+        / "sdk"
+        / "cpp"
+        / "continual"
+    )
+
+    for candidate in (package_local, repo_local, deployed):
+        if (
+            candidate / "src" / "train_core.cpp"
+        ).exists():
+            return candidate
+
+    # Return the canonical installed location so any error names the
+    # distribution payload that is expected to exist.
+    return package_local
 
 
 def ensure_train_core(*, force_rebuild: bool = False) -> Path:
@@ -67,7 +104,12 @@ def ensure_train_core(*, force_rebuild: bool = False) -> Path:
     build = src / "build"
     build.mkdir(parents=True, exist_ok=True)
     # Prefer simple g++ when cmake missing
-    out_bin = Path.home() / ".local" / "bin" / "sophyane-train-core"
+    out_bin = (
+        Path.home()
+        / ".local"
+        / "bin"
+        / _CORE_EXECUTABLE
+    )
     out_bin.parent.mkdir(parents=True, exist_ok=True)
     cpp = src / "src" / "train_core.cpp"
     inc = src / "include"
@@ -87,7 +129,7 @@ def ensure_train_core(*, force_rebuild: bool = False) -> Path:
             capture_output=True,
             text=True,
         )
-        built = build / "sophyane-train-core"
+        built = build / _CORE_EXECUTABLE
         if built.exists():
             shutil.copy2(built, out_bin)
             out_bin.chmod(0o755)

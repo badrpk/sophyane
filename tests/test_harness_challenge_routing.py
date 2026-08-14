@@ -119,7 +119,16 @@ def test_fastapi_project_uses_isolated_workspace(
     )
 
     assert selected != (tmp_path / "sophyane-repo").resolve()
-    assert ".sophyane/generated-projects" in str(selected)
+    parts = selected.parts
+
+    sophyane_index = parts.index(".sophyane")
+
+    assert parts[
+        sophyane_index : sophyane_index + 2
+    ] == (
+        ".sophyane",
+        "generated-projects",
+    )
 
 
 def test_compound_acceptance_criteria_are_preserved() -> None:

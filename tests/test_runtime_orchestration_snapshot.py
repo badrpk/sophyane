@@ -67,3 +67,32 @@ def test_snapshot_still_detects_new_exact_write(
     assert after["event.txt"] == hashlib.sha256(
         b"exact bytes"
     ).hexdigest()
+
+
+def test_snapshot_serializes_nested_paths_with_forward_slashes(
+    tmp_path: Path,
+):
+    nested = (
+        tmp_path
+        / "src"
+        / "package"
+        / "module.py"
+    )
+    nested.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    nested.write_bytes(b"portable")
+
+    snapshot = _snapshot(tmp_path)
+
+    expected = "src/package/module.py"
+
+    assert expected in snapshot
+    assert snapshot[expected] == hashlib.sha256(
+        b"portable"
+    ).hexdigest()
+
+    # Snapshot keys are a serialized cross-platform contract,
+    # not native filesystem display paths.
+    assert all("\\" not in key for key in snapshot)

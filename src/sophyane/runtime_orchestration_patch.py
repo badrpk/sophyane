@@ -69,7 +69,7 @@ def _snapshot(root: Path) -> dict[str, str]:
             continue
 
         try:
-            output[str(relative)] = hashlib.sha256(
+            output[relative.as_posix()] = hashlib.sha256(
                 path.read_bytes()
             ).hexdigest()
         except OSError:

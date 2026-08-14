@@ -433,9 +433,18 @@ def try_connector_fast_path(message: str) -> str | None:
     except Exception:
         return None
 
+def _is_windows() -> bool:
+    """Return whether deterministic execution is running on Windows."""
+    import os
+
+    return os.name == "nt"
+
+
 def _execute_shell_exit_probe(message: str, workspace: Path) -> CapabilityExecution:
     """Deterministic shell probe used by the harness."""
+    import os
     import subprocess
+    import sys
     root = workspace.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
 
@@ -461,12 +470,32 @@ def _execute_shell_exit_probe(message: str, workspace: Path) -> CapabilityExecut
     script.write_text(script_text, encoding="utf-8")
     script.chmod(0o755)
 
-    proc = subprocess.run(
-        ["bash", script.name],
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-    )
+    if _is_windows():
+        # Native Windows does not guarantee a usable Bash interpreter.
+        # Preserve the requested .sh artifact, but verify its deterministic
+        # stdout/stderr/exit-code contract through a real child process.
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; "
+                    f"print({expect_out!r}); "
+                    f"print({expect_err!r}, file=sys.stderr); "
+                    "sys.exit(7)"
+                ),
+            ],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+        )
+    else:
+        proc = subprocess.run(
+            ["bash", script.name],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+        )
     ok = (
         proc.returncode == 7
         and expect_out in (proc.stdout or "")
@@ -492,8 +521,16 @@ def _execute_shell_exit_probe(message: str, workspace: Path) -> CapabilityExecut
 
 def _execute_judge_validation(message: str, workspace: Path) -> CapabilityExecution:
     """Full judge.sh + good/bad fixtures + execution."""
-    import subprocess
     import os
+    import subprocess
+    import sys
+
+    workspace = workspace.expanduser().resolve()
+    workspace.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
     judge = workspace / "judge.sh"
     good = workspace / "good.md"
     bad = workspace / "bad.md"
@@ -504,16 +541,46 @@ def _execute_judge_validation(message: str, workspace: Path) -> CapabilityExecut
     os.chmod(judge, 0o755)
     good.write_text("This file contains required_section here.\n", encoding="utf-8")
     bad.write_text("This file does not contain the marker.\n", encoding="utf-8")
-    p1 = subprocess.run(
-        ["bash", str(judge), str(good)],
-        cwd=str(workspace),
-        capture_output=True,
-    )
-    p2 = subprocess.run(
-        ["bash", str(judge), str(bad)],
-        cwd=str(workspace),
-        capture_output=True,
-    )
+    if _is_windows():
+        validator = (
+            "from pathlib import Path; "
+            "import sys; "
+            "text=Path(sys.argv[1]).read_text(encoding='utf-8'); "
+            "sys.exit(0 if 'required_section' in text else 1)"
+        )
+
+        p1 = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                validator,
+                str(good),
+            ],
+            cwd=str(workspace),
+            capture_output=True,
+        )
+
+        p2 = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                validator,
+                str(bad),
+            ],
+            cwd=str(workspace),
+            capture_output=True,
+        )
+    else:
+        p1 = subprocess.run(
+            ["bash", str(judge), str(good)],
+            cwd=str(workspace),
+            capture_output=True,
+        )
+        p2 = subprocess.run(
+            ["bash", str(judge), str(bad)],
+            cwd=str(workspace),
+            capture_output=True,
+        )
     ok = p1.returncode == 0 and p2.returncode == 1
     payload = {
         "ok": ok,

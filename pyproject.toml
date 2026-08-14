@@ -34,7 +34,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["build>=1.2", "pytest>=8", "ruff>=0.6"]
+dev = ["build>=1.2", "pytest>=8", "psycopg[binary]>=3.2", "ruff>=0.6"]
+test = ["pytest>=8", "psycopg[binary]>=3.2"]
 
 [project.urls]
 Homepage = "https://github.com/badrpk/sophyane"
@@ -69,4 +70,8 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-sophyane = ["browser/home/*", "expert/data/*"]
+sophyane = ["browser/home/*", "expert/data/*",
+  "continual/cpp/CMakeLists.txt",
+  "continual/cpp/include/*.hpp",
+  "continual/cpp/src/*.cpp",
+]
