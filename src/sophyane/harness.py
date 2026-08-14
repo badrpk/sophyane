@@ -16,8 +16,15 @@ import asyncio
 import inspect
 import os
 import re
-import resource
 import subprocess
+
+try:
+    import resource
+except ImportError:
+    # ``resource`` is POSIX-only.  SandboxRunner already limits
+    # preexec handling to POSIX subprocesses, so Windows can safely
+    # operate without this optional module.
+    resource = None
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
@@ -206,6 +213,11 @@ class SandboxRunner:
         self.memory_mb = max(16, memory_mb)
 
     def _preexec(self) -> None:
+        # ``resource`` is unavailable on Windows.  subprocess.run() does
+        # not use this hook there, but keep direct calls safe as well.
+        if resource is None:
+            return
+
         # Soft limits only; ignore failures on platforms that reject them.
         # Avoid RLIMIT_NPROC — Crostini/user namespaces often cannot fork under
         # aggressive process caps, which breaks even simple shell builtins.
