@@ -43,14 +43,38 @@ def _ensure_dirs() -> None:
 
 
 def _cpp_sources() -> Path:
-    # package layout: src/sophyane/continual → parents[3] = repo root when editable
-    for p in (
-        Path(__file__).resolve().parents[3] / "sdk" / "cpp" / "continual",
-        Path.home() / ".local" / "share" / "sophyane" / "current" / "sdk" / "cpp" / "continual",
-    ):
-        if (p / "src" / "train_core.cpp").exists():
-            return p
-    return Path(__file__).resolve().parents[3] / "sdk" / "cpp" / "continual"
+    """Locate the C++ continual-training source payload.
+
+    Installed distributions carry a package-local copy.  The repository
+    candidate preserves compatibility with editable/source checkouts.
+    """
+    package_local = Path(__file__).resolve().parent / "cpp"
+    repo_local = (
+        Path(__file__).resolve().parents[3]
+        / "sdk"
+        / "cpp"
+        / "continual"
+    )
+    deployed = (
+        Path.home()
+        / ".local"
+        / "share"
+        / "sophyane"
+        / "current"
+        / "sdk"
+        / "cpp"
+        / "continual"
+    )
+
+    for candidate in (package_local, repo_local, deployed):
+        if (
+            candidate / "src" / "train_core.cpp"
+        ).exists():
+            return candidate
+
+    # Return the canonical installed location so any error names the
+    # distribution payload that is expected to exist.
+    return package_local
 
 
 def ensure_train_core(*, force_rebuild: bool = False) -> Path:

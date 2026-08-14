@@ -49,7 +49,7 @@ Thumbs.db
 
 # Recursive self-improvement runtime data
 improvement_chain.jsonl
-continual/
+/continual/
 *.before-*
 *.backup
 *.backup*
