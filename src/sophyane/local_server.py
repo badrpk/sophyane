@@ -172,8 +172,37 @@ def _launch(state: dict, port: int, *, minimal: bool = False) -> tuple[bool, str
         return False, "llama-server executable is missing"
 
     command = [
-        str(server), "-m", str(gguf),
-        "--host", "127.0.0.1", "--port", str(port),
+        str(server),
+        "-m",
+        str(gguf),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+
+        # SOPHYANE_LLAMA_MOBILE_SINGLE_SLOT_V1
+        #
+        # Sophyane's local provider performs one bounded generation at a
+        # time. llama-server's automatic four-slot configuration adds
+        # unnecessary KV/cache and resident-memory pressure on Android.
+        #
+        # Keep this configurable for larger machines, while making one slot
+        # the conservative local/mobile default.
+        "--parallel",
+        str(
+            max(
+                1,
+                int(
+                    state.get(
+                        "parallel",
+                    )
+                    or os.environ.get(
+                        "SOPHYANE_LLAMA_PARALLEL",
+                        "1",
+                    )
+                ),
+            )
+        ),
     ]
     if not minimal:
         command += ["-c", str(int(state.get("context") or 2048))]
@@ -336,3 +365,100 @@ def wait_until_ready(timeout: float = 20.0) -> bool:
 def failure_detail() -> str:
     status, message = server_status()
     return message if status != "ready" else ""
+
+
+def wait_until_idle(
+    timeout: float = 20.0,
+    *,
+    poll_interval: float = 0.2,
+) -> bool:
+    """Wait until every llama-server inference slot is idle.
+
+    SOPHYANE_LOCAL_SERVER_SLOT_QUIESCENCE_V1
+
+    HTTP cancellation is asynchronous inside llama-server. A client timeout
+    may therefore occur before the server has fully released the associated
+    inference slot.
+
+    This helper proves actual slot quiescence rather than assuming that a
+    cancelled HTTP request immediately frees model execution state.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    deadline = (
+        time.monotonic()
+        + max(
+            0.0,
+            float(
+                timeout
+            ),
+        )
+    )
+
+    while True:
+        try:
+            with urllib.request.urlopen(
+                "http://127.0.0.1:"
+                + str(
+                    _configured_port()
+                )
+                + "/slots",
+                timeout=min(
+                    2.0,
+                    max(
+                        0.25,
+                        deadline
+                        - time.monotonic(),
+                    ),
+                ),
+            ) as response:
+                slots = json.loads(
+                    response.read().decode(
+                        "utf-8"
+                    )
+                )
+
+            if (
+                isinstance(
+                    slots,
+                    list,
+                )
+                and not any(
+                    bool(
+                        slot.get(
+                            "is_processing"
+                        )
+                    )
+                    for slot in slots
+                    if isinstance(
+                        slot,
+                        dict,
+                    )
+                )
+            ):
+                return True
+
+        except (
+            OSError,
+            ValueError,
+            urllib.error.URLError,
+            json.JSONDecodeError,
+        ):
+            pass
+
+        if (
+            time.monotonic()
+            >= deadline
+        ):
+            return False
+
+        time.sleep(
+            max(
+                0.05,
+                float(
+                    poll_interval
+                ),
+            )
+        )

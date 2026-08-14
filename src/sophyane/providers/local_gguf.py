@@ -15,6 +15,129 @@ from sophyane.runtime_cancel import cancelled, register, unregister
 DEFAULT_ENDPOINT = os.environ.get("SOPHYANE_LLAMA_SERVER", "http://127.0.0.1:8766").rstrip("/")
 
 
+# SOPHYANE_LOCAL_GGUF_CONTEXT_BUDGET_V1
+
+def _configured_context_size() -> int:
+    """Return the local llama context configured for this runtime."""
+    explicit = os.environ.get(
+        "SOPHYANE_LLAMA_CONTEXT",
+        "",
+    ).strip()
+
+    if explicit:
+        try:
+            value = int(
+                explicit
+            )
+
+            if value >= 512:
+                return value
+
+        except ValueError:
+            pass
+
+    try:
+        state = (
+            load_gguf_runtime_state()
+        )
+
+        value = int(
+            state.get(
+                "context"
+            )
+            or 0
+        )
+
+        if value >= 512:
+            return value
+
+    except Exception:
+        pass
+
+    return 2048
+
+
+def _estimate_chat_prompt_tokens(
+    prompt: str,
+    system_prompt: str,
+) -> int:
+    """Conservatively estimate Qwen chat prompt occupancy.
+
+    This is intentionally an upper-biased transport budget estimate rather
+    than a tokenizer replacement. Exact tokenization remains llama.cpp's job.
+    """
+    total_chars = (
+        len(
+            prompt
+            or ""
+        )
+        + len(
+            system_prompt
+            or ""
+        )
+    )
+
+    # Coding/JSON content often tokenizes more densely than ordinary prose.
+    # 3 characters/token is deliberately conservative for admission control.
+    estimated_content = (
+        total_chars
+        + 2
+    ) // 3
+
+    # Reserve chat-template / role / control-token overhead.
+    return max(
+        1,
+        estimated_content
+        + 64,
+    )
+
+
+def _safe_completion_budget(
+    *,
+    prompt: str,
+    system_prompt: str,
+    configured_max_tokens: int,
+) -> int:
+    """Return output tokens that fit safely inside the local context."""
+    context_size = (
+        _configured_context_size()
+    )
+
+    prompt_tokens = (
+        _estimate_chat_prompt_tokens(
+            prompt,
+            system_prompt,
+        )
+    )
+
+    # Keep unused context so chat-template variance and tokenizer estimation
+    # errors do not drive generation directly into the context boundary.
+    safety_reserve = max(
+        160,
+        int(
+            context_size
+            * 0.08
+        ),
+    )
+
+    available = (
+        context_size
+        - prompt_tokens
+        - safety_reserve
+    )
+
+    return max(
+        0,
+        min(
+            int(
+                configured_max_tokens
+            ),
+            1536,
+            available,
+        ),
+    )
+
+
 class LocalGgufProvider(Provider):
     metadata = ProviderMetadata(
         provider_id="local_gguf",
@@ -48,80 +171,184 @@ class LocalGgufProvider(Provider):
         )
         system_prompt = (system_prompt or "")[:800]
         prompt = (prompt or "")[:4000]
+        # SOPHYANE_LOCAL_GGUF_SINGLE_REAL_GENERATION_V1
+        #
+        # Readiness recovery and real inference are separate phases.
+        #
+        # A completed health probe does not consume model inference. If the
+        # server is not ready, startup/recovery may run here. Once readiness is
+        # established, exactly one real completion request owns the remaining
+        # provider budget. A timeout/error from that request must propagate;
+        # retrying the same coding generation after hundreds of seconds wastes
+        # mobile compute and disguises the original timeout.
+        from sophyane.local_server import (
+            ensure_server_background,
+            failure_detail,
+            wait_until_ready,
+        )
+
+        ready = False
+        readiness_error = ""
+
         try:
-            return self._generate_via_server(prompt, system_prompt, request_timeout=3)
-        except Exception as first_server_error:  # noqa: BLE001
+            ready = wait_until_ready(
+                timeout=3.0,
+            )
+        except Exception as error:  # noqa: BLE001
+            readiness_error = (
+                f"{type(error).__name__}: {error}"
+            )
+
+        if not ready:
             if cancelled():
-                raise ProviderError("local generation cancelled") from first_server_error
+                raise ProviderError(
+                    "local generation cancelled"
+                )
 
-            detail = ""
-            server_loading = False
             try:
-                from sophyane.local_server import (
-                    ensure_server_background,
-                    failure_detail,
-                    wait_until_ready,
-                )
-                server_started, startup_message = ensure_server_background()
-                normalized = startup_message.lower()
-                server_loading = server_started and any(
-                    marker in normalized for marker in ("loading", "starting", "startup already", "still starting")
+                server_started, startup_message = (
+                    ensure_server_background()
                 )
 
-                # Never launch llama-cli while a live llama-server is loading the
-                # same GGUF. Two simultaneous model copies can exhaust Android RAM.
-                if server_loading:
-                    remaining = total_budget - (time.monotonic() - started_at)
-                    wait_budget = max(1.0, min(70.0, remaining - 8.0))
-                    if wait_until_ready(timeout=wait_budget):
-                        remaining = total_budget - (time.monotonic() - started_at)
-                        if remaining > 2.0:
-                            return self._generate_via_server(
-                                prompt,
-                                system_prompt,
-                                request_timeout=max(2, int(remaining)),
-                            )
-                    detail = failure_detail() or startup_message
+                normalized = (
+                    startup_message.lower()
+                )
+
+                server_loading = (
+                    server_started
+                    and any(
+                        marker
+                        in normalized
+                        for marker in (
+                            "loading",
+                            "starting",
+                            "startup already",
+                            "still starting",
+                        )
+                    )
+                )
+
+                remaining = (
+                    total_budget
+                    - (
+                        time.monotonic()
+                        - started_at
+                    )
+                )
+
+                if remaining <= 2.0:
                     raise ProviderError(
-                        "llama-server is still loading the model; CLI fallback was skipped "
-                        f"to avoid loading a second GGUF copy. {detail}"
+                        "local generation budget expired "
+                        "during server readiness recovery"
                     )
 
-                if server_started and wait_until_ready(timeout=8.0):
-                    remaining = total_budget - (time.monotonic() - started_at)
-                    return self._generate_via_server(
-                        prompt,
-                        system_prompt,
-                        request_timeout=max(2, int(remaining)),
+                if server_loading:
+                    wait_budget = max(
+                        1.0,
+                        min(
+                            70.0,
+                            remaining - 2.0,
+                        ),
                     )
-                detail = failure_detail() or startup_message
+                else:
+                    wait_budget = max(
+                        1.0,
+                        min(
+                            8.0,
+                            remaining - 2.0,
+                        ),
+                    )
+
+                ready = wait_until_ready(
+                    timeout=wait_budget,
+                )
+
+                if not ready:
+                    detail = (
+                        failure_detail()
+                        or startup_message
+                        or readiness_error
+                    )
+
+                    raise ProviderError(
+                        "llama-server did not become "
+                        "inference-ready. "
+                        + detail
+                    )
+
             except ProviderError:
                 raise
-            except Exception as startup_error:  # noqa: BLE001
-                detail = f"server startup check failed: {startup_error}"
 
-            if cancelled():
-                raise ProviderError("local generation cancelled") from first_server_error
-
-            combined_len = len(prompt) + len(system_prompt)
-            remaining = total_budget - (time.monotonic() - started_at)
-            if self.cli_path and self.gguf_path and combined_len <= 5000 and remaining >= 12:
-                try:
-                    return self._generate_via_cli(
-                        prompt,
-                        system_prompt,
-                        deadline=max(10, min(40, int(remaining))),
+            except Exception as error:  # noqa: BLE001
+                detail = (
+                    failure_detail()
+                    or readiness_error
+                    or str(
+                        error
                     )
-                except Exception as cli_error:  # noqa: BLE001
-                    raise ProviderError(
-                        "local_gguf unavailable. "
-                        f"Server: {detail or first_server_error}. "
-                        f"CLI fallback: {cli_error}"
-                    ) from cli_error
+                )
+
+                raise ProviderError(
+                    "local_gguf server readiness failed. "
+                    + detail
+                ) from error
+
+        if cancelled():
             raise ProviderError(
-                "local_gguf server unavailable. "
-                f"{detail or first_server_error}"
-            ) from first_server_error
+                "local generation cancelled"
+            )
+
+        remaining = (
+            total_budget
+            - (
+                time.monotonic()
+                - started_at
+            )
+        )
+
+        if remaining <= 2.0:
+            raise ProviderError(
+                "local generation budget expired "
+                "before inference started"
+            )
+
+        # This is the one and only model generation owned by this
+        # LocalGgufProvider.generate() call.
+        try:
+            return self._generate_via_server(
+                prompt,
+                system_prompt,
+                request_timeout=max(
+                    2,
+                    int(
+                        remaining
+                    ),
+                ),
+            )
+
+        except Exception:
+            # SOPHYANE_LOCAL_GGUF_POST_CANCEL_QUIESCENCE_V1
+            #
+            # urllib/HTTP timeout cancellation can precede llama-server's
+            # asynchronous slot release. Wait briefly for real quiescence
+            # before returning control to an agent that may issue another
+            # local generation.
+            try:
+                from sophyane.local_server import (
+                    wait_until_idle,
+                )
+
+                wait_until_idle(
+                    timeout=20.0,
+                )
+
+            except Exception:
+                # Never replace the original inference exception with cleanup
+                # diagnostics.
+                pass
+
+            raise
+
 
     def _generate_via_server(
         self,
@@ -130,6 +357,26 @@ class LocalGgufProvider(Provider):
         *,
         request_timeout: int | None = None,
     ) -> str:
+        completion_budget = (
+            _safe_completion_budget(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                configured_max_tokens=self.max_tokens,
+            )
+        )
+
+        # A tiny remaining output window means the requested implementation
+        # no longer belongs in one local generation turn. Do not start llama
+        # only to hit the context boundary with a predictably truncated file.
+        if completion_budget < 256:
+            raise ProviderError(
+                "Local generation requires decomposition: "
+                f"context={_configured_context_size()}, "
+                f"estimated_prompt_tokens="
+                f"{_estimate_chat_prompt_tokens(prompt, system_prompt)}, "
+                f"safe_completion_tokens={completion_budget}."
+            )
+
         response = post_json(
             f"{self.endpoint}/v1/chat/completions",
             {
@@ -148,9 +395,13 @@ class LocalGgufProvider(Provider):
                 #
                 # The configured max_tokens remains authoritative whenever
                 # it is lower than this local context-safe ceiling.
-                "max_tokens": min(
-                    self.max_tokens,
-                    1536,
+                # SOPHYANE_LOCAL_GGUF_CONTEXT_BUDGET_V1
+                #
+                # Never request a completion that mathematically competes
+                # with the prompt for more tokens than the active llama
+                # context can safely hold.
+                "max_tokens": (
+                    completion_budget
                 ),
                 "stream": False,
             },

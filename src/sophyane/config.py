@@ -61,7 +61,10 @@ def default_config() -> dict[str, Any]:
     return {
         "provider": DEFAULT_PROVIDER,
         "model": DEFAULT_MODEL,
-        "timeout": 60,
+        # Local coding/inference can legitimately require several minutes,
+        # especially on mobile/CPU runtimes. Keep the provider timeout aligned
+        # with the long-running coding budget instead of the legacy 60s cap.
+        "timeout": 600,
         "temperature": 0.3,
         "max_tokens": 4096,
     }
