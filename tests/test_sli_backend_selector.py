@@ -110,6 +110,7 @@ def test_explicit_path_remains_sqlite_under_postgres_selection(
 
 def test_explicit_postgres_selection_reads_prepared_schema(
     monkeypatch,
+    postgres_test_dsn,
 ) -> None:
     monkeypatch.setenv(
         "SOPHYANE_SLI_BACKEND",
@@ -133,10 +134,21 @@ def test_explicit_postgres_selection_reads_prepared_schema(
 
 def test_postgres_public_read_parity(
     monkeypatch,
+    postgres_test_dsn,
 ) -> None:
     monkeypatch.delenv(
         "SOPHYANE_SLI_BACKEND",
         raising=False,
+    )
+
+    # SOPHYANE_PYTEST_BACKEND_SELECTOR_ISOLATION_V1
+    #
+    # The first parity phase intentionally exercises SQLite.
+    # Persistent production configuration must not override it.
+    monkeypatch.setattr(
+        sli_backend,
+        "load_config",
+        lambda: {},
     )
 
     with sli_backend.connect() as sqlite_db:

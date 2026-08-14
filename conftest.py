@@ -56,6 +56,15 @@ def _isolate_sophyane_production_sli(
         isolated_db,
     )
 
+    # SOPHYANE_PYTEST_SQLITE_FIXTURE_INITIALIZATION_V1
+    #
+    # DB_PATH must identify an initialized database because some
+    # selector tests intentionally reopen it read-only.
+    with sli.connect(
+        isolated_db
+    ):
+        pass
+
 
 @pytest.fixture
 def postgres_test_dsn(monkeypatch):

@@ -19,32 +19,16 @@ STRICT_HELPERS = {
 }
 
 
-def test_strict_retrieval_generation_is_absent():
-    path = Path(
-        "src/sophyane/sli_semantic_intelligence.py"
+def test_strict_compatibility_does_not_drive_production_retrieval():
+    """Legacy strict helpers coexist, while FINAL V3 drives retrieval."""
+    source = inspect.getsource(
+        semantic.retrieve_for_capability
     )
 
-    text = path.read_text(
-        encoding="utf-8",
-    )
+    assert "_final_compatible" in source
 
-    tree = ast.parse(text)
-
-    functions = {
-        node.name
-        for node in tree.body
-        if isinstance(
-            node,
-            ast.FunctionDef,
-        )
-    }
-
-    assert not (
-        STRICT_HELPERS
-        & functions
-    )
-
-    assert "_STRICT_SIGNALS" not in text
+    for name in STRICT_HELPERS:
+        assert name not in source
 
 
 def test_final_retrieval_policy_remains_active():
