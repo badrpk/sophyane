@@ -1,0 +1,182 @@
+name: macOS loopback diagnostic
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        python-version:
+          - "3.13"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+
+      - name: Environment
+        shell: bash
+        run: |
+          python --version
+          sw_vers
+          env | sort | grep -iE '(^|_)proxy=' || true
+
+      - name: Raw loopback discriminator
+        shell: bash
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import os
+          import socket
+          import subprocess
+          import sys
+          import tempfile
+          import time
+          import urllib.request
+          from pathlib import Path
+
+          root = Path(tempfile.mkdtemp())
+          (root / "index.html").write_text(
+              "<!doctype html><html><body>LOOPBACK_OK</body></html>",
+              encoding="utf-8",
+          )
+
+          with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+              sock.bind(("127.0.0.1", 0))
+              port = sock.getsockname()[1]
+
+          command = [
+              sys.executable,
+              "-m",
+              "http.server",
+              str(port),
+              "--bind",
+              "127.0.0.1",
+              "--directory",
+              str(root),
+          ]
+
+          print("COMMAND:", command, flush=True)
+          print(
+              "PROXY ENV:",
+              {
+                  k: v
+                  for k, v in os.environ.items()
+                  if "proxy" in k.lower()
+              },
+              flush=True,
+          )
+
+          process = subprocess.Popen(
+              command,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.PIPE,
+              text=True,
+              start_new_session=True,
+          )
+
+          url = f"http://127.0.0.1:{port}/index.html"
+
+          try:
+              for attempt in range(1, 21):
+                  print(
+                      f"ATTEMPT={attempt} "
+                      f"poll={process.poll()}",
+                      flush=True,
+                  )
+
+                  # First discriminate TCP from HTTP/urllib.
+                  try:
+                      with socket.create_connection(
+                          ("127.0.0.1", port),
+                          timeout=1.0,
+                      ):
+                          print("TCP=PASS", flush=True)
+                  except Exception as exc:
+                      print(
+                          "TCP=FAIL",
+                          type(exc).__name__,
+                          repr(exc),
+                          flush=True,
+                      )
+
+                  try:
+                      opener = urllib.request.build_opener(
+                          urllib.request.ProxyHandler({})
+                      )
+                      with opener.open(
+                          url,
+                          timeout=1.0,
+                      ) as response:
+                          body = response.read()
+                          print(
+                              "URLLIB_DIRECT=PASS",
+                              response.status,
+                              body,
+                              flush=True,
+                          )
+                          break
+                  except Exception as exc:
+                      print(
+                          "URLLIB_DIRECT=FAIL",
+                          type(exc).__name__,
+                          repr(exc),
+                          flush=True,
+                      )
+
+                  try:
+                      with urllib.request.urlopen(
+                          url,
+                          timeout=1.0,
+                      ) as response:
+                          print(
+                              "URLLIB_DEFAULT=PASS",
+                              response.status,
+                              flush=True,
+                          )
+                  except Exception as exc:
+                      print(
+                          "URLLIB_DEFAULT=FAIL",
+                          type(exc).__name__,
+                          repr(exc),
+                          flush=True,
+                      )
+
+                  time.sleep(0.25)
+              else:
+                  raise SystemExit("loopback probe never became ready")
+
+          finally:
+              process.terminate()
+
+              try:
+                  stdout, stderr = process.communicate(timeout=5)
+              except subprocess.TimeoutExpired:
+                  process.kill()
+                  stdout, stderr = process.communicate()
+
+              print("SERVER STDOUT:")
+              print(stdout)
+              print("SERVER STDERR:")
+              print(stderr)
+          PY
+
+      - name: Exact Sophyane preview tests
+        shell: bash
+        run: |
+          python -m pytest -vv -s \
+            tests/test_new_tab_preview_and_gemini_tool_guard.py::test_verified_preview_opens_after_http_hash_check \
+            tests/test_rendered_evidence.py::test_verified_browser_result_includes_rendered_evidence
