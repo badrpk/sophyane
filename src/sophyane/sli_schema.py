@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 
 
@@ -29,7 +30,7 @@ def _columns(db: sqlite3.Connection, table: str) -> set[str]:
 def schema_is_current(path: Path) -> bool:
     if not path.exists():
         return True
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db:
         memories = _columns(db, "memories")
         traces = _columns(db, "learned_execution_traces")
     return EXPECTED_MEMORIES.issubset(memories) and EXPECTED_TRACES.issubset(traces)
@@ -43,7 +44,7 @@ def ensure_current_schema(path: Path | str | None = None) -> dict[str, str | boo
     target.parent.mkdir(parents=True, exist_ok=True)
 
     if schema_is_current(target):
-        with sli.connect(target):
+        with closing(sli.connect(target)):
             pass
         return {"migrated": False, "database": str(target), "backup": ""}
 
@@ -51,7 +52,7 @@ def ensure_current_schema(path: Path | str | None = None) -> dict[str, str | boo
     backup = target.with_name(f"{target.name}.backup.{stamp}")
     target.replace(backup)
 
-    with sli.connect(target):
+    with closing(sli.connect(target)):
         pass
 
     return {
