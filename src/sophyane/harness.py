@@ -16,8 +16,12 @@ import asyncio
 import inspect
 import os
 import re
-import resource
 import subprocess
+
+try:
+    import resource
+except ImportError:
+    resource = None  # type: ignore[assignment]
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
@@ -207,6 +211,8 @@ class SandboxRunner:
 
     def _preexec(self) -> None:
         # Soft limits only; ignore failures on platforms that reject them.
+        if resource is None:
+            return
         # Avoid RLIMIT_NPROC — Crostini/user namespaces often cannot fork under
         # aggressive process caps, which breaks even simple shell builtins.
         # Android/Termux processes can abort during startup when RLIMIT_AS is
