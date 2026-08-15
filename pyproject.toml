@@ -34,7 +34,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["build>=1.2", "pytest>=8", "ruff>=0.6"]
+test = [
+  "pytest>=8",
+  "psycopg[binary]>=3.2",
+]
+dev = [
+  "build>=1.2",
+  "pytest>=8",
+  "psycopg[binary]>=3.2",
+  "ruff>=0.6",
+]
 
 [project.urls]
 Homepage = "https://github.com/badrpk/sophyane"
