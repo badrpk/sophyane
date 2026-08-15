@@ -73,13 +73,19 @@ def test_python_semantic_plan_is_preserved():
         == "python_application"
     )
 
+    # Journaling/replay are now first-class behavioral capabilities.
+    # Architectural entry/error duties remain implementation dependencies.
     assert [
         item.name
         for item in plan.capabilities
     ] == [
+        "deterministic_replay",
+        "execution_journaling",
         "entry_point",
         "error_handling",
     ]
+
+    assert plan.has_material_requirement is True
 
 
 def test_browser_game_semantic_plan_is_preserved():
@@ -105,6 +111,10 @@ def test_browser_game_semantic_plan_is_preserved():
         for item in plan.capabilities
     ]
 
+    # Boundary-safe matching intentionally removes historical false
+    # positives such as "ui" inside "using" and "script" inside
+    # "JavaScript". Ordering therefore reflects the corrected importance
+    # values rather than the old substring-inflated scores.
     assert names == [
         "rendering",
         "application_state",
@@ -112,10 +122,10 @@ def test_browser_game_semantic_plan_is_preserved():
         "user_input",
         "time_loop",
         "document_shell",
-        "presentation",
-        "entry_point",
         "lifecycle_control",
+        "presentation",
         "progress_feedback",
+        "entry_point",
     ]
 
     assert "http_endpoint" not in names

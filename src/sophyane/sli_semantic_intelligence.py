@@ -241,8 +241,15 @@ CAPABILITY_ONTOLOGY: dict[str, dict[str, Any]] = {
             "correct",
             "incorrect",
             "validate",
+            "validation",
             "check",
             "rules",
+            "guardrail",
+            "guardrails",
+            "safety rule",
+            "safety rules",
+            "constraint",
+            "constraints",
             "win",
             "lose",
             "collision",
@@ -251,6 +258,7 @@ CAPABILITY_ONTOLOGY: dict[str, dict[str, Any]] = {
         "signals": {
             "if ",
             "validate",
+            "validation",
             "correct",
             "incorrect",
             "collision",
@@ -258,6 +266,8 @@ CAPABILITY_ONTOLOGY: dict[str, dict[str, Any]] = {
             "check",
             "match",
             "includes",
+            "guardrail",
+            "constraint",
         },
         "preferred_languages": {
             "javascript",
@@ -601,6 +611,122 @@ CAPABILITY_ONTOLOGY: dict[str, dict[str, Any]] = {
         },
     },
 
+    # SOPHYANE_EXECUTION_REPLAY_ONTOLOGY_V1
+    "execution_journaling": {
+        "concepts": {
+            "journal",
+            "journaling",
+            "execution journal",
+            "event journal",
+            "execution trace",
+            "trace",
+            "record",
+            "recording",
+            "api response",
+            "api responses",
+            "response capture",
+        },
+        "signals": {
+            "journal",
+            "event",
+            "sequence",
+            "record",
+            "response",
+            "payload",
+            "append",
+            "write",
+            "serialize",
+        },
+        "preferred_languages": {
+            "python",
+            "javascript",
+            "typescript",
+        },
+        "placements": {
+            "python_module",
+            "module",
+            "function",
+            "script",
+            "compound",
+        },
+    },
+
+    "concurrency_coordination": {
+        "concepts": {
+            "thread",
+            "threads",
+            "thread interleaving",
+            "thread interleavings",
+            "interleaving",
+            "interleavings",
+            "async",
+            "concurrency",
+            "race condition",
+            "race",
+            "synchronization",
+        },
+        "signals": {
+            "threading",
+            "thread",
+            "asyncio",
+            "await",
+            "lock",
+            "condition",
+            "barrier",
+            "event",
+            "queue",
+            "sequence",
+        },
+        "preferred_languages": {
+            "python",
+            "javascript",
+            "typescript",
+        },
+        "placements": {
+            "python_module",
+            "module",
+            "function",
+            "script",
+            "compound",
+        },
+    },
+
+    "deterministic_replay": {
+        "concepts": {
+            "replay",
+            "deterministic replay",
+            "non-deterministic",
+            "nondeterministic",
+            "deterministic",
+            "bit-for-bit",
+            "reproduce",
+            "reproduction",
+        },
+        "signals": {
+            "replay",
+            "sequence",
+            "expected",
+            "actual",
+            "assert",
+            "compare",
+            "digest",
+            "hash",
+            "bytes",
+        },
+        "preferred_languages": {
+            "python",
+            "javascript",
+            "typescript",
+        },
+        "placements": {
+            "python_module",
+            "module",
+            "function",
+            "script",
+            "compound",
+        },
+    },
+
     "http_endpoint": {
         "concepts": {
             "api",
@@ -763,6 +889,10 @@ class SemanticPlan:
     capabilities: list[CapabilityRequirement]
     target_language: str | None = None
     target_artifact: str | None = None
+    # True only when the request itself mapped to at least one behavioral
+    # capability. Architectural dependencies such as entry_point and
+    # error_handling must never manufacture semantic confidence.
+    has_material_requirement: bool = False
 
     @property
     def required_names(self) -> list[str]:
@@ -827,6 +957,33 @@ def extract_concepts(request: str) -> list[str]:
             concepts.add(phrase)
 
     return sorted(concepts)
+
+
+def _concept_present(
+    text: str,
+    concept_set: set[str],
+    concept: str,
+) -> bool:
+    """Match ontology concepts as semantic tokens/phrases, not substrings."""
+    term = normalize(concept)
+
+    if not term:
+        return False
+
+    if term in concept_set:
+        return True
+
+    escaped = re.escape(term)
+
+    return bool(
+        re.search(
+            r"(?<![A-Za-z0-9_])"
+            + escaped
+            + r"(?![A-Za-z0-9_])",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def infer_target(request: str) -> tuple[str | None, str | None]:
@@ -1019,9 +1176,10 @@ def build_semantic_plan(request: str) -> SemanticPlan:
         overlap_terms = {
             term
             for term in ontology_concepts
-            if (
-                term in text
-                or term in concept_set
+            if _concept_present(
+                text,
+                concept_set,
+                term,
             )
         }
 
@@ -1065,6 +1223,43 @@ def build_semantic_plan(request: str) -> SemanticPlan:
                 ),
             )
         )
+
+    # SOPHYANE_EXECUTION_REPLAY_TARGET_BOUNDARY_V1
+    #
+    # The replay/journaling ontology currently has retrieval and execution
+    # authority only after Sophyane has inferred a supported software target.
+    # In particular, recognizing C++ vocabulary must not silently introduce
+    # partial C++ semantic authority before C++ target inference exists.
+    execution_replay_capabilities = {
+        "execution_journaling",
+        "concurrency_coordination",
+        "deterministic_replay",
+    }
+
+    if target_artifact is None:
+        requirements = [
+            requirement
+            for requirement in requirements
+            if requirement.name
+            not in execution_replay_capabilities
+        ]
+
+    # Architectural/structural capabilities can be inferred directly from
+    # generic request wording such as "program", "application", or "script".
+    # They describe the shape of an implementation, not the distinguishing
+    # behavior the user actually requested.
+    #
+    # Therefore they must not manufacture semantic confidence even when they
+    # were matched before dependency injection.
+    non_material_capabilities = {
+        "entry_point",
+        "error_handling",
+    }
+
+    has_material_requirement = any(
+        item.name not in non_material_capabilities
+        for item in requirements
+    )
 
     required_names = {
         item.name
@@ -1219,6 +1414,7 @@ def build_semantic_plan(request: str) -> SemanticPlan:
         capabilities=requirements,
         target_language=target_language,
         target_artifact=target_artifact,
+        has_material_requirement=has_material_requirement,
     )
 
     # SOPHYANE_API_SERVER_SEMANTICS_V1
@@ -1805,6 +2001,31 @@ def artifact_capability_coverage(
     plan: SemanticPlan,
     files: Iterable[Path],
 ) -> tuple[float, dict[str, bool], list[str]]:
+    # SOPHYANE_MATERIAL_SEMANTIC_PLAN_GATE_V1
+    #
+    # entry_point/error_handling and other injected dependencies describe
+    # architecture, not the user's distinguishing behavior. Without at least
+    # one request-derived capability, SLI cannot prove semantic completion.
+    if (
+        plan.target_artifact in {
+            "python_application",
+            "javascript_application",
+        }
+        and not plan.has_material_requirement
+    ):
+        coverage_map = {
+            requirement.name: False
+            for requirement in plan.capabilities
+        }
+        return (
+            0.0,
+            coverage_map,
+            [
+                requirement.name
+                for requirement in plan.capabilities
+            ],
+        )
+
     combined_parts: list[str] = []
 
     for path in files:
