@@ -2,8 +2,9 @@
 # Universal Sophyane installer/updater.
 #
 # Contract:
-#   * every run installs the current GitHub main branch into a fresh managed
-#     system directory and a fresh virtual environment;
+#   * every run installs the latest stable semantic release tag (vX.Y.Z) into
+#     a fresh managed system directory and a fresh virtual environment;
+#   * SOPHYANE_REF may explicitly override the release ref when needed;
 #   * the previous managed Sophyane code/runtime is removed only after the new
 #     installation validates successfully;
 #   * user state/work stored outside the managed system/venv directories is
