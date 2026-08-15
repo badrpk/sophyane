@@ -403,7 +403,15 @@ def _cpp_action(
 ) -> CodingResult:
     filename = match.group("filename")
     target = _safe_child(workspace, filename)
-    executable = _safe_child(workspace, Path(filename).stem)
+    executable_name = Path(filename).stem
+
+    if os.name == "nt":
+        executable_name += ".exe"
+
+    executable = _safe_child(
+        workspace,
+        executable_name,
+    )
 
     target.write_text(
         _default_cpp(filename, request),

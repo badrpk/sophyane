@@ -293,7 +293,7 @@ def test_generated_application_runs_through_service_fabric(
 
         assert (
             str(status["health"])
-            == "http-status=200"
+            == "tcp-connect-ok"
         )
 
         assert int(

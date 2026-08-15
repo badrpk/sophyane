@@ -77,6 +77,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -92,7 +93,7 @@ def connect(path: Path = DB) -> sqlite3.Connection:
 
 
 def initialize(path: Path = DB) -> None:
-    with connect(path) as connection:
+    with closing(connect(path)) as connection, connection:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS items (
@@ -111,7 +112,7 @@ class Repository:
         initialize(path)
 
     def create(self, name: str, quantity: int, price: float) -> dict:
-        with connect(self.path) as connection:
+        with closing(connect(self.path)) as connection, connection:
             cursor = connection.execute(
                 "INSERT INTO items(name, quantity, price) VALUES (?, ?, ?)",
                 (name, quantity, price),
@@ -123,14 +124,14 @@ class Repository:
         return item
 
     def all(self) -> list[dict]:
-        with connect(self.path) as connection:
+        with closing(connect(self.path)) as connection, connection:
             rows = connection.execute(
                 "SELECT id, name, quantity, price FROM items ORDER BY id"
             ).fetchall()
         return [dict(row) for row in rows]
 
     def get(self, item_id: int) -> dict | None:
-        with connect(self.path) as connection:
+        with closing(connect(self.path)) as connection, connection:
             row = connection.execute(
                 "SELECT id, name, quantity, price FROM items WHERE id = ?",
                 (item_id,),
@@ -138,7 +139,7 @@ class Repository:
         return dict(row) if row else None
 
     def update(self, item_id: int, name: str, quantity: int, price: float) -> dict | None:
-        with connect(self.path) as connection:
+        with closing(connect(self.path)) as connection, connection:
             cursor = connection.execute(
                 "UPDATE items SET name = ?, quantity = ?, price = ? WHERE id = ?",
                 (name, quantity, price, item_id),
@@ -146,7 +147,7 @@ class Repository:
         return self.get(item_id) if cursor.rowcount else None
 
     def delete(self, item_id: int) -> bool:
-        with connect(self.path) as connection:
+        with closing(connect(self.path)) as connection, connection:
             cursor = connection.execute(
                 "DELETE FROM items WHERE id = ?", (item_id,)
             )

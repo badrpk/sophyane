@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -75,7 +76,7 @@ class MemoryStore:
         return {str(row["name"]) for row in rows}
 
     def _initialize(self) -> None:
-        with self.connect() as connection:
+        with closing(self.connect()) as connection, connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS memories (
@@ -163,7 +164,7 @@ class MemoryStore:
         importance = max(1, min(10, int(importance)))
         timestamp = utc_now()
 
-        with self.connect() as connection:
+        with closing(self.connect()) as connection, connection:
             connection.execute(
                 """
                 INSERT INTO memories(
@@ -197,7 +198,7 @@ class MemoryStore:
     def list(self, limit: int = 30) -> list[dict[str, Any]]:
         safe_limit = max(1, min(int(limit), 200))
 
-        with self.connect() as connection:
+        with closing(self.connect()) as connection, connection:
             rows = connection.execute(
                 """
                 SELECT
@@ -258,7 +259,7 @@ class MemoryStore:
         ]
 
     def forget(self, memory_id: int) -> bool:
-        with self.connect() as connection:
+        with closing(self.connect()) as connection, connection:
             cursor = connection.execute(
                 "DELETE FROM memories WHERE id = ?",
                 (int(memory_id),),
@@ -267,7 +268,7 @@ class MemoryStore:
             return bool(cursor.rowcount)
 
     def record_message(self, role: str, content: str) -> None:
-        with self.connect() as connection:
+        with closing(self.connect()) as connection, connection:
             connection.execute(
                 """
                 INSERT INTO conversations(
@@ -291,7 +292,7 @@ class MemoryStore:
     ) -> list[dict[str, Any]]:
         safe_limit = max(1, min(int(limit), 50))
 
-        with self.connect() as connection:
+        with closing(self.connect()) as connection, connection:
             rows = connection.execute(
                 """
                 SELECT created_at, role, content
@@ -308,7 +309,7 @@ class MemoryStore:
             ]
 
     def count(self) -> int:
-        with self.connect() as connection:
+        with closing(self.connect()) as connection, connection:
             row = connection.execute(
                 "SELECT COUNT(*) AS total FROM memories"
             ).fetchone()

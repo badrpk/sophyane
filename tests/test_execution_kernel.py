@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import json
 from pathlib import Path
 
@@ -26,7 +28,12 @@ def test_create_compile_run_cpp(tmp_path: Path) -> None:
     assert result is not None
     assert result.ok
     assert (tmp_path / "hello.cpp").is_file()
-    assert (tmp_path / "hello").is_file()
+    executable = (
+        "hello.exe"
+        if os.name == "nt"
+        else "hello"
+    )
+    assert (tmp_path / executable).is_file()
 
     payload = json.loads(result.output)
     assert payload["ok"] is True

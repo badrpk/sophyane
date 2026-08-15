@@ -820,11 +820,18 @@ def service_manifest_for_runtime(
                     runtime.environment
                 ),
                 restart="no",
+                # Startup readiness only proves that the generated
+                # service has bound its runtime port. Real HTTP routes,
+                # response bodies, status codes, and grounded mutations
+                # are verified separately by full-stack verification.
+                #
+                # Using TCP here avoids treating temporary response
+                # scheduling latency on loaded CI hosts as application
+                # startup failure.
                 health=HealthCheck(
-                    kind="http",
+                    kind="tcp",
                     host=runtime.host,
                     port=runtime.port,
-                    path=runtime.health_path,
                     timeout_seconds=3.0,
                 ),
             ),

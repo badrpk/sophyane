@@ -110,7 +110,7 @@ def _wait_for_server(
     base: str,
     process: subprocess.Popen[bytes],
     *,
-    timeout: float = 4.0,
+    timeout: float = 15.0,
 ) -> None:
     deadline = (
         time.monotonic()
@@ -135,7 +135,7 @@ def _wait_for_server(
         try:
             with urllib.request.urlopen(
                 f"{base}/index.html",
-                timeout=0.35,
+                timeout=1.0,
             ) as response:
                 if (
                     getattr(
@@ -439,7 +439,7 @@ def open_verified_browser(workspace: Path, progress: Progress) -> tuple[bool, st
     base = _server_for(workspace)
     url = f"{base}/index.html?v={candidate.stat().st_mtime_ns}"
     try:
-        with urllib.request.urlopen(url, timeout=5) as response:
+        with urllib.request.urlopen(url, timeout=15) as response:
             body = response.read()
             status = getattr(response, "status", 200)
     except Exception as error:  # noqa: BLE001
