@@ -12,6 +12,7 @@ $LogDir = Join-Path $Base "install-logs"
 $LockDir = Join-Path $Base ".install-lock"
 $TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("sophyane-install-" + [guid]::NewGuid().ToString("N"))
 $SourceDir = Join-Path $TempRoot "source"
+$SnapshotZip = Join-Path $TempRoot "release.zip"
 $OldSystem = Join-Path $Base (".old-system-" + $PID)
 $OldVenv = Join-Path $Base (".old-venv-" + $PID)
 $Swapped = $false
@@ -146,9 +147,13 @@ try {
     if (Test-Path $VenvDir) { Move-Item $VenvDir $OldVenv }
     $Swapped = $true
 
-    Copy-Item -Recurse -Force $SourceDir $SystemDir
-    $SystemGit = Join-Path $SystemDir ".git"
-    if (Test-Path $SystemGit) { Remove-Item -Recurse -Force $SystemGit }
+    # Materialize the committed release snapshot instead of recursively copying
+    # the Git checkout. This makes staging independent of Windows symlink mode
+    # and avoids broken Unix-only symlink targets in the working tree.
+    & git -C $SourceDir archive --format=zip --output=$SnapshotZip HEAD
+    if ($LASTEXITCODE -ne 0) { throw "Failed to create release snapshot." }
+    New-Item -ItemType Directory -Force -Path $SystemDir | Out-Null
+    Expand-Archive -LiteralPath $SnapshotZip -DestinationPath $SystemDir -Force
 
     Write-Step "Creating isolated Python environment"
     Invoke-Python $Python @("-m", "venv", $VenvDir)
