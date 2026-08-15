@@ -1,4 +1,4 @@
-# Sophyane 21.1
+# Sophyane 21.4.2
 
 **Local-first AI software engineering platform for planning, building, repairing, validating, executing, and delivering real software artifacts.**
 
@@ -8,33 +8,13 @@ It runs on Linux, macOS, Windows, ChromeOS Linux, Android Termux, UserLAnd, VPS 
 
 ## Current verified status
 
-Sophyane 21.1 has been verified end to end with Gemini on a browser-game task:
+Sophyane 21.4.2 is the current packaged release. The release wheel and source distribution have been validated from a clean build, and a fresh virtual-environment installation has been verified to install the declared runtime dependencies automatically.
 
-```text
-request
-  → semantic interpretation
-  → provider planning
-  → isolated workspace
-  → complete index.html generation
-  → structural validation
-  → HTTP verification
-  → browser preview in a new tab
-```
-
-The verified run produced a 14 KB self-contained browser game, served it from the current workspace, confirmed an HTTP 200 response, recorded a SHA-256 fingerprint, and opened the exact verified page in Chromium.
-
-The bundled offline engineering benchmark currently reports:
-
-```text
-21 passed
-0 failed
-2 skipped
-100.0 score
-```
-
-The skipped checks depend on optional host capabilities: Node.js availability and live-provider mode. See [Benchmarking](docs/BENCHMARKS.md).
+The v21.4.2 package includes the Sophyane Python runtime, browser assets, code-memory modules, provider integrations, service-fabric components, observability modules, and packaged continual-training C++ sources.
 
 ## Install
+
+### Recommended installer
 
 Linux, macOS, ChromeOS Linux, UserLAnd, and Termux:
 
@@ -48,10 +28,34 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/badrpk/sophyane/main/install.ps1 | iex
 ```
 
+### Install directly from the GitHub release
+
+Download the `sophyane-21.4.2-py3-none-any.whl` asset from the v21.4.2 GitHub Release, then install it normally with pip:
+
+```bash
+python -m pip install ./sophyane-21.4.2-py3-none-any.whl
+```
+
+`pip` reads the wheel metadata and installs required runtime dependencies automatically, including `numpy>=1.26` and `pexpect>=4.9` (plus transitive dependencies such as `ptyprocess`). Third-party dependencies are resolved by pip rather than being duplicated inside the Sophyane wheel.
+
+You can also install the tagged source directly from GitHub:
+
+```bash
+python -m pip install "git+https://github.com/badrpk/sophyane.git@v21.4.2"
+```
+
 Start:
 
 ```bash
 sophyane
+```
+
+Verify the installation:
+
+```bash
+sophyane --version
+sophyane --providers
+python -m pip check
 ```
 
 Developer installation:
