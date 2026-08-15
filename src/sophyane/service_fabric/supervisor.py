@@ -180,6 +180,24 @@ class ServiceSupervisor:
         )
 
         try:
+            popen_kwargs: dict[str, object] = {}
+
+            if os.name == "nt":
+                creationflags = getattr(
+                    subprocess,
+                    "CREATE_NEW_PROCESS_GROUP",
+                    0,
+                )
+
+                if creationflags:
+                    popen_kwargs[
+                        "creationflags"
+                    ] = creationflags
+            else:
+                popen_kwargs[
+                    "start_new_session"
+                ] = True
+
             process = subprocess.Popen(
                 list(
                     spec.command
@@ -191,7 +209,7 @@ class ServiceSupervisor:
                 stdin=subprocess.DEVNULL,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
-                start_new_session=True,
+                **popen_kwargs,
             )
 
         except Exception:
@@ -262,17 +280,20 @@ class ServiceSupervisor:
             + name
         )
 
-        try:
-            os.killpg(
-                process.pid,
-                signal.SIGTERM,
-            )
-
-        except (
-            ProcessLookupError,
-            PermissionError,
-        ):
+        if os.name == "nt":
             process.terminate()
+        else:
+            try:
+                os.killpg(
+                    process.pid,
+                    signal.SIGTERM,
+                )
+
+            except (
+                ProcessLookupError,
+                PermissionError,
+            ):
+                process.terminate()
 
         try:
             process.wait(
@@ -280,17 +301,20 @@ class ServiceSupervisor:
             )
 
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(
-                    process.pid,
-                    signal.SIGKILL,
-                )
-
-            except (
-                ProcessLookupError,
-                PermissionError,
-            ):
+            if os.name == "nt":
                 process.kill()
+            else:
+                try:
+                    os.killpg(
+                        process.pid,
+                        signal.SIGKILL,
+                    )
+
+                except (
+                    ProcessLookupError,
+                    PermissionError,
+                ):
+                    process.kill()
 
             process.wait(
                 timeout=2.0,

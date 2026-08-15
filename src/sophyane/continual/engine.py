@@ -31,6 +31,7 @@ LOCAL_DIR = STATE_DIR / "local_adapter"
 PEERS_DIR = STATE_DIR / "peer_deltas"
 CORE_BIN_CANDIDATES = [
     Path.home() / ".local" / "bin" / "sophyane-train-core",
+    Path(__file__).resolve().parent / "cpp" / "build" / "sophyane-train-core",
     Path(__file__).resolve().parents[3] / "sdk" / "cpp" / "continual" / "build" / "sophyane-train-core",
 ]
 
@@ -43,14 +44,43 @@ def _ensure_dirs() -> None:
 
 
 def _cpp_sources() -> Path:
-    # package layout: src/sophyane/continual → parents[3] = repo root when editable
-    for p in (
-        Path(__file__).resolve().parents[3] / "sdk" / "cpp" / "continual",
-        Path.home() / ".local" / "share" / "sophyane" / "current" / "sdk" / "cpp" / "continual",
+    """Locate continual C++ sources in installed and source-tree layouts."""
+    package_sources = (
+        Path(__file__).resolve().parent
+        / "cpp"
+    )
+
+    source_tree = (
+        Path(__file__).resolve().parents[3]
+        / "sdk"
+        / "cpp"
+        / "continual"
+    )
+
+    installed_release = (
+        Path.home()
+        / ".local"
+        / "share"
+        / "sophyane"
+        / "current"
+        / "sdk"
+        / "cpp"
+        / "continual"
+    )
+
+    for candidate in (
+        package_sources,
+        source_tree,
+        installed_release,
     ):
-        if (p / "src" / "train_core.cpp").exists():
-            return p
-    return Path(__file__).resolve().parents[3] / "sdk" / "cpp" / "continual"
+        if (
+            candidate
+            / "src"
+            / "train_core.cpp"
+        ).is_file():
+            return candidate
+
+    return package_sources
 
 
 def ensure_train_core(*, force_rebuild: bool = False) -> Path:
