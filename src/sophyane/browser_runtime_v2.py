@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
 import socket
@@ -167,6 +168,154 @@ def _wait_for_server(
     )
 
 
+def _truthy_environment(
+    name: str,
+) -> bool:
+    value = os.environ.get(
+        name,
+    )
+
+    if value is None:
+        return False
+
+    return (
+        value.strip().lower()
+        in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+    )
+
+
+def _browser_preview_disabled() -> bool:
+    """Return True when the current execution context forbids preview creation."""
+
+    if any(
+        _truthy_environment(name)
+        for name in (
+            "SOPHYANE_DISABLE_BROWSER_OPEN",
+            "SOPHYANE_NO_AUTO_OPEN",
+            "SOPHYANE_NO_BROWSER",
+        )
+    ):
+        return True
+
+    preview = os.environ.get(
+        "SOPHYANE_BROWSER_PREVIEW"
+    )
+
+    if (
+        preview is not None
+        and preview.strip().lower()
+        in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+    ):
+        return True
+
+    return False
+
+
+def _stop_process(
+    process: subprocess.Popen[bytes],
+    *,
+    timeout: float = 2.0,
+) -> None:
+    """Stop one owned detached preview process without touching unrelated PIDs."""
+
+    try:
+        if process.poll() is not None:
+            return
+    except Exception:
+        return
+
+    try:
+        process.terminate()
+    except (
+        OSError,
+        ProcessLookupError,
+    ):
+        return
+    except Exception:
+        return
+
+    try:
+        process.wait(
+            timeout=timeout,
+        )
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    except Exception:
+        return
+
+    try:
+        process.kill()
+    except (
+        OSError,
+        ProcessLookupError,
+    ):
+        return
+    except Exception:
+        return
+
+    try:
+        process.wait(
+            timeout=timeout,
+        )
+    except Exception:
+        pass
+
+
+def stop_preview_server(
+    workspace: Path,
+) -> bool:
+    """Stop the detached preview owned for one exact workspace."""
+
+    root = Path(
+        workspace
+    ).expanduser().resolve()
+
+    existing = _SERVERS.pop(
+        root,
+        None,
+    )
+
+    if existing is None:
+        return False
+
+    process, _base = existing
+
+    _stop_process(
+        process
+    )
+
+    return True
+
+
+def stop_all_preview_servers() -> int:
+    """Stop only detached preview processes currently owned by this runtime."""
+
+    roots = list(
+        _SERVERS
+    )
+
+    stopped = 0
+
+    for root in roots:
+        if stop_preview_server(
+            root
+        ):
+            stopped += 1
+
+    return stopped
+
+
 def _server_for(workspace: Path) -> str:
     """Return a preview URL whose server survives the caller process.
 
@@ -193,9 +342,8 @@ def _server_for(workspace: Path) -> str:
         ):
             return base
 
-        _SERVERS.pop(
-            root,
-            None,
+        stop_preview_server(
+            root
         )
 
     port = _free_preview_port()
@@ -231,10 +379,9 @@ def _server_for(workspace: Path) -> str:
         )
 
     except Exception:
-        try:
-            process.terminate()
-        except Exception:
-            pass
+        _stop_process(
+            process
+        )
 
         raise
 
@@ -274,8 +421,16 @@ def _desktop_new_tab(url: str) -> tuple[bool, str]:
 
 def open_verified_browser(workspace: Path, progress: Progress) -> tuple[bool, str]:
     candidate = workspace.resolve() / "index.html"
+
+    if _browser_preview_disabled():
+        return (
+            False,
+            "Browser preview suppressed by execution policy.",
+        )
+
     if not candidate.is_file():
         return False, "Browser launch blocked: index.html does not exist in the current workspace."
+
     _localize_demo_photos(workspace, progress)
     expected = candidate.read_bytes()
     if len(expected) < 100:

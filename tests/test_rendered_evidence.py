@@ -332,13 +332,18 @@ def test_verified_browser_result_includes_rendered_evidence(
             run.return_value.stdout = ""
             run.return_value.stderr = ""
 
-            opened, evidence = (
-                browser_runtime_v2
-                .open_verified_browser(
-                    tmp_path,
-                    lambda _message: None,
+            try:
+                opened, evidence = (
+                    browser_runtime_v2
+                    .open_verified_browser(
+                        tmp_path,
+                        lambda _message: None,
+                    )
                 )
-            )
+            finally:
+                browser_runtime_v2.stop_preview_server(
+                    tmp_path
+                )
 
     assert opened is True
 

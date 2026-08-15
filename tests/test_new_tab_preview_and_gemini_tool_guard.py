@@ -37,13 +37,22 @@ def test_verified_preview_opens_after_http_hash_check(tmp_path: Path, monkeypatc
         lambda url: opened.append(url) or True,
     )
 
-    ok, detail = browser_runtime_v2.open_verified_browser(tmp_path, lambda _message: None)
+    try:
+        ok, detail = browser_runtime_v2.open_verified_browser(
+            tmp_path,
+            lambda _message: None,
+        )
 
-    assert ok is True
-    assert len(opened) == 1
-    assert opened[0].startswith("http://127.0.0.1:")
-    assert "/index.html?v=" in opened[0]
-    assert "SHA-256 matched" in detail
+        assert ok is True
+        assert len(opened) == 1
+        assert opened[0].startswith("http://127.0.0.1:")
+        assert "/index.html?v=" in opened[0]
+        assert "SHA-256 matched" in detail
+
+    finally:
+        browser_runtime_v2.stop_preview_server(
+            tmp_path
+        )
 
 
 def test_gemini_disables_native_function_calling(monkeypatch):
