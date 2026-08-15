@@ -265,8 +265,11 @@ def enrich_request(message: str, attempt: int) -> str:
     variants = [
         (
             "Implement the request as complete runnable code. Include all imports, "
-            "entry points, error handling and required files. Do not produce tests, "
-            "documentation fragments, placeholders or unrelated examples."
+            "entry points, error handling and required files. Preserve every explicit "
+            "requested implementation language and deliverable; when the request "
+            "requires multiple languages, generate a concrete implementation artifact "
+            "for each requested language rather than satisfying only one. Do not "
+            "produce tests, documentation fragments, placeholders or unrelated examples."
         ),
         (
             "Produce a complete working implementation rather than a partial snippet. "

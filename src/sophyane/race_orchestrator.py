@@ -551,12 +551,107 @@ def _state_value(
     )
 
 
+# SOPHYANE_RACE_SLI_ANSWER_ARTIFACT_RENDER_V1
+def _render_sli_answer_artifacts(
+    *,
+    shadow: Path,
+    changed_files: tuple[str, ...],
+) -> str:
+    """Render generated SLI source artifacts as a direct user-facing answer.
+
+    Only bounded, textual implementation artifacts are exposed. Cache files,
+    bytecode and unrelated generated metadata are excluded.
+    """
+
+    language_by_suffix = {
+        ".py": "python",
+        ".cpp": "cpp",
+        ".cc": "cpp",
+        ".cxx": "cpp",
+        ".c": "c",
+        ".h": "cpp",
+        ".hpp": "cpp",
+        ".hh": "cpp",
+        ".rs": "rust",
+        ".go": "go",
+        ".js": "javascript",
+        ".mjs": "javascript",
+        ".ts": "typescript",
+        ".java": "java",
+        ".sh": "bash",
+        ".md": "markdown",
+        ".txt": "text",
+    }
+
+    parts: list[str] = []
+
+    for relative in sorted(set(changed_files)):
+        relative_path = Path(relative)
+
+        if "__pycache__" in relative_path.parts:
+            continue
+
+        if relative_path.suffix.lower() in {
+            ".pyc",
+            ".pyo",
+            ".so",
+            ".dll",
+            ".dylib",
+            ".o",
+            ".a",
+            ".class",
+        }:
+            continue
+
+        language = language_by_suffix.get(
+            relative_path.suffix.lower()
+        )
+
+        if language is None:
+            continue
+
+        candidate = (shadow / relative_path).resolve()
+
+        try:
+            candidate.relative_to(shadow.resolve())
+        except ValueError:
+            continue
+
+        if not candidate.is_file():
+            continue
+
+        try:
+            if candidate.stat().st_size > 1_500_000:
+                continue
+
+            source = candidate.read_text(
+                encoding="utf-8",
+                errors="replace",
+            ).strip()
+        except OSError:
+            continue
+
+        if not source:
+            continue
+
+        parts.append(
+            f"### {relative}\n\n"
+            f"```{language}\n"
+            f"{source}\n"
+            f"```"
+        )
+
+    return "\n\n".join(parts).strip()
+
+
+
 def make_sli_producer(
     *,
     request: str,
     workspace: Path,
     progress: Progress | None = None,
     shadow_registry: dict[str, Path] | None = None,
+    mode: str = "execution",
 ):
     """Build the real SLI worker against an isolated workspace."""
 
@@ -814,6 +909,83 @@ def make_sli_producer(
         )
 
         evidence = []
+
+        # SOPHYANE_RACE_SLI_ANSWER_COMPLETION_V1
+        #
+        # SLI normally returns a speculative patch/acquisition proposal.
+        # In a direct-answer race the user needs the generated artifact
+        # itself, not the SLI diagnostic report. Render textual shadow
+        # artifacts and subject them to exactly the same deterministic
+        # completion contract as local/cloud answers.
+        if str(mode).strip().lower() == "answer":
+            answer = _render_sli_answer_artifacts(
+                shadow=shadow,
+                changed_files=changed,
+            )
+
+            judgement = _answer_completion_judgement(
+                request=request,
+                answer=answer,
+            )
+
+            answer_evidence = []
+
+            if route:
+                answer_evidence.append(
+                    f"SLI route={route}"
+                )
+
+            if success:
+                answer_evidence.append(
+                    "SLI state success"
+                )
+
+            if promoted:
+                answer_evidence.append(
+                    "SLI candidate promoted"
+                )
+
+            if answer:
+                answer_evidence.append(
+                    "SLI generated artifact rendered as answer"
+                )
+
+            answer_evidence.extend(
+                judgement["evidence"]
+            )
+
+            missing = tuple(
+                judgement["missing"]
+            )
+
+            if missing:
+                answer_evidence.append(
+                    "missing answer requirements: "
+                    + ", ".join(missing)
+                )
+
+            confidence = (
+                float(judgement["score"])
+                if success and answer
+                else 0.0
+            )
+
+            return ProgressProposal(
+                engine="sli",
+                payload={
+                    "answer": answer,
+                    "route": route,
+                    "report": report,
+                    "success": success,
+                    "promoted": promoted,
+                    "shadow_workspace": str(shadow),
+                    "changed_files": changed,
+                },
+                kind="answer",
+                confidence=confidence,
+                evidence=tuple(answer_evidence),
+                requires_write=False,
+            )
 
         if route:
             evidence.append(
@@ -1439,6 +1611,7 @@ def build_real_workers(
                 shadow_registry=(
                     shadow_registry
                 ),
+                mode=mode,
             ),
         ),
     }

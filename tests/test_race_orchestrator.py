@@ -630,3 +630,137 @@ def test_provider_complete_answer_receives_completion_score(
         "requested capability addressed: deterministic replay"
         in proposal.evidence
     )
+
+
+# SOPHYANE_TEST_SLI_ANSWER_ARTIFACT_RENDER_V1
+def test_sli_answer_renderer_uses_generated_source_not_report(
+    tmp_path,
+):
+    import sophyane.race_orchestrator as orchestrator
+
+    (tmp_path / "main.py").write_text(
+        "def replay(journal):\n"
+        "    return list(journal)\n",
+        encoding="utf-8",
+    )
+
+    (tmp_path / "__pycache__").mkdir()
+    (tmp_path / "__pycache__" / "main.pyc").write_bytes(
+        b"not-user-facing"
+    )
+
+    answer = orchestrator._render_sli_answer_artifacts(
+        shadow=tmp_path,
+        changed_files=(
+            "main.py",
+            "__pycache__/main.pyc",
+        ),
+    )
+
+    assert "### main.py" in answer
+    assert "```python" in answer
+    assert "def replay" in answer
+    assert "not-user-facing" not in answer
+
+
+def test_sli_answer_renderer_preserves_multiple_languages(
+    tmp_path,
+):
+    import sophyane.race_orchestrator as orchestrator
+
+    (tmp_path / "journal.py").write_text(
+        "def replay(events):\n"
+        "    return events\n",
+        encoding="utf-8",
+    )
+
+    (tmp_path / "journal.cpp").write_text(
+        "#include <vector>\n"
+        "void replay() {}\n",
+        encoding="utf-8",
+    )
+
+    answer = orchestrator._render_sli_answer_artifacts(
+        shadow=tmp_path,
+        changed_files=(
+            "journal.py",
+            "journal.cpp",
+        ),
+    )
+
+    assert "```python" in answer
+    assert "```cpp" in answer
+    assert "journal.py" in answer
+    assert "journal.cpp" in answer
+
+
+def test_rendered_sli_python_only_fails_python_cpp_request(
+    tmp_path,
+):
+    import sophyane.race_orchestrator as orchestrator
+
+    (tmp_path / "main.py").write_text(
+        "# deterministic replay with thread schedule\n"
+        "def replay_failed(journal):\n"
+        "    return journal\n",
+        encoding="utf-8",
+    )
+
+    answer = orchestrator._render_sli_answer_artifacts(
+        shadow=tmp_path,
+        changed_files=("main.py",),
+    )
+
+    judgement = orchestrator._answer_completion_judgement(
+        request=(
+            "Provide a complete code snippet in Python and C++ "
+            "showing deterministic replay of a failed execution path."
+        ),
+        answer=answer,
+    )
+
+    assert judgement["complete"] is False
+    assert judgement["score"] == 0.54
+    assert "requested language: c++" in judgement["missing"]
+
+
+def test_rendered_sli_python_cpp_can_pass_answer_completion(
+    tmp_path,
+):
+    import sophyane.race_orchestrator as orchestrator
+
+    (tmp_path / "journal.py").write_text(
+        "# deterministic replay of failed thread schedule\n"
+        "def replay_failed(journal):\n"
+        "    return journal\n",
+        encoding="utf-8",
+    )
+
+    (tmp_path / "journal.cpp").write_text(
+        "// deterministic replay of failed thread interleaving\n"
+        "// async API response journal, bit-for-bit replay\n"
+        "void replay_failed() {}\n",
+        encoding="utf-8",
+    )
+
+    answer = orchestrator._render_sli_answer_artifacts(
+        shadow=tmp_path,
+        changed_files=(
+            "journal.py",
+            "journal.cpp",
+        ),
+    )
+
+    judgement = orchestrator._answer_completion_judgement(
+        request=(
+            "Design execution journaling in Python/C++ that captures "
+            "async API responses and thread interleavings. Provide a "
+            "complete code snippet showing how to replay a failed "
+            "execution path with bit-for-bit precision and deterministic replay."
+        ),
+        answer=answer,
+    )
+
+    assert judgement["complete"] is True
+    assert judgement["score"] == 0.72
+    assert judgement["missing"] == ()
