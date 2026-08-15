@@ -15,6 +15,20 @@ def test_posix_installer_replaces_runtime_but_preserves_state() -> None:
     assert "User state/work: preserved" in text
 
 
+def test_posix_installer_defaults_to_stable_tag_and_validates_dependencies() -> None:
+    text = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+    assert 'INSTALL_REF="${SOPHYANE_REF:-}"' in text
+    assert 'git ls-remote --tags --refs "$REPO" "refs/tags/v*"' in text
+    assert r'refs/tags/v(\d+)\.(\d+)\.(\d+)' in text
+    assert '--branch "$INSTALL_REF"' in text
+    assert 'SOURCE=$INSTALL_REF' in text
+    assert '"$VENV/bin/python" -m pip check' in text
+    assert "import numpy" in text
+    assert "import pexpect" in text
+    assert "import sophyane" in text
+
+
 def test_windows_installer_uses_separate_managed_runtime() -> None:
     text = (ROOT / "install.ps1").read_text(encoding="utf-8")
 
@@ -25,14 +39,28 @@ def test_windows_installer_uses_separate_managed_runtime() -> None:
     assert "User state/work preserved under" in text
 
 
+def test_windows_installer_defaults_to_stable_tag_and_validates_dependencies() -> None:
+    text = (ROOT / "install.ps1").read_text(encoding="utf-8")
+
+    assert '$InstallRef = $env:SOPHYANE_REF' in text
+    assert 'git ls-remote --tags --refs $RepoUrl "refs/tags/v*"' in text
+    assert r'refs/tags/v(\d+\.\d+\.\d+)$' in text
+    assert '--branch $InstallRef' in text
+    assert 'SOURCE=$InstallRef' in text
+    assert '& $VenvPython -m pip check' in text
+    assert "import numpy, pexpect, sophyane" in text
+
+
 def test_download_page_documents_supported_upgrade_contract() -> None:
     text = (ROOT / "DOWNLOAD.md").read_text(encoding="utf-8")
 
     assert "replace-the-runtime, preserve-the-user" in text
-    assert "current GitHub `main`" in text
-    normalized = " ".join(
-        text.split()
-    )
+    assert "newest stable semantic release tag (`vX.Y.Z`)" in text
+    assert "`SOPHYANE_REF`" in text
+    assert "`pip check`" in text
+    assert "Current stable release: `v21.4.2`" in text
+
+    normalized = " ".join(text.split())
 
     assert (
         "do not need to uninstall Sophyane manually first"
