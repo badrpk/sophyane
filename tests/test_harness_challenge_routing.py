@@ -119,7 +119,7 @@ def test_fastapi_project_uses_isolated_workspace(
     )
 
     assert selected != (tmp_path / "sophyane-repo").resolve()
-    assert ".sophyane/generated-projects" in str(selected)
+    assert ".sophyane/generated-projects" in str(selected).replace("\\", "/")
 
 
 def test_compound_acceptance_criteria_are_preserved() -> None:

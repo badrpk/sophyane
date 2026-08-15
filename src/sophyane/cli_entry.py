@@ -101,31 +101,42 @@ def _canonicalize_launch_workspace() -> str | None:
     """Move unsafe/default launch directories to the canonical Sophyane repo.
 
     Explicit project directories are preserved.  This specifically prevents
-    WSL sessions launched from Windows System32 from becoming the execution
-    workspace for coding/build tasks.
+    WSL sessions or native Windows shells launched from Windows System32
+    from becoming the execution workspace for coding/build tasks.
     """
     import os
     from pathlib import Path
 
     cwd = Path.cwd()
 
-    normalized = str(cwd).replace("\\", "/").lower()
+    normalized = str(cwd).replace("\\", "/").lower().rstrip("/")
 
     unsafe_launch = (
         normalized.endswith("/windows/system32")
         or normalized.endswith("/windows")
+        or normalized.endswith("windows/system32")
         or normalized in {
             "/mnt/c",
+            "/mnt/c/windows",
             "/mnt/c/windows/system32",
+            "c:/windows",
+            "c:/windows/system32",
+            "c:",
         }
     )
 
     if not unsafe_launch:
         return None
 
+    home_dir = Path.home()
+    if os.environ.get("HOME") and not (home_dir / "sophyane-repo").exists():
+        env_home = Path(os.environ["HOME"])
+        if env_home.exists():
+            home_dir = env_home
+
     candidates = (
-        Path.home() / "sophyane-repo",
-        Path.home() / "sophyane",
+        home_dir / "sophyane-repo",
+        home_dir / "sophyane",
     )
 
     for candidate in candidates:

@@ -29,9 +29,12 @@ def _columns(db: sqlite3.Connection, table: str) -> set[str]:
 def schema_is_current(path: Path) -> bool:
     if not path.exists():
         return True
-    with sqlite3.connect(path) as db:
+    db = sqlite3.connect(path)
+    try:
         memories = _columns(db, "memories")
         traces = _columns(db, "learned_execution_traces")
+    finally:
+        db.close()
     return EXPECTED_MEMORIES.issubset(memories) and EXPECTED_TRACES.issubset(traces)
 
 
@@ -43,16 +46,22 @@ def ensure_current_schema(path: Path | str | None = None) -> dict[str, str | boo
     target.parent.mkdir(parents=True, exist_ok=True)
 
     if schema_is_current(target):
-        with sli.connect(target):
+        conn = sli.connect(target)
+        try:
             pass
+        finally:
+            conn.close()
         return {"migrated": False, "database": str(target), "backup": ""}
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
     backup = target.with_name(f"{target.name}.backup.{stamp}")
     target.replace(backup)
 
-    with sli.connect(target):
+    conn = sli.connect(target)
+    try:
         pass
+    finally:
+        conn.close()
 
     return {
         "migrated": True,

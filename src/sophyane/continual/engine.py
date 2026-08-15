@@ -29,9 +29,15 @@ OPT_IN_FILE = STATE_DIR / "opt_in.json"
 GLOBAL_DIR = STATE_DIR / "global_adapter"
 LOCAL_DIR = STATE_DIR / "local_adapter"
 PEERS_DIR = STATE_DIR / "peer_deltas"
+CORE_BIN_NAME = "sophyane-train-core.exe" if os.name == "nt" else "sophyane-train-core"
 CORE_BIN_CANDIDATES = [
+    Path.home() / ".local" / "bin" / CORE_BIN_NAME,
     Path.home() / ".local" / "bin" / "sophyane-train-core",
+    Path(__file__).resolve().parent / "cpp" / "build" / CORE_BIN_NAME,
+    Path(__file__).resolve().parent / "cpp" / "build" / "Release" / CORE_BIN_NAME,
     Path(__file__).resolve().parent / "cpp" / "build" / "sophyane-train-core",
+    Path(__file__).resolve().parents[3] / "sdk" / "cpp" / "continual" / "build" / CORE_BIN_NAME,
+    Path(__file__).resolve().parents[3] / "sdk" / "cpp" / "continual" / "build" / "Release" / CORE_BIN_NAME,
     Path(__file__).resolve().parents[3] / "sdk" / "cpp" / "continual" / "build" / "sophyane-train-core",
 ]
 
@@ -87,17 +93,19 @@ def ensure_train_core(*, force_rebuild: bool = False) -> Path:
     """Locate or build the pure-C++ train core binary."""
     _ensure_dirs()
     for cand in CORE_BIN_CANDIDATES:
-        if cand.exists() and os.access(cand, os.X_OK) and not force_rebuild:
-            return cand
-    which = shutil.which("sophyane-train-core")
+        if cand.exists() and not force_rebuild:
+            if os.name == "nt" or os.access(cand, os.X_OK):
+                return cand
+
+    which = shutil.which(CORE_BIN_NAME) or shutil.which("sophyane-train-core")
     if which and not force_rebuild:
         return Path(which)
 
     src = _cpp_sources()
     build = src / "build"
     build.mkdir(parents=True, exist_ok=True)
-    # Prefer simple g++ when cmake missing
-    out_bin = Path.home() / ".local" / "bin" / "sophyane-train-core"
+
+    out_bin = Path.home() / ".local" / "bin" / CORE_BIN_NAME
     out_bin.parent.mkdir(parents=True, exist_ok=True)
     cpp = src / "src" / "train_core.cpp"
     inc = src / "include"
@@ -112,28 +120,49 @@ def ensure_train_core(*, force_rebuild: bool = False) -> Path:
             text=True,
         )
         subprocess.run(
-            ["cmake", "--build", str(build), "-j", str(max(1, (os.cpu_count() or 2) // 2))],
+            [
+                "cmake",
+                "--build",
+                str(build),
+                "--config",
+                "Release",
+                "-j",
+                str(max(1, (os.cpu_count() or 2) // 2)),
+            ],
             check=True,
             capture_output=True,
             text=True,
         )
-        built = build / "sophyane-train-core"
-        if built.exists():
+        built = None
+        for candidate_built in (
+            build / CORE_BIN_NAME,
+            build / "Release" / CORE_BIN_NAME,
+            build / "Debug" / CORE_BIN_NAME,
+            build / "sophyane-train-core",
+            build / "Release" / "sophyane-train-core",
+        ):
+            if candidate_built.exists():
+                built = candidate_built
+                break
+
+        if built is not None:
             shutil.copy2(built, out_bin)
-            out_bin.chmod(0o755)
+            if os.name != "nt":
+                out_bin.chmod(0o755)
             return out_bin
 
-    # Fallback: direct g++
-    gxx = shutil.which("g++") or shutil.which("c++")
-    if not gxx:
-        raise RuntimeError("g++ required to build sophyane-train-core (C++ continual engine)")
+    # Fallback: direct compiler
+    cxx = shutil.which("g++") or shutil.which("clang++") or shutil.which("c++")
+    if not cxx:
+        raise RuntimeError("C++ compiler required to build sophyane-train-core (C++ continual engine)")
     subprocess.run(
-        [gxx, "-O2", "-std=c++17", f"-I{inc}", str(cpp), "-o", str(out_bin)],
+        [cxx, "-O2", "-std=c++17", f"-I{inc}", str(cpp), "-o", str(out_bin)],
         check=True,
         capture_output=True,
         text=True,
     )
-    out_bin.chmod(0o755)
+    if os.name != "nt":
+        out_bin.chmod(0o755)
     return out_bin
 
 

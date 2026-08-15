@@ -86,11 +86,9 @@ def test_relative_reporting_distinguishes_public_and_source_main(
     )
 
     reported = [
-        str(
-            path.relative_to(
-                workspace
-            )
-        )
+        path.relative_to(
+            workspace
+        ).as_posix()
         for path in (
             public,
             source,

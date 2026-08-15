@@ -20,9 +20,13 @@ def test_hybrid_preserves_short_exact_local_answer() -> None:
 
 def test_sli_migration_backs_up_legacy_database(tmp_path: Path) -> None:
     database = tmp_path / "sli.db"
-    with sqlite3.connect(database) as db:
+    db = sqlite3.connect(database)
+    try:
         db.execute("CREATE TABLE memories(id INTEGER PRIMARY KEY, request TEXT)")
         db.execute("CREATE TABLE learned_execution_traces(trace_id TEXT PRIMARY KEY)")
+        db.commit()
+    finally:
+        db.close()
     assert not schema_is_current(database)
     result = ensure_current_schema(database)
     assert result["migrated"] is True

@@ -1,9 +1,17 @@
 from pathlib import Path
-
+import shutil
 import subprocess
+
+import pytest
 
 from sophyane.capability_executors import (
     execute_deterministic_capability,
+)
+
+BASH_BIN = shutil.which("bash") or shutil.which("sh")
+pytestmark = pytest.mark.skipif(
+    not BASH_BIN,
+    reason="Deterministic shell and judge capabilities require bash",
 )
 
 
@@ -55,14 +63,14 @@ def test_judge_validation_creates_and_checks_fixtures(
     assert bad.is_file()
 
     good_run = subprocess.run(
-        ["bash", judge.name, good.name],
+        [BASH_BIN, judge.name, good.name],
         cwd=tmp_path,
         check=False,
         capture_output=True,
         text=True,
     )
     bad_run = subprocess.run(
-        ["bash", judge.name, bad.name],
+        [BASH_BIN, judge.name, bad.name],
         cwd=tmp_path,
         check=False,
         capture_output=True,

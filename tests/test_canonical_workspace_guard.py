@@ -38,11 +38,15 @@ def test_system32_launch_moves_to_sophyane_repo(
         parents=True,
     )
 
-    # pathlib.Path.home() resolves through HOME on Linux.
+    # pathlib.Path.home() resolves through HOME on Linux / USERPROFILE on Windows.
     # The production helper imports Path locally, so patch the
     # environment rather than a nonexistent cli.Path symbol.
     monkeypatch.setenv(
         "HOME",
+        str(home),
+    )
+    monkeypatch.setenv(
+        "USERPROFILE",
         str(home),
     )
 

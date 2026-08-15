@@ -435,6 +435,8 @@ def try_connector_fast_path(message: str) -> str | None:
 
 def _execute_shell_exit_probe(message: str, workspace: Path) -> CapabilityExecution:
     """Deterministic shell probe used by the harness."""
+    import os
+    import shutil
     import subprocess
     root = workspace.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -459,10 +461,28 @@ def _execute_shell_exit_probe(message: str, workspace: Path) -> CapabilityExecut
         expect_out, expect_err = "HELLO", "ERRMSG"
 
     script.write_text(script_text, encoding="utf-8")
-    script.chmod(0o755)
+    if os.name != "nt":
+        script.chmod(0o755)
+
+    bash_bin = shutil.which("bash") or shutil.which("sh")
+    if not bash_bin:
+        payload = {
+            "ok": False,
+            "capability": "shell.exit_probe",
+            "error": "bash required but not found",
+            "runtime_executed_action": False,
+            "provider_bypassed": True,
+            "deterministic": True,
+        }
+        return CapabilityExecution(
+            ok=False,
+            capability_id="shell.exit_probe",
+            text=json.dumps(payload, indent=2, ensure_ascii=False),
+            data=payload,
+        )
 
     proc = subprocess.run(
-        ["bash", script.name],
+        [bash_bin, script.name],
         cwd=str(root),
         capture_output=True,
         text=True,
@@ -492,8 +512,9 @@ def _execute_shell_exit_probe(message: str, workspace: Path) -> CapabilityExecut
 
 def _execute_judge_validation(message: str, workspace: Path) -> CapabilityExecution:
     """Full judge.sh + good/bad fixtures + execution."""
-    import subprocess
     import os
+    import shutil
+    import subprocess
     judge = workspace / "judge.sh"
     good = workspace / "good.md"
     bad = workspace / "bad.md"
@@ -501,16 +522,36 @@ def _execute_judge_validation(message: str, workspace: Path) -> CapabilityExecut
         '#!/bin/bash\ngrep -q "required_section" "$1" && exit 0 || exit 1\n',
         encoding="utf-8",
     )
-    os.chmod(judge, 0o755)
+    if os.name != "nt":
+        os.chmod(judge, 0o755)
     good.write_text("This file contains required_section here.\n", encoding="utf-8")
     bad.write_text("This file does not contain the marker.\n", encoding="utf-8")
+
+    bash_bin = shutil.which("bash") or shutil.which("sh")
+    if not bash_bin:
+        payload = {
+            "ok": False,
+            "capability": "validation.judge",
+            "summary": "bash not found",
+            "files": ["judge.sh", "good.md", "bad.md"],
+            "runtime_executed_action": False,
+            "provider_bypassed": True,
+            "deterministic": True,
+        }
+        return CapabilityExecution(
+            ok=False,
+            capability_id="validation.judge",
+            text=json.dumps(payload, indent=2, ensure_ascii=False),
+            data=payload,
+        )
+
     p1 = subprocess.run(
-        ["bash", str(judge), str(good)],
+        [bash_bin, str(judge), str(good)],
         cwd=str(workspace),
         capture_output=True,
     )
     p2 = subprocess.run(
-        ["bash", str(judge), str(bad)],
+        [bash_bin, str(judge), str(bad)],
         cwd=str(workspace),
         capture_output=True,
     )
