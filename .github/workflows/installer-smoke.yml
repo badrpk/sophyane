@@ -24,10 +24,30 @@ permissions:
   contents: read
 
 jobs:
-  stable-posix-install:
-    name: Stable POSIX installer
+  installer-contract:
+    name: Installer contract tests
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install pytest
+      - name: Run installer contract tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: python -m pytest -q tests/test_universal_installer_contract.py
+      - name: Bash syntax
+        run: bash -n install.sh
+
+  stable-posix-install:
+    name: Stable POSIX installer (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,20 +91,17 @@ jobs:
           EXPECTED_TAG: ${{ steps.stable.outputs.tag }}
         run: |
           set -euo pipefail
-
           EXPECTED_VERSION="${EXPECTED_TAG#v}"
           INSTALLED_VERSION="$(tr -d '[:space:]' < "$SOPHYANE_HOME/installed-version")"
           INSTALLED_COMMIT="$(tr -d '[:space:]' < "$SOPHYANE_HOME/installed-commit")"
           SOURCE="$(sed -n 's/^SOURCE=//p' "$SOPHYANE_HOME/install-info")"
-
-          echo "EXPECTED_TAG=$EXPECTED_TAG"
-          echo "INSTALLED_VERSION=$INSTALLED_VERSION"
-          echo "INSTALLED_COMMIT=$INSTALLED_COMMIT"
-          echo "SOURCE=$SOURCE"
+          INSTALL_LOG="$(sed -n 's/^INSTALL_LOG=//p' "$SOPHYANE_HOME/install-info")"
 
           test "$INSTALLED_VERSION" = "$EXPECTED_VERSION"
           test "$SOURCE" = "$EXPECTED_TAG"
           test -n "$INSTALLED_COMMIT"
+          test -s "$INSTALL_LOG"
+          test ! -e "$SOPHYANE_HOME/.install-lock"
 
           "$SOPHYANE_HOME/venv/bin/python" -m pip check
           "$SOPHYANE_HOME/venv/bin/python" - <<'PY'
@@ -92,7 +109,6 @@ jobs:
           import numpy
           import pexpect
           import sophyane
-
           print("sophyane =", importlib.metadata.version("sophyane"))
           print("numpy =", numpy.__version__)
           print("pexpect =", pexpect.__version__)
@@ -100,16 +116,60 @@ jobs:
           PY
 
           SOPHYANE_SKIP_UPDATE_CHECK=1 "$SOPHYANE_BIN/sophyane" --version
-          SOPHYANE_SKIP_UPDATE_CHECK=1 "$SOPHYANE_BIN/sophyane" --providers
 
-      - name: Verify stable-tag override contract
-        shell: bash
+  stable-windows-install:
+    name: Stable Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Resolve latest stable release
+        id: stable
+        shell: pwsh
+        run: |
+          $Candidates = @()
+          foreach ($Line in (git ls-remote --tags --refs https://github.com/badrpk/sophyane.git "refs/tags/v*")) {
+            if ($Line -match "refs/tags/v(\d+\.\d+\.\d+)$") {
+              $Candidates += [pscustomobject]@{ Tag = "v$($Matches[1])"; Version = [version]$Matches[1] }
+            }
+          }
+          if (-not $Candidates) { throw "No stable Sophyane release tags found" }
+          $Tag = ($Candidates | Sort-Object Version -Descending | Select-Object -First 1).Tag
+          "tag=$Tag" >> $env:GITHUB_OUTPUT
+
+      - name: Run universal Windows installer
+        shell: pwsh
         env:
+          SOPHYANE_HOME: ${{ runner.temp }}\sophyane-home
+        run: ./install.ps1
+
+      - name: Verify Windows release and dependencies
+        shell: pwsh
+        env:
+          SOPHYANE_HOME: ${{ runner.temp }}\sophyane-home
           EXPECTED_TAG: ${{ steps.stable.outputs.tag }}
         run: |
-          set -euo pipefail
-          grep -F 'INSTALL_REF="${SOPHYANE_REF:-}"' install.sh
-          grep -F -- '--branch "$INSTALL_REF"' install.sh
-          grep -F 'SOURCE=$INSTALL_REF' install.sh
-          grep -F 'pip check' install.sh
-          test -n "$EXPECTED_TAG"
+          $ExpectedVersion = $env:EXPECTED_TAG.TrimStart('v')
+          $Version = (Get-Content (Join-Path $env:SOPHYANE_HOME "installed-version") -Raw).Trim()
+          $Commit = (Get-Content (Join-Path $env:SOPHYANE_HOME "installed-commit") -Raw).Trim()
+          $Info = Get-Content (Join-Path $env:SOPHYANE_HOME "install-info")
+          $Source = (($Info | Where-Object { $_ -like 'SOURCE=*' }) -replace '^SOURCE=', '').Trim()
+          $InstallLog = (($Info | Where-Object { $_ -like 'INSTALL_LOG=*' }) -replace '^INSTALL_LOG=', '').Trim()
+
+          if ($Version -ne $ExpectedVersion) { throw "Version mismatch: $Version != $ExpectedVersion" }
+          if ($Source -ne $env:EXPECTED_TAG) { throw "Source mismatch: $Source" }
+          if (-not $Commit) { throw "Missing installed commit" }
+          if (-not (Test-Path $InstallLog)) { throw "Missing install log" }
+          if (Test-Path (Join-Path $env:SOPHYANE_HOME ".install-lock")) { throw "Installer lock leaked" }
+
+          $Python = Join-Path $env:SOPHYANE_HOME "venv\Scripts\python.exe"
+          & $Python -m pip check
+          if ($LASTEXITCODE -ne 0) { throw "pip check failed" }
+          & $Python -c "import numpy, pexpect, sophyane; print(numpy.__version__, pexpect.__version__, sophyane.__file__)"
+          if ($LASTEXITCODE -ne 0) { throw "runtime imports failed" }
