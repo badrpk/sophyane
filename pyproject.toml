@@ -8,7 +8,7 @@ version = "21.4.2"
 description = "Local-first AI software engineering platform with durable execution, repository intelligence, validator-driven recovery, browser verification, multi-provider orchestration, MCP interoperability, and native COI sub-agents"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
 authors = [{name = "Badar Uzaman", email = "badrpk@gmail.com"}]
 keywords = ["ai", "coding-agent", "repository", "semantic-index", "self-repair", "multi-agent", "llm", "autonomous", "local-ai", "validated-execution", "local-first", "sandbox", "provider-dispatch", "subagents", "evaluation", "tracing", "compaction", "coi", "mcp", "orchestration", "release-gate", "audit", "benchmark", "sli", "lstm", "intent-routing", "state-graph", "checkpointing", "durable-execution", "browser-verification", "software-engineering"]
 classifiers = [
@@ -16,7 +16,6 @@ classifiers = [
   "Environment :: Console",
   "Environment :: Web Environment",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Operating System :: Android",
   "Operating System :: MacOS",
   "Operating System :: Microsoft :: Windows",
@@ -78,11 +77,6 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-sophyane = [
-    "browser/home/*",
-    "expert/data/*",
-    "continual/cpp/CMakeLists.txt",
-    "continual/cpp/*.cpp",
-    "continual/cpp/src/*.cpp",
-    "continual/cpp/include/*.hpp",
-]
+"sophyane.browser" = ["home/*"]
+"sophyane.expert" = ["data/*.json"]
+"sophyane.continual.cpp" = ["CMakeLists.txt", "*.cpp", "include/*.hpp", "src/*.cpp"]
