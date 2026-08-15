@@ -1,3 +1,3 @@
 """Sophyane package version."""
 
-__version__ = "21.4.1"
+__version__ = "21.4.2"

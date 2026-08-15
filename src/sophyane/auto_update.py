@@ -13,7 +13,7 @@ from typing import Any
 
 from sophyane.version import __version__
 
-LATEST_VERSION = "21.4.1"
+LATEST_VERSION = "21.4.2"
 REPO_URL = "https://github.com/badrpk/sophyane.git"
 
 USER_DATA_PATHS = [
