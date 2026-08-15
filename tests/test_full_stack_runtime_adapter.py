@@ -164,7 +164,7 @@ if __name__ == "__main__":
         runtime.command
     )
 
-    assert service.health.kind == "http"
+    assert service.health.kind == "tcp"
 
     assert service.health.port == 9090
 
