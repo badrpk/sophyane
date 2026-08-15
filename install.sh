@@ -88,7 +88,31 @@ archive_legacy_root_install
 
 TMP="$(mktemp -d)"
 SOURCE="$TMP/source"
-git clone --quiet --depth 1 --single-branch --branch main "$REPO" "$SOURCE"
+
+INSTALL_REF="${SOPHYANE_REF:-}"
+
+if [ -z "$INSTALL_REF" ]; then
+  INSTALL_REF="$(
+    git ls-remote --tags --refs "$REPO" "refs/tags/v*" |
+    python3 -c 'import re, sys
+items = []
+for line in sys.stdin:
+    ref = line.rstrip().split("\t")[-1]
+    m = re.fullmatch(r"refs/tags/v(\d+)\.(\d+)\.(\d+)", ref)
+    if m:
+        version = tuple(map(int, m.groups()))
+        tag = ref.rsplit("/", 1)[-1]
+        items.append((version, tag))
+if not items:
+    raise SystemExit("No stable Sophyane release tags found")
+print(max(items)[1])'
+  )"
+fi
+
+printf 'Installing Sophyane ref: %s\n' "$INSTALL_REF"
+
+git clone --quiet --depth 1 --single-branch   --branch "$INSTALL_REF"   "$REPO"   "$SOURCE"
+
 COMMIT="$(git -C "$SOURCE" rev-parse HEAD)"
 VERSION="$(python3 - "$SOURCE/pyproject.toml" <<'PY'
 import re, sys
@@ -115,6 +139,19 @@ export PYTHONNOUSERSITE=1
 unset PYTHONPATH PYTHONHOME
 "$VENV/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --upgrade pip setuptools wheel >/dev/null
 "$VENV/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --force-reinstall "$SYSTEM" >/dev/null
+
+"$VENV/bin/python" -m pip check >/dev/null ||
+  fail "Python dependency graph is broken"
+
+"$VENV/bin/python" - <<'PYDEP'
+import numpy
+import pexpect
+import sophyane
+
+print("numpy =", numpy.__version__)
+print("pexpect =", pexpect.__version__)
+print("sophyane =", sophyane.__file__)
+PYDEP
 
 LAUNCHERS=(
   sophyane
@@ -193,7 +230,7 @@ printf '%s\n' "$VERSION" > "$BASE/installed-version"
 cat > "$BASE/install-info" <<EOF
 VERSION=$VERSION
 COMMIT=$COMMIT
-SOURCE=main
+SOURCE=$INSTALL_REF
 UPDATED_AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 INSTALL_URL=$RAW/install.sh
 MANAGED_SYSTEM=$SYSTEM

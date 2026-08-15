@@ -74,7 +74,35 @@ if (Test-Path $LegacyGit) {
 
 try {
     New-Item -ItemType Directory -Force -Path $TempRoot | Out-Null
-    git clone --quiet --depth 1 --single-branch --branch main $RepoUrl $SourceDir
+
+    $InstallRef = $env:SOPHYANE_REF
+
+    if (-not $InstallRef) {
+        $Candidates = @()
+
+        foreach ($Line in (git ls-remote --tags --refs $RepoUrl "refs/tags/v*")) {
+            if ($Line -match "refs/tags/v(\d+\.\d+\.\d+)$") {
+                $Candidates += [pscustomobject]@{
+                    Tag = "v$($Matches[1])"
+                    Version = [version]$Matches[1]
+                }
+            }
+        }
+
+        if (-not $Candidates) {
+            throw "No stable Sophyane release tags found."
+        }
+
+        $InstallRef = (
+            $Candidates |
+            Sort-Object Version -Descending |
+            Select-Object -First 1
+        ).Tag
+    }
+
+    Write-Host "Installing Sophyane ref: $InstallRef"
+
+    git clone --quiet --depth 1 --single-branch --branch $InstallRef $RepoUrl $SourceDir
     if ($LASTEXITCODE -ne 0) { throw "Git clone failed." }
 
     $Commit = (git -C $SourceDir rev-parse HEAD).Trim()
@@ -96,6 +124,16 @@ try {
     $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
     & $VenvPython -m pip install --disable-pip-version-check --no-cache-dir --upgrade pip setuptools wheel | Out-Null
     & $VenvPython -m pip install --disable-pip-version-check --no-cache-dir --force-reinstall $SystemDir | Out-Null
+
+    & $VenvPython -m pip check
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python dependency graph is broken."
+    }
+
+    & $VenvPython -c "import numpy, pexpect, sophyane; print('numpy =', numpy.__version__); print('pexpect =', pexpect.__version__); print('sophyane =', sophyane.__file__)"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Required Sophyane runtime imports failed."
+    }
 
     $Launchers = @(
         "sophyane", "sophyane-web", "sophyane-doctor", "sophyane-browser",
@@ -137,7 +175,7 @@ try {
     @"
 VERSION=$Version
 COMMIT=$Commit
-SOURCE=main
+SOURCE=$InstallRef
 UPDATED_AT=$((Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ"))
 INSTALL_URL=$RawUrl/install.ps1
 MANAGED_SYSTEM=$SystemDir
