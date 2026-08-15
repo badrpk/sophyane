@@ -284,7 +284,7 @@ def _clean_environment() -> dict[str, str]:
 
 
 def _compiler() -> str | None:
-    for candidate in ("clang++", "g++", "c++"):
+    for candidate in ("g++", "clang++", "c++"):
         found = shutil.which(candidate)
         if found:
             return found
