@@ -1,0 +1,115 @@
+name: Installer smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "install.sh"
+      - "install.ps1"
+      - "pyproject.toml"
+      - "tests/test_universal_installer_contract.py"
+      - "DOWNLOAD.md"
+      - ".github/workflows/installer-smoke.yml"
+  pull_request:
+    paths:
+      - "install.sh"
+      - "install.ps1"
+      - "pyproject.toml"
+      - "tests/test_universal_installer_contract.py"
+      - "DOWNLOAD.md"
+      - ".github/workflows/installer-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stable-posix-install:
+    name: Stable POSIX installer
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve latest stable release
+        id: stable
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="$(
+            git ls-remote --tags --refs https://github.com/badrpk/sophyane.git 'refs/tags/v*' |
+            python3 -c 'import re, sys
+          items = []
+          for line in sys.stdin:
+              ref = line.rstrip().split("\t")[-1]
+              m = re.fullmatch(r"refs/tags/v(\d+)\.(\d+)\.(\d+)", ref)
+              if m:
+                  items.append((tuple(map(int, m.groups())), ref.rsplit("/", 1)[-1]))
+          if not items:
+              raise SystemExit("No stable Sophyane release tags found")
+          print(max(items)[1])'
+          )"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Latest stable tag: $TAG"
+
+      - name: Run universal installer
+        shell: bash
+        env:
+          SOPHYANE_HOME: ${{ runner.temp }}/sophyane-home
+          SOPHYANE_BIN: ${{ runner.temp }}/sophyane-bin
+        run: |
+          set -euo pipefail
+          bash ./install.sh
+
+      - name: Verify installed release and dependencies
+        shell: bash
+        env:
+          SOPHYANE_HOME: ${{ runner.temp }}/sophyane-home
+          SOPHYANE_BIN: ${{ runner.temp }}/sophyane-bin
+          EXPECTED_TAG: ${{ steps.stable.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          EXPECTED_VERSION="${EXPECTED_TAG#v}"
+          INSTALLED_VERSION="$(tr -d '[:space:]' < "$SOPHYANE_HOME/installed-version")"
+          INSTALLED_COMMIT="$(tr -d '[:space:]' < "$SOPHYANE_HOME/installed-commit")"
+          SOURCE="$(sed -n 's/^SOURCE=//p' "$SOPHYANE_HOME/install-info")"
+
+          echo "EXPECTED_TAG=$EXPECTED_TAG"
+          echo "INSTALLED_VERSION=$INSTALLED_VERSION"
+          echo "INSTALLED_COMMIT=$INSTALLED_COMMIT"
+          echo "SOURCE=$SOURCE"
+
+          test "$INSTALLED_VERSION" = "$EXPECTED_VERSION"
+          test "$SOURCE" = "$EXPECTED_TAG"
+          test -n "$INSTALLED_COMMIT"
+
+          "$SOPHYANE_HOME/venv/bin/python" -m pip check
+          "$SOPHYANE_HOME/venv/bin/python" - <<'PY'
+          import importlib.metadata
+          import numpy
+          import pexpect
+          import sophyane
+
+          print("sophyane =", importlib.metadata.version("sophyane"))
+          print("numpy =", numpy.__version__)
+          print("pexpect =", pexpect.__version__)
+          print("module =", sophyane.__file__)
+          PY
+
+          SOPHYANE_SKIP_UPDATE_CHECK=1 "$SOPHYANE_BIN/sophyane" --version
+          SOPHYANE_SKIP_UPDATE_CHECK=1 "$SOPHYANE_BIN/sophyane" --providers
+
+      - name: Verify stable-tag override contract
+        shell: bash
+        env:
+          EXPECTED_TAG: ${{ steps.stable.outputs.tag }}
+        run: |
+          set -euo pipefail
+          grep -F 'INSTALL_REF="${SOPHYANE_REF:-}"' install.sh
+          grep -F -- '--branch "$INSTALL_REF"' install.sh
+          grep -F 'SOURCE=$INSTALL_REF' install.sh
+          grep -F 'pip check' install.sh
+          test -n "$EXPECTED_TAG"
