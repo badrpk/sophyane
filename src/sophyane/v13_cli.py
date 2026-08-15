@@ -568,10 +568,96 @@ def _winner_direct_answer(winner) -> str:
     return ""
 
 
+# SOPHYANE_AUTO_RESPONSE_CODE_BOUNDARY_V1
 def _auto_request_requires_execution(
     request: str,
 ) -> bool:
-    # Reuse Sophyane's established TUI execution-intent policy.
+    """Distinguish response-code requests from workspace mutation."""
+
+    text = " ".join(
+        str(request)
+        .strip()
+        .lower()
+        .split()
+    )
+
+    mutation_markers = (
+        "create a file",
+        "create file",
+        "write a file",
+        "write file",
+        "save to ",
+        "save it to ",
+        "modify ",
+        "edit ",
+        "patch ",
+        "replace ",
+        "append ",
+        "delete ",
+        "remove ",
+        "rename ",
+        "move ",
+        "copy ",
+        "install ",
+        "uninstall ",
+        "deploy ",
+        "launch ",
+        "start server",
+        "run the code",
+        "run this code",
+        "execute ",
+        "build a website",
+        "build website",
+        "make a website",
+        "make website",
+        "create a website",
+        "create website",
+        "build an app",
+        "build app",
+        "create an app",
+        "create app",
+        "make an app",
+        "make app",
+        "in the workspace",
+        "in this repo",
+        "in this repository",
+        "in the repository",
+        "commit ",
+        "push ",
+    )
+
+    if any(
+        marker in text
+        for marker in mutation_markers
+    ):
+        return True
+
+    response_code_markers = (
+        "provide code",
+        "provide complete code",
+        "provide a code",
+        "provide the code",
+        "code snippet",
+        "code example",
+        "show code",
+        "show me code",
+        "show how to",
+        "give me code",
+        "give code",
+        "example in python",
+        "example in c++",
+        "python/c++",
+        "python and c++",
+        "complete code showing",
+        "complete code snippet",
+    )
+
+    if any(
+        marker in text
+        for marker in response_code_markers
+    ):
+        return False
+
     from sophyane.tui_v2 import (
         _execution_requested,
     )

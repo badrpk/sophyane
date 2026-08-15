@@ -214,3 +214,52 @@ def test_execution_json_remains_action():
 
     assert proposal.kind == "action"
     assert proposal.payload["action"]["type"] == "run"
+
+
+# SOPHYANE_TEST_AUTO_RESPONSE_CODE_BOUNDARY_V1
+def test_python_cpp_code_snippet_request_is_answer_mode():
+    request = (
+        "Design a lightweight execution journaling mechanism "
+        "in Python/C++ that captures non-deterministic async API "
+        "responses and thread interleavings. Provide complete code "
+        "showing how to replay a failed execution path with "
+        "bit-for-bit precision to isolate a race condition."
+    )
+
+    assert cli._auto_request_requires_execution(request) is False
+
+
+def test_show_code_request_is_answer_mode():
+    assert (
+        cli._auto_request_requires_execution(
+            "Show me code in Python for deterministic replay."
+        )
+        is False
+    )
+
+
+def test_write_file_request_remains_execution_mode():
+    assert (
+        cli._auto_request_requires_execution(
+            "Write a file replay.py containing deterministic replay code."
+        )
+        is True
+    )
+
+
+def test_build_website_request_remains_execution_mode():
+    assert (
+        cli._auto_request_requires_execution(
+            "Build a website about dogs."
+        )
+        is True
+    )
+
+
+def test_deploy_request_still_remains_execution_mode():
+    assert (
+        cli._auto_request_requires_execution(
+            DEPLOY_REQUEST
+        )
+        is True
+    )
