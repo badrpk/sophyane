@@ -29,8 +29,12 @@ function Write-Step([string]$Name) {
 }
 
 function Find-Python {
-    foreach ($candidate in @("py", "python", "python3")) {
-        if (Get-Command $candidate -ErrorAction SilentlyContinue) { return $candidate }
+    foreach ($candidate in @("python", "python3", "py")) {
+        $command = Get-Command $candidate -ErrorAction SilentlyContinue
+        if ($command) {
+            if ($candidate -eq "py") { return "py" }
+            return $command.Source
+        }
     }
     throw "Python 3.10+ was not found. Install Python 3.10 or newer and rerun the installer."
 }
@@ -147,9 +151,6 @@ try {
     if (Test-Path $VenvDir) { Move-Item $VenvDir $OldVenv }
     $Swapped = $true
 
-    # Materialize the committed release snapshot instead of recursively copying
-    # the Git checkout. This makes staging independent of Windows symlink mode
-    # and avoids broken Unix-only symlink targets in the working tree.
     & git -C $SourceDir archive --format=zip --output=$SnapshotZip HEAD
     if ($LASTEXITCODE -ne 0) { throw "Failed to create release snapshot." }
     New-Item -ItemType Directory -Force -Path $SystemDir | Out-Null
@@ -158,6 +159,12 @@ try {
     Write-Step "Creating isolated Python environment"
     Invoke-Python $Python @("-m", "venv", $VenvDir)
     $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+    if (-not (Test-Path -LiteralPath $VenvPython)) {
+        throw "Virtual environment creation did not produce $VenvPython."
+    }
+    & $VenvPython --version
+    if ($LASTEXITCODE -ne 0) { throw "Managed virtual environment Python is not executable." }
+
     $env:PYTHONNOUSERSITE = "1"
     Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
     Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
