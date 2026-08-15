@@ -1,11 +1,13 @@
-# Download Sophyane 21.4.0
+# Download Sophyane 21.4.2
 
 This is the single download page for every supported device.
 
 The universal installers use a **replace-the-runtime, preserve-the-user** upgrade
 model:
 
-- the current GitHub `main` branch is downloaded into a fresh managed system;
+- by default, the newest stable semantic release tag (`vX.Y.Z`) is resolved and
+  downloaded into a fresh managed system;
+- `SOPHYANE_REF` can explicitly select another branch, tag, or ref when needed;
 - the previous managed Sophyane source/runtime and virtual environment are
   deleted only after the new installation validates successfully;
 - configuration, API keys, memory, databases, learned state, user workspaces,
@@ -15,7 +17,9 @@ model:
   as patches and untracked files are copied into `user-work` before tracked old
   source is retired;
 - installer launchers are recreated so an older executable cannot shadow the
-  newly installed release.
+  newly installed release;
+- the installed Python dependency graph is checked with `pip check`, and core
+  runtime imports are validated before the new runtime is accepted.
 
 Running the same command again is therefore the supported upgrade path. You do not need to uninstall Sophyane manually first.
 
@@ -55,8 +59,28 @@ Open PowerShell and run:
 irm https://raw.githubusercontent.com/badrpk/sophyane/main/install.ps1 | iex
 ```
 
-The Windows installer follows the same managed-runtime replacement and
-persistent-user-state contract.
+The Windows installer follows the same stable-release selection,
+managed-runtime replacement, dependency validation, and persistent-user-state
+contract.
+
+## Install a specific ref
+
+To intentionally install a particular release or development ref, set
+`SOPHYANE_REF` before running the installer.
+
+POSIX example:
+
+```bash
+SOPHYANE_REF=v21.4.2 \
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh)"
+```
+
+PowerShell example:
+
+```powershell
+$env:SOPHYANE_REF = "v21.4.2"
+irm https://raw.githubusercontent.com/badrpk/sophyane/main/install.ps1 | iex
+```
 
 ## iPhone and iPad
 
@@ -69,10 +93,13 @@ interface from Safari.
 ```text
 sophyane --version
 sophyane --doctor
+python -m pip check
 ```
 
-Rerun the installer for your platform at any time. It always installs the
-current GitHub `main` revision and removes the prior managed runtime only after
+Rerun the installer for your platform at any time. By default it installs the
+newest stable `vX.Y.Z` release and removes the prior managed runtime only after
 validation passes.
+
+Current stable release: `v21.4.2`
 
 Source repository: https://github.com/badrpk/sophyane
