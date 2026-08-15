@@ -78,8 +78,6 @@ try {
     Write-Step "Checking Python"
     Invoke-Python $Python @("-c", "import sys; assert sys.version_info >= (3,10), f'Sophyane requires Python 3.10+; found {sys.version.split()[0]}'; print('Python', sys.version.split()[0])")
 
-    # Migrate legacy installs that cloned the repository directly into the
-    # persistent state root. Preserve edits and untracked work first.
     $LegacyGit = Join-Path $Base ".git"
     if (Test-Path $LegacyGit) {
         Write-Step "Preserving legacy source changes"
@@ -239,7 +237,7 @@ INSTALL_LOG=$InstallLog
     Write-Host "Start: sophyane"
 }
 catch {
-    Write-Error "Installation failed during: $CurrentStep"
+    Write-Host "Installation failed during: $CurrentStep" -ForegroundColor Red
     Write-Warning "Install log: $InstallLog"
     if ($Swapped) {
         Write-Warning "Restoring previous Sophyane managed runtime..."
