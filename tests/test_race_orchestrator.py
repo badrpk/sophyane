@@ -311,3 +311,322 @@ def test_authoritative_workspace_not_mutated_by_race(
         )
         == "VALUE = 1\n"
     )
+
+
+def test_failed_sli_report_cannot_win_adaptive_race(
+    monkeypatch,
+    tmp_path,
+):
+    """
+    A failed SLI graph may provide diagnostics, route metadata, and a
+    report, but it must remain below the race winner threshold.
+    """
+    import sophyane.race_orchestrator as orchestrator
+
+    class FailedState:
+        route = "software_artifact"
+        success = False
+        promoted = False
+        report = (
+            "SLI-only mode: code-memory assembly did not meet "
+            "the artifact quality threshold."
+        )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_copy_shadow_workspace",
+        lambda workspace, *, engine: tmp_path,
+    )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_file_manifest",
+        lambda root: {},
+    )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_shadow_changes",
+        lambda before, shadow: (),
+    )
+
+    import sophyane.sli_graph as sli_graph
+
+    monkeypatch.setattr(
+        sli_graph,
+        "run_sli_graph",
+        lambda *args, **kwargs: FailedState(),
+    )
+
+    import sophyane.unified_execution_kernel as kernel
+
+    class NotHandled:
+        handled = False
+
+    monkeypatch.setattr(
+        kernel,
+        "execute_request",
+        lambda *args, **kwargs: NotHandled(),
+    )
+
+    producer = orchestrator.make_sli_producer(
+        request="build deterministic replay support",
+        workspace=tmp_path,
+    )
+
+    proposal = producer()
+
+    assert proposal.engine == "sli"
+    assert proposal.payload["success"] is False
+    assert proposal.payload["promoted"] is False
+    assert proposal.confidence < 0.55
+
+
+# SOPHYANE_TEST_DIRECT_ANSWER_COMPLETION_V1
+def test_answer_completion_accepts_generic_nonempty_answer():
+    import sophyane.race_orchestrator as orchestrator
+
+    judgement = orchestrator._answer_completion_judgement(
+        request=(
+            "Explain why cooperative speculative races "
+            "can improve execution."
+        ),
+        answer=(
+            "They allow independent workers to explore candidate "
+            "actions concurrently and promote the strongest result."
+        ),
+    )
+
+    assert judgement["complete"] is True
+    assert judgement["score"] == 0.72
+    assert judgement["missing"] == ()
+
+
+def test_answer_completion_rejects_requested_code_without_fence():
+    import sophyane.race_orchestrator as orchestrator
+
+    judgement = orchestrator._answer_completion_judgement(
+        request=(
+            "Provide a code example in Python for "
+            "deterministic replay."
+        ),
+        answer=(
+            "Python can implement deterministic replay by recording "
+            "events and replaying them in the same order."
+        ),
+    )
+
+    assert judgement["complete"] is False
+    assert judgement["score"] == 0.54
+    assert "requested code artifact" in judgement["missing"]
+
+    assert (
+        "requested language: python"
+        not in judgement["missing"]
+    )
+
+    assert (
+        "requested capability: deterministic replay"
+        not in judgement["missing"]
+    )
+
+
+def test_answer_completion_requires_each_requested_language():
+    import sophyane.race_orchestrator as orchestrator
+
+    judgement = orchestrator._answer_completion_judgement(
+        request=(
+            "Provide a code example in Python and C++."
+        ),
+        answer=(
+            "Python implementation:\n"
+            "```python\n"
+            "print('ok')\n"
+            "```"
+        ),
+    )
+
+    assert judgement["complete"] is False
+    assert judgement["score"] == 0.54
+
+    assert (
+        "requested language: c++"
+        in judgement["missing"]
+    )
+
+    assert (
+        "requested language: python"
+        not in judgement["missing"]
+    )
+
+    assert (
+        "requested code artifact"
+        not in judgement["missing"]
+    )
+
+
+def test_answer_completion_requires_replay_demonstration():
+    import sophyane.race_orchestrator as orchestrator
+
+    judgement = orchestrator._answer_completion_judgement(
+        request=(
+            "Show how to replay a failed execution path."
+        ),
+        answer=(
+            "Record execution events in an append-only journal "
+            "so the history can be inspected later."
+        ),
+    )
+
+    assert judgement["complete"] is False
+    assert judgement["score"] == 0.54
+
+    assert (
+        "requested replay demonstration"
+        in judgement["missing"]
+    )
+
+
+def test_answer_completion_accepts_requested_replay_demonstration():
+    import sophyane.race_orchestrator as orchestrator
+
+    judgement = orchestrator._answer_completion_judgement(
+        request=(
+            "Show how to replay a failed execution path."
+        ),
+        answer=(
+            "Replay the failed execution by loading its journal "
+            "and applying the recorded schedule in order."
+        ),
+    )
+
+    assert judgement["complete"] is True
+    assert judgement["score"] == 0.72
+    assert judgement["missing"] == ()
+
+    assert (
+        "requested replay demonstration addressed"
+        in judgement["evidence"]
+    )
+
+
+def test_provider_answer_missing_deliverable_stays_below_race_threshold(
+    monkeypatch,
+    tmp_path,
+):
+    import sophyane.race_orchestrator as orchestrator
+
+    class Provider:
+        def generate(
+            self,
+            user_prompt,
+            system_prompt,
+        ):
+            return (
+                "Python can provide deterministic replay by "
+                "recording execution events and replaying them."
+            )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_single_provider",
+        lambda **kwargs: Provider(),
+    )
+
+    producer = orchestrator.make_provider_producer(
+        engine="local",
+        provider_id="test-provider",
+        request=(
+            "Provide a complete implementation in Python "
+            "with deterministic replay."
+        ),
+        workspace=tmp_path,
+        config={},
+        mode="answer",
+    )
+
+    proposal = producer()
+
+    assert proposal.engine == "local"
+    assert proposal.kind == "answer"
+    assert proposal.payload["answer"]
+
+    # _llm_proposal() initially gives a non-empty answer 0.60.
+    # The completion gate must replace it with the losing ceiling.
+    assert proposal.confidence == 0.54
+    assert proposal.confidence < 0.55
+
+    assert any(
+        evidence.startswith(
+            "missing answer requirements:"
+        )
+        for evidence in proposal.evidence
+    )
+
+    assert any(
+        "requested code artifact" in evidence
+        for evidence in proposal.evidence
+    )
+
+
+def test_provider_complete_answer_receives_completion_score(
+    monkeypatch,
+    tmp_path,
+):
+    import sophyane.race_orchestrator as orchestrator
+
+    class Provider:
+        def generate(
+            self,
+            user_prompt,
+            system_prompt,
+        ):
+            return (
+                "Python deterministic replay implementation:\n"
+                "```python\n"
+                "def replay(journal):\n"
+                "    for event in journal:\n"
+                "        apply(event)\n"
+                "```\n"
+                "The journal is replayed deterministically."
+            )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_single_provider",
+        lambda **kwargs: Provider(),
+    )
+
+    producer = orchestrator.make_provider_producer(
+        engine="cloud",
+        provider_id="test-provider",
+        request=(
+            "Provide a complete implementation in Python "
+            "with deterministic replay."
+        ),
+        workspace=tmp_path,
+        config={},
+        mode="answer",
+    )
+
+    proposal = producer()
+
+    assert proposal.engine == "cloud"
+    assert proposal.kind == "answer"
+    assert proposal.confidence == 0.72
+    assert proposal.confidence >= 0.55
+
+    assert (
+        "requested code artifact present"
+        in proposal.evidence
+    )
+
+    assert (
+        "requested language present: python"
+        in proposal.evidence
+    )
+
+    assert (
+        "requested capability addressed: deterministic replay"
+        in proposal.evidence
+    )

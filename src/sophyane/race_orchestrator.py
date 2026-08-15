@@ -843,24 +843,35 @@ def make_sli_producer(
                 )
             )
 
-        confidence = 0.45
+        # A failed SLI attempt may still return useful diagnostics,
+        # but diagnostics alone must never become a valid race winner.
+        #
+        # Previously:
+        #   base 0.45 + route 0.08 + report 0.07 == 0.60
+        #
+        # That exceeded the adaptive race minimum score of 0.55 even
+        # when success=False and promoted=False, allowing a failed SLI
+        # artifact to cancel a still-running local provider.
+        if not success:
+            confidence = 0.0
+        else:
+            confidence = 0.45
 
-        if route:
-            confidence += 0.08
+            if route:
+                confidence += 0.08
 
-        if report:
-            confidence += 0.07
+            if report:
+                confidence += 0.07
 
-        if success:
             confidence += 0.18
 
-        if promoted:
-            confidence += 0.12
+            if promoted:
+                confidence += 0.12
 
-        confidence = min(
-            confidence,
-            0.95,
-        )
+            confidence = min(
+                confidence,
+                0.95,
+            )
 
         return ProgressProposal(
             engine="sli",
@@ -1025,6 +1036,216 @@ def _semantic_proposal_relevance(
         }
 
 
+
+# SOPHYANE_RACE_DIRECT_ANSWER_COMPLETION_V1
+def _answer_completion_judgement(
+    *,
+    request: str,
+    answer: str,
+) -> dict[str, Any]:
+    """Deterministically check explicit direct-answer deliverables.
+
+    This is intentionally local and provider-independent.  It does not try
+    to decide whether prose is brilliant; it prevents a merely non-empty
+    response from winning when the user explicitly requested concrete
+    artifacts or precision guarantees that the response omitted.
+    """
+    request_text = str(request or "").strip()
+    answer_text = str(answer or "").strip()
+
+    request_lower = request_text.lower()
+    answer_lower = answer_text.lower()
+
+    missing: list[str] = []
+    evidence: list[str] = []
+
+    if not answer_text:
+        return {
+            "complete": False,
+            "score": 0.0,
+            "missing": ("non-empty answer",),
+            "evidence": (),
+        }
+
+    # Explicit code-deliverable requests must contain actual fenced code,
+    # rather than prose that merely says a snippet could be written.
+    code_requested = any(
+        phrase in request_lower
+        for phrase in (
+            "code snippet",
+            "code example",
+            "complete code",
+            "complete implementation",
+            "working implementation",
+            "provide code",
+            "show code",
+        )
+    )
+
+    has_code_fence = "```" in answer_text
+
+    if code_requested:
+        if has_code_fence:
+            evidence.append("requested code artifact present")
+        else:
+            missing.append("requested code artifact")
+
+    # Preserve explicit language requirements.  When multiple languages are
+    # joined by "/" or "and", each requested language is material.
+    language_markers = {
+        "python": (
+            "python" in request_lower,
+            (
+                "```python" in answer_lower
+                or "python" in answer_lower
+            ),
+        ),
+        "c++": (
+            (
+                "c++" in request_lower
+                or "cpp" in request_lower
+            ),
+            (
+                "```cpp" in answer_lower
+                or "```c++" in answer_lower
+                or "c++" in answer_lower
+                or "cpp" in answer_lower
+            ),
+        ),
+        "javascript": (
+            (
+                "javascript" in request_lower
+                or "js " in request_lower
+            ),
+            (
+                "```javascript" in answer_lower
+                or "```js" in answer_lower
+                or "javascript" in answer_lower
+            ),
+        ),
+        "typescript": (
+            "typescript" in request_lower,
+            (
+                "```typescript" in answer_lower
+                or "```ts" in answer_lower
+                or "typescript" in answer_lower
+            ),
+        ),
+        "rust": (
+            "rust" in request_lower,
+            (
+                "```rust" in answer_lower
+                or "rust" in answer_lower
+            ),
+        ),
+        "go": (
+            (
+                " golang" in request_lower
+                or " go " in f" {request_lower} "
+            ),
+            (
+                "```go" in answer_lower
+                or "golang" in answer_lower
+            ),
+        ),
+    }
+
+    for language, (requested, present) in language_markers.items():
+        if not requested:
+            continue
+
+        if present:
+            evidence.append(
+                f"requested language present: {language}"
+            )
+        else:
+            missing.append(
+                f"requested language: {language}"
+            )
+
+    # Exactness/guarantee phrases are material constraints.  A response that
+    # silently weakens them must not receive a winning score.
+    precision_requirements = (
+        (
+            ("bit-for-bit", "bit for bit"),
+            ("bit-for-bit", "bit for bit"),
+            "bit-for-bit precision",
+        ),
+        (
+            ("deterministic replay",),
+            ("deterministic replay", "deterministic", "replay"),
+            "deterministic replay",
+        ),
+        (
+            ("thread interleaving", "thread interleavings"),
+            ("interleaving", "schedule", "thread"),
+            "thread interleavings",
+        ),
+        (
+            ("async api", "asynchronous api"),
+            ("async", "asynchronous", "api response"),
+            "async API capture",
+        ),
+    )
+
+    for request_terms, answer_terms, label in precision_requirements:
+        if not any(
+            term in request_lower
+            for term in request_terms
+        ):
+            continue
+
+        if any(
+            term in answer_lower
+            for term in answer_terms
+        ):
+            evidence.append(
+                f"requested capability addressed: {label}"
+            )
+        else:
+            missing.append(
+                f"requested capability: {label}"
+            )
+
+    # A requested replay demonstration must show replay behavior, not merely
+    # define a logger.
+    replay_demo_requested = (
+        "replay a failed execution path" in request_lower
+        or "show how to replay" in request_lower
+        or "demonstrate replay" in request_lower
+    )
+
+    if replay_demo_requested:
+        replay_signal = (
+            "replay" in answer_lower
+            and (
+                "failed" in answer_lower
+                or "journal" in answer_lower
+                or "schedule" in answer_lower
+            )
+        )
+
+        if replay_signal:
+            evidence.append("requested replay demonstration addressed")
+        else:
+            missing.append("requested replay demonstration")
+
+    if missing:
+        # Hard ceiling below CooperativeRace's normal 0.55 threshold.
+        score = 0.54
+        complete = False
+    else:
+        score = 0.72
+        complete = True
+
+    return {
+        "complete": complete,
+        "score": score,
+        "missing": tuple(missing),
+        "evidence": tuple(evidence),
+    }
+
+
 def make_provider_producer(
     *,
     engine: str,
@@ -1079,8 +1300,55 @@ def make_provider_producer(
             mode=mode,
         )
 
-        # Direct-answer races have their own completion semantics. The
-        # objective-aware action gate applies only to executable proposals.
+        # Direct-answer races require deterministic completion evidence.
+        # A non-empty answer is not sufficient by itself: explicit requested
+        # deliverables such as complete code, named languages, replay, or
+        # precision guarantees must actually appear in the response.
+        if (
+            str(mode).strip().lower() == "answer"
+            and proposal.kind == "answer"
+            and isinstance(proposal.payload, dict)
+        ):
+            answer_text = str(
+                proposal.payload.get("answer")
+                or ""
+            ).strip()
+
+            judgement = _answer_completion_judgement(
+                request=request,
+                answer=answer_text,
+            )
+
+            evidence = list(
+                proposal.evidence
+            )
+
+            evidence.extend(
+                judgement["evidence"]
+            )
+
+            missing = tuple(
+                judgement["missing"]
+            )
+
+            if missing:
+                evidence.append(
+                    "missing answer requirements: "
+                    + ", ".join(missing)
+                )
+
+            proposal = ProgressProposal(
+                engine=proposal.engine,
+                payload=proposal.payload,
+                kind=proposal.kind,
+                confidence=float(
+                    judgement["score"]
+                ),
+                evidence=tuple(evidence),
+                requires_write=proposal.requires_write,
+            )
+
+        # Executable proposals retain the objective-aware action gate.
         if (
             str(mode).strip().lower() != "answer"
             and proposal.kind == "action"
