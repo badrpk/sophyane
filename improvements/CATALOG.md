@@ -28,3 +28,4 @@ executable patches into `main`.
 - 2026-08-14: 6 proposals · merkle `f0fae8453203cc49…` · device `localhost-cd8f5f9f`
 - 2026-08-14: 1 proposals · merkle `56e09a5c7cf26534…` · device `runnervmzvulz-1cc9423c`
 - 2026-08-15: 6 proposals · merkle `3afb70d4917a53be…` · device `localhost-cd8f5f9f`
+- 2026-08-16: 1 proposals · merkle `0e3ac716cf32970c…` · device `runnervmzvulz-1cc9423c`
