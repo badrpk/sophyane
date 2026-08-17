@@ -10,15 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from sophyane.execution_runtime import (
-    _normalize_action,
-)
-from sophyane.race_adapters import (
-    CooperativeRace,
-    ProgressProposal,
-    proposal_worker,
-)
-
+from sophyane.execution_runtime import _normalize_action
+from sophyane.race_adapters import CooperativeRace, ProgressProposal, proposal_worker
 
 Progress = Callable[[str], None]
 
@@ -42,10 +35,7 @@ class RealRaceResult:
 
     @property
     def ok(self) -> bool:
-        return bool(
-            self.race_result
-            and self.race_result.winner
-        )
+        return bool(self.race_result and self.race_result.winner)
 
 
 def _noop_progress(_message: str) -> None:
@@ -61,16 +51,11 @@ def _emit(progress: Progress | None, message: str) -> None:
 
 
 def _copy_shadow_workspace(workspace: Path, *, engine: str) -> Path:
-    """Create an isolated speculative workspace.
-
-    The authoritative repository is never handed to SLI during the race.
-    """
     workspace = workspace.expanduser().resolve()
     root = Path(tempfile.mkdtemp(prefix=f"sophyane-race-{engine}-"))
     destination = root / "workspace"
     ignore_names = {
-        ".git", ".venv", "__pycache__", ".pytest_cache", ".mypy_cache",
-        ".ruff_cache", "node_modules",
+        ".git", ".venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules",
     }
 
     def ignore(_directory: str, names: list[str]):
@@ -126,11 +111,9 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
 
 
 def _llm_proposal(*, engine: str, text: str, mode: str = "execution") -> ProgressProposal[Any]:
-    """Turn local/cloud output into one validated speculative proposal."""
     raw = str(text or "").strip()
     parsed = _extract_json_object(raw)
     action = _normalize_action(parsed) if parsed is not None else None
-
     if action is not None:
         return ProgressProposal(
             engine=engine,
@@ -140,75 +123,17 @@ def _llm_proposal(*, engine: str, text: str, mode: str = "execution") -> Progres
             evidence=("valid JSON", "execution action normalized by execution_runtime"),
             requires_write=False,
         )
-
     if raw:
         direct_answer = str(mode).strip().lower() == "answer"
         return ProgressProposal(
             engine=engine,
-            payload={"answer" if direct_answer else "plan": raw},
-            kind="answer" if direct_answer else "plan",
+            payload={("answer" if direct_answer else "plan"): raw},
+            kind=("answer" if direct_answer else "plan"),
             confidence=0.60,
-            evidence=("non-empty provider answer" if direct_answer else "non-empty provider proposal",),
+            evidence=(("non-empty provider answer" if direct_answer else "non-empty provider proposal"),),
             requires_write=False,
         )
-
     return ProgressProposal(engine=engine, payload="", kind="plan", confidence=0.0, evidence=(), requires_write=False)
-
-
-# SOPHYANE_RACE_SOFTWARE_ARTIFACT_GATE_V1
-def _software_artifact_request(request: str) -> bool:
-    """Return True when the user explicitly asked Sophyane to construct software.
-
-    This is deliberately narrower than generic repair/debug work. It protects
-    direct construction prompts such as "make cats website" from being satisfied
-    by a planning or prose-only race proposal.
-    """
-    text = " ".join(str(request or "").lower().split())
-    construction = any(term in text for term in (
-        "make ", "create ", "build ", "develop ", "implement ", "generate ", "produce ",
-    ))
-    target = any(term in text for term in (
-        "website", "web site", "webpage", "web page", "app", "application", "game",
-        "api", "script", "program", "project", "frontend", "backend", "html",
-    ))
-    return construction and target
-
-
-def _software_artifact_action_judgement(*, request: str, action: dict[str, Any]) -> dict[str, Any]:
-    """Reject non-material actions for explicit software-construction prompts."""
-    if not _software_artifact_request(request):
-        return {"required": False, "material": True, "score": None, "reason": ""}
-
-    kind = str(action.get("type") or "").strip().lower()
-    path = str(action.get("path") or action.get("file") or "").strip()
-    content = str(action.get("content") or action.get("text") or "")
-    command = str(action.get("command") or action.get("cmd") or "").strip()
-
-    material = False
-    if kind in {"write_file", "append_file"}:
-        material = bool(path and content)
-    elif kind in {"mkdir"}:
-        material = bool(path)
-    elif kind in {"run", "shell", "run_command", "bash"}:
-        material = bool(command)
-
-    if material:
-        return {
-            "required": True,
-            "material": True,
-            "score": None,
-            "reason": f"material software action: {kind}",
-        }
-
-    return {
-        "required": True,
-        "material": False,
-        "score": 0.54,
-        "reason": (
-            "explicit software construction requires a material executable action; "
-            f"received {kind or 'unknown'} with no artifact-producing payload"
-        ),
-    }
 
 
 def _race_system_prompt(mode: str = "execution") -> str:
@@ -222,10 +147,11 @@ def _race_system_prompt(mode: str = "execution") -> str:
         "that files were modified. Analyze the objective and return the single best NEXT ACTION as strict JSON. "
         "Preferred schema: "
         '{"action":{"type":"run|write_file|append_file|mkdir|respond",'
-        '"path":"optional relative path","command":"optional command",'
-        '"content":"optional content","message":"optional response"}}. '
-        "Return one action only. For explicit build/create/make software requests, do not return a plan or "
-        "respond-only action; return a material executable action that creates or advances the requested artifact."
+        '"path":"optional relative path",'
+        '"command":"optional command",'
+        '"content":"optional content",'
+        '"message":"optional response"}}. '
+        "Return one action only."
     )
 
 
@@ -241,6 +167,7 @@ def _race_user_prompt(request: str, workspace: Path, mode: str = "execution") ->
 
 def _single_provider(*, provider_id: str, config: dict[str, Any]):
     from sophyane.main import PluginLoader, get_secret
+
     loader = PluginLoader()
     providers = loader.discover()
     if provider_id not in providers:
@@ -254,6 +181,7 @@ def _single_provider(*, provider_id: str, config: dict[str, Any]):
             api_key = get_secret("gemini", "GOOGLE_API_KEY") or ""
         if not api_key:
             raise RuntimeError(f"{provider_id} credentials unavailable")
+
     model = ""
     if provider_id == "local_gguf":
         try:
@@ -268,6 +196,7 @@ def _single_provider(*, provider_id: str, config: dict[str, Any]):
             model = str(config.get("model") or "").strip()
     if not model:
         model = str(metadata.default_model or "").strip()
+
     timeout = int(config.get("timeout") or (300 if provider_id == "local_gguf" else 180))
     max_tokens = min(int(config.get("max_tokens") or 4096), 384)
     return loader.create(
@@ -280,16 +209,19 @@ def _single_provider(*, provider_id: str, config: dict[str, Any]):
     )
 
 
-# SOPHYANE_SLI_STATE_ACCESS_V1
 def _state_value(state: Any, key: str, default: Any = None) -> Any:
     if isinstance(state, dict):
         return state.get(key, default)
     return getattr(state, key, default)
 
 
-def make_sli_producer(*, request: str, workspace: Path, progress: Progress | None = None, shadow_registry: dict[str, Path] | None = None):
-    """Build the real SLI worker against an isolated workspace."""
-
+def make_sli_producer(
+    *,
+    request: str,
+    workspace: Path,
+    progress: Progress | None = None,
+    shadow_registry: dict[str, Path] | None = None,
+):
     def produce():
         from sophyane.sli_graph import run_sli_graph
         shadow = _copy_shadow_workspace(workspace, engine="sli")
@@ -309,7 +241,12 @@ def make_sli_producer(*, request: str, workspace: Path, progress: Progress | Non
                 or _state_value(harness_result, "error", None)
                 or str(harness_result or "")
             )
-            state = {"route": "harness_execution", "success": harness_ok, "promoted": False, "report": str(harness_report or "")}
+            state = {
+                "route": "harness_execution",
+                "success": harness_ok,
+                "promoted": False,
+                "report": str(harness_report or ""),
+            }
         else:
             from sophyane.unified_execution_kernel import execute_request as execute_unified_request
             deterministic_result = execute_unified_request(request, workspace=shadow)
@@ -327,7 +264,6 @@ def make_sli_producer(*, request: str, workspace: Path, progress: Progress | Non
                     or getattr(deterministic_result, "detail", None)
                     or str(deterministic_result or "")
                 )
-                _emit(progress, "Race SLI worker: deterministic capability handled request")
                 state = {
                     "route": "deterministic_capability",
                     "success": deterministic_ok,
@@ -354,6 +290,7 @@ def make_sli_producer(*, request: str, workspace: Path, progress: Progress | Non
             evidence.append("SLI report produced")
         if changed:
             evidence.append(f"isolated shadow changed {len(changed)} file(s)")
+
         if not success:
             confidence = 0.0
         else:
@@ -366,6 +303,7 @@ def make_sli_producer(*, request: str, workspace: Path, progress: Progress | Non
             if promoted:
                 confidence += 0.12
             confidence = min(confidence, 0.95)
+
         return ProgressProposal(
             engine="sli",
             payload={
@@ -377,7 +315,7 @@ def make_sli_producer(*, request: str, workspace: Path, progress: Progress | Non
                 "shadow_workspace": str(shadow),
                 "changed_files": changed,
             },
-            kind="patch" if changed else "acquisition",
+            kind=("patch" if changed else "acquisition"),
             confidence=confidence,
             evidence=tuple(evidence),
             requires_write=False,
@@ -386,7 +324,6 @@ def make_sli_producer(*, request: str, workspace: Path, progress: Progress | Non
     return produce
 
 
-# SOPHYANE_RACE_SEMANTIC_PROPOSAL_RELEVANCE_V1
 def _semantic_proposal_relevance(*, request: str, action: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     try:
         provider = _single_provider(provider_id="gemini", config=config)
@@ -402,9 +339,12 @@ def _semantic_proposal_relevance(*, request: str, action: dict[str, Any], config
             "ORIGINAL USER OBJECTIVE:\n" + str(request) + "\n\nPROPOSED NEXT ACTION:\n"
             + json.dumps(action, ensure_ascii=False, sort_keys=True)
         )
-        raw_text = str(provider.generate(user_prompt, system_prompt) or "").strip()
+        raw = provider.generate(user_prompt, system_prompt)
+        raw_text = str(raw or "").strip()
         if raw_text.startswith("```"):
-            lines = raw_text.splitlines()[1:]
+            lines = raw_text.splitlines()
+            if lines:
+                lines = lines[1:]
             if lines and lines[-1].strip().startswith("```"):
                 lines = lines[:-1]
             raw_text = "\n".join(lines).strip()
@@ -430,7 +370,29 @@ def _semantic_proposal_relevance(*, request: str, action: dict[str, Any], config
         }
 
 
-# SOPHYANE_RACE_DIRECT_ANSWER_COMPLETION_V1
+def _software_artifact_request(request: str) -> bool:
+    text = " ".join(str(request or "").lower().split())
+    construction = any(term in text for term in ("make", "create", "build", "develop", "implement", "generate", "produce", "write"))
+    artifact = any(term in text for term in (
+        "website", "web site", "webpage", "web page", "app", "application", "game", "api", "script",
+        "program", "project", "frontend", "backend", "html", "css", "javascript", "typescript", "python", "code",
+    ))
+    return construction and artifact
+
+
+def _software_artifact_action_judgement(*, request: str, action: dict[str, Any]) -> dict[str, Any]:
+    required = _software_artifact_request(request)
+    kind = str(action.get("type") or "").strip().lower()
+    material = kind in {"write_file", "append_file", "mkdir", "run", "shell", "run_command", "bash"}
+    score = 0.82 if (not required or material) else 0.54
+    reason = (
+        "material software action"
+        if material
+        else "software construction request requires a material executable action, not a plan/response"
+    )
+    return {"required": required, "material": material, "score": score, "reason": reason}
+
+
 def _answer_completion_judgement(*, request: str, answer: str) -> dict[str, Any]:
     request_text = str(request or "").strip()
     answer_text = str(answer or "").strip()
@@ -533,6 +495,20 @@ def make_provider_producer(
                 requires_write=proposal.requires_write,
             )
 
+        if str(mode).strip().lower() != "answer" and _software_artifact_request(request):
+            if proposal.kind == "plan":
+                evidence = list(proposal.evidence)
+                evidence.append("software artifact gate=plan-only")
+                evidence.append("software construction request requires a material executable action")
+                proposal = ProgressProposal(
+                    engine=proposal.engine,
+                    payload=proposal.payload,
+                    kind=proposal.kind,
+                    confidence=0.54,
+                    evidence=tuple(evidence),
+                    requires_write=proposal.requires_write,
+                )
+
         if (
             str(mode).strip().lower() != "answer"
             and proposal.kind == "action"
@@ -540,15 +516,7 @@ def make_provider_producer(
             and isinstance(proposal.payload.get("action"), dict)
         ):
             action = proposal.payload["action"]
-
-            # Deterministic hard gate before any provider-based relevance score.
-            # A semantic judge may find a plan "relevant", but relevance is not
-            # a deliverable for explicit software-construction prompts.
-            artifact_judgement = _software_artifact_action_judgement(
-                request=request,
-                action=action,
-            )
-
+            artifact_judgement = _software_artifact_action_judgement(request=request, action=action)
             if artifact_judgement["required"] and not artifact_judgement["material"]:
                 evidence = list(proposal.evidence)
                 evidence.append("software artifact gate=non-material")
