@@ -14,7 +14,7 @@ $OldSystem = Join-Path $Base (".old-system-" + $PID)
 $OldVenv = Join-Path $Base (".old-venv-" + $PID)
 $Swapped = $false
 
-Write-Host "=== Sophyane universal Windows installer/updater ===" -ForegroundColor Cyan
+Write-Host "=== Sophyane Harness universal Windows installer/updater ===" -ForegroundColor Cyan
 Write-Host "State root: $Base"
 
 function Find-Python {
@@ -35,9 +35,6 @@ Invoke-Python $Python @("-c", "import sys; assert sys.version_info >= (3,10); pr
 
 New-Item -ItemType Directory -Force -Path $Base, $BinDir, $UserWork | Out-Null
 
-# Migrate legacy Windows installs that cloned the Sophyane repository directly
-# into the persistent state root. Preserve edits/untracked work, then retire the
-# old tracked source so it cannot shadow the fresh managed installation.
 $LegacyGit = Join-Path $Base ".git"
 if (Test-Path $LegacyGit) {
     $Stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
@@ -136,7 +133,7 @@ try {
     }
 
     $Launchers = @(
-        "sophyane", "sophyane-web", "sophyane-doctor", "sophyane-browser",
+        "sophyane", "sophyane-harness", "sophyane-web", "sophyane-doctor", "sophyane-browser",
         "sophyane-sli", "sophyane-sli-train", "sophyane-sli-migrate", "sophyane-vela",
         "sophyane-platform", "sophyane-memory", "sophyane-task", "sophyane-execute",
         "sophyane-coi", "sophyane-release", "sophyane-audit", "sophyane-benchmark",
@@ -170,6 +167,9 @@ try {
     & (Join-Path $BinDir "sophyane.cmd") --version | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Sophyane validation failed." }
 
+    & (Join-Path $BinDir "sophyane-harness.cmd") --help | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Sophyane Harness validation failed." }
+
     $Commit | Set-Content -Encoding ASCII (Join-Path $Base "installed-commit")
     $Version | Set-Content -Encoding ASCII (Join-Path $Base "installed-version")
     @"
@@ -188,11 +188,14 @@ USER_STATE_ROOT=$Base
     if (Test-Path $OldVenv) { Remove-Item -Recurse -Force $OldVenv }
 
     Write-Host ""
-    Write-Host "Sophyane $Version is installed and current." -ForegroundColor Green
+    Write-Host "Sophyane Harness $Version is installed and current." -ForegroundColor Green
     Write-Host "Commit: $($Commit.Substring(0,12))"
     Write-Host "Previous managed version: removed after validation"
     Write-Host "User state/work preserved under: $Base"
-    Write-Host "Start: sophyane"
+    Write-Host "Start harness: sophyane-harness"
+    Write-Host "Modes: auto | internet | local-llm | cloud-llm | learning"
+    Write-Host "Direct advanced CLI: sophyane"
+    Write-Host "Optional Node 22+/Corepack/pnpm tooling is a web/developer enhancement, not a required Sophyane runtime dependency."
 }
 catch {
     if ($Swapped) {

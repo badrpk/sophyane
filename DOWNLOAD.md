@@ -1,55 +1,37 @@
-# Download Sophyane 21.4.2
+# Download Sophyane Harness 21.4.2
 
-This is the single download page for every supported device.
+Sophyane Harness is the public five-mode launch experience for Sophyane:
 
-The universal installers use a **replace-the-runtime, preserve-the-user** upgrade
-model:
+1. **Sophyane Auto**
+2. **Internet**
+3. **Local LLM**
+4. **Cloud LLM**
+5. **Sophyane Learning**
 
-- by default, the newest stable semantic release tag (`vX.Y.Z`) is resolved and
-  downloaded into a fresh managed system;
-- `SOPHYANE_REF` can explicitly select another branch, tag, or ref when needed;
-- the previous managed Sophyane source/runtime and virtual environment are
-  deleted only after the new installation validates successfully;
-- configuration, API keys, memory, databases, learned state, user workspaces,
-  generated projects, and other files outside the managed `system` and `venv`
-  directories remain on the device;
-- legacy root-clone installs are migrated safely: local source edits are saved
-  as patches and untracked files are copied into `user-work` before tracked old
-  source is retired;
-- installer launchers are recreated so an older executable cannot shadow the
-  newly installed release;
-- the installed Python dependency graph is checked with `pip check`, and core
-  runtime imports are validated before the new runtime is accepted.
-
-Running the same command again is therefore the supported upgrade path. You do not need to uninstall Sophyane manually first.
+The universal installers use a **replace-the-runtime, preserve-the-user** upgrade contract. By default, the installer resolves the newest stable semantic release tag (`vX.Y.Z`) and installs it into a fresh managed runtime. `SOPHYANE_REF` can explicitly select another branch, tag, or ref when needed. The new runtime is validated with dependency checks including `pip check` before the previous managed runtime is removed. User configuration, API keys, memory, databases, learned state, workspaces, generated projects, and other persistent data remain preserved outside the replaceable runtime directories. Running the installer again is the supported upgrade path; you do not need to uninstall Sophyane manually first.
 
 ## Linux, macOS, ChromeOS Linux, Android Termux, and UserLAnd
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | bash
+sophyane-harness
 ```
 
 If `curl` is unavailable:
 
 ```bash
 wget -qO- https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh | bash
+sophyane-harness
 ```
 
-Managed runtime:
+If `raw.githubusercontent.com` is temporarily unavailable, clone the repository and run the installer directly:
 
-```text
-~/.local/share/sophyane/system
-~/.local/share/sophyane/venv
+```bash
+TMP="$(mktemp -d)"
+git clone --depth 1 https://github.com/badrpk/sophyane.git "$TMP/sophyane"
+bash "$TMP/sophyane/install.sh"
+rm -rf "$TMP"
 ```
-
-Persistent Sophyane state remains under:
-
-```text
-~/.local/share/sophyane
-```
-
-The installer replaces only the managed runtime directories above; it does not
-wipe the rest of the state root.
 
 ## Windows 10 and 11
 
@@ -57,49 +39,122 @@ Open PowerShell and run:
 
 ```powershell
 irm https://raw.githubusercontent.com/badrpk/sophyane/main/install.ps1 | iex
+sophyane-harness
 ```
 
-The Windows installer follows the same stable-release selection,
-managed-runtime replacement, dependency validation, and persistent-user-state
-contract.
+## Five launch modes
+
+```bash
+sophyane-harness auto
+sophyane-harness internet
+sophyane-harness local-llm
+sophyane-harness cloud-llm
+sophyane-harness learning
+```
+
+Browser UI with the same session policy:
+
+```bash
+sophyane-harness auto --web
+sophyane-harness internet --web
+sophyane-harness local-llm --web
+sophyane-harness cloud-llm --web
+sophyane-harness learning --web
+```
+
+### Sophyane Auto
+
+Uses Sophyane's adaptive capability selection and cooperative race/orchestration policy.
+
+### Internet
+
+Runs SLI Graph + memory + internet acquisition without requiring a local or cloud LLM.
+
+### Local LLM
+
+Uses the configured llama.cpp / GGUF local model and disables cloud fallback for the session.
+
+### Cloud LLM
+
+Uses a configured cloud provider and model.
+
+### Sophyane Learning
+
+Runs continuous SLI topic acquisition + embedding until stopped with Ctrl+C.
+
+## Comprehensive optional developer/browser toolchain
+
+Sophyane is Python-native, and Python remains the authoritative runtime. On systems where it is useful and supported, the installer can also prepare a modern JavaScript tooling layer for web/developer workflows:
+
+```text
+Node.js 22+
+npm
+Corepack
+pnpm 11.7.0
+```
+
+This mirrors the convenience of modern agent-harness setup flows without installing another project's unrelated workspace dependency graph. Sophyane only treats JavaScript tooling as a supporting layer for its own web/developer workflows.
+
+Set `SOPHYANE_INSTALL_JS_TOOLCHAIN=0` before installation to skip the optional JavaScript tooling layer.
+
+## Managed runtime
+
+```text
+~/.local/share/sophyane/system
+~/.local/share/sophyane/venv
+```
+
+Persistent state remains under:
+
+```text
+~/.local/share/sophyane
+```
+
+Running the installer again is the supported upgrade path. By default, it resolves the newest stable semantic release tag (`vX.Y.Z`) and replaces only the managed runtime after successful validation.
 
 ## Install a specific ref
 
-To intentionally install a particular release or development ref, set
-`SOPHYANE_REF` before running the installer.
-
-POSIX example:
+POSIX:
 
 ```bash
 SOPHYANE_REF=v21.4.2 \
   bash -c "$(curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh)"
 ```
 
-PowerShell example:
+PowerShell:
 
 ```powershell
 $env:SOPHYANE_REF = "v21.4.2"
 irm https://raw.githubusercontent.com/badrpk/sophyane/main/install.ps1 | iex
 ```
 
-## iPhone and iPad
+## Verify
 
-Stock iOS does not support the local Python CLI. Install Sophyane on a Windows,
-macOS, Linux, cloud, or Android Termux host and open its authenticated browser
-interface from Safari.
-
-## Verify or upgrade
-
-```text
+```bash
 sophyane --version
 sophyane --doctor
+sophyane-harness --help
 python -m pip check
+node -v        # when optional Node toolchain is installed
+pnpm --version # when optional pnpm toolchain is installed
 ```
 
-Rerun the installer for your platform at any time. By default it installs the
-newest stable `vX.Y.Z` release and removes the prior managed runtime only after
-validation passes.
+## Developer clone flow
+
+```bash
+git clone https://github.com/badrpk/sophyane.git
+cd sophyane
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -e '.[dev]'
+sophyane-harness
+```
+
+## iPhone and iPad
+
+Stock iOS does not run the local Python CLI directly. Install Sophyane Harness on a Windows, macOS, Linux, cloud, or Android Termux host and use its browser interface remotely.
 
 Current stable release: `v21.4.2`
+Current stable package version: `21.4.2`
 
 Source repository: https://github.com/badrpk/sophyane
