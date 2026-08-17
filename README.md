@@ -1,8 +1,8 @@
 # Sophyane Harness 21.4.2
 
-**A local-first AI software engineering harness with four clear execution modes: Deterministic, Internet, Local LLM, and Cloud LLM.**
+**A local-first AI software engineering harness with five original execution modes: Sophyane Auto, Internet, Local LLM, Cloud LLM, and Sophyane Learning.**
 
-Sophyane Harness is the public user experience for Sophyane. It keeps Sophyane's existing engineering runtime — planning, building, repairing, validating, executing, repository intelligence, browser verification, orchestration, MCP interoperability, COI agents, and durable state — behind a simple harness-style launch flow.
+Sophyane Harness is the public user experience for Sophyane. It keeps Sophyane's engineering runtime — planning, building, repairing, validating, executing, repository intelligence, browser verification, orchestration, MCP interoperability, COI agents, and durable state — behind one harness-style launch flow.
 
 ## Install
 
@@ -18,13 +18,13 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/badrpk/sophyane/main/install.ps1 | iex
 ```
 
-Then start the harness:
+Then start:
 
 ```bash
 sophyane-harness
 ```
 
-or start Sophyane directly:
+The traditional advanced CLI remains available:
 
 ```bash
 sophyane
@@ -32,29 +32,32 @@ sophyane
 
 ## Sophyane Harness modes
 
-At launch, Sophyane Harness exposes exactly four public execution choices:
+At launch, Sophyane Harness exposes the five original Sophyane session choices:
 
-1. **Deterministic** — Sophyane execution/orchestration without cloud rescue.
-2. **Internet** — SLI Graph + internet acquisition, with no local or cloud LLM required.
+1. **Sophyane Auto** — intelligently decide between available deterministic, internet, local-model, and cloud capabilities using Sophyane's adaptive orchestration/race policy.
+2. **Internet** — SLI Graph + memory + internet acquisition, with no local or cloud LLM required.
 3. **Local LLM** — local llama.cpp / GGUF inference only; cloud fallback is disabled.
-4. **Cloud LLM** — use a configured cloud provider.
+4. **Cloud LLM** — use a configured cloud provider directly.
+5. **Sophyane Learning** — continuous SLI topic acquisition + embedding until stopped with Ctrl+C.
 
-You can select a mode explicitly:
+Select a mode explicitly:
 
 ```bash
-sophyane-harness deterministic
+sophyane-harness auto
 sophyane-harness internet
 sophyane-harness local-llm
 sophyane-harness cloud-llm
+sophyane-harness learning
 ```
 
-Launch the browser interface with the same mode contract:
+Launch the browser interface under the same mode contract:
 
 ```bash
-sophyane-harness deterministic --web
+sophyane-harness auto --web
 sophyane-harness internet --web
 sophyane-harness local-llm --web
 sophyane-harness cloud-llm --web
+sophyane-harness learning --web
 ```
 
 ## Harness-style download experience
@@ -77,7 +80,22 @@ python -m pip install -e '.[dev]'
 sophyane-harness
 ```
 
-The goal is the same class of simple harness experience users expect from modern coding-agent harnesses: clone/install, build or install dependencies, then launch one clear command. Sophyane remains a Python-native project and does not copy another harness's internal implementation or dependency stack.
+Sophyane remains Python-native. The installer may also provision an optional modern JavaScript toolchain for the browser/developer harness experience: Node.js 22+, npm, Corepack, and pnpm 11.7.0. Those tools are support dependencies, not replacements for the Sophyane Python runtime.
+
+## Optional comprehensive toolchain
+
+Where supported by the universal installer, Sophyane Harness can prepare:
+
+- Python 3.10+ and a managed virtual environment
+- `numpy`, `pexpect`, and Sophyane's declared Python dependencies
+- Node.js 22+ for modern browser/developer tooling
+- npm
+- Corepack
+- pnpm 11.7.0
+- Git
+- browser/runtime tools already used by Sophyane when available
+
+The goal is a comprehensive install-and-launch experience without pretending Sophyane needs another project's entire dependency graph. Large third-party packages such as unrelated agent SDKs, vendor-specific CLIs, or workspace-only build tools are not installed unless Sophyane itself actually requires them.
 
 ## Current verified status
 
@@ -91,20 +109,17 @@ The universal installer uses a replace-the-runtime / preserve-the-user model: it
 sophyane --version
 sophyane --providers
 sophyane --doctor
+sophyane-harness --help
 python -m pip check
+node -v        # when optional Node toolchain is installed
+pnpm --version # when optional pnpm toolchain is installed
 ```
 
 ## What is inside Sophyane Harness
 
-### Deterministic engineering runtime
+### Sophyane Auto
 
-- Semantic intent routing
-- Durable execution graph
-- Repository indexing and symbol discovery
-- Sandboxed filesystem execution
-- Validator-driven repair
-- Deterministic capability routing and race arbitration
-- Execution traces, checkpoints, and evidence
+Sophyane owns the execution policy. It can choose deterministic capabilities and race eligible workers rather than forcing one provider at startup.
 
 ### Internet mode
 
@@ -118,6 +133,20 @@ Local mode uses a configured llama.cpp / GGUF runtime. The local model is author
 
 Cloud mode uses a configured provider such as Gemini, OpenAI, Anthropic, xAI, Groq, OpenRouter, DeepSeek, or another installed Sophyane provider plugin.
 
+### Sophyane Learning
+
+Learning mode continuously acquires topic material and updates Sophyane's local learning/vector state until the user stops it.
+
+### Deterministic engineering runtime
+
+- Semantic intent routing
+- Durable execution graph
+- Repository indexing and symbol discovery
+- Sandboxed filesystem execution
+- Validator-driven repair
+- Deterministic capability routing and race arbitration
+- Execution traces, checkpoints, and evidence
+
 ### Browser and artifact verification
 
 Sophyane can generate and validate software artifacts, serve browser products over HTTP, check structural and semantic conditions, and use browser-oriented evidence where the relevant runtime is available.
@@ -130,10 +159,11 @@ COI coordinates Sophyane's internal agents, tasks, artifacts, permissions, valid
 
 ```bash
 sophyane-harness
-sophyane-harness deterministic
+sophyane-harness auto
 sophyane-harness internet
 sophyane-harness local-llm
 sophyane-harness cloud-llm
+sophyane-harness learning
 sophyane
 sophyane-web
 sophyane-browser
@@ -142,7 +172,7 @@ sophyane-coi status
 sophyane-benchmark
 ```
 
-Advanced/internal commands remain available for users who need SLI training, continuous learning, auditing, missions, MCP, release gates, or platform diagnostics. They are not part of the four-mode public harness surface.
+Advanced/internal commands remain available for users who need SLI training, auditing, missions, MCP, release gates, or platform diagnostics.
 
 ## Runtime layout
 
@@ -164,10 +194,11 @@ Advanced/internal commands remain available for users who need SLI training, con
 User
   │
 Sophyane Harness
-  ├── Deterministic
+  ├── Sophyane Auto
   ├── Internet
   ├── Local LLM
-  └── Cloud LLM
+  ├── Cloud LLM
+  └── Sophyane Learning
   │
 Sophyane Supervisor / Race Orchestrator
   │
@@ -178,11 +209,11 @@ Repository kernel + sandbox + validators
 Artifacts / browser verification / MCP / COI
 ```
 
-The four modes select execution policy. They do not redefine ownership of lower-level capabilities. Sophyane remains the semantic planner/orchestrator; external or specialized components continue to own their own runtime boundaries.
+The five modes select session policy. They do not redefine ownership of lower-level capabilities.
 
 ## Capability boundaries
 
-The four-mode harness does not imply that every machine has every optional dependency. Internet mode requires network access. Local LLM mode requires a configured local GGUF runtime. Cloud LLM mode requires provider credentials. Browser verification requires a compatible browser/runtime. Deterministic mode is the least externally dependent path.
+The five-mode harness does not imply that every machine has every optional dependency. Internet mode requires network access. Local LLM mode requires a configured local GGUF runtime. Cloud LLM mode requires provider credentials. Browser verification requires a compatible browser/runtime. Learning mode requires local writable state and may use internet acquisition depending on the task.
 
 ## Documentation
 
