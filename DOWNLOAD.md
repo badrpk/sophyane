@@ -1,13 +1,14 @@
 # Download Sophyane Harness 21.4.2
 
-Sophyane Harness is the public four-mode launch experience for Sophyane:
+Sophyane Harness is the public five-mode launch experience for Sophyane:
 
-1. **Deterministic**
+1. **Sophyane Auto**
 2. **Internet**
 3. **Local LLM**
 4. **Cloud LLM**
+5. **Sophyane Learning**
 
-The installer keeps Sophyane's existing replace-the-runtime / preserve-the-user upgrade contract. A new managed runtime is installed and validated before the old managed runtime is removed. User configuration, API keys, memory, databases, learned state, workspaces, generated projects, and other persistent data remain preserved outside the replaceable runtime directories.
+The installer keeps Sophyane's replace-the-runtime / preserve-the-user upgrade contract. A new managed runtime is installed and validated before the old managed runtime is removed. User configuration, API keys, memory, databases, learned state, workspaces, generated projects, and other persistent data remain preserved outside the replaceable runtime directories.
 
 ## Linux, macOS, ChromeOS Linux, Android Termux, and UserLAnd
 
@@ -32,31 +33,33 @@ irm https://raw.githubusercontent.com/badrpk/sophyane/main/install.ps1 | iex
 sophyane-harness
 ```
 
-## Four explicit launch modes
+## Five launch modes
 
 ```bash
-sophyane-harness deterministic
+sophyane-harness auto
 sophyane-harness internet
 sophyane-harness local-llm
 sophyane-harness cloud-llm
+sophyane-harness learning
 ```
 
-Browser UI with the same policy:
+Browser UI with the same session policy:
 
 ```bash
-sophyane-harness deterministic --web
+sophyane-harness auto --web
 sophyane-harness internet --web
 sophyane-harness local-llm --web
 sophyane-harness cloud-llm --web
+sophyane-harness learning --web
 ```
 
-### Deterministic
+### Sophyane Auto
 
-Runs Sophyane's deterministic execution/orchestration path without cloud rescue.
+Uses Sophyane's adaptive capability selection and cooperative race/orchestration policy.
 
 ### Internet
 
-Runs the SLI Graph + internet acquisition path without requiring a local or cloud LLM.
+Runs SLI Graph + memory + internet acquisition without requiring a local or cloud LLM.
 
 ### Local LLM
 
@@ -65,6 +68,23 @@ Uses the configured llama.cpp / GGUF local model and disables cloud fallback for
 ### Cloud LLM
 
 Uses a configured cloud provider and model.
+
+### Sophyane Learning
+
+Runs continuous SLI topic acquisition + embedding until stopped with Ctrl+C.
+
+## Comprehensive optional developer/browser toolchain
+
+Sophyane is Python-native, and Python remains the authoritative runtime. On systems where it is useful and supported, the installer can also prepare a modern JavaScript tooling layer for web/developer workflows:
+
+```text
+Node.js 22+
+npm
+Corepack
+pnpm 11.7.0
+```
+
+This mirrors the convenience of modern agent-harness setup flows without installing another project's unrelated workspace dependency graph. Sophyane only treats JavaScript tooling as a supporting layer for its own web/developer workflows.
 
 ## Managed runtime
 
@@ -104,6 +124,8 @@ sophyane --version
 sophyane --doctor
 sophyane-harness --help
 python -m pip check
+node -v        # when optional Node toolchain is installed
+pnpm --version # when optional pnpm toolchain is installed
 ```
 
 ## Developer clone flow
