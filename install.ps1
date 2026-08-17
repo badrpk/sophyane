@@ -193,8 +193,9 @@ USER_STATE_ROOT=$Base
     Write-Host "Previous managed version: removed after validation"
     Write-Host "User state/work preserved under: $Base"
     Write-Host "Start harness: sophyane-harness"
-    Write-Host "Modes: deterministic | internet | local-llm | cloud-llm"
-    Write-Host "Direct CLI: sophyane"
+    Write-Host "Modes: auto | internet | local-llm | cloud-llm | learning"
+    Write-Host "Direct advanced CLI: sophyane"
+    Write-Host "Optional Node 22+/Corepack/pnpm tooling is a web/developer enhancement, not a required Sophyane runtime dependency."
 }
 catch {
     if ($Swapped) {
