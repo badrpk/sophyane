@@ -48,8 +48,6 @@ need python3
 mkdir -p "$BASE" "$BIN" "$USER_WORK"
 
 archive_legacy_root_install() {
-  # Older Sophyane installers may have cloned the repository directly into
-  # SOPHYANE_HOME.  Retire that managed source without throwing away user work.
   [ -d "$BASE/.git" ] || return 0
 
   stamp="$(date -u '+%Y%m%dT%H%M%SZ')"
@@ -71,8 +69,6 @@ archive_legacy_root_install() {
     fi
   done < <(git -C "$BASE" ls-files --others --exclude-standard -z 2>/dev/null || true)
 
-  # Remove only files Git identifies as tracked Sophyane source.  Modified
-  # tracked files remain recoverable from working-tree.patch/index.patch.
   while IFS= read -r -d '' rel; do
     case "$rel" in
       system/*|venv/*|user-work/*) continue ;;
@@ -84,12 +80,11 @@ archive_legacy_root_install() {
   printf 'Legacy source changes preserved at: %s\n' "$backup"
 }
 
-printf '=== Sophyane universal installer/updater ===\n'
+printf '=== Sophyane Harness universal installer/updater ===\n'
 archive_legacy_root_install
 
 TMP="$(mktemp -d)"
 SOURCE="$TMP/source"
-
 INSTALL_REF="${SOPHYANE_REF:-}"
 
 if [ -z "$INSTALL_REF" ]; then
@@ -112,7 +107,7 @@ fi
 
 printf 'Installing Sophyane ref: %s\n' "$INSTALL_REF"
 
-git clone --quiet --depth 1 --single-branch   --branch "$INSTALL_REF"   "$REPO"   "$SOURCE"
+git clone --quiet --depth 1 --single-branch --branch "$INSTALL_REF" "$REPO" "$SOURCE"
 
 COMMIT="$(git -C "$SOURCE" rev-parse HEAD)"
 VERSION="$(python3 - "$SOURCE/pyproject.toml" <<'PY'
@@ -141,14 +136,12 @@ unset PYTHONPATH PYTHONHOME
 "$VENV/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --upgrade pip setuptools wheel >/dev/null
 "$VENV/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --force-reinstall "$SYSTEM" >/dev/null
 
-"$VENV/bin/python" -m pip check >/dev/null ||
-  fail "Python dependency graph is broken"
+"$VENV/bin/python" -m pip check >/dev/null || fail "Python dependency graph is broken"
 
 "$VENV/bin/python" - <<'PYDEP'
 import numpy
 import pexpect
 import sophyane
-
 print("numpy =", numpy.__version__)
 print("pexpect =", pexpect.__version__)
 print("sophyane =", sophyane.__file__)
@@ -156,6 +149,7 @@ PYDEP
 
 LAUNCHERS=(
   sophyane
+  sophyane-harness
   sophyane-web
   sophyane-doctor
   sophyane-browser
@@ -175,8 +169,6 @@ LAUNCHERS=(
   sophyane-mission
 )
 
-# Remove only launchers previously managed by this installer, then recreate the
-# current launcher set so no old executable can shadow the new release.
 if [ -f "$MANAGED_LAUNCHERS" ]; then
   while IFS= read -r name; do
     case "$name" in
@@ -213,6 +205,7 @@ esac
 hash -r 2>/dev/null || true
 
 SOPHYANE_SKIP_UPDATE_CHECK=1 "$BIN/sophyane" --version >/dev/null || fail "sophyane failed validation"
+"$BIN/sophyane-harness" --help >/dev/null || fail "sophyane-harness failed validation"
 "$BIN/sophyane-platform" status >/dev/null || fail "sophyane-platform failed validation"
 "$BIN/sophyane-coi" status >/dev/null || fail "sophyane-coi failed validation"
 "$BIN/sophyane-release" status >/dev/null || fail "sophyane-release failed validation"
@@ -239,20 +232,16 @@ MANAGED_VENV=$VENV
 USER_STATE_ROOT=$BASE
 EOF
 
-# New installation is fully validated.  Only now permanently delete the old
-# managed code/runtime.  Everything else under BASE is persistent user state.
 SWAPPED=0
 rm -rf "$OLD_SYSTEM" "$OLD_VENV" "$TMP"
 TMP=""
 
-printf '\n✅ Sophyane %s is installed and current\n' "$VERSION"
+printf '\n✅ Sophyane Harness %s is installed and current\n' "$VERSION"
 printf '   Commit: %.12s\n' "$COMMIT"
 printf '   Managed system: %s\n' "$SYSTEM"
 printf '   Managed venv:   %s\n' "$VENV"
-printf '   Previous managed version: removed after validation\n'
 printf '   User state/work: preserved under %s\n' "$BASE"
-printf '   Legacy source edits (if any): %s\n' "$USER_WORK"
-printf '   Offline audit report: %s/install-audit.json\n' "$BASE"
-printf '   Product benchmark report: %s/install-benchmark.json\n' "$BASE"
-printf '   Start: sophyane\n'
+printf '   Start harness: sophyane-harness\n'
+printf '   Modes: deterministic | internet | local-llm | cloud-llm\n'
+printf '   Direct CLI: sophyane\n'
 printf '   Universal install/update link:\n   curl -fsSL %s/install.sh | bash\n' "$RAW"
