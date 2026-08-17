@@ -2,8 +2,9 @@
 # Universal Sophyane Harness installer/updater.
 #
 # Contract:
-#   * install the selected/latest stable Sophyane release into a fresh managed
-#     Python runtime;
+#   * every run installs the latest stable semantic release tag (vX.Y.Z) into
+#     a fresh managed system directory and a fresh virtual environment unless
+#     SOPHYANE_REF explicitly selects another branch, tag, or ref;
 #   * preserve user configuration/state/work outside managed system/venv;
 #   * validate the new runtime before removing the prior managed runtime;
 #   * expose the five-mode sophyane-harness launcher;
@@ -135,13 +136,21 @@ SOURCE="$TMP/source"
 INSTALL_REF="${SOPHYANE_REF:-}"
 
 if [ -z "$INSTALL_REF" ]; then
-  INSTALL_REF="$(git ls-remote --tags --refs "$REPO" 'refs/tags/v*' | python3 -c 'import re,sys
-items=[]
+  INSTALL_REF="$(
+    git ls-remote --tags --refs "$REPO" "refs/tags/v*" |
+    python3 -c 'import re, sys
+items = []
 for line in sys.stdin:
- ref=line.rstrip().split("\t")[-1]; m=re.fullmatch(r"refs/tags/v(\d+)\.(\d+)\.(\d+)",ref)
- if m: items.append((tuple(map(int,m.groups())),ref.rsplit("/",1)[-1]))
-if not items: raise SystemExit("No stable Sophyane release tags found")
-print(max(items)[1])')"
+    ref = line.rstrip().split("\t")[-1]
+    m = re.fullmatch(r"refs/tags/v(\d+)\.(\d+)\.(\d+)", ref)
+    if m:
+        version = tuple(map(int, m.groups()))
+        tag = ref.rsplit("/", 1)[-1]
+        items.append((version, tag))
+if not items:
+    raise SystemExit("No stable Sophyane release tags found")
+print(max(items)[1])'
+  )"
 fi
 
 printf 'Installing Sophyane ref: %s\n' "$INSTALL_REF"
@@ -172,7 +181,9 @@ unset PYTHONPATH PYTHONHOME
 "$VENV/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --force-reinstall "$SYSTEM" >/dev/null
 "$VENV/bin/python" -m pip check >/dev/null || fail "Python dependency graph is broken"
 "$VENV/bin/python" - <<'PYDEP'
-import numpy,pexpect,sophyane
+import numpy
+import pexpect
+import sophyane
 print('numpy =',numpy.__version__)
 print('pexpect =',pexpect.__version__)
 print('sophyane =',sophyane.__file__)
@@ -236,6 +247,7 @@ printf '\n✅ Sophyane Harness %s is installed and current\n' "$VERSION"
 printf '   Commit: %.12s\n' "$COMMIT"
 printf '   Managed system: %s\n' "$SYSTEM"
 printf '   Managed venv:   %s\n' "$VENV"
+printf '   Previous managed version: removed after validation\n'
 printf '   User state/work: preserved under %s\n' "$BASE"
 printf '   Start harness: sophyane-harness\n'
 printf '   Modes: auto | internet | local-llm | cloud-llm | learning\n'
