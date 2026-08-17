@@ -495,19 +495,22 @@ def make_provider_producer(
                 requires_write=proposal.requires_write,
             )
 
-        if str(mode).strip().lower() != "answer" and _software_artifact_request(request):
-            if proposal.kind == "plan":
-                evidence = list(proposal.evidence)
-                evidence.append("software artifact gate=plan-only")
-                evidence.append("software construction request requires a material executable action")
-                proposal = ProgressProposal(
-                    engine=proposal.engine,
-                    payload=proposal.payload,
-                    kind=proposal.kind,
-                    confidence=0.54,
-                    evidence=tuple(evidence),
-                    requires_write=proposal.requires_write,
-                )
+        if (
+            str(mode).strip().lower() != "answer"
+            and proposal.kind == "plan"
+            and _software_artifact_request(request)
+        ):
+            evidence = list(proposal.evidence)
+            evidence.append("software artifact gate=non-material")
+            evidence.append("software construction request requires a material executable action")
+            proposal = ProgressProposal(
+                engine=proposal.engine,
+                payload=proposal.payload,
+                kind=proposal.kind,
+                confidence=0.54,
+                evidence=tuple(evidence),
+                requires_write=proposal.requires_write,
+            )
 
         if (
             str(mode).strip().lower() != "answer"
