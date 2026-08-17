@@ -307,7 +307,7 @@ def test_authoritative_workspace_not_mutated_by_race(
 
     assert (
         source.read_text(
-            encoding="utf-8"
+            encoding="utf-8",
         )
         == "VALUE = 1\n"
     )
@@ -380,6 +380,113 @@ def test_failed_sli_report_cannot_win_adaptive_race(
     assert proposal.payload["success"] is False
     assert proposal.payload["promoted"] is False
     assert proposal.confidence < 0.55
+
+
+# SOPHYANE_TEST_SOFTWARE_ARTIFACT_GATE_V1
+def test_software_artifact_gate_rejects_plan_only_cloud_response(
+    monkeypatch,
+    tmp_path,
+):
+    import sophyane.race_orchestrator as orchestrator
+
+    class Provider:
+        def generate(self, user_prompt, system_prompt):
+            return (
+                '{"objective":"Create a website dedicated to cats.",'
+                '"success_criteria":["Website loads successfully"],'
+                '"action":{"type":"plan","steps":["Design layout","Create HTML"]},'
+                '"files":[]}'
+            )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_single_provider",
+        lambda **kwargs: Provider(),
+    )
+
+    # Reproduce the live provider envelope directly: execution_runtime cannot
+    # execute type=plan, so the response must not become a winning deliverable.
+    proposal = orchestrator.make_provider_producer(
+        engine="cloud",
+        provider_id="gemini",
+        request="make cats website",
+        workspace=tmp_path,
+        config={},
+    )()
+
+    assert proposal.confidence < 0.55
+    assert any(
+        "software artifact gate=non-material" in item
+        for item in proposal.evidence
+    )
+
+
+def test_software_artifact_gate_rejects_respond_only_for_build(
+    monkeypatch,
+    tmp_path,
+):
+    import sophyane.race_orchestrator as orchestrator
+
+    class Provider:
+        def generate(self, user_prompt, system_prompt):
+            return (
+                '{"action":{"type":"respond",'
+                '"message":"I will create the cats website."}}'
+            )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_single_provider",
+        lambda **kwargs: Provider(),
+    )
+
+    proposal = orchestrator.make_provider_producer(
+        engine="cloud",
+        provider_id="gemini",
+        request="make cats website",
+        workspace=tmp_path,
+        config={},
+    )()
+
+    assert proposal.confidence == 0.54
+    assert proposal.confidence < 0.55
+
+
+def test_software_artifact_gate_allows_material_write_action(
+    monkeypatch,
+    tmp_path,
+):
+    import sophyane.race_orchestrator as orchestrator
+
+    class Provider:
+        def generate(self, user_prompt, system_prompt):
+            # First call is provider generation; semantic judge call returns a
+            # deterministic relevant score for the material action.
+            if "PROPOSED NEXT ACTION" in user_prompt:
+                return '{"relevant":true,"score":0.91,"reason":"writes requested website"}'
+            return (
+                '{"action":{"type":"write_file","path":"index.html",'
+                '"content":"<!doctype html><title>Cats</title><main>Cats</main>"}}'
+            )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_single_provider",
+        lambda **kwargs: Provider(),
+    )
+
+    proposal = orchestrator.make_provider_producer(
+        engine="cloud",
+        provider_id="gemini",
+        request="make cats website",
+        workspace=tmp_path,
+        config={},
+    )()
+
+    assert proposal.confidence == 0.91
+    assert proposal.confidence >= 0.55
+    assert proposal.payload["action"]["type"] == "write_file"
+    assert proposal.payload["action"]["path"] == "index.html"
 
 
 # SOPHYANE_TEST_DIRECT_ANSWER_COMPLETION_V1
@@ -551,8 +658,6 @@ def test_provider_answer_missing_deliverable_stays_below_race_threshold(
     assert proposal.kind == "answer"
     assert proposal.payload["answer"]
 
-    # _llm_proposal() initially gives a non-empty answer 0.60.
-    # The completion gate must replace it with the losing ceiling.
     assert proposal.confidence == 0.54
     assert proposal.confidence < 0.55
 
