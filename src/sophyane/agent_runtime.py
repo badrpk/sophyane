@@ -24,6 +24,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .neuron_security import (
+    NeuronSecurityDecision,
+    NeuronSecurityUnavailable,
+    authorize_shell,
+)
+
 
 BASE_DIR = Path.home() / ".sophyane"
 DATA_DIR = BASE_DIR / "data"
@@ -554,10 +560,35 @@ def safe_shell(command_text: str) -> str:
         log_tool("safe_shell", command_text, output, False)
         return output
 
+    try:
+        security = authorize_shell(command_text)
+    except NeuronSecurityUnavailable as error:
+        output = f"Shell command rejected: {error}"
+        log_tool("safe_shell", command_text, output, False)
+        return output
+
+    if security.decision in {
+        NeuronSecurityDecision.ISOLATE,
+        NeuronSecurityDecision.BLOCK,
+    }:
+        reasons = ", ".join(security.reasons) or "policy decision"
+        output = (
+            "Shell command rejected by Neuron security: "
+            f"{security.decision.value} ({reasons})."
+        )
+        log_tool("safe_shell", command_text, output, False)
+        return output
+
     print()
     print("Sophyane wants to execute:")
     print(f"  {' '.join(shlex.quote(item) for item in arguments)}")
     print()
+
+    if security.decision == NeuronSecurityDecision.REQUIRE_REVIEW:
+        print(
+            "Neuron security requires review "
+            f"(risk={security.risk:.3f})."
+        )
 
     confirmation = input("Allow this command? [y/N]: ").strip().lower()
 
@@ -618,266 +649,102 @@ def detect_natural_tool(prompt: str) -> str | None:
         "system information",
         "computer configuration",
         "machine configuration",
-        "check my computer",
-        "inspect my computer",
-        "check my system",
-        "inspect my system",
-        "what system am i using",
-        "what computer am i using",
-        "hardware configuration",
     ]
 
     if any(phrase in normalized for phrase in system_phrases):
         return "system"
 
-    if any(
-        phrase in normalized
-        for phrase in [
-            "cpu information",
-            "processor information",
-            "check cpu",
-            "what cpu",
-            "which processor",
-        ]
-    ):
+    if any(phrase in normalized for phrase in ["cpu", "processor"]):
         return "cpu"
 
-    if any(
-        phrase in normalized
-        for phrase in [
-            "ram information",
-            "memory information",
-            "check ram",
-            "check memory",
-            "how much ram",
-        ]
-    ):
+    if any(phrase in normalized for phrase in ["ram", "memory usage", "memory information"]):
         return "ram"
 
-    if any(
-        phrase in normalized
-        for phrase in [
-            "disk information",
-            "storage information",
-            "disk space",
-            "free storage",
-            "check disk",
-            "check storage",
-        ]
-    ):
+    if any(phrase in normalized for phrase in ["disk", "storage", "filesystem"]):
         return "disk"
 
-    if any(
-        phrase in normalized
-        for phrase in [
-            "network configuration",
-            "network information",
-            "check network",
-            "ip address",
-            "open ports",
-        ]
-    ):
+    if any(phrase in normalized for phrase in ["network", "ip address", "routing", "ports"]):
         return "network"
 
-    if any(
-        phrase in normalized
-        for phrase in [
-            "running processes",
-            "check processes",
-            "process list",
-            "what is running",
-        ]
-    ):
+    if any(phrase in normalized for phrase in ["processes", "running processes", "process list"]):
         return "processes"
 
-    if any(
-        phrase in normalized
-        for phrase in [
-            "git status",
-            "check repository",
-            "check git",
-            "repository status",
-        ]
-    ):
+    if any(phrase in normalized for phrase in ["git status", "repository status", "git repository"]):
         return "git"
 
-    if any(
-        phrase in normalized
-        for phrase in [
-            "list files",
-            "show files",
-            "directory contents",
-            "what files",
-        ]
-    ):
+    if any(phrase in normalized for phrase in ["list files", "show files", "directory contents"]):
         return "files"
 
     return None
 
 
-def execute_named_tool(tool_name: str, argument: str = "") -> str:
-    if tool_name == "system":
+def route_tool(prompt: str) -> str | None:
+    prompt = prompt.strip()
+
+    if not prompt:
+        return None
+
+    if prompt == "/tools":
+        return tools_help()
+
+    if prompt == "/memory":
+        return format_memories()
+
+    if prompt.startswith("/remember "):
+        return remember(prompt[len("/remember ") :])
+
+    if prompt.startswith("/forget "):
+        memory_id = prompt[len("/forget ") :].strip()
+        try:
+            return forget_memory(int(memory_id))
+        except ValueError:
+            return "Usage: /forget <memory-id>"
+
+    if prompt == "/system":
         return system_information()
 
-    if tool_name == "cpu":
+    if prompt == "/cpu":
         return cpu_information()
 
-    if tool_name == "ram":
+    if prompt == "/ram":
         return memory_information()
 
-    if tool_name == "disk":
+    if prompt == "/disk":
         return disk_information()
 
-    if tool_name == "network":
+    if prompt == "/network":
         return network_information()
 
-    if tool_name == "processes":
+    if prompt == "/processes":
         return process_information()
 
-    if tool_name == "git":
+    if prompt == "/git":
         return git_information()
 
-    if tool_name == "files":
-        return directory_information(argument or ".")
+    if prompt.startswith("/files"):
+        path_text = prompt[len("/files") :].strip() or "."
+        return directory_information(path_text)
 
-    raise RuntimeErrorMessage(f"Unknown tool: {tool_name}")
+    if prompt.startswith("/shell "):
+        return safe_shell(prompt[len("/shell ") :])
 
+    natural_tool = detect_natural_tool(prompt)
 
-def route_local_request(prompt: str) -> dict[str, Any]:
-    """
-    Returns:
-      handled: whether this request used a local command
-      direct: text to print without an LLM
-      context: local data that should be summarized by the LLM
-    """
+    if natural_tool == "system":
+        return system_information()
+    if natural_tool == "cpu":
+        return cpu_information()
+    if natural_tool == "ram":
+        return memory_information()
+    if natural_tool == "disk":
+        return disk_information()
+    if natural_tool == "network":
+        return network_information()
+    if natural_tool == "processes":
+        return process_information()
+    if natural_tool == "git":
+        return git_information()
+    if natural_tool == "files":
+        return directory_information()
 
-    stripped = prompt.strip()
-
-    if stripped == "/tools":
-        return {
-            "handled": True,
-            "direct": tools_help(),
-            "context": "",
-        }
-
-    if stripped == "/memory":
-        return {
-            "handled": True,
-            "direct": format_memories(),
-            "context": "",
-        }
-
-    if stripped.startswith("/remember "):
-        content = stripped[len("/remember "):].strip()
-        return {
-            "handled": True,
-            "direct": remember(content),
-            "context": "",
-        }
-
-    if stripped.startswith("/forget "):
-        raw_id = stripped[len("/forget "):].strip()
-
-        try:
-            memory_id = int(raw_id)
-        except ValueError:
-            message = "Usage: /forget <memory-id>"
-        else:
-            message = forget_memory(memory_id)
-
-        return {
-            "handled": True,
-            "direct": message,
-            "context": "",
-        }
-
-    if stripped.startswith("/shell "):
-        command = stripped[len("/shell "):].strip()
-
-        return {
-            "handled": True,
-            "direct": safe_shell(command),
-            "context": "",
-        }
-
-    slash_tools = {
-        "/system": "system",
-        "/cpu": "cpu",
-        "/ram": "ram",
-        "/disk": "disk",
-        "/network": "network",
-        "/processes": "processes",
-        "/git": "git",
-    }
-
-    if stripped in slash_tools:
-        tool_name = slash_tools[stripped]
-
-        return {
-            "handled": True,
-            "direct": "",
-            "context": execute_named_tool(tool_name),
-            "tool_name": tool_name,
-        }
-
-    if stripped == "/files":
-        return {
-            "handled": True,
-            "direct": "",
-            "context": directory_information("."),
-            "tool_name": "files",
-        }
-
-    if stripped.startswith("/files "):
-        path_text = stripped[len("/files "):].strip()
-
-        return {
-            "handled": True,
-            "direct": "",
-            "context": directory_information(path_text),
-            "tool_name": "files",
-        }
-
-    natural_tool = detect_natural_tool(stripped)
-
-    if natural_tool:
-        return {
-            "handled": True,
-            "direct": "",
-            "context": execute_named_tool(natural_tool),
-            "tool_name": natural_tool,
-        }
-
-    return {
-        "handled": False,
-        "direct": "",
-        "context": "",
-    }
-
-
-def memory_context(limit: int = 10) -> str:
-    memories = recall_memories(limit)
-
-    if not memories:
-        return ""
-
-    lines = ["Relevant long-term user memories:"]
-
-    for memory in memories:
-        lines.append(f"- {memory['content']}")
-
-    return "\n".join(lines)
-
-
-def runtime_status() -> dict[str, Any]:
-    return {
-        "base_directory": str(BASE_DIR),
-        "workspace": str(WORKSPACE_DIR),
-        "database": str(DATABASE_FILE),
-        "memory_count": len(recall_memories(100)),
-        "safe_commands": sorted(SAFE_COMMANDS),
-    }
-
-
-if __name__ == "__main__":
-    print(json.dumps(runtime_status(), indent=2))
+    return None
