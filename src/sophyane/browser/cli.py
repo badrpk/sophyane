@@ -5,10 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 from typing import Sequence
 
 from sophyane.browser.cdp import CDPEndpoint, CDPError, list_targets, target_summary
-from sophyane.browser.launcher import launch_sophyane_browser
+from sophyane.browser.launcher import CDP_PORT_FILE, launch_sophyane_browser
 
 
 def build_browser_parser() -> argparse.ArgumentParser:
@@ -46,12 +47,23 @@ def _env_port() -> int:
         return 0
 
 
+def _persisted_port(path: Path = CDP_PORT_FILE) -> int:
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return 0
+    try:
+        return int(value)
+    except ValueError:
+        return 0
+
+
 def _endpoint(host: str, port: int) -> CDPEndpoint:
-    actual_port = int(port or _env_port())
+    actual_port = int(port or _env_port() or _persisted_port())
     if actual_port <= 0:
         raise CDPError(
             "CDP port is unknown. Start with 'sophyane browser start --cdp' "
-            "or set SOPHYANE_CDP_PORT."
+            "or pass --port / set SOPHYANE_CDP_PORT."
         )
     return CDPEndpoint(host=host, port=actual_port)
 
