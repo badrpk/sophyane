@@ -92,10 +92,21 @@ def test_browser_start_cli_returns_json(monkeypatch, capsys) -> None:
     assert payload["cdp"]["enabled"] is True
 
 
-def test_endpoint_requires_known_port(monkeypatch) -> None:
+def test_endpoint_requires_known_port(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv("SOPHYANE_CDP_PORT", raising=False)
+    monkeypatch.setattr(browser_cli, "CDP_PORT_FILE", tmp_path / "missing")
+    monkeypatch.setattr(browser_cli, "_persisted_port", lambda path=browser_cli.CDP_PORT_FILE: 0)
     with pytest.raises(CDPError):
         browser_cli._endpoint("127.0.0.1", 0)
+
+
+def test_endpoint_uses_persisted_port(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("SOPHYANE_CDP_PORT", raising=False)
+    port_file = tmp_path / "browser-cdp-port"
+    port_file.write_text("43123\n", encoding="utf-8")
+    monkeypatch.setattr(browser_cli, "_persisted_port", lambda path=browser_cli.CDP_PORT_FILE: 43123)
+    endpoint = browser_cli._endpoint("127.0.0.1", 0)
+    assert endpoint.base_url == "http://127.0.0.1:43123"
 
 
 def test_explicit_endpoint_port() -> None:
