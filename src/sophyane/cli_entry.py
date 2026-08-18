@@ -65,12 +65,23 @@ def _metadata_only_invocation() -> bool:
     return any(arg in {"-V", "--version", "--status", "--providers", "--doctor"} for arg in sys.argv[1:])
 
 
+def _browser_command_invocation() -> bool:
+    return len(sys.argv) > 1 and sys.argv[1] == "browser"
+
+
+def _run_browser_command() -> int:
+    from sophyane.browser.cli import main as browser_main
+
+    return browser_main(sys.argv[2:])
+
+
 def _start_local_server_if_needed() -> None:
     # SLI-only modes do not use an LLM. Never inspect, start, or report the
     # llama.cpp/GGUF runtime for these sessions, even when local_gguf is saved
     # as the default provider in the persistent configuration.
     if (
         _metadata_only_invocation()
+        or _browser_command_invocation()
         or os.environ.get("SOPHYANE_SLI_ONLY") == "1"
         or os.environ.get("SOPHYANE_SLI_GRAPH") == "1"
         or os.environ.get("SOPHYANE_SLI_CONTINUOUS") == "1"
@@ -156,6 +167,10 @@ def main() -> int:
 
     # SOPHYANE_CANONICAL_WORKSPACE_CALL_V1
     _canonicalize_launch_workspace()
+
+    if _browser_command_invocation():
+        return _run_browser_command()
+
     from sophyane.runtime_artifact_patch import install_artifact_patch
     from sophyane.runtime_browser_patch import install_browser_patch
     from sophyane.runtime_deep_agent_patch import install_deep_agent_runtime

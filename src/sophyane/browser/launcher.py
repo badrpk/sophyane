@@ -18,6 +18,7 @@ from sophyane.version import __version__
 STATE_DIR = Path.home() / ".local" / "state" / "sophyane"
 BROWSER_PROFILE = STATE_DIR / "browser-profile"
 BROWSER_HOME = Path(__file__).resolve().parent / "home"
+CDP_PORT_FILE = STATE_DIR / "browser-cdp-port"
 
 
 CHROMIUM_CANDIDATES = (
@@ -40,7 +41,6 @@ def find_chromium() -> str | None:
         path = shutil.which(name)
         if path:
             return path
-    # macOS app bundle
     mac = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
     if Path(mac).exists():
         return mac
@@ -83,14 +83,16 @@ def launch_sophyane_browser(
     open_home: bool = True,
     extra_args: list[str] | None = None,
     start_apis: bool = True,
+    enable_cdp: bool = False,
+    initial_url: str | None = None,
 ) -> dict[str, Any]:
-    """Launch Chromium (if available) with Sophyane profile + home page."""
+    """Launch Chromium with Sophyane profile and optional loopback CDP."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
     BROWSER_PROFILE.mkdir(parents=True, exist_ok=True)
     server, port, home_url = serve_browser_home()
 
     api_threads: list[str] = []
     if start_apis:
-        # Best-effort background mesh + hardware API for the browser UI.
         try:
             from sophyane.hardware_api import create_default_api, serve_hardware_api
             from sophyane.mesh.core import get_mesh_node
@@ -108,28 +110,47 @@ def launch_sophyane_browser(
     chromium = find_chromium()
     launched: list[str] = []
     pid = None
-    # SOPHYANE_BROWSER_MODE=tab forces new-tab in the user's default browser
-    # (keeps flexibility even when Chromium is installed).
+    cdp_port: int | None = None
+    cdp_endpoint: str | None = None
+
     force_tab = os.environ.get("SOPHYANE_BROWSER_MODE", "").lower() in {
         "tab",
         "new-tab",
         "webbrowser",
         "default",
     }
-    if chromium and open_home and not force_tab:
+
+    should_launch_chromium = bool(chromium) and not force_tab and (open_home or initial_url or enable_cdp)
+
+    if should_launch_chromium:
+        target_url = str(initial_url or home_url)
         args = [
-            chromium,
+            str(chromium),
             f"--user-data-dir={BROWSER_PROFILE}",
             "--no-first-run",
             "--no-default-browser-check",
-            f"--app={home_url}",
             "--new-window",
         ]
+
+        if enable_cdp:
+            cdp_port = _free_port()
+            args.extend(
+                [
+                    "--remote-debugging-address=127.0.0.1",
+                    f"--remote-debugging-port={cdp_port}",
+                ]
+            )
+
+        if open_home and not initial_url:
+            args.append(f"--app={home_url}")
+        else:
+            args.append(target_url)
+
         if extra_args:
             args.extend(extra_args)
-        # On constrained containers allow no-sandbox when needed
         if os.environ.get("SOPHYANE_BROWSER_NO_SANDBOX", "").lower() in {"1", "true", "yes"}:
             args.append("--no-sandbox")
+
         try:
             proc = subprocess.Popen(
                 args,
@@ -139,14 +160,20 @@ def launch_sophyane_browser(
             )
             pid = proc.pid
             launched.append(f"chromium:{chromium}")
+            if cdp_port is not None:
+                CDP_PORT_FILE.write_text(f"{cdp_port}\n", encoding="utf-8")
+                os.environ["SOPHYANE_CDP_PORT"] = str(cdp_port)
+                cdp_endpoint = f"http://127.0.0.1:{cdp_port}"
         except Exception as error:  # noqa: BLE001
             launched.append(f"chromium-failed:{error}")
-            webbrowser.open(home_url, new=2)  # new tab when possible
-            launched.append("webbrowser-new-tab-fallback")
+            if open_home or initial_url:
+                webbrowser.open(target_url, new=2)
+                launched.append("webbrowser-new-tab-fallback")
     else:
-        # Always preserve open-in-user-browser (new tab) path
-        webbrowser.open(home_url, new=2)
-        launched.append("webbrowser-new-tab")
+        target_url = str(initial_url or home_url)
+        if open_home or initial_url:
+            webbrowser.open(target_url, new=2)
+            launched.append("webbrowser-new-tab")
         if force_tab:
             launched.append("mode-forced-tab")
         if not chromium:
@@ -162,6 +189,13 @@ def launch_sophyane_browser(
         "pid": pid,
         "launched": launched,
         "apis": api_threads,
+        "cdp": {
+            "enabled": bool(enable_cdp and cdp_port is not None),
+            "host": "127.0.0.1" if cdp_port is not None else None,
+            "port": cdp_port,
+            "endpoint": cdp_endpoint,
+            "port_file": str(CDP_PORT_FILE) if cdp_port is not None else None,
+        },
         "modes": {
             "download_install": "sophyane-browser / sophyane --browser (Chromium profile when available)",
             "new_tab": "Default browser new tab (always available; SOPHYANE_BROWSER_MODE=tab to force)",
@@ -169,9 +203,8 @@ def launch_sophyane_browser(
             "web_open_tab": "/browser-home/ on cloud portal (target=_blank)",
         },
         "note": (
-            "Sophyane Browser uses system Chromium/Chrome when installed for a dedicated shell; "
-            "opening the home UI in a new tab of the user's default browser remains intact "
-            "(fallback and SOPHYANE_BROWSER_MODE=tab)."
+            "Sophyane Browser uses system Chromium/Chrome with a dedicated profile. "
+            "CDP, when enabled, is bound only to 127.0.0.1."
         ),
     }
 
