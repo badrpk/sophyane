@@ -649,102 +649,266 @@ def detect_natural_tool(prompt: str) -> str | None:
         "system information",
         "computer configuration",
         "machine configuration",
+        "check my computer",
+        "inspect my computer",
+        "check my system",
+        "inspect my system",
+        "what system am i using",
+        "what computer am i using",
+        "hardware configuration",
     ]
 
     if any(phrase in normalized for phrase in system_phrases):
         return "system"
 
-    if any(phrase in normalized for phrase in ["cpu", "processor"]):
+    if any(
+        phrase in normalized
+        for phrase in [
+            "cpu information",
+            "processor information",
+            "check cpu",
+            "what cpu",
+            "which processor",
+        ]
+    ):
         return "cpu"
 
-    if any(phrase in normalized for phrase in ["ram", "memory usage", "memory information"]):
+    if any(
+        phrase in normalized
+        for phrase in [
+            "ram information",
+            "memory information",
+            "check ram",
+            "check memory",
+            "how much ram",
+        ]
+    ):
         return "ram"
 
-    if any(phrase in normalized for phrase in ["disk", "storage", "filesystem"]):
+    if any(
+        phrase in normalized
+        for phrase in [
+            "disk information",
+            "storage information",
+            "disk space",
+            "free storage",
+            "check disk",
+            "check storage",
+        ]
+    ):
         return "disk"
 
-    if any(phrase in normalized for phrase in ["network", "ip address", "routing", "ports"]):
+    if any(
+        phrase in normalized
+        for phrase in [
+            "network configuration",
+            "network information",
+            "check network",
+            "ip address",
+            "open ports",
+        ]
+    ):
         return "network"
 
-    if any(phrase in normalized for phrase in ["processes", "running processes", "process list"]):
+    if any(
+        phrase in normalized
+        for phrase in [
+            "running processes",
+            "check processes",
+            "process list",
+            "what is running",
+        ]
+    ):
         return "processes"
 
-    if any(phrase in normalized for phrase in ["git status", "repository status", "git repository"]):
+    if any(
+        phrase in normalized
+        for phrase in [
+            "git status",
+            "check repository",
+            "check git",
+            "repository status",
+        ]
+    ):
         return "git"
 
-    if any(phrase in normalized for phrase in ["list files", "show files", "directory contents"]):
+    if any(
+        phrase in normalized
+        for phrase in [
+            "list files",
+            "show files",
+            "directory contents",
+            "what files",
+        ]
+    ):
         return "files"
 
     return None
 
 
-def route_tool(prompt: str) -> str | None:
-    prompt = prompt.strip()
+def execute_named_tool(tool_name: str, argument: str = "") -> str:
+    if tool_name == "system":
+        return system_information()
 
-    if not prompt:
-        return None
+    if tool_name == "cpu":
+        return cpu_information()
 
-    if prompt == "/tools":
-        return tools_help()
+    if tool_name == "ram":
+        return memory_information()
 
-    if prompt == "/memory":
-        return format_memories()
+    if tool_name == "disk":
+        return disk_information()
 
-    if prompt.startswith("/remember "):
-        return remember(prompt[len("/remember ") :])
+    if tool_name == "network":
+        return network_information()
 
-    if prompt.startswith("/forget "):
-        memory_id = prompt[len("/forget ") :].strip()
+    if tool_name == "processes":
+        return process_information()
+
+    if tool_name == "git":
+        return git_information()
+
+    if tool_name == "files":
+        return directory_information(argument or ".")
+
+    raise RuntimeErrorMessage(f"Unknown tool: {tool_name}")
+
+
+def route_local_request(prompt: str) -> dict[str, Any]:
+    """
+    Returns:
+      handled: whether this request used a local command
+      direct: text to print without an LLM
+      context: local data that should be summarized by the LLM
+    """
+
+    stripped = prompt.strip()
+
+    if stripped == "/tools":
+        return {
+            "handled": True,
+            "direct": tools_help(),
+            "context": "",
+        }
+
+    if stripped == "/memory":
+        return {
+            "handled": True,
+            "direct": format_memories(),
+            "context": "",
+        }
+
+    if stripped.startswith("/remember "):
+        content = stripped[len("/remember "):].strip()
+        return {
+            "handled": True,
+            "direct": remember(content),
+            "context": "",
+        }
+
+    if stripped.startswith("/forget "):
+        raw_id = stripped[len("/forget "):].strip()
+
         try:
-            return forget_memory(int(memory_id))
+            memory_id = int(raw_id)
         except ValueError:
-            return "Usage: /forget <memory-id>"
+            message = "Usage: /forget <memory-id>"
+        else:
+            message = forget_memory(memory_id)
 
-    if prompt == "/system":
-        return system_information()
+        return {
+            "handled": True,
+            "direct": message,
+            "context": "",
+        }
 
-    if prompt == "/cpu":
-        return cpu_information()
+    if stripped.startswith("/shell "):
+        command = stripped[len("/shell "):].strip()
 
-    if prompt == "/ram":
-        return memory_information()
+        return {
+            "handled": True,
+            "direct": safe_shell(command),
+            "context": "",
+        }
 
-    if prompt == "/disk":
-        return disk_information()
+    slash_tools = {
+        "/system": "system",
+        "/cpu": "cpu",
+        "/ram": "ram",
+        "/disk": "disk",
+        "/network": "network",
+        "/processes": "processes",
+        "/git": "git",
+    }
 
-    if prompt == "/network":
-        return network_information()
+    if stripped in slash_tools:
+        tool_name = slash_tools[stripped]
 
-    if prompt == "/processes":
-        return process_information()
+        return {
+            "handled": True,
+            "direct": "",
+            "context": execute_named_tool(tool_name),
+            "tool_name": tool_name,
+        }
 
-    if prompt == "/git":
-        return git_information()
+    if stripped == "/files":
+        return {
+            "handled": True,
+            "direct": "",
+            "context": directory_information("."),
+            "tool_name": "files",
+        }
 
-    if prompt.startswith("/files"):
-        path_text = prompt[len("/files") :].strip() or "."
-        return directory_information(path_text)
+    if stripped.startswith("/files "):
+        path_text = stripped[len("/files "):].strip()
 
-    if prompt.startswith("/shell "):
-        return safe_shell(prompt[len("/shell ") :])
+        return {
+            "handled": True,
+            "direct": "",
+            "context": directory_information(path_text),
+            "tool_name": "files",
+        }
 
-    natural_tool = detect_natural_tool(prompt)
+    natural_tool = detect_natural_tool(stripped)
 
-    if natural_tool == "system":
-        return system_information()
-    if natural_tool == "cpu":
-        return cpu_information()
-    if natural_tool == "ram":
-        return memory_information()
-    if natural_tool == "disk":
-        return disk_information()
-    if natural_tool == "network":
-        return network_information()
-    if natural_tool == "processes":
-        return process_information()
-    if natural_tool == "git":
-        return git_information()
-    if natural_tool == "files":
-        return directory_information()
+    if natural_tool:
+        return {
+            "handled": True,
+            "direct": "",
+            "context": execute_named_tool(natural_tool),
+            "tool_name": natural_tool,
+        }
 
-    return None
+    return {
+        "handled": False,
+        "direct": "",
+        "context": "",
+    }
+
+
+def memory_context(limit: int = 10) -> str:
+    memories = recall_memories(limit)
+
+    if not memories:
+        return ""
+
+    lines = ["Relevant long-term user memories:"]
+
+    for memory in memories:
+        lines.append(f"- {memory['content']}")
+
+    return "\n".join(lines)
+
+
+def runtime_status() -> dict[str, Any]:
+    return {
+        "base_directory": str(BASE_DIR),
+        "workspace": str(WORKSPACE_DIR),
+        "database": str(DATABASE_FILE),
+        "memory_count": len(recall_memories(100)),
+        "safe_commands": sorted(SAFE_COMMANDS),
+    }
+
+
+if __name__ == "__main__":
+    print(json.dumps(runtime_status(), indent=2))
