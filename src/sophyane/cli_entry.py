@@ -65,12 +65,20 @@ def _metadata_only_invocation() -> bool:
     return any(arg in {"-V", "--version", "--status", "--providers", "--doctor"} for arg in sys.argv[1:])
 
 
+def _browser_command_invocation() -> bool:
+    return len(sys.argv) > 1 and sys.argv[1] == "browser"
+
+
+def _run_browser_command() -> int:
+    from sophyane.browser.cli import main as browser_main
+
+    return browser_main(sys.argv[2:])
+
+
 def _start_local_server_if_needed() -> None:
-    # SLI-only modes do not use an LLM. Never inspect, start, or report the
-    # llama.cpp/GGUF runtime for these sessions, even when local_gguf is saved
-    # as the default provider in the persistent configuration.
     if (
         _metadata_only_invocation()
+        or _browser_command_invocation()
         or os.environ.get("SOPHYANE_SLI_ONLY") == "1"
         or os.environ.get("SOPHYANE_SLI_GRAPH") == "1"
         or os.environ.get("SOPHYANE_SLI_CONTINUOUS") == "1"
@@ -95,20 +103,13 @@ def _start_local_server_if_needed() -> None:
         print(f"◆ Local inference startup warning: {error}", file=sys.stderr, flush=True)
 
 
-
 # SOPHYANE_CANONICAL_WORKSPACE_V1
 def _canonicalize_launch_workspace() -> str | None:
-    """Move unsafe/default launch directories to the canonical Sophyane repo.
-
-    Explicit project directories are preserved.  This specifically prevents
-    WSL sessions or native Windows shells launched from Windows System32
-    from becoming the execution workspace for coding/build tasks.
-    """
+    """Move unsafe/default launch directories to the canonical Sophyane repo."""
     import os
     from pathlib import Path
 
     cwd = Path.cwd()
-
     normalized = str(cwd).replace("\\", "/").lower().rstrip("/")
 
     unsafe_launch = (
@@ -140,12 +141,7 @@ def _canonicalize_launch_workspace() -> str | None:
     )
 
     for candidate in candidates:
-        if (
-            candidate.is_dir()
-            and (
-                candidate / "pyproject.toml"
-            ).is_file()
-        ):
+        if candidate.is_dir() and (candidate / "pyproject.toml").is_file():
             os.chdir(candidate)
             return str(candidate)
 
@@ -153,9 +149,11 @@ def _canonicalize_launch_workspace() -> str | None:
 
 
 def main() -> int:
-
-    # SOPHYANE_CANONICAL_WORKSPACE_CALL_V1
     _canonicalize_launch_workspace()
+
+    if _browser_command_invocation():
+        return _run_browser_command()
+
     from sophyane.runtime_artifact_patch import install_artifact_patch
     from sophyane.runtime_browser_patch import install_browser_patch
     from sophyane.runtime_deep_agent_patch import install_deep_agent_runtime
@@ -173,7 +171,6 @@ def main() -> int:
     from sophyane.runtime_sli_brain import install_sli_brain
     from sophyane.runtime_sli_builder import install_sli_builder
     from sophyane.runtime_sli_capability_planner import install_sli_capability_planner
-    # SOPHYANE_FILESYSTEM_CAPABILITIES_V20
     from sophyane.runtime_filesystem_capabilities_v20 import install_filesystem_capabilities_v20
     from sophyane.runtime_sli_intent_patch import install_sli_intent_routing
     from sophyane.runtime_sli_mission_os import install_sli_mission_os
@@ -199,32 +196,18 @@ def main() -> int:
     install_sli_intent_routing()
     install_intent_refinement()
     install_sli_onset_feedback()
-    # Install capability planning before specialized browser builders so software
-    # requests receive a deterministic project type and safe scaffold first.
     install_sli_capability_planner()
-    # SOPHYANE_FILESYSTEM_CAPABILITIES_V20
     install_filesystem_capabilities_v20()
-    # SLI assembles premium browser artifacts itself. Install before the asset
-    # pipeline so verified downloaded photos are supplied to the builder.
     install_sli_builder()
     install_premium_asset_pipeline()
-    # Mission OS installs after all artifact builders so complex multi-service
-    # requests are intercepted before any one-shot provider artifact is requested.
     install_sli_mission_os()
-    # Final authority: SLI owns routing, profile selection, prompt budgets and
-    # deterministic fallbacks. Local/cloud LLMs remain replaceable workers.
     install_sli_brain()
-    # Keep mission routing outermost after all provider wrappers.
     install_capability_acquisition_patch()
-    # Executable software projects must bypass editable visual-session routing.
     install_software_routing_guard()
-    # Semantic browser-game repair must see the final wrapped validator and
-    # continuation prompt, so it is installed after all other runtime patches.
     install_snake_semantic_repair()
 
     try:
         from sophyane.platform_kernel import ensure_platform_filesystem
-
         ensure_platform_filesystem()
     except Exception as error:  # noqa: BLE001
         print(f"◆ Platform filesystem warning: {error}", file=sys.stderr, flush=True)
@@ -232,44 +215,25 @@ def main() -> int:
     if len(sys.argv) <= 1:
         try:
             from sophyane.startup_policy import choose_startup_provider
-
             choose_startup_provider()
         except (EOFError, KeyboardInterrupt):
             print("\nStartup selection cancelled; keeping current configuration.", file=sys.stderr)
         except Exception as error:
             print(f"◆ Startup provider selection warning: {error}", file=sys.stderr)
 
-
-    # SOPHYANE_FRESH_PREVIEW_INSTALL_V1
-    # All explicit SLI previews use the exact-workspace, no-store server.
     try:
         import sophyane.sli_capability_engine as _sli_engine
-
-        from sophyane.code_memory.fresh_preview import (
-            preview_workspace as _fresh_preview_workspace,
-        )
-
-        _sli_engine.preview_sli_artifact = (
-            _fresh_preview_workspace
-        )
-
+        from sophyane.code_memory.fresh_preview import preview_workspace as _fresh_preview_workspace
+        _sli_engine.preview_sli_artifact = _fresh_preview_workspace
     except Exception as error:
-        print(
-            f"◆ Fresh preview installation warning: {error}",
-            file=sys.stderr,
-            flush=True,
-        )
+        print(f"◆ Fresh preview installation warning: {error}", file=sys.stderr, flush=True)
 
     print(_runtime_identity(), file=sys.stderr, flush=True)
     _start_local_server_if_needed()
     if len(sys.argv) <= 1:
         print(_user_start_tips(), file=sys.stderr, flush=True)
-    # SOPHYANE_CONTINUOUS_SLI_CLI_V1
     if os.environ.get("SOPHYANE_SLI_CONTINUOUS") == "1":
-        from sophyane.code_memory.continuous_sli_loop import (
-            run_continuous_sli_loop,
-        )
-
+        from sophyane.code_memory.continuous_sli_loop import run_continuous_sli_loop
         return run_continuous_sli_loop()
 
     from sophyane.v13_cli import main as run_cli
