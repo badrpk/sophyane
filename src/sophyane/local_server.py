@@ -17,6 +17,9 @@ LOG_FILE = RUNTIME_DIR / "llama-server.log"
 PID_FILE = RUNTIME_DIR / "llama-server.pid"
 START_FILE = RUNTIME_DIR / "llama-server.started"
 STALL_SECONDS = 90.0
+LOCK_FILE = RUNTIME_DIR / "llama-server.starting"
+
+# SOPHYANE_LLAMA_SINGLE_OWNER_V1
 
 
 def _state() -> dict:
@@ -51,6 +54,289 @@ def _listening(port: int) -> bool:
     except OSError:
         return False
 
+
+
+def _process_cmdline(pid: int) -> str:
+    """Read a process command line without trusting a reused PID."""
+    if pid <= 0:
+        return ""
+
+    try:
+        return (
+            Path(f"/proc/{pid}/cmdline")
+            .read_bytes()
+            .replace(b"\0", b" ")
+            .decode(
+                "utf-8",
+                errors="replace",
+            )
+        )
+    except OSError:
+        return ""
+
+
+def _expected_gguf(
+    state: dict | None = None,
+) -> Path | None:
+    value = str(
+        (state or _state()).get(
+            "gguf_path"
+        )
+        or ""
+    ).strip()
+
+    if not value:
+        return None
+
+    return Path(value).expanduser()
+
+
+def _pid_matches_expected_server(
+    pid: int,
+    state: dict | None = None,
+) -> bool:
+    """Prove PID ownership before reuse or termination."""
+    command = _process_cmdline(
+        pid
+    )
+
+    if "llama-server" not in command:
+        return False
+
+    gguf = _expected_gguf(
+        state
+    )
+
+    if gguf is None:
+        return False
+
+    return (
+        str(gguf) in command
+        or gguf.name in command
+    )
+
+
+def _models_match_expected(
+    port: int,
+    state: dict | None = None,
+) -> bool:
+    """Require /v1/models to identify the configured GGUF."""
+    import urllib.error
+    import urllib.request
+
+    gguf = _expected_gguf(
+        state
+    )
+
+    if gguf is None:
+        return False
+
+    expected = {
+        str(gguf).casefold(),
+        gguf.name.casefold(),
+        gguf.stem.casefold(),
+    }
+
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/v1/models",
+            timeout=1.5,
+        ) as response:
+
+            if response.status != 200:
+                return False
+
+            payload = json.loads(
+                response.read().decode(
+                    "utf-8",
+                    errors="replace",
+                )
+            )
+
+    except (
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+        urllib.error.HTTPError,
+        urllib.error.URLError,
+    ):
+        return False
+
+    data = (
+        payload.get("data")
+        if isinstance(
+            payload,
+            dict,
+        )
+        else None
+    )
+
+    if not isinstance(
+        data,
+        list,
+    ):
+        return False
+
+    for entry in data:
+
+        if not isinstance(
+            entry,
+            dict,
+        ):
+            continue
+
+        model_id = str(
+            entry.get("id")
+            or ""
+        ).strip()
+
+        if not model_id:
+            continue
+
+        observed = {
+            model_id.casefold(),
+            Path(model_id).name.casefold(),
+            Path(model_id).stem.casefold(),
+        }
+
+        if expected & observed:
+            return True
+
+    return False
+
+
+def _boot_id() -> str:
+    try:
+        return (
+            Path(
+                "/proc/sys/kernel/random/boot_id"
+            )
+            .read_text(
+                encoding="utf-8"
+            )
+            .strip()
+        )
+    except OSError:
+        return ""
+
+
+def _read_start_lock() -> tuple[int, str]:
+    try:
+        text = LOCK_FILE.read_text(
+            encoding="utf-8"
+        ).strip()
+    except OSError:
+        return 0, ""
+
+    try:
+        value = json.loads(
+            text
+        )
+
+        if isinstance(
+            value,
+            dict,
+        ):
+            return (
+                int(
+                    value.get(
+                        "pid"
+                    )
+                    or 0
+                ),
+                str(
+                    value.get(
+                        "boot_id"
+                    )
+                    or ""
+                ),
+            )
+
+    except (
+        ValueError,
+        TypeError,
+        json.JSONDecodeError,
+    ):
+        pass
+
+    try:
+        return int(text), ""
+    except ValueError:
+        return 0, ""
+
+
+def _acquire_start_lock() -> int | None:
+    """Acquire startup ownership; recover only provably stale locks."""
+    RUNTIME_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    for _ in range(2):
+
+        try:
+            fd = os.open(
+                LOCK_FILE,
+                os.O_CREAT
+                | os.O_EXCL
+                | os.O_WRONLY,
+                0o600,
+            )
+
+        except FileExistsError:
+
+            owner_pid, owner_boot = (
+                _read_start_lock()
+            )
+
+            current_boot = (
+                _boot_id()
+            )
+
+            same_boot = (
+                not owner_boot
+                or not current_boot
+                or owner_boot
+                == current_boot
+            )
+
+            if (
+                same_boot
+                and _pid_alive(
+                    owner_pid
+                )
+            ):
+                return None
+
+            try:
+                LOCK_FILE.unlink()
+            except OSError:
+                return None
+
+            continue
+
+        payload = json.dumps(
+            {
+                "pid":
+                    os.getpid(),
+                "boot_id":
+                    _boot_id(),
+                "created":
+                    time.time(),
+            },
+            sort_keys=True,
+        ).encode(
+            "utf-8"
+        )
+
+        os.write(
+            fd,
+            payload,
+        )
+
+        return fd
+
+    return None
 
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
@@ -124,6 +410,33 @@ def _log_tail(limit: int = 1600) -> str:
 
 def _server_path(state: dict) -> Path | None:
     candidates: list[Path] = []
+
+    configured = str(
+        os.environ.get(
+            "SOPHYANE_LLAMA_SERVER_BIN",
+            "",
+        )
+        or ""
+    ).strip()
+
+    if configured:
+        explicit = Path(
+            configured
+        ).expanduser()
+
+        if (
+            explicit.is_file()
+            and os.access(
+                explicit,
+                os.X_OK,
+            )
+        ):
+            return explicit
+
+        # Explicit configuration is authoritative.
+        # Fail closed instead of silently selecting
+        # a different executable.
+        return None
     for key in ("server", "llama_server", "server_path"):
         if state.get(key):
             candidates.append(Path(str(state[key])).expanduser())
@@ -143,24 +456,110 @@ def _server_path(state: dict) -> Path | None:
     return None
 
 
+
 def server_status() -> tuple[str, str]:
-    """Return ready, loading, stalled, stopped, or failed."""
+    """Return ready, loading, stalled, foreign, stopped, or failed."""
+    state = _state()
     port = _configured_port()
-    if _listening(port):
-        return "ready", f"llama-server is listening on {port}"
     pid = _read_pid()
-    if _pid_alive(pid):
+
+    if _listening(
+        port
+    ):
+
+        if _models_match_expected(
+            port,
+            state,
+        ):
+            return (
+                "ready",
+                f"configured llama-server "
+                f"is listening on {port}",
+            )
+
+        if (
+            _pid_alive(
+                pid
+            )
+            and _pid_matches_expected_server(
+                pid,
+                state,
+            )
+        ):
+            age = _startup_age()
+
+            if age >= STALL_SECONDS:
+                return (
+                    "stalled",
+                    f"configured llama-server "
+                    f"process {pid} is not "
+                    f"inference-ready after "
+                    f"{int(age)}s. "
+                    f"Log: {_log_tail()}",
+                )
+
+            return (
+                "loading",
+                f"configured llama-server "
+                f"process {pid} is loading "
+                f"on {port} "
+                f"({int(age)}s)",
+            )
+
+        return (
+            "foreign",
+            f"port {port} is occupied by "
+            f"an unexpected or unverifiable "
+            f"process; refusing reuse or kill",
+        )
+
+    if _pid_alive(
+        pid
+    ):
+
+        if not _pid_matches_expected_server(
+            pid,
+            state,
+        ):
+            return (
+                "foreign",
+                f"recorded PID {pid} is not "
+                f"the configured llama-server; "
+                f"refusing ownership",
+            )
+
         age = _startup_age()
+
         if age >= STALL_SECONDS:
             return (
                 "stalled",
-                f"llama-server process {pid} has not opened {port} after {int(age)}s. "
+                f"llama-server process {pid} "
+                f"has not opened {port} "
+                f"after {int(age)}s. "
                 f"Log: {_log_tail()}",
             )
-        return "loading", f"llama-server process {pid} is loading on {port} ({int(age)}s)"
+
+        return (
+            "loading",
+            f"llama-server process {pid} "
+            f"is loading on {port} "
+            f"({int(age)}s)",
+        )
+
     if pid:
-        return "failed", f"llama-server process {pid} exited before listening. Log: {_log_tail()}"
-    return "stopped", f"llama-server is not running on {port}"
+        return (
+            "failed",
+            f"llama-server process {pid} "
+            f"exited before listening. "
+            f"Log: {_log_tail()}",
+        )
+
+    return (
+        "stopped",
+        f"llama-server is not "
+        f"running on {port}",
+    )
+
 
 
 def _launch(state: dict, port: int, *, minimal: bool = False) -> tuple[bool, str]:
@@ -245,37 +644,94 @@ def _launch(state: dict, port: int, *, minimal: bool = False) -> tuple[bool, str
     return True, f"llama-server process {process.pid} is loading on {port}"
 
 
+
 def ensure_server_background() -> tuple[bool, str]:
-    """Start one detached llama-server and recover one stalled startup."""
+    """Own exactly one persistent llama-server process."""
     state = _state()
     port = _configured_port()
-    status, message = server_status()
-    if status in {"ready", "loading"}:
+
+    status, message = (
+        server_status()
+    )
+
+    if status in {
+        "ready",
+        "loading",
+    }:
         return True, message
+
+    if status == "foreign":
+        return False, message
+
     if status == "stalled":
+
         old_pid = _read_pid()
-        _terminate_process_group(old_pid)
+
+        if not _pid_matches_expected_server(
+            old_pid,
+            state,
+        ):
+            return (
+                False,
+                f"refusing to terminate "
+                f"unverified PID {old_pid}",
+            )
+
+        _terminate_process_group(
+            old_pid
+        )
+
         _clear_runtime_state()
 
-    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    lock_path = RUNTIME_DIR / "llama-server.starting"
-    try:
-        lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    except FileExistsError:
-        return True, f"llama-server startup already in progress on {port}"
+    lock_fd = (
+        _acquire_start_lock()
+    )
+
+    if lock_fd is None:
+        return (
+            True,
+            f"llama-server startup "
+            f"already in progress "
+            f"on {port}",
+        )
 
     try:
-        os.write(lock_fd, str(os.getpid()).encode())
-        ok, launch_message = _launch(state, port, minimal=(status == "stalled"))
-        if ok:
-            return True, launch_message
-        return False, launch_message
+
+        # Another caller may have completed
+        # startup while this caller was waiting.
+        status, message = (
+            server_status()
+        )
+
+        if status in {
+            "ready",
+            "loading",
+        }:
+            return True, message
+
+        if status == "foreign":
+            return False, message
+
+        return _launch(
+            state,
+            port,
+            minimal=(
+                status == "stalled"
+            ),
+        )
+
     finally:
-        os.close(lock_fd)
+
         try:
-            lock_path.unlink()
-        except OSError:
-            pass
+            os.close(
+                lock_fd
+            )
+        finally:
+            try:
+                LOCK_FILE.unlink()
+            except OSError:
+                pass
+
 
 
 def wait_until_ready(timeout: float = 20.0) -> bool:

@@ -845,90 +845,158 @@ def llama_server_reachable(timeout: float = 2.0) -> bool:
         return False
 
 
+
 def start_llama_server(
     gguf_path: Path,
     *,
     progress: ProgressFn | None = None,
     binaries: dict[str, str] | None = None,
 ) -> None:
-    if llama_server_reachable():
-        _progress(progress, "llama-server already running")
-        return
+    """Delegate persistent llama-server ownership to local_server.
 
-    binaries = binaries or install_llama_cpp(progress, force=False)
-    # Reinstall if previous broken thin wrappers exist.
-    if not _llama_libs_ok(LLAMA_RUNTIME_DIR):
-        binaries = install_llama_cpp(progress, force=True)
+    SOPHYANE_LLAMA_SINGLE_OWNER_V1
 
-    server = binaries.get("server") or str(BIN_DIR / "llama-server")
-    if not Path(server).exists():
-        raise RuntimeError("llama-server binary missing")
+    local_runtime may discover models and binaries, but only
+    sophyane.local_server may create the persistent server process.
+    """
+    gguf_path = (
+        Path(
+            gguf_path
+        )
+        .expanduser()
+        .resolve()
+    )
 
-    host = "127.0.0.1"
-    port = 8766
-    for prefix in ("https://", "http://"):
-        if LLAMA_SERVER_HOST.startswith(prefix):
-            rest = LLAMA_SERVER_HOST[len(prefix) :]
-            if ":" in rest:
-                host, port_s = rest.rsplit(":", 1)
-                try:
-                    port = int(port_s)
-                except ValueError:
-                    port = 8766
-            else:
-                host = rest
-            break
-
-    log_path = STATE_DIR / "llama-server.log"
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    _progress(progress, f"Starting llama-server on {host}:{port} with {gguf_path.name} …")
-    threads = max(1, min(4, os.cpu_count() or 1))
-    # Context budget: small models still need headroom for chat system prompts.
-    # Keep conservative on very low RAM; coding planner should not run here.
-    ram = profile_hardware().ram_mb
-    if ram < 2000:
-        ctx = 2048
-    elif ram < 3500:
-        ctx = 4096
-    else:
-        ctx = 8192
-    cmd = [
-        server,
-        "-m",
-        str(gguf_path),
-        "--host",
-        host,
-        "--port",
-        str(port),
-        "-c",
-        str(ctx),
-        "-t",
-        str(threads),
-        "--parallel",
-        "1",
-    ]
-    env = os.environ.copy()
-    runtime = binaries.get("runtime") or str(LLAMA_RUNTIME_DIR)
-    lib_dirs = sorted({str(p.parent) for p in Path(runtime).rglob("*.so*")})
-    if runtime not in lib_dirs:
-        lib_dirs.insert(0, runtime)
-    env["LD_LIBRARY_PATH"] = ":".join(lib_dirs) + ":" + env.get("LD_LIBRARY_PATH", "")
-    with log_path.open("a", encoding="utf-8") as log:
-        subprocess.Popen(
-            cmd,
-            stdout=log,
-            stderr=log,
-            start_new_session=True,
-            env=env,
+    if not gguf_path.is_file():
+        raise RuntimeError(
+            f"GGUF model file "
+            f"missing: {gguf_path}"
         )
 
-    deadline = time.time() + 90
-    while time.time() < deadline:
-        if llama_server_reachable():
-            _progress(progress, "llama-server is ready")
-            return
-        time.sleep(0.5)
-    raise RuntimeError(f"llama-server did not become ready. See {log_path}")
+    try:
+        state = json.loads(
+            GGUF_STATE_FILE.read_text(
+                encoding="utf-8"
+            )
+        )
+    except (
+        OSError,
+        json.JSONDecodeError,
+    ):
+        state = {}
+
+    if not isinstance(
+        state,
+        dict,
+    ):
+        state = {}
+
+    state[
+        "gguf_path"
+    ] = str(
+        gguf_path
+    )
+
+    state[
+        "endpoint"
+    ] = LLAMA_SERVER_HOST
+
+    if binaries:
+
+        server = str(
+            binaries.get(
+                "server"
+            )
+            or ""
+        ).strip()
+
+        cli = str(
+            binaries.get(
+                "cli"
+            )
+            or ""
+        ).strip()
+
+        if server:
+            state[
+                "server"
+            ] = server
+
+        if cli:
+            state[
+                "cli"
+            ] = cli
+
+    explicit_server = str(
+        os.environ.get(
+            "SOPHYANE_LLAMA_SERVER_BIN",
+            "",
+        )
+        or ""
+    ).strip()
+
+    if explicit_server:
+        state[
+            "server"
+        ] = explicit_server
+
+    STATE_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    GGUF_STATE_FILE.write_text(
+        json.dumps(
+            state,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    from sophyane.local_server import (
+        ensure_server_background,
+        failure_detail,
+        wait_until_ready,
+    )
+
+    ok, message = (
+        ensure_server_background()
+    )
+
+    if not ok:
+        raise RuntimeError(
+            message
+        )
+
+    timeout = max(
+        20.0,
+        float(
+            os.environ.get(
+                "SOPHYANE_LLAMA_READY_TIMEOUT",
+                "120",
+            )
+        ),
+    )
+
+    if not wait_until_ready(
+        timeout=timeout
+    ):
+        raise RuntimeError(
+            "llama-server did not "
+            "become inference-ready: "
+            + (
+                failure_detail()
+                or message
+            )
+        )
+
+    _progress(
+        progress,
+        "llama-server is ready",
+    )
+
 
 
 def persist_gguf_state(
