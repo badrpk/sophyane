@@ -54,6 +54,9 @@ Operating rules:
 LOCAL_CHAT_SYSTEM_PROMPT = (
     "You are Sophyane, a helpful local AI assistant. "
     "Answer clearly and briefly. Do not invent tool runs or file edits. "
+    "When RECENT CONVERSATION is supplied, use it to resolve follow-up references. "
+    "When LIVE WEB PAGE EVIDENCE or LIVE INTERNET RESEARCH is supplied, use it "
+    "as current evidence and do not claim you cannot access the web content. "
     "If you lack information, say so."
 )
 
@@ -271,10 +274,46 @@ class SophyaneAgent:
         )
         local_mode = active_provider == "local_gguf"
 
+        web_context = ""
+        try:
+            from sophyane.web_grounding import build_web_grounding
+
+            web_context = build_web_grounding(
+                original_message,
+                max_chars=3000 if local_mode else 5000,
+            )
+        except Exception:
+            # Web grounding is additive. Preserve normal chat if research fails.
+            self.logger.debug("Web grounding unavailable", exc_info=True)
+
         if local_mode:
-            # Skip bulky memory dumps — they drown 0.5B–1B models.
-            sections = [f"User: {original_message}"]
-            prompt = "\n".join(sections)
+            # Keep only a tiny recent-context window so 0.5B–1.5B models can
+            # resolve follow-ups across separate CLI invocations without being
+            # drowned by full conversation/memory dumps.
+            recent = self.memory.recent_messages(limit=5)
+            history_lines = []
+            for item in recent[:-1]:
+                content = str(item.get("content") or "").strip()
+                if not content:
+                    continue
+                if len(content) > 220:
+                    content = content[:220] + "…"
+                history_lines.append(f"{item['role']}: {content}")
+            history = "\n".join(history_lines[-4:])
+            if len(history) > 900:
+                history = history[-900:]
+
+            sections = []
+            if history:
+                sections.append("RECENT CONVERSATION:\n" + history)
+            sections.append(f"CURRENT USER REQUEST:\n{original_message}")
+            if web_context:
+                sections.append(web_context)
+                sections.append(
+                    "Answer the user's request from the evidence above. "
+                    "Prefer current fetched evidence over model memory."
+                )
+            prompt = "\n\n".join(sections)
             system = LOCAL_CHAT_SYSTEM_PROMPT
         else:
             memory_context = self.memory.format_relevant(original_message)
@@ -295,6 +334,8 @@ class SophyaneAgent:
                 sections.append(
                     "Recent conversation:\n" + "\n".join(history_lines)
                 )
+            if web_context:
+                sections.append(web_context)
             sections.append(f"Current user request:\n{original_message}")
             if captured:
                 sections.append(
