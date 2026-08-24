@@ -208,8 +208,23 @@ def export_daily_epoch(day: str | None = None) -> dict[str, Any]:
         line = f"- {day}: {len(day_blocks)} proposals · merkle `{epoch['merkle_root'][:16]}…` · device `{epoch['device']}`\n"
         if catalog.exists():
             existing = catalog.read_text(encoding="utf-8")
-            if day not in existing:
-                catalog.write_text(existing.rstrip() + "\n" + line, encoding="utf-8")
+            prefix = f"- {day}:"
+            existing_lines = existing.splitlines()
+            replaced = False
+            updated_lines = []
+            for existing_line in existing_lines:
+                if existing_line.startswith(prefix):
+                    if not replaced:
+                        updated_lines.append(line.rstrip("\n"))
+                        replaced = True
+                    continue
+                updated_lines.append(existing_line)
+            if not replaced:
+                updated_lines.append(line.rstrip("\n"))
+            catalog.write_text(
+                "\n".join(updated_lines).rstrip() + "\n",
+                encoding="utf-8",
+            )
         else:
             catalog.write_text(
                 "# Sophyane daily improvement catalog\n\n"
