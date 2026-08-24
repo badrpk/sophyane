@@ -28,5 +28,14 @@ executable patches into `main`.
 - 2026-08-14: 6 proposals · merkle `f0fae8453203cc49…` · device `localhost-cd8f5f9f`
 - 2026-08-14: 1 proposals · merkle `56e09a5c7cf26534…` · device `runnervmzvulz-1cc9423c`
 - 2026-08-15: 6 proposals · merkle `3afb70d4917a53be…` · device `localhost-cd8f5f9f`
+- 2026-08-16: 1 proposals · merkle `0e3ac716cf32970c…` · device `runnervmzvulz-1cc9423c`
 - 2026-08-16: 33 proposals · merkle `4a6f1bedd3956867…` · device `localhost-cd8f5f9f`
+- 2026-08-17: 1 proposals · merkle `9121072d677fda03…` · device `runnervmzvulz-1cc9423c`
+- 2026-08-18: 1 proposals · merkle `a3199842e12d91cd…` · device `runnervmzvulz-1cc9423c`
+- 2026-08-19: 1 proposals · merkle `3cd34445bfa55898…` · device `runnervmzvulz-1cc9423c`
+- 2026-08-20: 1 proposals · merkle `3ceefcfaff4cda89…` · device `runnervmzvulz-1cc9423c`
 - 2026-08-20: 15 proposals · merkle `c031d822e591fad5…` · device `localhost-cd8f5f9f`
+- 2026-08-21: 1 proposals · merkle `2518b7ccb9900e6c…` · device `runnervm76f27-5836e3db`
+- 2026-08-22: 1 proposals · merkle `67ce2747c993fb7c…` · device `runnervm76f27-5836e3db`
+- 2026-08-23: 1 proposals · merkle `50be2a3ed4898921…` · device `runnervm76f27-5836e3db`
+- 2026-08-24: 1 proposals · merkle `73e2dc3c65bc62bc…` · device `runnervm76f27-5836e3db`

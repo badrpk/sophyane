@@ -209,11 +209,16 @@ def export_daily_epoch(day: str | None = None) -> dict[str, Any]:
         if catalog.exists():
             existing = catalog.read_text(encoding="utf-8")
             prefix = f"- {day}:"
+            device_marker = f"· device `{epoch['device']}`"
             existing_lines = existing.splitlines()
             replaced = False
             updated_lines = []
             for existing_line in existing_lines:
-                if existing_line.startswith(prefix):
+                is_same_identity = (
+                    existing_line.startswith(prefix)
+                    and existing_line.endswith(device_marker)
+                )
+                if is_same_identity:
                     if not replaced:
                         updated_lines.append(line.rstrip("\n"))
                         replaced = True

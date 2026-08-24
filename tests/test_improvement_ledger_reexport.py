@@ -221,8 +221,8 @@ def test_same_day_reexport_deduplicates_existing_rows(
 
     catalog.write_text(
         "# Sophyane daily improvement catalog\n\n"
-        f"- {day}: stale one\n"
-        f"- {day}: stale two\n",
+        f"- {day}: stale one · device `test-device`\n"
+        f"- {day}: stale two · device `test-device`\n",
         encoding="utf-8",
     )
 
@@ -302,7 +302,7 @@ def test_reexport_preserves_other_catalog_rows(
     catalog.write_text(
         "# Sophyane daily improvement catalog\n\n"
         f"{other_before}\n"
-        f"- {day}: stale row\n"
+        f"- {day}: stale row · device `test-device`\n"
         f"{other_after}\n",
         encoding="utf-8",
     )
@@ -347,3 +347,192 @@ def test_reexport_preserves_other_catalog_rows(
     ]
 
     assert len(rows) == 1
+
+
+def test_same_day_reexport_preserves_other_device_row(
+    tmp_path: Path,
+    monkeypatch,
+):
+    day = "2099-01-06"
+
+    local_dir = tmp_path / "local"
+    repo_dir = (
+        tmp_path
+        / "repo"
+        / "improvements"
+    )
+
+    repo_dir.mkdir(
+        parents=True
+    )
+
+    catalog = (
+        repo_dir
+        / "CATALOG.md"
+    )
+
+    other_device_row = (
+        f"- {day}: "
+        "7 proposals "
+        "· merkle `other-device-root…` "
+        "· device `remote-device`"
+    )
+
+    catalog.write_text(
+        "# Sophyane daily improvement catalog\n\n"
+        f"{other_device_row}\n",
+        encoding="utf-8",
+    )
+
+    blocks = [
+        _block(
+            index=1,
+            timestamp=_timestamp(day, 0),
+            block_hash="eee",
+        ),
+    ]
+
+    _configure(
+        monkeypatch=monkeypatch,
+        local_dir=local_dir,
+        repo_dir=repo_dir,
+        current_blocks=blocks,
+    )
+
+    result = ledger.export_daily_epoch(
+        day
+    )
+
+    lines = catalog.read_text(
+        encoding="utf-8"
+    ).splitlines()
+
+    assert other_device_row in lines
+
+    same_day_rows = [
+        line
+        for line in lines
+        if line.startswith(
+            f"- {day}:"
+        )
+    ]
+
+    local_expected = (
+        f"- {day}: "
+        f"{result['count']} proposals "
+        f"· merkle "
+        f"`{result['merkle_root'][:16]}…` "
+        f"· device `{result['device']}`"
+    )
+
+    assert same_day_rows == [
+        other_device_row,
+        local_expected,
+    ]
+
+
+def test_same_day_reexport_deduplicates_only_same_device(
+    tmp_path: Path,
+    monkeypatch,
+):
+    day = "2099-01-07"
+
+    local_dir = tmp_path / "local"
+    repo_dir = (
+        tmp_path
+        / "repo"
+        / "improvements"
+    )
+
+    repo_dir.mkdir(
+        parents=True
+    )
+
+    catalog = (
+        repo_dir
+        / "CATALOG.md"
+    )
+
+    other_device_row = (
+        f"- {day}: "
+        "3 proposals "
+        "· merkle `remote-root…` "
+        "· device `remote-device`"
+    )
+
+    catalog.write_text(
+        "# Sophyane daily improvement catalog\n\n"
+        f"- {day}: stale local one "
+        "· device `test-device`\n"
+        f"{other_device_row}\n"
+        f"- {day}: stale local two "
+        "· device `test-device`\n",
+        encoding="utf-8",
+    )
+
+    blocks = [
+        _block(
+            index=1,
+            timestamp=_timestamp(day, 0),
+            block_hash="fff",
+        ),
+    ]
+
+    _configure(
+        monkeypatch=monkeypatch,
+        local_dir=local_dir,
+        repo_dir=repo_dir,
+        current_blocks=blocks,
+    )
+
+    result = ledger.export_daily_epoch(
+        day
+    )
+
+    lines = catalog.read_text(
+        encoding="utf-8"
+    ).splitlines()
+
+    assert other_device_row in lines
+
+    same_device_rows = [
+        line
+        for line in lines
+        if (
+            line.startswith(
+                f"- {day}:"
+            )
+            and line.endswith(
+                "· device `test-device`"
+            )
+        )
+    ]
+
+    expected = (
+        f"- {day}: "
+        f"{result['count']} proposals "
+        f"· merkle "
+        f"`{result['merkle_root'][:16]}…` "
+        f"· device `{result['device']}`"
+    )
+
+    assert same_device_rows == [
+        expected
+    ]
+
+    other_rows = [
+        line
+        for line in lines
+        if (
+            line.startswith(
+                f"- {day}:"
+            )
+            and line.endswith(
+                "· device `remote-device`"
+            )
+        )
+    ]
+
+    assert other_rows == [
+        other_device_row
+    ]
