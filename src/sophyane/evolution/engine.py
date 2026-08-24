@@ -72,6 +72,9 @@ COMPONENT_PATHS = {
 }
 
 
+from sophyane.evolution.badrpk_targets import resolve_target
+from sophyane.evolution.target_policy import build_target_policy
+
 class EvolutionEngine:
     def __init__(
         self,
@@ -79,6 +82,17 @@ class EvolutionEngine:
     ) -> None:
         self.config = config
         self.repo = config.repo.resolve()
+        self.harness_repo = self.repo
+        self.target = resolve_target(
+            name=config.target_name,
+            harness_repo=self.harness_repo,
+            explicit_repo=config.target_repo,
+            badrpk_root=config.badrpk_root,
+        )
+        self.target_repo = self.target.repo
+        self.target_policy = build_target_policy(
+            self.target
+        )
         self.records = (
             config.resolved_records_dir()
         )

@@ -124,6 +124,9 @@ class EvolutionRecord:
 @dataclass
 class EvolutionConfig:
     repo: Path
+    target_name: str = "sophyane"
+    target_repo: Path | None = None
+    badrpk_root: Path | None = None
     cycles: int = 1
     timeout_seconds: int = 180
     allow_cloud_analysis: bool = True
