@@ -189,6 +189,26 @@ def install_intent_refinement() -> None:
 
             self.emit("You", message)
 
+            # SOPHYANE_AUTHORITATIVE_OBJECTIVE_PREFLIGHT
+            # Consume the ORIGINAL user request before adaptive dispatch,
+            # intent refinement, SLI acquisition, races or provider calls.
+            from sophyane.objective_preflight import (
+                preflight_original_request,
+            )
+
+            preflight_reply = preflight_original_request(
+                message
+            )
+
+            if preflight_reply is not None:
+                self.emit(
+                    "Sophyane",
+                    str(preflight_reply),
+                )
+
+                self.active_request = ""
+                continue
+
             # SOPHYANE_AUTO_EFFECTIVE_TUI_AUTHORITY_V1
             #
             # install_intent_refinement() replaces ObservableTUI.run at

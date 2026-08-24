@@ -1330,6 +1330,32 @@ class ObservableTUI:
 
             self.emit("You", message)
 
+            # SOPHYANE_PRE_DISPATCH_OBJECTIVE_GATE
+            from sophyane.objective_preflight import (
+                preflight_original_request,
+            )
+
+            preflight_reply = preflight_original_request(
+                message
+            )
+
+            if preflight_reply is not None:
+                print()
+                print("Sophyane")
+
+                for preflight_line in str(
+                    preflight_reply
+                ).splitlines():
+                    print(
+                        "  " + preflight_line
+                    )
+
+                print()
+                self.active_request = ""
+                continue
+
+
+
             # SOPHYANE_NATIVE_CHOICE_STATE_DISPATCH
             normalized_choice = " ".join(message.casefold().split())
 
