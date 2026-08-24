@@ -1628,6 +1628,41 @@ validate the returned filesystem evidence.
             self.emit("Sophyane", text)
 
 
+def _create_provider_for_observable_tui(
+    config: dict[str, Any],
+) -> Any:
+    """Construct a provider except for an authoritative SLI-only refusal.
+
+    The provider factory is imported here deliberately. Historically
+    run_observable_tui() could resolve create_provider through its own
+    local scope; this module-level helper must own that dependency.
+
+    Only the explicit SLI-only refusal is translated to ``None``.
+    Every other construction failure remains fail-closed.
+    """
+    from sophyane.main import (
+        create_provider as authoritative_create_provider,
+    )
+
+    try:
+        return authoritative_create_provider(
+            config
+        )
+
+    except RuntimeError as error:
+        message = str(
+            error
+        )
+
+        if (
+            "SLI-only session forbids LLM provider construction"
+            not in message
+        ):
+            raise
+
+        return None
+
+
 def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
     from pathlib import Path
 
@@ -1804,7 +1839,7 @@ def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
         # Explicit provider modes retain the conventional provider-backed
         # SophyaneAgent path.
         agent = SophyaneAgent(
-            create_provider(config),
+            _create_provider_for_observable_tui(config),
             MemoryStore(),
             logger,
         )
