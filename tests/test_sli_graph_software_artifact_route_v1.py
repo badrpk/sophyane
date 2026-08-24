@@ -59,7 +59,7 @@ def test_constructive_non_browser_software_uses_software_artifact(
 def test_informational_software_topics_remain_informational(
     case: str,
 ) -> None:
-    assert route(case) == "memory_then_internet"
+    assert route(case) == "general_knowledge"
 
 
 @pytest.mark.parametrize(

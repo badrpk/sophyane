@@ -84,11 +84,11 @@ def test_constructive_non_browser_software_routes_without_internet(
         ),
         (
             "Explain how daemon process monitoring works.",
-            "memory_then_internet",
+            "general_knowledge",
         ),
         (
             "What is a terminal agent?",
-            "memory_then_internet",
+            "general_knowledge",
         ),
     ),
 )

@@ -75,10 +75,19 @@ def sli_preplanning_feedback(message: str) -> str:
             pass
 
     lines = _task_hints(message)
-    if defects:
+
+    # SOPHYANE_RELEVANT_ONSET_FEEDBACK_V1
+    #
+    # Historical execution/artifact telemetry is relevant only when the
+    # current request is itself an execution/build task. Ordinary factual
+    # chat must not inherit HTML defects, cloud-rescue counts, or visual
+    # planning guidance.
+    execution_relevant = bool(lines)
+
+    if execution_relevant and defects:
         common = ", ".join(name for name, _count in defects.most_common(4))
         lines.append(f"Recent SLI execution history most often observed these failure modes: {common}.")
-    if actions:
+    if execution_relevant and actions:
         total = sum(actions.values())
         rescue = actions.get("escalate_cloud", 0)
         repair = actions.get("targeted_repair", 0)
@@ -87,11 +96,11 @@ def sli_preplanning_feedback(message: str) -> str:
                 f"Across {total} recent SLI decisions, {repair} needed targeted repair and {rescue} needed cloud rescue; "
                 "make acceptance criteria concrete enough to prevent those repairs where possible."
             )
-    if latencies:
+    if execution_relevant and latencies:
         average = sum(latencies) / len(latencies)
         lines.append(f"Recent provider latency averaged {average:.1f}s; prefer a direct, bounded plan with minimal redundant generations.")
     if not lines:
-        lines.append("Use a small, testable plan; create real artifacts before commands; verify every user-visible requirement.")
+        return ""
     return "\n".join(f"- {line}" for line in lines[:10])
 
 
@@ -133,11 +142,13 @@ def install_sli_onset_feedback() -> None:
     def context_prompt(self: Any, message: str, *, continuing: bool) -> str:
         base = original_context(self, message, continuing=continuing)
         feedback = sli_preplanning_feedback(message)
+        if not feedback:
+            return base
+
         return (
             base
             + "\n\nSLI EXECUTION GUIDANCE FOR THIS PLAN:\n"
             + feedback
-            + "\nLay out the smallest plan predicted to satisfy the approved request, while targeting a premium visual demo rather than a bare minimum page."
         )
 
     def premium_html_prompt(original_request: str, existing: str = "") -> str:

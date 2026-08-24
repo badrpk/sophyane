@@ -357,6 +357,86 @@ def _duckduckgo_search(query: str, *, limit: int = 5) -> list[dict[str, Any]]:
     return hits[:limit]
 
 
+
+def normalize_knowledge_query(query: str) -> str:
+    """Reduce conversational knowledge prompts to retrieval-oriented topics.
+
+    This function performs syntax-only normalization. It does not invent
+    entities, facts, synonyms, or answers.
+    """
+    import re
+
+    text = " ".join(
+        str(query or "").strip().split()
+    )
+
+    if not text:
+        return ""
+
+    value = text.casefold()
+
+    # Remove only well-defined conversational wrappers.
+    patterns = (
+        r"^please\s+explain\s+(?:what\s+)?",
+        r"^explain\s+(?:what\s+)?",
+        r"^please\s+define\s+",
+        r"^define\s+",
+        r"^tell\s+me\s+about\s+",
+        r"^what\s+is\s+",
+        r"^what\s+are\s+",
+        r"^what\s+was\s+",
+        r"^describe\s+",
+    )
+
+    wrapper_removed = False
+
+    for pattern in patterns:
+        reduced = re.sub(
+            pattern,
+            "",
+            value,
+            count=1,
+        )
+
+        if reduced != value:
+            value = reduced
+            wrapper_removed = True
+            break
+
+    # Remove grammatical residue from forms such as:
+    #   "Explain what a red-black tree is."
+    value = re.sub(
+        r"\s+(?:is|are|was)\s*[?.!]*$",
+        "",
+        value,
+    )
+
+    value = value.strip(
+        " \t\r\n?.!:;,\"'"
+    )
+
+    # A conversational wrapper frequently leaves an English article:
+    #
+    #   "What is a red-black tree?" -> "a red-black tree"
+    #
+    # Remove that grammatical article only when we actually stripped a
+    # recognized wrapper. Bare retrieval queries such as "a-ha" or arbitrary
+    # user text are otherwise preserved.
+    if wrapper_removed:
+        value = re.sub(
+            r"^(?:a|an|the)\s+",
+            "",
+            value,
+            count=1,
+        )
+
+    # Avoid destructive over-normalization.
+    if not value:
+        return text
+
+    return value
+
+
 def web_search(query: str, *, limit: int = 6) -> dict[str, Any]:
     """Live internet search for agent/chat grounding (Wikipedia + DuckDuckGo)."""
     q = (query or "").strip()

@@ -253,10 +253,38 @@ class FallbackProvider(Provider):
             allow_cloud_local_rescue = bool(
                 cfg.get("allow_cloud_local_rescue", False)
             )
+            # SOPHYANE_STRICT_CLOUD_BOOTSTRAP_BOUNDARY_V2
+            # Explicit cloud mode is terminal provider authority. Persisted
+            # allow_cloud_local_rescue must not override the selected session.
+            import os as _cloud_rescue_policy_os
+
+            session_mode = str(
+                _cloud_rescue_policy_os.environ.get(
+                    "SOPHYANE_SESSION_MODE"
+                )
+                or ""
+            ).strip().lower()
+
+            disable_local_fallback = (
+                str(
+                    _cloud_rescue_policy_os.environ.get(
+                        "SOPHYANE_DISABLE_LOCAL_FALLBACK"
+                    )
+                    or ""
+                ).strip().lower()
+                in {"1", "true", "yes", "on"}
+            )
+
+            strict_cloud = (
+                session_mode == "cloud_llm"
+                or disable_local_fallback
+            )
+
 
             if (
                 is_credit_or_auth_failure(joined)
                 and allow_cloud_local_rescue
+                and not strict_cloud
             ):
                 LOGGER.warning(
                     "Configured cloud providers failed; explicit local rescue "
@@ -410,7 +438,42 @@ def build_fallback_provider(
     discovered = loader.discover()
     llm_config = load_llm_config()
     primary = str(config.get("provider", "")).strip().lower()
-    order = resolve_provider_order(primary, llm_config=llm_config)
+    order = resolve_provider_order(
+        primary,
+        llm_config=llm_config,
+    )
+
+    # SOPHYANE_STRICT_CLOUD_PROVIDER_CHAIN_V1
+    #
+    # Session mode is stronger authority than a persisted fallback_order.
+    # Explicit cloud_llm means exactly the selected cloud provider: stale
+    # llm.json entries must not silently append local_gguf or another backend.
+    import os as _provider_policy_os
+
+    session_mode = str(
+        _provider_policy_os.environ.get(
+            "SOPHYANE_SESSION_MODE"
+        )
+        or ""
+    ).strip().lower()
+
+    disable_local_fallback = (
+        str(
+            _provider_policy_os.environ.get(
+                "SOPHYANE_DISABLE_LOCAL_FALLBACK"
+            )
+            or ""
+        ).strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+
+    if (
+        session_mode == "cloud_llm"
+        or disable_local_fallback
+    ):
+        order = [
+            primary
+        ] if primary else []
 
     providers_cfg = llm_config.get("providers") or {}
     timeout = int(config.get("timeout", 180))

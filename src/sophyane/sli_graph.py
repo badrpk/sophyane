@@ -267,6 +267,177 @@ def _is_software_artifact_request(request: str) -> bool:
     )
 
 
+
+# SOPHYANE_GENERAL_KNOWLEDGE_ROUTE_V1
+
+def _is_browser_product_request(request: str) -> bool:
+    """Recognize explicit construction of browser-delivered products."""
+    text = " ".join(
+        str(request or "").casefold().split()
+    )
+
+    if not text:
+        return False
+
+    constructive = any(
+        text.startswith(prefix)
+        or f" {prefix}" in text
+        for prefix in (
+            "build ",
+            "create ",
+            "make ",
+            "develop ",
+            "design ",
+            "generate ",
+            "implement ",
+            "produce ",
+        )
+    )
+
+    browser_target = any(
+        cue in text
+        for cue in (
+            "website",
+            "web site",
+            "webpage",
+            "web page",
+            "web app",
+            "browser app",
+            "browser application",
+            "html",
+            "index.html",
+            "landing page",
+            "dashboard",
+            "visualizer",
+        )
+    )
+
+    return bool(
+        constructive
+        and browser_target
+    )
+
+
+def _is_general_knowledge_request(request: str) -> bool:
+    """Recognize non-constructive factual/explanatory questions."""
+    text = " ".join(
+        str(request or "").casefold().split()
+    )
+
+    if not text:
+        return False
+
+    if _is_browser_product_request(text):
+        return False
+
+    if _is_software_artifact_request(text):
+        return False
+
+    prefixes = (
+        "what is ",
+        "what are ",
+        "what was ",
+        "who is ",
+        "who was ",
+        "who invented ",
+        "when ",
+        "where ",
+        "why ",
+        "how does ",
+        "how do ",
+        "explain ",
+        "describe ",
+        "tell me about ",
+        "compare ",
+        "define ",
+    )
+
+    return text.startswith(
+        prefixes
+    )
+
+
+def try_grounded_knowledge(
+    state: SLIState,
+    progress: Progress,
+) -> SLIState:
+    """Produce a textual grounded answer without artifact or LLM authority."""
+    if (
+        state.success
+        or state.meta.get("terminal")
+        or state.meta.get("private")
+    ):
+        return state
+
+    progress(
+        "SLI-graph: grounded textual knowledge retrieval"
+    )
+
+    try:
+        from sophyane.web_intel import (
+            grounded_answer_from_search,
+            normalize_knowledge_query,
+            web_search,
+        )
+
+        retrieval_query = normalize_knowledge_query(
+            state.request
+        )
+
+        search = web_search(
+            retrieval_query
+        )
+
+        answer = grounded_answer_from_search(
+            state.request,
+            search,
+        ).strip()
+
+        if answer:
+            state.report = (
+                answer
+                + "\n\n"
+                + "Success: True\n"
+                + "Artifact construction used: False\n"
+                + "LLM used: False\n"
+            )
+            state.success = True
+            state.meta["terminal"] = True
+            state.meta["grounded_text_answer"] = True
+            state.log(
+                "grounded-knowledge success=True"
+            )
+            return state
+
+        state.report = (
+            "SLI-only mode could not obtain grounded textual evidence "
+            "for this knowledge request.\n"
+            "Success: False\n"
+            "Artifact construction used: False\n"
+            "LLM used: False\n"
+        )
+        state.meta["terminal"] = True
+        state.log(
+            "grounded-knowledge success=False"
+        )
+
+    except Exception as error:
+        state.errors.append(
+            "grounded-knowledge:"
+            + f"{type(error).__name__}: {error}"
+        )
+        state.report = (
+            "SLI-only grounded knowledge retrieval failed safely.\n"
+            f"Error: {type(error).__name__}: {error}\n"
+            "Success: False\n"
+            "Artifact construction used: False\n"
+            "LLM used: False\n"
+        )
+        state.meta["terminal"] = True
+
+    return state
+
+
 def classify(state: SLIState, progress: Progress) -> SLIState:
     q = (state.request or "").lower()
     progress(f"SLI-graph: classify «{state.request[:80]}»")
@@ -323,6 +494,16 @@ def classify(state: SLIState, progress: Progress) -> SLIState:
             # Generic constructive non-browser software must outrank
             # historical product/python heuristics such as "client",
             # "implement " and "fastapi".
+            elif _is_browser_product_request(
+                state.request
+            ):
+                state.route = "product_app"
+
+            elif _is_general_knowledge_request(
+                state.request
+            ):
+                state.route = "general_knowledge"
+
             elif _is_software_artifact_request(
                 state.request
             ):
@@ -1081,6 +1262,9 @@ def run_sli_graph(
             "software_artifact": [
                 try_memory_router,
             ],
+            "general_knowledge": [
+                try_grounded_knowledge,
+            ],
             "memory_then_internet": [try_memory_router, try_internet],
         }
         steps = pipelines.get(
@@ -1115,7 +1299,23 @@ def run_sli_graph(
             ):
                 break
 
-        state = validate_and_promote(state, progress)
+        # SOPHYANE_TERMINAL_TEXT_PROMOTION_BYPASS_V1
+        #
+        # A completed textual knowledge response is not a workspace
+        # artifact and therefore has nothing to validate or promote.
+        # Product/software routes retain the existing promotion gate.
+        terminal_text = (
+            state.route == "general_knowledge"
+            and state.meta.get("terminal")
+            and state.meta.get("grounded_text_answer")
+        )
+
+        if not terminal_text:
+            state = validate_and_promote(
+                state,
+                progress,
+            )
+
         state.seconds = round(time.perf_counter() - started, 3)
         if state.report and "SLI-graph route:" not in state.report:
             state.report = (

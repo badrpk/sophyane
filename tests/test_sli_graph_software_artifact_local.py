@@ -60,7 +60,7 @@ def test_constructive_code_routes_to_software_artifact(
 def test_informational_questions_remain_informational(
     case: str,
 ) -> None:
-    assert route(case) == "memory_then_internet"
+    assert route(case) == "general_knowledge"
 
 
 @pytest.mark.parametrize(

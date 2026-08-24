@@ -411,11 +411,47 @@ def install_intent_refinement() -> None:
                 continue
 
             has_project = bool(self.active_request and self.active_workspace)
-            refined_result = _confirm_refinement(self, message, has_project=has_project, tui_v2=tui_v2)
-            if refined_result is None:
-                self.emit("system", "Request cancelled; no files were changed.")
-                continue
-            route, refined_message = refined_result
+
+            # SOPHYANE_DIRECT_CHAT_REFINEMENT_BYPASS_V1
+            #
+            # Ordinary deterministic chat does not need a first provider
+            # generation merely to rediscover that it is chat. That duplicate
+            # refinement call wastes latency/tokens and can cause a small model
+            # to answer the routing prompt instead of the user's question.
+            #
+            # Execution/continuation requests retain the existing refinement
+            # and confirmation authority unchanged.
+            try:
+                from sophyane.runtime_sli_brain import (
+                    _route as _sli_pre_refinement_route,
+                )
+
+                pre_refinement_route = _sli_pre_refinement_route(
+                    message,
+                    has_project,
+                )
+            except Exception:
+                pre_refinement_route = ""
+
+            if pre_refinement_route == "chat":
+                route = "chat"
+                refined_message = message
+            else:
+                refined_result = _confirm_refinement(
+                    self,
+                    message,
+                    has_project=has_project,
+                    tui_v2=tui_v2,
+                )
+
+                if refined_result is None:
+                    self.emit(
+                        "system",
+                        "Request cancelled; no files were changed.",
+                    )
+                    continue
+
+                route, refined_message = refined_result
 
             # Installed visual capabilities must be activated here,
             # while the original/refined user request is still available.

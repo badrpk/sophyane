@@ -584,9 +584,32 @@ def install_sli_brain() -> None:
     original_context = tui_v2.ObservableTUI._context_prompt
 
     def context_prompt(self: Any, message: str, *, continuing: bool) -> str:
-        decision = decide(message, has_project=continuing)
-        base = _clean(original_context(self, message, continuing=continuing), 850)
-        checks = " | ".join(decision.criteria)
+        decision = decide(
+            message,
+            has_project=continuing,
+        )
+
+        base = _clean(
+            original_context(
+                self,
+                message,
+                continuing=continuing,
+            ),
+            850,
+        )
+
+        # SOPHYANE_CHAT_CONTEXT_ISOLATION_V1
+        #
+        # The immutable executable ledger is an execution-plane contract.
+        # Feeding it to route=chat causes local/cloud models to emit shell,
+        # JSON or planning scaffolds instead of answering the user.
+        if decision.route == "chat" and not continuing:
+            return base
+
+        checks = " | ".join(
+            decision.criteria
+        )
+
         return (
             f"SLI_PROFILE={decision.profile}; ROUTE={decision.route}; "
             f"GOAL={base}; CHECKS={checks}; "
