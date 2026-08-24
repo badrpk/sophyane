@@ -1740,6 +1740,40 @@ def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
                 f"Adaptive race failed safely: {error}"
             )
 
+    elif session_mode == "sli_graph":
+        # SOPHYANE_MODE2_SLI_TOP_LEVEL_AUTHORITY_V1
+        #
+        # Mode 2 intentionally has no LLM provider.
+        # The original request therefore enters SLI Graph
+        # directly instead of constructing SophyaneAgent(None).
+        workspace = (
+            Path.cwd().resolve()
+            / ".sophyane-workspace"
+        )
+
+        def ask(message: str) -> AgentResponse:
+            raise RuntimeError(
+                "SLI Graph mode low-level provider callback was invoked. "
+                "Original user requests must use dispatch_user_request()."
+            )
+
+        def dispatch_user_request(
+            message: str,
+        ) -> AgentResponse:
+            from sophyane.sli_graph import (
+                run_sli_graph,
+            )
+
+            state = run_sli_graph(
+                message,
+                workspace=workspace,
+                progress=lambda event: app.progress(event),
+            )
+
+            return AgentResponse(
+                state.report
+            )
+
     else:
         # Explicit provider modes retain the conventional provider-backed
         # SophyaneAgent path.
