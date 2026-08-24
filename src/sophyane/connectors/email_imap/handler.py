@@ -297,6 +297,22 @@ def execute(
         if op == "search":
             query = str(args.get("query") or args.get("message") or "").strip()
             return _op_search(user, pw, query, host, port)
+        if op in ("analyze", "analysis", "advanced_search"):
+            from sophyane.connectors.email_imap.analysis import analyze
+
+            query = str(
+                args.get("query")
+                or args.get("message")
+                or ""
+            ).strip()
+
+            return analyze(
+                user=user,
+                pw=pw,
+                host=host,
+                port=port,
+                query=query,
+            )
         return {
             "ok": False,
             "error": "unknown_op",

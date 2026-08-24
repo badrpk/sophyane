@@ -1,5 +1,6 @@
 """Load connector manifests and dispatch ops."""
 from __future__ import annotations
+import re
 
 import importlib
 import json
@@ -209,17 +210,6 @@ def run_connector(
 def try_connector_reply(message: str, profile: str | None = None) -> str | None:
     text = " ".join(str(message or "").lower().split())
 
-    outbound_email_words = {
-        "send",
-        "compose",
-        "write",
-        "draft",
-        "reply",
-        "forward",
-        "email to",
-        "mail to",
-    }
-
     email_resources = {
         "email",
         "mail",
@@ -227,8 +217,52 @@ def try_connector_reply(message: str, profile: str | None = None) -> str | None:
         "inbox",
     }
 
-    is_email_request = any(word in text for word in email_resources)
-    is_outbound_request = any(word in text for word in outbound_email_words)
+    is_email_request = any(
+        word in text
+        for word in email_resources
+    )
+
+    # Some natural mailbox-analysis requests omit the literal words
+    # "email", "mail", "gmail", and "inbox". Recognize only narrow
+    # email-conversation evidence patterns here. Do not treat the
+    # generic word "message" alone as email, because other private
+    # connectors may own SMS/WhatsApp/Telegram/etc.
+    implicit_email_analysis_patterns = (
+        r"\bmessages?\s+i\s+received\b.{0,80}\b(?:never|not)\s+replied\b",
+        r"\breceived\s+messages?\b.{0,80}\b(?:never|not)\s+replied\b",
+        r"\bmessages?\s+i\s+sent\b.{0,80}\bmessages?\s+i\s+received\b",
+        r"\bmessages?\s+i\s+received\b.{0,80}\bmessages?\s+i\s+sent\b",
+        r"\blater\s+sent\s+reply\s+from\s+me\b",
+        r"\bsubsequently\s+replied\b",
+    )
+
+    implicit_email_analysis_request = any(
+        re.search(pattern, text)
+        for pattern in implicit_email_analysis_patterns
+    )
+
+    if not is_email_request:
+        is_email_request = implicit_email_analysis_request
+
+    # Outbound authority must require an explicit requested action.
+    # Words such as "reply", "sent", or "forward" occurring as
+    # evidence-analysis nouns/verbs must NOT imply permission to send.
+    outbound_patterns = (
+        r"\bsend\s+(?:an?\s+)?email\b",
+        r"\bsend\s+(?:an?\s+)?mail\b",
+        r"\bcompose\s+(?:an?\s+)?email\b",
+        r"\bdraft\s+(?:an?\s+)?email\b",
+        r"\bwrite\s+(?:an?\s+)?email\s+to\b",
+        r"\breply\s+to\s+(?:this|the|an?)\s+(?:email|message)\b",
+        r"\bforward\s+(?:this|the|an?)\s+(?:email|message)\b",
+        r"\bemail\s+[^.?!]{1,100}\s+about\b",
+        r"\bmail\s+[^.?!]{1,100}\s+about\b",
+    )
+
+    is_outbound_request = any(
+        re.search(pattern, text)
+        for pattern in outbound_patterns
+    )
 
     if is_email_request and is_outbound_request:
         return (
@@ -238,15 +272,96 @@ def try_connector_reply(message: str, profile: str | None = None) -> str | None:
             "to San Francisco ticket next month with flexible dates."
         )
 
+    # Complex analytical requests may be more efficiently
+    # solved by an ephemeral deterministic program than by a
+    # generic connector operation. The compiled task receives
+    # no greater authority than the original read-only request.
+    try:
+        from sophyane.task_orchestrator import (
+            try_compiled_task_reply,
+        )
+
+        compiled_reply = try_compiled_task_reply(
+            message,
+            profile=profile,
+        )
+
+        if compiled_reply is not None:
+            return compiled_reply
+
+    except Exception:
+        # Compiler failure must never destroy the existing
+        # deterministic connector path.
+        pass
+
     match = resolve_connector_op(message, profile=profile)
-    if match is None:
-        return None
-    result = run_connector(
-        match.connector_id,
-        match.op,
-        args={"query": message, "message": message},
-        profile=profile,
+
+    # Complex read-only mailbox analysis must take precedence over
+    # simple "sent" or "search" phrase matches. For example,
+    # "Search Inbox and Sent Mail ... did I later reply?" contains
+    # the phrase "sent mail", but it is not asking for the latest
+    # sent message.
+    advanced_email_analysis_markers = (
+        "inbox and sent",
+        "search inbox and sent",
+        "inspect my inbox and sent",
+        "received count",
+        "sent count",
+        "most frequently by email",
+        "classify my",
+        "classify them",
+        "classify emails",
+        "classify received emails",
+        "analyze my last 200 received emails",
+        "analyze my received emails",
+        "containing attachments",
+        "email attachments",
+        "reconstruct the thread",
+        "thread chronologically",
+        "cannot find a later sent reply",
+        "whether i subsequently replied",
+        "require action from me",
+        "unresolved",
+        "invoices",
+        "receipts",
+        "payment confirmations",
+        "api keys",
+        "credentials",
+        "access tokens",
     )
+
+    advanced_email_analysis_request = (
+        implicit_email_analysis_request
+        or any(
+            marker in text
+            for marker in advanced_email_analysis_markers
+        )
+    )
+
+    if advanced_email_analysis_request and is_email_request:
+        result = run_connector(
+            "email.imap",
+            "analyze",
+            args={
+                "query": message,
+                "message": message,
+            },
+            profile=profile,
+        )
+
+    elif match is None:
+        return None
+
+    else:
+        result = run_connector(
+            match.connector_id,
+            match.op,
+            args={
+                "query": message,
+                "message": message,
+            },
+            profile=profile,
+        )
     if not result.get("ok"):
         return result.get("message") or f"Connector error: {result.get('error')}"
     fmt = result.get("formatted")
