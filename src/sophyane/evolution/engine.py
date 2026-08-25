@@ -1685,34 +1685,97 @@ Return:
                 )
             )
 
-            retain_worktree = promotable
+            promotion_committed = False
 
             if (
                 promotable
                 and self.config.allow_promotion
             ):
-                subprocess.run(
-                    [
-                        "git",
-                        "add",
-                        "-A",
-                    ],
-                    cwd=worktree,
-                    check=True,
-                )
-                subprocess.run(
-                    [
-                        "git",
-                        "commit",
-                        "-m",
-                        (
-                            "Constrained evolution: "
-                            + proposal.component
+                try:
+                    subprocess.run(
+                        [
+                            "git",
+                            "add",
+                            "-A",
+                        ],
+                        cwd=worktree,
+                        check=True,
+                    )
+
+                except subprocess.CalledProcessError as exc:
+                    return GateResult(
+                        targeted_passed=(
+                            targeted.returncode == 0
                         ),
-                    ],
-                    cwd=worktree,
-                    check=True,
-                )
+                        regression_passed=(
+                            regression.returncode == 0
+                        ),
+                        held_out_passed=held_out_passed,
+                        baseline_score=baseline_score,
+                        candidate_score=candidate_score,
+                        security_passed=security_passed,
+                        promotable=False,
+                        details={
+                            "worktree": str(worktree),
+                            "branch": branch,
+                            "promotion_stage": "git_add",
+                            "promotion_error": (
+                                (exc.stderr or "")
+                                or str(exc)
+                            )[-3000:],
+                            "promotion_returncode": (
+                                exc.returncode
+                            ),
+                            "promotion_committed": False,
+                        },
+                    )
+
+                try:
+                    subprocess.run(
+                        [
+                            "git",
+                            "commit",
+                            "-m",
+                            (
+                                "Constrained evolution: "
+                                + proposal.component
+                            ),
+                        ],
+                        cwd=worktree,
+                        check=True,
+                    )
+
+                except subprocess.CalledProcessError as exc:
+                    return GateResult(
+                        targeted_passed=(
+                            targeted.returncode == 0
+                        ),
+                        regression_passed=(
+                            regression.returncode == 0
+                        ),
+                        held_out_passed=held_out_passed,
+                        baseline_score=baseline_score,
+                        candidate_score=candidate_score,
+                        security_passed=security_passed,
+                        promotable=False,
+                        details={
+                            "worktree": str(worktree),
+                            "branch": branch,
+                            "promotion_stage": "git_commit",
+                            "promotion_error": (
+                                (exc.stderr or "")
+                                or str(exc)
+                            )[-3000:],
+                            "promotion_returncode": (
+                                exc.returncode
+                            ),
+                            "promotion_committed": False,
+                        },
+                    )
+
+                promotion_committed = True
+
+            retain_worktree = promotable
 
             return GateResult(
                 targeted_passed=(
@@ -1754,8 +1817,7 @@ Return:
                         candidate_generalization_score
                     ),
                     "promotion_committed": (
-                        promotable
-                        and self.config.allow_promotion
+                        promotion_committed
                     ),
                 },
             )
