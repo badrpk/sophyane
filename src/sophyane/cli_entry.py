@@ -154,6 +154,29 @@ def _canonicalize_launch_workspace() -> str | None:
 
 def main() -> int:
 
+    # SOPHYANE_STARTUP_AUTO_UPDATE_V1
+    # Update before runtime/provider initialization so a
+    # successfully updated installation is re-executed before
+    # any normal Sophyane services are started.
+    try:
+        from sophyane.startup_update import (
+            maybe_update_before_startup,
+        )
+
+        maybe_update_before_startup()
+
+    except KeyboardInterrupt:
+        raise
+
+    except Exception as error:
+        # Update availability must never become startup
+        # availability. Sophyane remains usable offline.
+        print(
+            f"◆ Sophyane update warning: {error}",
+            file=sys.stderr,
+            flush=True,
+        )
+
     # SOPHYANE_CANONICAL_WORKSPACE_CALL_V1
     _canonicalize_launch_workspace()
     from sophyane.runtime_artifact_patch import install_artifact_patch

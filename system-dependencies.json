@@ -1,0 +1,14 @@
+{
+  "termux": [
+    "git",
+    "python",
+    "clang",
+    "cmake",
+    "make",
+    "pkg-config",
+    "rust",
+    "libffi",
+    "openssl",
+    "postgresql"
+  ]
+}
