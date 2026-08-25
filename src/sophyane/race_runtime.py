@@ -192,6 +192,15 @@ class AdaptiveRace(Generic[T]):
                     None,
                 )
 
+            except SystemExit as exc:
+                # A worker-local SystemExit is a worker failure,
+                # not authority to terminate the race host.
+                return (
+                    worker,
+                    None,
+                    exc,
+                )
+
             except Exception as exc:
                 return (
                     worker,

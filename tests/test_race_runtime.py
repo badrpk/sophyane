@@ -156,6 +156,85 @@ def test_worker_failure_does_not_block_others():
     assert "cloud" in result.errors
 
 
+
+def test_worker_systemexit_does_not_terminate_race():
+    def fatal(stop, report):
+        raise SystemExit(23)
+
+    def survivor(stop, report):
+        time.sleep(0.03)
+
+        return {
+            "valid": True,
+            "score": 0.90,
+            "evidence": "survivor",
+        }
+
+    race = AdaptiveRace(
+        validator=validator,
+        minimum_score=0.70,
+        winner_grace_seconds=0.0,
+    )
+
+    result = race.run(
+        {
+            "fatal": fatal,
+            "survivor": survivor,
+        },
+        timeout=2.0,
+    )
+
+    assert result.ok
+    assert result.winner is not None
+    assert result.winner.worker == "survivor"
+
+    assert (
+        result.errors["fatal"]
+        == "SystemExit: 23"
+    )
+
+    failed = [
+        event
+        for event in result.events
+        if (
+            event.worker == "fatal"
+            and event.status
+            == RaceStatus.FAILED
+        )
+    ]
+
+    assert len(failed) == 1
+    assert failed[0].message == "SystemExit: 23"
+
+
+def test_worker_keyboardinterrupt_still_propagates():
+    def interrupted(stop, report):
+        raise KeyboardInterrupt()
+
+    race = AdaptiveRace(
+        validator=validator,
+        minimum_score=0.70,
+        winner_grace_seconds=0.0,
+    )
+
+    try:
+        race.run(
+            {
+                "interrupted": interrupted,
+            },
+            timeout=2.0,
+        )
+
+    except KeyboardInterrupt:
+        pass
+
+    else:
+        raise AssertionError(
+            "KeyboardInterrupt must remain "
+            "a host/operator interrupt"
+        )
+
+
 def test_slow_worker_does_not_hold_up_winner():
     def local(stop, report):
         for _ in range(100):
