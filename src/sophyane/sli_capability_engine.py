@@ -1540,6 +1540,30 @@ def preview_sli_artifact(
     *,
     progress: Progress | None = None,
 ) -> str:
+    # SOPHYANE_PREVIEW_DISABLED_BEFORE_SERVER_SPAWN_V1
+    preview_disabled = (
+        os.environ.get(
+            "SOPHYANE_DISABLE_BROWSER_OPEN",
+            "",
+        ).strip().lower()
+        in {"1", "true", "yes", "on"}
+        or os.environ.get(
+            "SOPHYANE_NO_AUTO_OPEN",
+            "",
+        ).strip().lower()
+        in {"1", "true", "yes", "on"}
+        or os.environ.get(
+            "SOPHYANE_BROWSER_PREVIEW",
+            "",
+        ).strip().lower()
+        in {"0", "false", "no", "off"}
+    )
+
+    if preview_disabled:
+        return (
+            "SLI preview skipped: browser preview is disabled."
+        )
+
     progress = progress or (lambda _message: None)
 
     target = _find_preview_target(workspace)
