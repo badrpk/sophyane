@@ -1,5 +1,80 @@
 from __future__ import annotations
 
+import pytest
+
+@pytest.fixture(scope="module", autouse=True)
+def _restore_fallback_provider_class_after_module():
+    """Keep quality-escalation runtime installation local to this module."""
+    from sophyane.providers import fallback as _fallback
+
+    cls = _fallback.FallbackProvider
+
+    before_class = dict(
+        cls.__dict__
+    )
+
+    sentinel_name = (
+        "_quality_escalation_installed"
+    )
+
+    sentinel_existed = hasattr(
+        _fallback,
+        sentinel_name,
+    )
+
+    sentinel_before = getattr(
+        _fallback,
+        sentinel_name,
+        None,
+    )
+
+    yield
+
+    after_class = dict(
+        cls.__dict__
+    )
+
+    changed_class_names = {
+        name
+        for name in (
+            set(before_class)
+            | set(after_class)
+        )
+        if (
+            before_class.get(name)
+            is not after_class.get(name)
+        )
+    }
+
+    for name in changed_class_names:
+        if name in before_class:
+            setattr(
+                cls,
+                name,
+                before_class[name],
+            )
+        else:
+            delattr(
+                cls,
+                name,
+            )
+
+    if sentinel_existed:
+        setattr(
+            _fallback,
+            sentinel_name,
+            sentinel_before,
+        )
+    elif hasattr(
+        _fallback,
+        sentinel_name,
+    ):
+        delattr(
+            _fallback,
+            sentinel_name,
+        )
+
+
 from dataclasses import dataclass
 
 
