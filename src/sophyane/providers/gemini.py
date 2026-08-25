@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -14,6 +17,7 @@ from sophyane.providers.base import (
     ProviderMetadata,
 )
 from sophyane.providers.http import post_json
+from sophyane.runtime_cancel import cancelled
 from sophyane.version import __version__
 
 
@@ -98,6 +102,150 @@ class GeminiProvider(Provider):
 
     def get_token_usage(self) -> dict[str, int]:
         return dict(self._token_usage)
+
+    # SOPHYANE_GEMINI_TRANSIENT_HTTP_RETRY_V1
+    _RETRYABLE_HTTP_STATUSES = {
+        429,
+        500,
+        502,
+        503,
+        504,
+    }
+
+    @staticmethod
+    def _http_status_from_error(
+        error: BaseException,
+    ) -> int | None:
+        """Extract an HTTP status preserved by the shared transport."""
+        match = re.search(
+            r"\bHTTP\s+(\d{3})\b",
+            str(error),
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            return None
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _retry_settings() -> tuple[int, float]:
+        """Return bounded runtime Gemini retry configuration."""
+        try:
+            attempts = int(
+                os.environ.get(
+                    "SOPHYANE_GEMINI_MAX_ATTEMPTS",
+                    "3",
+                )
+            )
+        except ValueError:
+            attempts = 3
+
+        try:
+            base_seconds = float(
+                os.environ.get(
+                    "SOPHYANE_GEMINI_RETRY_BASE_SECONDS",
+                    "0.75",
+                )
+            )
+        except ValueError:
+            base_seconds = 0.75
+
+        # Never permit configuration to create an unbounded retry loop.
+        attempts = min(
+            max(attempts, 1),
+            6,
+        )
+        base_seconds = min(
+            max(base_seconds, 0.0),
+            10.0,
+        )
+        return attempts, base_seconds
+
+    @staticmethod
+    def _cancel_aware_sleep(
+        delay: float,
+    ) -> None:
+        """Sleep in small slices so live cancellation stays responsive."""
+        deadline = time.monotonic() + max(
+            0.0,
+            delay,
+        )
+        while True:
+            if cancelled():
+                raise ProviderError(
+                    "provider generation cancelled"
+                )
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+
+            time.sleep(
+                min(
+                    0.1,
+                    remaining,
+                )
+            )
+
+    def _post_json_with_retry(
+        self,
+        url: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Retry only transient Gemini HTTP failures.
+
+        Provider-selection policy remains outside this method. In particular,
+        explicit Cloud mode stays Gemini-only and no local rescue is introduced.
+        """
+        max_attempts, base_seconds = (
+            self._retry_settings()
+        )
+
+        for attempt in range(
+            1,
+            max_attempts + 1,
+        ):
+            if cancelled():
+                raise ProviderError(
+                    "provider generation cancelled"
+                )
+
+            try:
+                return post_json(
+                    url,
+                    payload,
+                    timeout=self.timeout,
+                )
+            except ProviderError as error:
+                if cancelled():
+                    raise ProviderError(
+                        "provider generation cancelled"
+                    ) from error
+
+                status = self._http_status_from_error(
+                    error
+                )
+
+                if (
+                    status
+                    not in self._RETRYABLE_HTTP_STATUSES
+                    or attempt >= max_attempts
+                ):
+                    raise
+
+                delay = base_seconds * (
+                    2 ** (attempt - 1)
+                )
+
+                self._cancel_aware_sleep(
+                    delay
+                )
+
+        raise AssertionError(
+            "Gemini retry loop exited unexpectedly"
+        )
 
     def _record_usage(self, response: dict[str, Any]) -> None:
         usage = response.get("usageMetadata")
@@ -236,11 +384,10 @@ class GeminiProvider(Provider):
 
         last_response: dict[str, Any] = {}
         for attempt in range(2):
-            response = post_json(
+            response = self._post_json_with_retry(
                 "https://generativelanguage.googleapis.com/"
                 f"v1beta/models/{model}:generateContent?key={key}",
                 payload,
-                timeout=self.timeout,
             )
             self._record_usage(response)
             last_response = response
