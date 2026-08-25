@@ -259,23 +259,83 @@ def choose_startup_provider() -> dict[str, Any]:
 
         return config
 
-    if local and clouds:
-        print("\nStart this session with:", file=sys.stderr)
+    if local or clouds:
+        # SOPHYANE_FIVE_MODE_STARTUP_MENU_V1
+        #
+        # Session-mode visibility is independent from provider
+        # availability. Keep all five Sophyane operating modes
+        # visible and mark provider-specific modes unavailable.
+        print(
+            "\nStart this session with:",
+            file=sys.stderr,
+        )
+
         print(
             "  1. Sophyane — intelligently decide between available capabilities",
             file=sys.stderr,
         )
-        print("  2. SLI Graph — memory + internet, no LLM", file=sys.stderr)
-        print("  3. Local LLM — llama.cpp / GGUF on-device model", file=sys.stderr)
-        print(f"  4. Cloud LLM — use {clouds[0][1]}", file=sys.stderr)
+
+        print(
+            "  2. SLI Graph — memory + internet, no LLM",
+            file=sys.stderr,
+        )
+
+        if local:
+            print(
+                "  3. Local LLM — llama.cpp / GGUF on-device model",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "  3. Local LLM — unavailable; no local model configured",
+                file=sys.stderr,
+            )
+
+        if clouds:
+            print(
+                f"  4. Cloud LLM — use {clouds[0][1]}",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "  4. Cloud LLM — unavailable; no cloud API configured",
+                file=sys.stderr,
+            )
+
         print(
             "  5. Sophyane Learning — acquire + embed until saturation/Ctrl+C",
             file=sys.stderr,
         )
+
         while True:
-            answer = input("Select [1-5, default 1]: ").strip()
-            if answer in {"", "1", "2", "3", "4", "5"}:
+            answer = input(
+                "Select [1-5, default 1]: "
+            ).strip()
+
+            if answer in {"", "1", "2", "5"}:
                 break
+
+            if answer == "3":
+                if local:
+                    break
+
+                print(
+                    "Local LLM unavailable. "
+                    "Configure a local model first."
+                )
+                continue
+
+            if answer == "4":
+                if clouds:
+                    break
+
+                print(
+                    "Cloud LLM unavailable. "
+                    "Configure a cloud provider with "
+                    "`sophyane --setup`."
+                )
+                continue
+
             print("Enter 1, 2, 3, 4, or 5.")
 
         if answer in {"", "1"}:
@@ -381,8 +441,6 @@ def choose_startup_provider() -> dict[str, Any]:
             print(f"Mode: Cloud LLM ({cloud_id})", file=sys.stderr)
             return updated
 
-    elif local:
-        print("Mode: local only; no cloud rescue API is configured.", file=sys.stderr)
     elif clouds:
         if verbose_startup:
             print(f"Mode: cloud ({clouds[0][0]}); no local model is configured.", file=sys.stderr)
