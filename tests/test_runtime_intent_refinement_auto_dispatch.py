@@ -104,7 +104,7 @@ def test_effective_runtime_run_honors_auto_dispatch_before_refinement(
     ) in events
 
 
-def test_effective_runtime_run_falls_through_when_dispatch_returns_none(
+def test_effective_runtime_dispatch_none_uses_direct_chat_without_refinement(
     monkeypatch,
 ):
     patch.install_intent_refinement()
@@ -123,6 +123,7 @@ def test_effective_runtime_run_falls_through_when_dispatch_returns_none(
             self.messages = iter(
                 [
                     "ordinary chat request",
+                    "exit",
                 ]
             )
 
@@ -138,20 +139,165 @@ def test_effective_runtime_run_falls_through_when_dispatch_returns_none(
             events.append(
                 ("dispatch", message)
             )
-
-            # Dispatcher contract:
-            # None means "not handled; continue legacy routing".
-            # A response object means "handled; render and stop".
             return None
 
-    class StopAfterFallthrough(Exception):
+        def _context_prompt(
+            self,
+            message,
+            *,
+            continuing,
+        ):
+            events.append(
+                (
+                    "context",
+                    (
+                        message,
+                        continuing,
+                    ),
+                )
+            )
+            return message
+
+        def progress(self, message):
+            events.append(
+                ("progress", message)
+            )
+
+        def call_provider(self, message):
+            events.append(
+                ("provider", message)
+            )
+
+            class Response:
+                text = "DIRECT CHAT RESULT"
+
+            return Response()
+
+    monkeypatch.setattr(
+        tui_v2,
+        "_simple_chat_reply",
+        lambda message: None,
+    )
+
+    monkeypatch.setattr(
+        tui_v2,
+        "_render_nonexecuting_response",
+        lambda text: text,
+    )
+
+    monkeypatch.setattr(
+        tui_v2,
+        "_explicit_new_benchmark",
+        lambda message: False,
+    )
+
+    monkeypatch.setattr(
+        patch,
+        "_confirm_refinement",
+        lambda *args, **kwargs: (
+            _ for _ in ()
+        ).throw(
+            AssertionError(
+                "ordinary direct chat must bypass "
+                "intent refinement after dispatch(None)"
+            )
+        ),
+    )
+
+    effective_run = tui_v2.ObservableTUI.run
+
+    result = effective_run(
+        FakeTUI()
+    )
+
+    assert result == 0
+
+    assert (
+        "dispatch",
+        "ordinary chat request",
+    ) in events
+
+    assert any(
+        event[0] == "context"
+        and event[1][0]
+        == "ordinary chat request"
+        for event in events
+    )
+
+    assert any(
+        event[0] == "provider"
+        and (
+            "Answer directly. No JSON or tool action."
+            in event[1]
+        )
+        for event in events
+    )
+
+    assert (
+        "emit",
+        (
+            "Sophyane",
+            "DIRECT CHAT RESULT",
+        ),
+    ) in events
+
+
+def test_effective_runtime_execution_request_still_reaches_refinement(
+    monkeypatch,
+):
+    patch.install_intent_refinement()
+
+    events: list[tuple[str, object]] = []
+
+    class FakeTUI:
+        active_workspace = None
+        active_request = ""
+        project_requirements = []
+        history = []
+        trace = False
+        config = {}
+
+        def __init__(self):
+            self.messages = iter(
+                [
+                    "Repair the repository after a pytest failure.",
+                ]
+            )
+
+        def read_prompt(self, prompt):
+            return next(self.messages)
+
+        def emit(self, role, text):
+            events.append(
+                ("emit", (role, text))
+            )
+
+        def dispatch_user_request(self, message):
+            events.append(
+                ("dispatch", message)
+            )
+            return None
+
+    class StopAtRefinement(Exception):
         pass
 
-    def refinement(*args, **kwargs):
+    def refinement(
+        _self,
+        message,
+        *,
+        has_project,
+        tui_v2,
+    ):
         events.append(
-            ("refinement", args[1])
+            (
+                "refinement",
+                (
+                    message,
+                    has_project,
+                ),
+            )
         )
-        raise StopAfterFallthrough
+        raise StopAtRefinement
 
     monkeypatch.setattr(
         tui_v2,
@@ -168,16 +314,34 @@ def test_effective_runtime_run_falls_through_when_dispatch_returns_none(
     effective_run = tui_v2.ObservableTUI.run
 
     try:
-        effective_run(FakeTUI())
-    except StopAfterFallthrough:
+        effective_run(
+            FakeTUI()
+        )
+    except StopAtRefinement:
         pass
     else:
         raise AssertionError(
-            "expected refinement fallthrough"
+            "execution request must retain "
+            "intent-refinement authority"
         )
 
-    assert events.index(
-        ("dispatch", "ordinary chat request")
-    ) < events.index(
-        ("refinement", "ordinary chat request")
+    dispatch_event = (
+        "dispatch",
+        "Repair the repository after a pytest failure.",
+    )
+
+    refinement_event = (
+        "refinement",
+        (
+            "Repair the repository after a pytest failure.",
+            False,
+        ),
+    )
+
+    assert dispatch_event in events
+    assert refinement_event in events
+
+    assert (
+        events.index(dispatch_event)
+        < events.index(refinement_event)
     )
