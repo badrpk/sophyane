@@ -1,0 +1,12 @@
+SOPHYANE_STARTUP_AUTO_UPDATE_ZERO_TOUCH_PROOF
+
+PUBLIC_PARENT=664f9d74ab58376a089f36ee6b30aa9d46ec7826
+
+Purpose:
+This file is a harmless publication marker used to prove that
+an already-installed Sophyane device automatically detects,
+fast-forwards, verifies dependencies, smoke-tests, and re-executes
+when a newer public main commit becomes available.
+
+Created:
+2026-08-26T02:23:39+05:00
