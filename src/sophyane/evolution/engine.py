@@ -83,15 +83,39 @@ class EvolutionEngine:
         self.config = config
         self.repo = config.repo.resolve()
         self.harness_repo = self.repo
+
+        # Preserve the original harness-evolution contract: callers may
+        # construct the implicit Sophyane target around an ordinary
+        # temporary directory. Explicit target selection remains subject
+        # to the strict BADRPK repository validation performed by
+        # resolve_target().
+        implicit_default_target = (
+            config.target_name == "sophyane"
+            and config.target_repo is None
+            and config.badrpk_root is None
+        )
+
         self.target = resolve_target(
             name=config.target_name,
             harness_repo=self.harness_repo,
             explicit_repo=config.target_repo,
             badrpk_root=config.badrpk_root,
+            require_exists=not implicit_default_target,
         )
         self.target_repo = self.target.repo
-        self.target_policy = build_target_policy(
-            self.target
+
+        # The pre-target-compatibility EvolutionEngine allowed the
+        # implicit Sophyane harness to be an ordinary directory. A
+        # TargetPolicy represents a real Git-backed mutation target,
+        # so do not fabricate one for that legacy compatibility mode.
+        # Explicit target selection remains fully strict.
+        self.target_policy = (
+            None
+            if implicit_default_target
+            and not self.target.git_repo
+            else build_target_policy(
+                self.target
+            )
         )
         self.records = (
             config.resolved_records_dir()
