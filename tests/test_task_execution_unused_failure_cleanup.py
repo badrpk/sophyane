@@ -1,55 +1,49 @@
 from __future__ import annotations
 
-import ast
-from pathlib import Path
+import inspect
+
+from sophyane import task_execution
+from sophyane import task_orchestrator
 
 
-def _tree() -> ast.Module:
-    source = (
-        Path(__file__).parents[1]
-        / "src"
-        / "sophyane"
-        / "task_execution.py"
-    ).read_text(encoding="utf-8")
+def test_compiled_task_failure_contract_is_preserved() -> None:
+    source = inspect.getsource(
+        task_execution.execute_compiled_task
+    )
 
-    return ast.parse(source)
-
-
-def test_no_plain_local_failure_assignments_remain() -> None:
-    assignments = [
-        node.lineno
-        for node in ast.walk(_tree())
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name)
-            and target.id == "failure"
-            for target in node.targets
-        )
-    ]
-
-    assert assignments == []
+    assert '"error": "source_validation_failed"' in source
+    assert '"error": "task_timeout"' in source
+    assert '"error": "task_failed"' in source
+    assert '"error": "invalid_json_output"' in source
 
 
-def test_legitimate_annotated_failure_field_is_preserved() -> None:
-    annotated_fields = [
-        node.lineno
-        for node in ast.walk(_tree())
-        if isinstance(node, ast.AnnAssign)
-        and isinstance(node.target, ast.Name)
-        and node.target.id == "failure"
-    ]
+def test_failed_subprocess_preserves_diagnostic_evidence() -> None:
+    source = inspect.getsource(
+        task_execution.execute_compiled_task
+    )
 
-    assert annotated_fields
+    assert '"exit_code": process.returncode' in source
+    assert '"stderr": process.stderr[' in source
+    assert '"workspace": str(workspace)' in source
 
 
-def test_failure_evidence_is_still_recorded() -> None:
-    source = (
-        Path(__file__).parents[1]
-        / "src"
-        / "sophyane"
-        / "task_execution.py"
-    ).read_text(encoding="utf-8")
+def test_orchestrator_consumes_compiled_task_failures() -> None:
+    source = inspect.getsource(
+        task_orchestrator.try_compiled_task_reply
+    )
 
-    assert "failed_action = action.action_id" in source
-    assert "previous_failure = result.to_dict()" in source
-    assert "all_results.append(result)" in source
+    assert "execute_compiled_task(" in source
+    assert 'if not result.get("ok"):' in source
+    assert 'result.get(' in source
+    assert '"error"' in source
+    assert '"task_failed"' in source
+    assert '"source_validation_failed"' in source
+
+
+def test_legacy_action_result_failure_state_is_not_required() -> None:
+    source = inspect.getsource(
+        task_execution
+    )
+
+    assert "failed_action = action.action_id" not in source
+    assert "previous_failure = result.to_dict()" not in source
