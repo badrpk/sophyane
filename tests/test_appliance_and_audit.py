@@ -10,6 +10,51 @@ from sophyane.appliance import (
     write_systemd_unit,
 )
 from sophyane.feature_audit import run_full_audit
+# SOPHYANE_TEST_LIVE_LEDGER_ISOLATION_V1
+def _isolate_improvement_ledger(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    import sophyane.self_improve.ledger as ledger
+
+    state_dir = (
+        tmp_path
+        / "sophyane-state"
+    )
+
+    repo_improvements = (
+        tmp_path
+        / "repo"
+        / "improvements"
+    )
+
+    monkeypatch.setattr(
+        ledger,
+        "STATE_DIR",
+        state_dir,
+    )
+
+    monkeypatch.setattr(
+        ledger,
+        "LEDGER_PATH",
+        state_dir
+        / "improvement_chain.jsonl",
+    )
+
+    monkeypatch.setattr(
+        ledger,
+        "EPOCH_DIR",
+        state_dir
+        / "improvement_epochs",
+    )
+
+    monkeypatch.setattr(
+        ledger,
+        "REPO_IMPROVEMENTS",
+        repo_improvements,
+    )
+
+
 
 
 def test_detect_network_interfaces() -> None:
@@ -23,7 +68,12 @@ def test_detect_network_interfaces() -> None:
     assert "wifi_path" in cap
 
 
-def test_boot_appliance_once() -> None:
+def test_boot_appliance_once(monkeypatch, tmp_path: Path) -> None:
+    _isolate_improvement_ledger(
+        monkeypatch,
+        tmp_path,
+    )
+
     report = boot_appliance(
         open_browser=False,
         start_mesh=True,
@@ -59,7 +109,12 @@ def test_write_units(tmp_path: Path, monkeypatch) -> None:
     assert "sophyane --boot" in body
 
 
-def test_full_feature_audit() -> None:
+def test_full_feature_audit(monkeypatch, tmp_path: Path) -> None:
+    _isolate_improvement_ledger(
+        monkeypatch,
+        tmp_path,
+    )
+
     report = run_full_audit()
     assert report["total"] >= 15
     # Allow minor optional failures (e.g. network scrape) but require strong core

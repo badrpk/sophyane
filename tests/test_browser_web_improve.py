@@ -10,6 +10,51 @@ from sophyane.self_improve.ledger import (
     verify_chain,
 )
 from sophyane.web_intel import fetch_url, scrape_for_improvement
+# SOPHYANE_TEST_LIVE_LEDGER_ISOLATION_V1
+def _isolate_improvement_ledger(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    import sophyane.self_improve.ledger as ledger
+
+    state_dir = (
+        tmp_path
+        / "sophyane-state"
+    )
+
+    repo_improvements = (
+        tmp_path
+        / "repo"
+        / "improvements"
+    )
+
+    monkeypatch.setattr(
+        ledger,
+        "STATE_DIR",
+        state_dir,
+    )
+
+    monkeypatch.setattr(
+        ledger,
+        "LEDGER_PATH",
+        state_dir
+        / "improvement_chain.jsonl",
+    )
+
+    monkeypatch.setattr(
+        ledger,
+        "EPOCH_DIR",
+        state_dir
+        / "improvement_epochs",
+    )
+
+    monkeypatch.setattr(
+        ledger,
+        "REPO_IMPROVEMENTS",
+        repo_improvements,
+    )
+
+
 
 
 def test_browser_home_exists() -> None:
@@ -30,7 +75,12 @@ def test_fetch_example_com() -> None:
     assert result.content_hash
 
 
-def test_improvement_chain() -> None:
+def test_improvement_chain(monkeypatch, tmp_path: Path) -> None:
+    _isolate_improvement_ledger(
+        monkeypatch,
+        tmp_path,
+    )
+
     before = chain_tip()["length"]
     out = propose_improvement("fact", "test-proposal", "body for chain", score=0.2)
     assert out["ok"] is True
