@@ -1466,6 +1466,8 @@ Return:
             + record.run_id
         )
 
+        retain_worktree = False
+
         subprocess.run(
             [
                 "git",
@@ -1560,25 +1562,83 @@ Return:
                 ]
             )
 
-            targeted = subprocess.run(
-                targeted_command,
-                cwd=worktree,
-                capture_output=True,
-                text=True,
-                timeout=300,
-                check=False,
-            )
+            try:
+                targeted = subprocess.run(
+                    targeted_command,
+                    cwd=worktree,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    check=False,
+                )
 
-            regression = subprocess.run(
-                list(
-                    self.config.full_test_command
-                ),
-                cwd=worktree,
-                capture_output=True,
-                text=True,
-                timeout=900,
-                check=False,
-            )
+            except subprocess.TimeoutExpired as exc:
+                return GateResult(
+                    targeted_passed=False,
+                    regression_passed=False,
+                    held_out_passed=False,
+                    baseline_score=baseline_score,
+                    candidate_score=0.0,
+                    security_passed=False,
+                    promotable=False,
+                    details={
+                        "worktree": str(worktree),
+                        "branch": branch,
+                        "timeout_stage": "targeted",
+                        "timeout_seconds": exc.timeout,
+                        "timeout_output": (
+                            (exc.stdout or "")
+                            + (exc.stderr or "")
+                        )[-3000:],
+                        "promotion_committed": False,
+                    },
+                )
+
+            try:
+                regression = subprocess.run(
+                    list(
+                        self.config.full_test_command
+                    ),
+                    cwd=worktree,
+                    capture_output=True,
+                    text=True,
+                    timeout=900,
+                    check=False,
+                )
+
+            except subprocess.TimeoutExpired as exc:
+                targeted_passed = (
+                    targeted.returncode == 0
+                )
+
+                return GateResult(
+                    targeted_passed=targeted_passed,
+                    regression_passed=False,
+                    held_out_passed=False,
+                    baseline_score=baseline_score,
+                    candidate_score=(
+                        1.0
+                        if targeted_passed
+                        else 0.0
+                    ),
+                    security_passed=False,
+                    promotable=False,
+                    details={
+                        "worktree": str(worktree),
+                        "branch": branch,
+                        "timeout_stage": "regression",
+                        "timeout_seconds": exc.timeout,
+                        "targeted_output": (
+                            targeted.stdout[-3000:]
+                            + targeted.stderr[-3000:]
+                        ),
+                        "timeout_output": (
+                            (exc.stdout or "")
+                            + (exc.stderr or "")
+                        )[-3000:],
+                        "promotion_committed": False,
+                    },
+                )
 
             (
                 candidate_generalization_score,
@@ -1624,6 +1684,8 @@ Return:
                     candidate_score > 2.5,
                 )
             )
+
+            retain_worktree = promotable
 
             if (
                 promotable
@@ -1699,9 +1761,48 @@ Return:
             )
 
         finally:
-            # Keep promotable worktrees for human inspection.
-            # Remove rejected candidates automatically.
-            pass
+            # Keep genuinely promotable worktrees for human
+            # inspection. Rejected or aborted candidates are
+            # disposable and must not remain registered in Git.
+            if not retain_worktree:
+                subprocess.run(
+                    [
+                        "git",
+                        "worktree",
+                        "remove",
+                        "--force",
+                        str(worktree),
+                    ],
+                    cwd=self.repo,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+
+                subprocess.run(
+                    [
+                        "git",
+                        "worktree",
+                        "prune",
+                    ],
+                    cwd=self.repo,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+
+                subprocess.run(
+                    [
+                        "git",
+                        "branch",
+                        "-D",
+                        branch,
+                    ],
+                    cwd=self.repo,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
 
     def cycle(
         self,
