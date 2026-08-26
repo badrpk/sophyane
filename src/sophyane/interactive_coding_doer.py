@@ -89,6 +89,55 @@ class InteractiveCodingDoerRuntime(LiveGuardedCodingDoerRuntime):
             self.progress.emit("+", self._preview(str(action.get("content", "")), 2400))
         return super()._execute_one(action)
 
+    @staticmethod
+    def _looks_like_test_command(command: Any) -> bool:
+        """Return True only for successful-test-style command evidence."""
+        if getattr(command, "exit_code", None) != 0:
+            return False
+        if bool(getattr(command, "timed_out", False)):
+            return False
+
+        argv = getattr(command, "argv", [])
+        if isinstance(argv, str):
+            rendered = argv
+        else:
+            rendered = " ".join(str(item) for item in (argv or []))
+
+        normalized = " ".join(rendered.lower().split())
+
+        markers = (
+            " pytest",
+            "pytest ",
+            "-m pytest",
+            " unittest",
+            "unittest ",
+            "-m unittest",
+            " tox",
+            "tox ",
+            " nox",
+            "nox ",
+            "ctest",
+            "cargo test",
+            "go test",
+            "npm test",
+            "npm run test",
+            "pnpm test",
+            "yarn test",
+            "bun test",
+            "make test",
+        )
+        return any(marker in normalized for marker in markers)
+
+    def _has_successful_test_evidence(self) -> bool:
+        """Whether this run already produced a successful real test command."""
+        report = getattr(self.executor, "report", None)
+        commands = getattr(report, "commands", []) if report is not None else []
+
+        return any(
+            self._looks_like_test_command(command)
+            for command in commands
+        )
+
     def _completed_result(
         self,
         run_id: str,
@@ -163,6 +212,63 @@ class InteractiveCodingDoerRuntime(LiveGuardedCodingDoerRuntime):
                     "repair_required": not is_fatal_provider_error(error),
                 }
                 if is_fatal_provider_error(error):
+                    # A later provider outage must not downgrade an objective
+                    # whose required mutation/execution contract is already
+                    # satisfied by successful real test evidence.
+                    if (
+                        history
+                        and self._execution_contract_satisfied()
+                        and self._has_successful_test_evidence()
+                    ):
+                        message = (
+                            "Objective completed with verified test evidence before "
+                            "the provider became unavailable."
+                        )
+                        verdict = {
+                            "goal_met": True,
+                            "confidence": 1,
+                            "missing_requirements": [],
+                            "next_instruction": "",
+                            "final_answer": message,
+                            "verification_mode": (
+                                "provider_failure_test_evidence_recovery"
+                            ),
+                            "provider_error_after_verification": str(error),
+                        }
+                        history.append(
+                            StepRecord(
+                                step_number,
+                                action,
+                                observation,
+                                verdict,
+                            )
+                        )
+                        stopped_reason = (
+                            "goal_verified_after_provider_failure"
+                        )
+                        result = self._completed_result(
+                            run_id,
+                            objective or prompt,
+                            criteria,
+                            True,
+                            message,
+                            history,
+                            stopped_reason,
+                        )
+                        self.memory.record_message(
+                            "assistant",
+                            result.final_output,
+                        )
+                        self.progress.emit(
+                            "🏁",
+                            (
+                                "Run finished: goal_met=True, "
+                                f"steps={len(history)}, "
+                                f"reason={stopped_reason}"
+                            ),
+                        )
+                        return result
+
                     message = (
                         "Provider unavailable: quota, billing, authentication, or authorization prevents "
                         "the planner from producing choices or code. Configure a working provider/key and rerun."

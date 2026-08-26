@@ -95,3 +95,117 @@ def test_quota_error_stops_after_one_step_without_verifier_retry(tmp_path: Path)
     output = stream.getvalue()
     assert "Provider unavailable" in output
     assert "steps=1" in output
+
+
+def test_provider_failure_after_successful_tests_preserves_verified_success(
+    tmp_path: Path,
+) -> None:
+    """A later quota failure cannot erase already-successful test evidence."""
+
+    (tmp_path / "test_calculator.py").write_text(
+        "import unittest\n"
+        "from calculator import add\n\n"
+        "class Tests(unittest.TestCase):\n"
+        "    def test_add(self):\n"
+        "        self.assertEqual(add(2, 3), 5)\n\n"
+        "if __name__ == '__main__':\n"
+        "    unittest.main()\n",
+        encoding="utf-8",
+    )
+
+    calls = {"planner": 0, "verifier": 0}
+
+    def backend(prompt: str, system: str) -> str:
+        if "SOPHYANE_ROLE=VERIFIER" in system:
+            calls["verifier"] += 1
+            # Deliberately demand another iteration despite mechanically
+            # successful tests. The next planner call will lose quota.
+            return json.dumps(
+                {
+                    "goal_met": False,
+                    "confidence": 0.5,
+                    "missing_requirements": [
+                        "Additional confirmation requested"
+                    ],
+                    "next_instruction": "Continue toward unmet requirements",
+                    "final_answer": "",
+                }
+            )
+
+        calls["planner"] += 1
+
+        if calls["planner"] == 1:
+            action = {
+                "type": "batch",
+                "actions": [
+                    {
+                        "type": "write_file",
+                        "path": "calculator.py",
+                        "content": (
+                            "def add(a, b):\n"
+                            "    return a + b\n"
+                        ),
+                    },
+                    {
+                        "type": "run_command",
+                        "argv": [
+                            sys.executable,
+                            "-m",
+                            "unittest",
+                            "test_calculator.py",
+                        ],
+                    },
+                ],
+            }
+            return json.dumps(
+                {
+                    "objective": "Repair calculator.py and run tests",
+                    "success_criteria": [
+                        "calculator.py is repaired",
+                        "tests exit zero",
+                    ],
+                    "candidates": [
+                        {
+                            "label": "repair and test",
+                            "reason": "Direct verified repair",
+                            "action": action,
+                        }
+                    ],
+                    "selected_index": 0,
+                    "selection_reason": "Repair and test directly",
+                    "action": action,
+                    "rationale": "Minimum verified repair",
+                }
+            )
+
+        raise RuntimeError(
+            "HTTP 429: insufficient_quota: exceeded your current quota"
+        )
+
+    stream = io.StringIO()
+
+    result = InteractiveCodingDoerRuntime(
+        backend=backend,
+        memory=MemoryStore(tmp_path / "memory.db"),
+        workspace=tmp_path,
+        max_steps=4,
+        progress=LiveProgressReporter(
+            stream=stream,
+            heartbeat_seconds=60,
+        ),
+    ).run("Repair calculator.py and run tests")
+
+    assert result.goal_met
+    assert result.stopped_reason == (
+        "goal_verified_after_provider_failure"
+    )
+    assert calls["planner"] == 2
+    assert calls["verifier"] == 1
+
+    assert result.execution["commands"][-1]["exit_code"] == 0
+    assert (
+        result.steps[-1].verification["verification_mode"]
+        == "provider_failure_test_evidence_recovery"
+    )
+
+    assert "provider became unavailable" in result.final_output.lower()
