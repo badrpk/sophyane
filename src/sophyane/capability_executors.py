@@ -82,7 +82,249 @@ def _parse_exact_file_write(
     message: str,
 ) -> tuple[str, str] | None:
     """Extract a plain workspace filename and exact single-line content."""
-    text = _normalise(message)
+
+    # ------------------------------------------------------------
+    # Deterministic compositional exact-write grammar.
+    #
+    # This is intentionally a narrow front-end. If the request does
+    # not match this grammar exactly enough to construct bytes without
+    # guessing, execution falls through to the pre-existing literal
+    # exact-write parser below.
+    #
+    # Supported semantic shape:
+    #
+    #   Create a file named <filename>.
+    #   ... line must begin <prefix> and ...
+    #   contain the [upper/lowercase] words A, B, and C
+    #   joined by <separator>.
+    #   End the file with exactly one newline.
+    #
+    # Post-action instructions are not payload bytes.
+    # ------------------------------------------------------------
+
+    request = _normalise(message)
+
+    filename_match = re.search(
+        r"""
+        \bfile\s+(?:named|called)\s+
+        (?P<filename>[^\s]+)
+        """,
+        request,
+        re.IGNORECASE | re.VERBOSE,
+    )
+
+    begin_match = re.search(
+        r"""
+        \b(?:that|the)\s+line
+        \s+must\s+begin
+        (?:\s+with)?
+        \s+
+        (?P<prefix>
+            [`"']?
+            [^\s`"']+
+            [`"']?
+        )
+        \s+and\b
+        """,
+        request,
+        re.IGNORECASE | re.VERBOSE,
+    )
+
+    words_match = re.search(
+        r"""
+        \bcontain
+        \s+the\s+
+        (?:
+            (?P<case>uppercase|lowercase)
+            \s+
+        )?
+        words?
+        \s+
+        (?P<words>[A-Za-z0-9,\s]+?)
+        \s+joined\s+by\s+
+        (?P<separator>
+            underscores?
+            |
+            hyphens?
+            |
+            dashes?
+            |
+            spaces?
+            |
+            periods?
+            |
+            dots?
+            |
+            colons?
+            |
+            slashes?
+        )
+        \b
+        """,
+        request,
+        re.IGNORECASE | re.VERBOSE,
+    )
+
+    if (
+        filename_match is not None
+        and begin_match is not None
+        and words_match is not None
+    ):
+        filename = filename_match.group("filename").strip()
+
+        # Sentence punctuation immediately following a bare filename is
+        # prose punctuation, not part of the filename.
+        filename = filename.rstrip(".,;!?")
+
+        prefix = begin_match.group("prefix").strip()
+
+        if (
+            len(prefix) >= 2
+            and prefix[0] == prefix[-1]
+            and prefix[0] in {"'", '"', "`"}
+        ):
+            prefix = prefix[1:-1]
+
+        raw_words = words_match.group("words").strip()
+
+        # Important: split the conjunction form before the plain comma
+        # form so ", and PASS" becomes PASS rather than "and PASS".
+        words = [
+            item.strip()
+            for item in re.split(
+                r"\s*,?\s+and\s+|\s*,\s*",
+                raw_words,
+                flags=re.IGNORECASE,
+            )
+            if item.strip()
+        ]
+
+        # Refuse semantic guessing. Every listed item must be one
+        # unambiguous alphanumeric word.
+        if (
+            filename
+            and prefix
+            and len(words) >= 2
+            and all(
+                re.fullmatch(r"[A-Za-z0-9]+", word)
+                for word in words
+            )
+            and "/" not in filename
+            and "\\" not in filename
+            and filename not in {".", ".."}
+        ):
+            requested_case = (
+                words_match.group("case") or ""
+            ).casefold()
+
+            if requested_case == "uppercase":
+                words = [
+                    word.upper()
+                    for word in words
+                ]
+            elif requested_case == "lowercase":
+                words = [
+                    word.lower()
+                    for word in words
+                ]
+
+            separator_word = (
+                words_match.group("separator")
+                .casefold()
+            )
+
+            separators = {
+                "underscore": "_",
+                "underscores": "_",
+                "hyphen": "-",
+                "hyphens": "-",
+                "dash": "-",
+                "dashes": "-",
+                "space": " ",
+                "spaces": " ",
+                "period": ".",
+                "periods": ".",
+                "dot": ".",
+                "dots": ".",
+                "colon": ":",
+                "colons": ":",
+                "slash": "/",
+                "slashes": "/",
+            }
+
+            separator = separators.get(
+                separator_word
+            )
+
+            no_newline = bool(
+                re.search(
+                    r"""
+                    \b(?:
+                        with\s+no\s+newline
+                        |
+                        without\s+(?:a\s+)?newline
+                        |
+                        do\s+not\s+
+                        (?:add|append|include)
+                        \s+(?:a\s+)?newline
+                    )\b
+                    """,
+                    request,
+                    re.IGNORECASE | re.VERBOSE,
+                )
+            )
+
+            one_newline = bool(
+                re.search(
+                    r"""
+                    \b(?:
+                        end\s+(?:the\s+)?file\s+with
+                        |
+                        ending\s+with
+                        |
+                        terminate(?:d)?\s+with
+                        |
+                        followed\s+by
+                    )
+                    \s+exactly\s+one\s+
+                    (?:newline|line\s*feed|LF)
+                    \b
+                    """,
+                    request,
+                    re.IGNORECASE | re.VERBOSE,
+                )
+            )
+
+            # Contradictory byte requirements are not deterministic.
+            if (
+                separator is not None
+                and not (no_newline and one_newline)
+            ):
+                content = (
+                    prefix
+                    + separator.join(words)
+                )
+
+                if no_newline:
+                    content = content.rstrip(
+                        "\r\n"
+                    )
+                elif one_newline:
+                    content = (
+                        content.rstrip("\r\n")
+                        + "\n"
+                    )
+
+                return filename, content
+
+    # ------------------------------------------------------------
+    # Legacy literal exact-write grammar.
+    #
+    # Do not replace or reinterpret it. Existing exact-write behavior
+    # remains authoritative for every request not claimed above.
+    # ------------------------------------------------------------
+
+    text = request
     match = _EXACT_FILE_WRITE_RE.search(text)
 
     if not match:
