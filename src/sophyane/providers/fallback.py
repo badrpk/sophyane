@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from sophyane.config import CONFIG_DIR, get_secret
+from sophyane.decision_visibility import is_fatal_provider_error
 from sophyane.providers.base import Provider, ProviderError, ProviderMetadata
 from sophyane.runtime_cancel import cancelled
 
@@ -27,6 +29,47 @@ DEFAULT_FALLBACK_ORDER = (
     "deepseek",
     "local_gguf",
 )
+
+
+@dataclass
+class LocalRescueBudget:
+    """Shared wall-clock budget for cloud-to-local rescue generations."""
+
+    remaining_seconds: float
+    per_attempt_seconds: float = 60.0
+
+    def available_timeout(
+        self,
+        configured_timeout: float,
+    ) -> int:
+        if self.remaining_seconds <= 0:
+            return 0
+
+        ceiling = min(
+            float(configured_timeout),
+            float(self.per_attempt_seconds),
+            float(self.remaining_seconds),
+        )
+
+        # LocalGgufProvider itself requires a useful positive generation
+        # window. A final fractional remainder is therefore unavailable.
+        if ceiling < 1.0:
+            return 0
+
+        return max(
+            1,
+            int(ceiling),
+        )
+
+    def consume(
+        self,
+        elapsed_seconds: float,
+    ) -> None:
+        self.remaining_seconds = max(
+            0.0,
+            float(self.remaining_seconds)
+            - max(0.0, float(elapsed_seconds)),
+        )
 
 
 class FallbackProvider(Provider):
@@ -186,8 +229,34 @@ class FallbackProvider(Provider):
                     original,
                 )
 
-    def generate(self, prompt: str, system_prompt: str) -> str:
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str,
+        *,
+        local_rescue_timeout: int | None = None,
+        local_rescue_budget: LocalRescueBudget | None = None,
+    ) -> str:
+        """Generate through the configured provider chain.
+
+        ``local_rescue_timeout`` is an optional per-call ceiling used only
+        when a non-local primary has already failed with a permanent
+        quota/auth/billing-style error and the next provider is local_gguf.
+
+        Normal local-primary generation keeps its configured timeout.
+        Transient cloud failures also keep the normal fallback timeout.
+
+        ``local_rescue_budget`` is shared by all repository-coding backend
+        calls in one run. Only real local rescue wall time consumes it.
+        Once exhausted, cloud providers remain callable but another local
+        rescue is skipped.
+        """
         errors: list[str] = []
+        hard_cloud_failure_seen = False
+
+        # These fields describe this generate() call, not a previous call.
+        self.last_provider = ""
+        self.last_errors = []
 
         if cancelled():
             raise ProviderError("provider generation cancelled")
@@ -197,6 +266,60 @@ class FallbackProvider(Provider):
                 raise ProviderError("provider generation cancelled")
 
             started = time.perf_counter()
+
+            original_timeout = getattr(provider, "timeout", None)
+
+            local_rescue_candidate = (
+                name in LOCAL_PROVIDER_IDS
+                and self.primary not in LOCAL_PROVIDER_IDS
+                and hard_cloud_failure_seen
+                and original_timeout is not None
+            )
+
+            rescue_timeout = 0
+
+            if local_rescue_candidate:
+                if local_rescue_budget is not None:
+                    rescue_timeout = (
+                        local_rescue_budget.available_timeout(
+                            float(original_timeout)
+                        )
+                    )
+                elif local_rescue_timeout is not None:
+                    requested = int(local_rescue_timeout)
+
+                    if requested > 0:
+                        rescue_timeout = min(
+                            int(original_timeout),
+                            max(20, requested),
+                        )
+                else:
+                    rescue_timeout = int(original_timeout)
+
+                if rescue_timeout <= 0:
+                    errors.append(
+                        f"{name}: local rescue skipped: "
+                        "shared coding rescue budget exhausted"
+                    )
+                    continue
+
+            bounded_local_rescue = (
+                local_rescue_candidate
+                and (
+                    local_rescue_budget is not None
+                    or local_rescue_timeout is not None
+                )
+            )
+
+            if bounded_local_rescue:
+                provider.timeout = rescue_timeout
+
+            local_started = (
+                time.perf_counter()
+                if local_rescue_candidate
+                else None
+            )
+
             try:
                 text = provider.generate(prompt, system_prompt)
             except Exception as error:  # noqa: BLE001
@@ -214,7 +337,27 @@ class FallbackProvider(Provider):
                     latency_ms,
                     error,
                 )
+
+                if (
+                    name not in LOCAL_PROVIDER_IDS
+                    and is_fatal_provider_error(error)
+                ):
+                    hard_cloud_failure_seen = True
+
                 continue
+
+            finally:
+                if (
+                    local_started is not None
+                    and local_rescue_budget is not None
+                ):
+                    local_rescue_budget.consume(
+                        time.perf_counter()
+                        - local_started
+                    )
+
+                if bounded_local_rescue:
+                    provider.timeout = original_timeout
 
             self.last_provider = name
             self.last_errors = errors
@@ -281,10 +424,16 @@ class FallbackProvider(Provider):
             )
 
 
+            shared_rescue_available = (
+                local_rescue_budget is None
+                or local_rescue_budget.remaining_seconds >= 1.0
+            )
+
             if (
                 is_credit_or_auth_failure(joined)
                 and allow_cloud_local_rescue
                 and not strict_cloud
+                and shared_rescue_available
             ):
                 LOGGER.warning(
                     "Configured cloud providers failed; explicit local rescue "
@@ -296,10 +445,36 @@ class FallbackProvider(Provider):
 
                     loader = PluginLoader()
                     provider_id = result.provider or "local_gguf"
+                    bootstrap_timeout = max(
+                        self.timeout,
+                        300,
+                    )
+
+                    if local_rescue_budget is not None:
+                        bootstrap_timeout = (
+                            local_rescue_budget.available_timeout(
+                                float(bootstrap_timeout)
+                            )
+                        )
+
+                    elif local_rescue_timeout is not None:
+                        bootstrap_timeout = min(
+                            bootstrap_timeout,
+                            max(
+                                20,
+                                int(local_rescue_timeout),
+                            ),
+                        )
+
+                    if bootstrap_timeout <= 0:
+                        raise ProviderError(
+                            "shared coding rescue budget exhausted"
+                        )
+
                     kwargs: dict[str, Any] = {
                         "api_key": "",
                         "model": result.model,
-                        "timeout": max(self.timeout, 300),
+                        "timeout": bootstrap_timeout,
                         "temperature": self.temperature,
                         "max_tokens": self.max_tokens,
                     }
@@ -328,7 +503,27 @@ class FallbackProvider(Provider):
                             "provider generation cancelled"
                         )
 
-                    text = local.generate(prompt, system_prompt)
+                    bootstrap_local_started = (
+                        time.perf_counter()
+                        if provider_id in LOCAL_PROVIDER_IDS
+                        else None
+                    )
+
+                    try:
+                        text = local.generate(
+                            prompt,
+                            system_prompt,
+                        )
+                    finally:
+                        if (
+                            bootstrap_local_started is not None
+                            and local_rescue_budget is not None
+                        ):
+                            local_rescue_budget.consume(
+                                time.perf_counter()
+                                - bootstrap_local_started
+                            )
+
                     self.last_provider = provider_id
                     self.model = result.model
                     self._providers = [(provider_id, local)] + [

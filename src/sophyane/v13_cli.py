@@ -1310,6 +1310,23 @@ def main() -> int:
         print(response.text)
         return 0 if response.text else 2
 
+    # SOPHYANE_CODING_CUMULATIVE_LOCAL_RESCUE_BUDGET_V1
+    #
+    # A strict coding step may invoke the backend repeatedly for planner
+    # schema repair and generic artifact recovery. Without shared state,
+    # every call receives a fresh local-rescue timeout and one nominal
+    # 60-second rescue can multiply into several minutes.
+    #
+    # Ninety seconds is the total cloud->local rescue allowance for this
+    # repository-coding run. Each individual local attempt remains capped
+    # at sixty seconds.
+    from sophyane.providers.fallback import LocalRescueBudget
+
+    coding_local_rescue_budget = LocalRescueBudget(
+        remaining_seconds=90.0,
+        per_attempt_seconds=60.0,
+    )
+
     def backend(prompt: str, system: str) -> str:
         """Generate with a compact budget for structured planner calls.
 
@@ -1371,6 +1388,31 @@ def main() -> int:
                     provider.max_tokens = (
                         original_max_tokens
                     )
+
+        # SOPHYANE_CODING_LOCAL_RESCUE_TIMEOUT_V1
+        #
+        # Repository coding uses a bounded local rescue only after a hard
+        # cloud quota/auth/billing failure. This does not lower the normal
+        # local-primary coding timeout.
+        if str(config.get("provider") or "").lower() != "local_gguf":
+            try:
+                return provider.generate(
+                    prompt,
+                    system,
+                    local_rescue_timeout=60,
+                    local_rescue_budget=(
+                        coding_local_rescue_budget
+                    ),
+                )
+            except TypeError as error:
+                # Single-provider/bootstrap providers retain the canonical
+                # two-argument Provider.generate contract.
+                message = str(error)
+                if (
+                    "local_rescue_timeout" not in message
+                    and "local_rescue_budget" not in message
+                ):
+                    raise
 
         return provider.generate(prompt, system)
 
