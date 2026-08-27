@@ -1632,6 +1632,1616 @@ def _repair_unhashable_equality_contradiction(
     )
 
 
+def _request_requires_any_iterable(
+    request: str,
+) -> bool:
+    text = _normalized_request_text(
+        request
+    )
+
+    return _contains_any_marker(
+        text,
+        (
+            "accept any iterable",
+            "any iterable",
+            "arbitrary iterable",
+            "iterable input",
+        ),
+    )
+
+
+def _failure_proves_iterable_shape_conflict(
+    failure: str,
+) -> bool:
+    text = str(
+        failure or ""
+    ).casefold()
+
+    if "typeerror" not in text:
+        return False
+
+    iterable_markers = (
+        "generator",
+        "iterator",
+        "iterable",
+    )
+
+    shape_markers = (
+        "has no len()",
+        "has no len",
+        "not subscriptable",
+        "does not support indexing",
+    )
+
+    return (
+        _contains_any_marker(
+            text,
+            iterable_markers,
+        )
+        and _contains_any_marker(
+            text,
+            shape_markers,
+        )
+    )
+
+
+def _function_calls_constructor_on_name(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    *,
+    constructor: str,
+    name: str,
+) -> bool:
+    for node in ast.walk(
+        function
+    ):
+        if not isinstance(
+            node,
+            ast.Call,
+        ):
+            continue
+
+        if not _is_name(
+            node.func,
+            constructor,
+        ):
+            continue
+
+        if (
+            len(node.args) == 1
+            and not node.keywords
+            and _is_name(
+                node.args[0],
+                name,
+            )
+        ):
+            return True
+
+    return False
+
+
+def _function_requires_sequence_shape(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    *,
+    name: str,
+) -> bool:
+    for node in ast.walk(
+        function
+    ):
+        if (
+            isinstance(
+                node,
+                ast.Call,
+            )
+            and _is_name(
+                node.func,
+                "len",
+            )
+            and len(node.args) == 1
+            and _is_name(
+                node.args[0],
+                name,
+            )
+        ):
+            return True
+
+        if (
+            isinstance(
+                node,
+                ast.Subscript,
+            )
+            and _is_name(
+                node.value,
+                name,
+            )
+        ):
+            return True
+
+    return False
+
+
+def _insert_function_prefix_statement(
+    source: str,
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    statement: str,
+) -> str:
+    lines = source.splitlines()
+
+    docstring_end = (
+        _function_docstring_end_line(
+            function
+        )
+    )
+
+    if docstring_end is not None:
+        insert_at = docstring_end
+    elif function.body:
+        insert_at = (
+            function.body[0].lineno
+            - 1
+        )
+    else:
+        insert_at = function.lineno
+
+    indent = " " * (
+        function.col_offset + 4
+    )
+
+    lines.insert(
+        insert_at,
+        indent + statement,
+    )
+
+    return (
+        "\n".join(lines).rstrip()
+        + "\n"
+    )
+
+
+def _repair_any_iterable_materialization(
+    *,
+    request: str,
+    source: str,
+    failure: str,
+) -> str | None:
+    if not _request_requires_any_iterable(
+        request
+    ):
+        return None
+
+    if not _failure_proves_iterable_shape_conflict(
+        failure
+    ):
+        return None
+
+    tree = _parse_module(
+        source
+    )
+
+    if tree is None:
+        return None
+
+    function = _first_top_level_function(
+        tree
+    )
+
+    if (
+        function is None
+        or not function.args.args
+    ):
+        return None
+
+    argument = (
+        function.args.args[0].arg
+    )
+
+    if _function_calls_constructor_on_name(
+        function,
+        constructor="list",
+        name=argument,
+    ):
+        return None
+
+    if not _function_requires_sequence_shape(
+        function,
+        name=argument,
+    ):
+        return None
+
+    candidate = (
+        _insert_function_prefix_statement(
+            source,
+            function,
+            f"{argument} = list({argument})",
+        )
+    )
+
+    if _parse_module(
+        candidate
+    ) is None:
+        return None
+
+    return candidate
+
+
+def _requested_int_contract_names(
+    request: str,
+) -> tuple[str, ...]:
+    names: list[str] = []
+
+    patterns = (
+        r"\bconvert\s+"
+        r"([A-Za-z_][A-Za-z0-9_]*)"
+        r"\s+to\s+int\b",
+        r"\bconvert\s+"
+        r"([A-Za-z_][A-Za-z0-9_]*)"
+        r"\s+with\s+int\b",
+    )
+
+    for pattern in patterns:
+        for value in re.findall(
+            pattern,
+            str(request or ""),
+            flags=re.I,
+        ):
+            normalized = str(
+                value
+            )
+
+            if normalized not in names:
+                names.append(
+                    normalized
+                )
+
+    return tuple(
+        names
+    )
+
+
+def _function_bound_names(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> set[str]:
+    result = {
+        argument.arg
+        for argument in (
+            list(function.args.posonlyargs)
+            + list(function.args.args)
+            + list(function.args.kwonlyargs)
+        )
+    }
+
+    if function.args.vararg is not None:
+        result.add(
+            function.args.vararg.arg
+        )
+
+    if function.args.kwarg is not None:
+        result.add(
+            function.args.kwarg.arg
+        )
+
+    for node in ast.walk(
+        function
+    ):
+        if (
+            isinstance(
+                node,
+                ast.Name,
+            )
+            and isinstance(
+                node.ctx,
+                ast.Store,
+            )
+        ):
+            result.add(
+                node.id
+            )
+
+    return result
+
+
+def _resolve_contract_local_name(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    *,
+    contract_name: str,
+) -> str | None:
+    names = _function_bound_names(
+        function
+    )
+
+    if contract_name in names:
+        return contract_name
+
+    folded = contract_name.casefold()
+
+    matches = [
+        name
+        for name in names
+        if folded
+        in {
+            part.casefold()
+            for part in name.split("_")
+        }
+    ]
+
+    if len(matches) == 1:
+        return matches[0]
+
+    suffix_matches = [
+        name
+        for name in names
+        if (
+            name.casefold().endswith(
+                "_" + folded
+            )
+            or name.casefold().startswith(
+                folded + "_"
+            )
+        )
+    ]
+
+    if len(suffix_matches) == 1:
+        return suffix_matches[0]
+
+    return None
+
+
+def _statement_binds_name(
+    statement: ast.stmt,
+    *,
+    name: str,
+) -> bool:
+    return any(
+        isinstance(
+            node,
+            ast.Name,
+        )
+        and node.id == name
+        and isinstance(
+            node.ctx,
+            ast.Store,
+        )
+        for node in ast.walk(
+            statement
+        )
+    )
+
+
+def _is_valueerror_raise(
+    statement: ast.stmt,
+) -> bool:
+    if not isinstance(
+        statement,
+        ast.Raise,
+    ):
+        return False
+
+    exc = statement.exc
+
+    if _is_name(
+        exc,
+        "ValueError",
+    ):
+        return True
+
+    return (
+        isinstance(
+            exc,
+            ast.Call,
+        )
+        and _is_name(
+            exc.func,
+            "ValueError",
+        )
+    )
+
+
+def _if_only_raises_valueerror(
+    statement: ast.stmt,
+) -> bool:
+    return (
+        isinstance(
+            statement,
+            ast.If,
+        )
+        and not statement.orelse
+        and len(statement.body) == 1
+        and _is_valueerror_raise(
+            statement.body[0]
+        )
+    )
+
+
+def _is_not_isinstance_int_guard(
+    statement: ast.stmt,
+    *,
+    name: str,
+) -> bool:
+    if not _if_only_raises_valueerror(
+        statement
+    ):
+        return False
+
+    test = statement.test
+
+    if not (
+        isinstance(
+            test,
+            ast.UnaryOp,
+        )
+        and isinstance(
+            test.op,
+            ast.Not,
+        )
+    ):
+        return False
+
+    call = test.operand
+
+    return (
+        isinstance(
+            call,
+            ast.Call,
+        )
+        and _is_name(
+            call.func,
+            "isinstance",
+        )
+        and len(call.args) == 2
+        and not call.keywords
+        and _is_name(
+            call.args[0],
+            name,
+        )
+        and _is_name(
+            call.args[1],
+            "int",
+        )
+    )
+
+
+def _remove_simple_int_type_guard(
+    source: str,
+    *,
+    name: str,
+) -> str:
+    tree = _parse_module(
+        source
+    )
+
+    if tree is None:
+        return source
+
+    function = _first_top_level_function(
+        tree
+    )
+
+    if function is None:
+        return source
+
+    guards = [
+        statement
+        for statement in function.body
+        if _is_not_isinstance_int_guard(
+            statement,
+            name=name,
+        )
+    ]
+
+    if len(guards) != 1:
+        return source
+
+    return _delete_statement(
+        source,
+        guards[0],
+    )
+
+
+def _function_calls_int_on_name(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    *,
+    name: str,
+) -> bool:
+    return _function_calls_constructor_on_name(
+        function,
+        constructor="int",
+        name=name,
+    )
+
+
+def _binding_insertion_line(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    *,
+    name: str,
+) -> int | None:
+    argument_names = {
+        argument.arg
+        for argument in (
+            list(function.args.posonlyargs)
+            + list(function.args.args)
+            + list(function.args.kwonlyargs)
+        )
+    }
+
+    if name in argument_names:
+        docstring_end = (
+            _function_docstring_end_line(
+                function
+            )
+        )
+
+        if docstring_end is not None:
+            return docstring_end
+
+        if function.body:
+            return (
+                function.body[0].lineno
+                - 1
+            )
+
+        return function.lineno
+
+    matches = [
+        statement
+        for statement in function.body
+        if _statement_binds_name(
+            statement,
+            name=name,
+        )
+    ]
+
+    if len(matches) != 1:
+        return None
+
+    return matches[0].end_lineno
+
+
+def _insert_after_source_line(
+    source: str,
+    *,
+    line: int,
+    indent: int,
+    statements: list[str],
+) -> str:
+    lines = source.splitlines()
+
+    prefix = " " * indent
+
+    rendered = [
+        prefix + item
+        for item in statements
+    ]
+
+    lines[
+        line:line
+    ] = rendered
+
+    return (
+        "\n".join(lines).rstrip()
+        + "\n"
+    )
+
+
+def _function_has_negative_valueerror_guard(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    *,
+    name: str,
+) -> bool:
+    for statement in function.body:
+        if not _if_only_raises_valueerror(
+            statement
+        ):
+            continue
+
+        test = statement.test
+
+        if not isinstance(
+            test,
+            ast.Compare,
+        ):
+            continue
+
+        if (
+            len(test.ops) != 1
+            or len(test.comparators) != 1
+        ):
+            continue
+
+        operator = test.ops[0]
+        comparator = test.comparators[0]
+
+        if (
+            isinstance(
+                operator,
+                ast.Lt,
+            )
+            and _is_name(
+                test.left,
+                name,
+            )
+            and isinstance(
+                comparator,
+                ast.Constant,
+            )
+            and comparator.value == 0
+        ):
+            return True
+
+        if (
+            isinstance(
+                operator,
+                ast.Gt,
+            )
+            and isinstance(
+                test.left,
+                ast.Constant,
+            )
+            and test.left.value == 0
+            and _is_name(
+                comparator,
+                name,
+            )
+        ):
+            return True
+
+    return False
+
+
+def _request_requires_negative_valueerror(
+    request: str,
+) -> bool:
+    text = _normalized_request_text(
+        request
+    )
+
+    return (
+        "negative"
+        in text
+        and "raise"
+        in text
+        and "valueerror"
+        in text
+    )
+
+
+def _find_int_assignment_end_line(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    *,
+    name: str,
+) -> int | None:
+    for statement in function.body:
+        parsed = _single_name_assignment(
+            statement
+        )
+
+        if parsed is None:
+            continue
+
+        target_name, value = parsed
+
+        if target_name != name:
+            continue
+
+        if not isinstance(
+            value,
+            ast.Call,
+        ):
+            continue
+
+        if not _is_name(
+            value.func,
+            "int",
+        ):
+            continue
+
+        if (
+            len(value.args) == 1
+            and not value.keywords
+            and _is_name(
+                value.args[0],
+                name,
+            )
+        ):
+            return statement.end_lineno
+
+    return None
+
+
+def _repair_explicit_int_contract(
+    *,
+    request: str,
+    source: str,
+    failure: str,
+) -> str | None:
+    del failure
+
+    contract_names = (
+        _requested_int_contract_names(
+            request
+        )
+    )
+
+    if not contract_names:
+        return None
+
+    current = source
+    changed = False
+
+    for contract_name in contract_names:
+        tree = _parse_module(
+            current
+        )
+
+        if tree is None:
+            return None
+
+        function = _first_top_level_function(
+            tree
+        )
+
+        if function is None:
+            return None
+
+        local_name = (
+            _resolve_contract_local_name(
+                function,
+                contract_name=contract_name,
+            )
+        )
+
+        if local_name is None:
+            continue
+
+        without_guard = (
+            _remove_simple_int_type_guard(
+                current,
+                name=local_name,
+            )
+        )
+
+        if without_guard != current:
+            current = without_guard
+            changed = True
+
+        tree = _parse_module(
+            current
+        )
+
+        if tree is None:
+            return None
+
+        function = _first_top_level_function(
+            tree
+        )
+
+        if function is None:
+            return None
+
+        if not _function_calls_int_on_name(
+            function,
+            name=local_name,
+        ):
+            line = _binding_insertion_line(
+                function,
+                name=local_name,
+            )
+
+            if line is None:
+                continue
+
+            current = _insert_after_source_line(
+                current,
+                line=line,
+                indent=function.col_offset + 4,
+                statements=[
+                    (
+                        f"{local_name} = "
+                        f"int({local_name})"
+                    ),
+                ],
+            )
+
+            changed = True
+
+        if _request_requires_negative_valueerror(
+            request
+        ):
+            tree = _parse_module(
+                current
+            )
+
+            if tree is None:
+                return None
+
+            function = _first_top_level_function(
+                tree
+            )
+
+            if function is None:
+                return None
+
+            if not _function_has_negative_valueerror_guard(
+                function,
+                name=local_name,
+            ):
+                line = (
+                    _find_int_assignment_end_line(
+                        function,
+                        name=local_name,
+                    )
+                )
+
+                if line is None:
+                    line = _binding_insertion_line(
+                        function,
+                        name=local_name,
+                    )
+
+                if line is None:
+                    continue
+
+                current = _insert_after_source_line(
+                    current,
+                    line=line,
+                    indent=function.col_offset + 4,
+                    statements=[
+                        f"if {local_name} < 0:",
+                        (
+                            "    raise ValueError("
+                            "\"negative value is not allowed\""
+                            ")"
+                        ),
+                    ],
+                )
+
+                changed = True
+
+    if not changed:
+        return None
+
+    if _parse_module(
+        current
+    ) is None:
+        return None
+
+    return current
+
+
+def _request_requires_exactly_one_level(
+    request: str,
+) -> bool:
+    text = _normalized_request_text(
+        request
+    )
+
+    return _contains_any_marker(
+        text,
+        (
+            "flatten exactly one nesting level",
+            "exactly one nesting level",
+            "exactly one level",
+            "one nesting level",
+        ),
+    )
+
+
+def _function_calls_itself(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
+    return any(
+        isinstance(
+            node,
+            ast.Call,
+        )
+        and _is_name(
+            node.func,
+            function.name,
+        )
+        for node in ast.walk(
+            function
+        )
+    )
+
+
+class _OneLevelExtendTransformer(
+    ast.NodeTransformer
+):
+    def __init__(
+        self,
+        function_name: str,
+    ) -> None:
+        self.function_name = (
+            function_name
+        )
+        self.changed = False
+
+    def visit_Call(
+        self,
+        node: ast.Call,
+    ) -> ast.AST:
+        node = self.generic_visit(
+            node
+        )
+
+        if not isinstance(
+            node,
+            ast.Call,
+        ):
+            return node
+
+        if not isinstance(
+            node.func,
+            ast.Attribute,
+        ):
+            return node
+
+        if node.func.attr != "extend":
+            return node
+
+        if (
+            len(node.args) != 1
+            or node.keywords
+        ):
+            return node
+
+        inner = node.args[0]
+
+        if not isinstance(
+            inner,
+            ast.Call,
+        ):
+            return node
+
+        if not _is_name(
+            inner.func,
+            self.function_name,
+        ):
+            return node
+
+        if (
+            len(inner.args) != 1
+            or inner.keywords
+        ):
+            return node
+
+        node.args[0] = inner.args[0]
+
+        self.changed = True
+
+        return node
+
+
+def _repair_bounded_one_level_recursion(
+    *,
+    request: str,
+    source: str,
+    failure: str,
+) -> str | None:
+    del failure
+
+    if not _request_requires_exactly_one_level(
+        request
+    ):
+        return None
+
+    tree = _parse_module(
+        source
+    )
+
+    if tree is None:
+        return None
+
+    function = _first_top_level_function(
+        tree
+    )
+
+    if function is None:
+        return None
+
+    if not _function_calls_itself(
+        function
+    ):
+        return None
+
+    transformer = (
+        _OneLevelExtendTransformer(
+            function.name
+        )
+    )
+
+    updated = transformer.visit(
+        tree
+    )
+
+    if not transformer.changed:
+        return None
+
+    ast.fix_missing_locations(
+        updated
+    )
+
+    candidate = (
+        ast.unparse(
+            updated
+        ).rstrip()
+        + "\n"
+    )
+
+    if _parse_module(
+        candidate
+    ) is None:
+        return None
+
+    return candidate
+
+
+def _requested_pair_contract(
+    request: str,
+) -> tuple[
+    str,
+    str,
+    str,
+] | None:
+    text = str(
+        request or ""
+    )
+
+    match = re.search(
+        (
+            r"\b"
+            r"([A-Za-z_][A-Za-z0-9_]*)"
+            r"\s+is\s+a\s*"
+            r"\(\s*"
+            r"([A-Za-z_][A-Za-z0-9_]*)"
+            r"\s*,\s*"
+            r"([A-Za-z_][A-Za-z0-9_]*)"
+            r"\s*\)\s*pair\b"
+        ),
+        text,
+        flags=re.I,
+    )
+
+    if match is None:
+        return None
+
+    return (
+        match.group(1),
+        match.group(2),
+        match.group(3),
+    )
+
+
+def _request_requires_missing_as_zero(
+    request: str,
+) -> bool:
+    text = _normalized_request_text(
+        request
+    )
+
+    return (
+        "missing"
+        in text
+        and _contains_any_marker(
+            text,
+            (
+                "count as zero",
+                "counts as zero",
+                "count as 0",
+                "counts as 0",
+                "default to zero",
+                "default to 0",
+            ),
+        )
+    )
+
+
+def _request_requires_available_ge_requested(
+    request: str,
+) -> bool:
+    text = _normalized_request_text(
+        request
+    )
+
+    return (
+        _contains_any_marker(
+            text,
+            (
+                "return true only when",
+                "return true when",
+                "true only when",
+            ),
+        )
+        and _contains_any_marker(
+            text,
+            (
+                "available stock",
+                "available",
+            ),
+        )
+        and _contains_any_marker(
+            text,
+            (
+                ">=",
+                "greater than or equal",
+                "at least",
+            ),
+        )
+        and _contains_any_marker(
+            text,
+            (
+                "requested quantity",
+                "requested amount",
+            ),
+        )
+    )
+
+
+def _pair_argument_contradiction_proven(
+    *,
+    source: str,
+    failure: str,
+    pair_argument: str,
+) -> bool:
+    tree = _parse_module(
+        source
+    )
+
+    if tree is None:
+        return False
+
+    function = _first_top_level_function(
+        tree
+    )
+
+    if function is None:
+        return False
+
+    failure_text = str(
+        failure or ""
+    ).casefold()
+
+    tuple_failure = (
+        "valueerror"
+        in failure_text
+        and "tuple"
+        in failure_text
+    )
+
+    list_guard = False
+
+    for node in ast.walk(
+        function
+    ):
+        if not isinstance(
+            node,
+            ast.If,
+        ):
+            continue
+
+        test = node.test
+
+        if not (
+            isinstance(
+                test,
+                ast.UnaryOp,
+            )
+            and isinstance(
+                test.op,
+                ast.Not,
+            )
+        ):
+            continue
+
+        call = test.operand
+
+        if not (
+            isinstance(
+                call,
+                ast.Call,
+            )
+            and _is_name(
+                call.func,
+                "isinstance",
+            )
+            and len(call.args) == 2
+            and not call.keywords
+            and _is_name(
+                call.args[0],
+                pair_argument,
+            )
+            and _is_name(
+                call.args[1],
+                "list",
+            )
+        ):
+            continue
+
+        list_guard = True
+        break
+
+    iterates_pair = any(
+        isinstance(
+            node,
+            (
+                ast.For,
+                ast.comprehension,
+            ),
+        )
+        and _is_name(
+            node.iter,
+            pair_argument,
+        )
+        for node in ast.walk(
+            function
+        )
+    )
+
+    return (
+        tuple_failure
+        or list_guard
+        or iterates_pair
+    )
+
+
+def _function_positional_argument_names(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[str]:
+    return [
+        argument.arg
+        for argument in (
+            list(
+                function.args.posonlyargs
+            )
+            + list(
+                function.args.args
+            )
+        )
+    ]
+
+
+def _repair_explicit_pair_availability_contract(
+    *,
+    request: str,
+    source: str,
+    failure: str,
+) -> str | None:
+    contract = (
+        _requested_pair_contract(
+            request
+        )
+    )
+
+    if contract is None:
+        return None
+
+    (
+        pair_contract_name,
+        key_name,
+        quantity_name,
+    ) = contract
+
+    requested_int_names = set(
+        _requested_int_contract_names(
+            request
+        )
+    )
+
+    if quantity_name not in requested_int_names:
+        return None
+
+    if not _request_requires_negative_valueerror(
+        request
+    ):
+        return None
+
+    if not _request_requires_missing_as_zero(
+        request
+    ):
+        return None
+
+    if not _request_requires_available_ge_requested(
+        request
+    ):
+        return None
+
+    tree = _parse_module(
+        source
+    )
+
+    if tree is None:
+        return None
+
+    function = _first_top_level_function(
+        tree
+    )
+
+    if function is None:
+        return None
+
+    arguments = (
+        _function_positional_argument_names(
+            function
+        )
+    )
+
+    if len(arguments) != 2:
+        return None
+
+    pair_argument = (
+        _resolve_contract_local_name(
+            function,
+            contract_name=pair_contract_name,
+        )
+    )
+
+    if (
+        pair_argument is None
+        or pair_argument not in arguments
+    ):
+        return None
+
+    mapping_candidates = [
+        name
+        for name in arguments
+        if name != pair_argument
+    ]
+
+    if len(mapping_candidates) != 1:
+        return None
+
+    mapping_argument = (
+        mapping_candidates[0]
+    )
+
+    if not _pair_argument_contradiction_proven(
+        source=source,
+        failure=failure,
+        pair_argument=pair_argument,
+    ):
+        return None
+
+    new_body: list[ast.stmt] = [
+        ast.Assign(
+            targets=[
+                ast.Tuple(
+                    elts=[
+                        ast.Name(
+                            id=key_name,
+                            ctx=ast.Store(),
+                        ),
+                        ast.Name(
+                            id=quantity_name,
+                            ctx=ast.Store(),
+                        ),
+                    ],
+                    ctx=ast.Store(),
+                )
+            ],
+            value=ast.Name(
+                id=pair_argument,
+                ctx=ast.Load(),
+            ),
+        ),
+        ast.Assign(
+            targets=[
+                ast.Name(
+                    id=quantity_name,
+                    ctx=ast.Store(),
+                )
+            ],
+            value=ast.Call(
+                func=ast.Name(
+                    id="int",
+                    ctx=ast.Load(),
+                ),
+                args=[
+                    ast.Name(
+                        id=quantity_name,
+                        ctx=ast.Load(),
+                    )
+                ],
+                keywords=[],
+            ),
+        ),
+        ast.If(
+            test=ast.Compare(
+                left=ast.Name(
+                    id=quantity_name,
+                    ctx=ast.Load(),
+                ),
+                ops=[
+                    ast.Lt()
+                ],
+                comparators=[
+                    ast.Constant(
+                        value=0
+                    )
+                ],
+            ),
+            body=[
+                ast.Raise(
+                    exc=ast.Call(
+                        func=ast.Name(
+                            id="ValueError",
+                            ctx=ast.Load(),
+                        ),
+                        args=[
+                            ast.Constant(
+                                value=(
+                                    "negative value "
+                                    "is not allowed"
+                                )
+                            )
+                        ],
+                        keywords=[],
+                    ),
+                    cause=None,
+                )
+            ],
+            orelse=[],
+        ),
+        ast.Return(
+            value=ast.Compare(
+                left=ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Name(
+                            id=mapping_argument,
+                            ctx=ast.Load(),
+                        ),
+                        attr="get",
+                        ctx=ast.Load(),
+                    ),
+                    args=[
+                        ast.Name(
+                            id=key_name,
+                            ctx=ast.Load(),
+                        ),
+                        ast.Constant(
+                            value=0
+                        ),
+                    ],
+                    keywords=[],
+                ),
+                ops=[
+                    ast.GtE()
+                ],
+                comparators=[
+                    ast.Name(
+                        id=quantity_name,
+                        ctx=ast.Load(),
+                    )
+                ],
+            )
+        ),
+    ]
+
+    function.body = new_body
+
+    ast.fix_missing_locations(
+        tree
+    )
+
+    candidate = (
+        ast.unparse(
+            tree
+        ).rstrip()
+        + "\n"
+    )
+
+    try:
+        compile(
+            candidate,
+            "<fast-local-pair-contract>",
+            "exec",
+        )
+    except SyntaxError:
+        return None
+
+    return candidate
+
+
+def _repair_generic_explicit_contract_closure(
+    *,
+    request: str,
+    source: str,
+    failure: str,
+) -> tuple[str | None, str]:
+    current = source
+    reasons: list[str] = []
+
+    candidate = (
+        _repair_explicit_pair_availability_contract(
+            request=request,
+            source=current,
+            failure=failure,
+        )
+    )
+
+    if (
+        candidate is not None
+        and candidate != current
+    ):
+        current = candidate
+        reasons.append(
+            "explicit-pair-availability"
+        )
+
+    candidate = (
+        _repair_explicit_int_contract(
+            request=request,
+            source=current,
+            failure=failure,
+        )
+    )
+
+    if (
+        candidate is not None
+        and candidate != current
+    ):
+        current = candidate
+        reasons.append(
+            "explicit-int-contract"
+        )
+
+    candidate = (
+        _repair_any_iterable_materialization(
+            request=request,
+            source=current,
+            failure=failure,
+        )
+    )
+
+    if (
+        candidate is not None
+        and candidate != current
+    ):
+        current = candidate
+        reasons.append(
+            "iterable-materialization"
+        )
+
+    candidate = (
+        _repair_bounded_one_level_recursion(
+            request=request,
+            source=current,
+            failure=failure,
+        )
+    )
+
+    if (
+        candidate is not None
+        and candidate != current
+    ):
+        current = candidate
+        reasons.append(
+            "bounded-one-level"
+        )
+
+    if not reasons:
+        return (
+            None,
+            "",
+        )
+
+    try:
+        compile(
+            current,
+            "<fast-local-generic-contract-closure>",
+            "exec",
+        )
+    except SyntaxError:
+        return (
+            None,
+            "",
+        )
+
+    return (
+        current,
+        "+".join(
+            reasons
+        ),
+    )
+
+
 def _deterministic_contract_repair(
     *,
     request: str,
@@ -1664,6 +3274,23 @@ def _deterministic_contract_repair(
         return (
             candidate,
             "unhashable-equality contradiction",
+        )
+
+    (
+        candidate,
+        generic_reason,
+    ) = (
+        _repair_generic_explicit_contract_closure(
+            request=request,
+            source=source,
+            failure=failure,
+        )
+    )
+
+    if candidate is not None:
+        return (
+            candidate,
+            generic_reason,
         )
 
     return (
