@@ -84,6 +84,326 @@ def _explicit_python_paths(prompt: str) -> list[str]:
     return result
 
 
+
+def _is_explicitly_incomplete_definition(
+    node: ast.AST,
+) -> bool:
+    if not isinstance(
+        node,
+        (
+            ast.FunctionDef,
+            ast.AsyncFunctionDef,
+            ast.ClassDef,
+        ),
+    ):
+        return False
+
+    body = list(
+        getattr(
+            node,
+            "body",
+            [],
+        )
+        or []
+    )
+
+    if (
+        len(body) == 1
+        and isinstance(
+            body[0],
+            ast.Pass,
+        )
+    ):
+        return True
+
+    for child in ast.walk(node):
+        if not isinstance(
+            child,
+            ast.Raise,
+        ):
+            continue
+
+        exc = child.exc
+
+        if isinstance(
+            exc,
+            ast.Name,
+        ):
+            name = exc.id
+
+        elif (
+            isinstance(
+                exc,
+                ast.Call,
+            )
+            and isinstance(
+                exc.func,
+                ast.Name,
+            )
+        ):
+            name = exc.func.id
+
+        else:
+            name = ""
+
+        if name == "NotImplementedError":
+            return True
+
+    return False
+
+
+def _request_symbol_names(
+    request: str,
+) -> set[str]:
+    text = str(
+        request
+        or ""
+    )
+
+    names: set[str] = set()
+
+    patterns = (
+        r"\b(?:implement|fix|repair|complete|update)\s+"
+        r"([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+        r"\b(?:class)\s+"
+        r"([A-Za-z_][A-Za-z0-9_]*)\b",
+    )
+
+    for pattern in patterns:
+        for value in re.findall(
+            pattern,
+            text,
+            flags=re.I,
+        ):
+            names.add(
+                str(value)
+            )
+
+    return names
+
+
+def _structural_stub_targets(
+    root: Path,
+) -> list[tuple[str, tuple[str, ...]]]:
+    excluded_parts = {
+        ".git",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "node_modules",
+        "build",
+        "dist",
+    }
+
+    targets: list[
+        tuple[
+            str,
+            tuple[str, ...],
+        ]
+    ] = []
+
+    for candidate in sorted(
+        root.rglob("*.py")
+    ):
+        try:
+            relative = candidate.relative_to(
+                root
+            )
+        except ValueError:
+            continue
+
+        if not candidate.is_file():
+            continue
+
+        if candidate.name.startswith(
+            "test_"
+        ):
+            continue
+
+        if any(
+            part in excluded_parts
+            or part.startswith(".")
+            for part in relative.parts[:-1]
+        ):
+            continue
+
+        try:
+            source = candidate.read_text(
+                encoding="utf-8"
+            )
+            tree = ast.parse(
+                source,
+                filename=str(
+                    relative
+                ),
+            )
+        except (
+            OSError,
+            UnicodeError,
+            SyntaxError,
+        ):
+            continue
+
+        definitions: list[str] = []
+
+        for node in tree.body:
+            if (
+                isinstance(
+                    node,
+                    (
+                        ast.FunctionDef,
+                        ast.AsyncFunctionDef,
+                        ast.ClassDef,
+                    ),
+                )
+                and _is_explicitly_incomplete_definition(
+                    node
+                )
+            ):
+                definitions.append(
+                    node.name
+                )
+
+        if definitions:
+            targets.append(
+                (
+                    relative.as_posix(),
+                    tuple(
+                        definitions
+                    ),
+                )
+            )
+
+    return targets
+
+
+def _resolve_fast_python_target(
+    *,
+    root: Path,
+    request: str,
+    explicit_paths: list[str],
+) -> tuple[str | None, str]:
+    existing_explicit: list[str] = []
+
+    for relative_path in explicit_paths:
+        candidate = (
+            root
+            / relative_path
+        ).resolve()
+
+        try:
+            candidate.relative_to(
+                root
+            )
+        except ValueError:
+            continue
+
+        if candidate.is_file():
+            existing_explicit.append(
+                relative_path
+            )
+
+    structural = (
+        _structural_stub_targets(
+            root
+        )
+    )
+
+    structural_by_path = {
+        path: definitions
+        for path, definitions in structural
+    }
+
+    explicit_incomplete = [
+        path
+        for path in existing_explicit
+        if path in structural_by_path
+    ]
+
+    requested_symbols = (
+        _request_symbol_names(
+            request
+        )
+    )
+
+    symbol_matches = [
+        path
+        for path, definitions in structural
+        if requested_symbols.intersection(
+            definitions
+        )
+    ]
+
+    # Multiple explicit Python paths are ambiguous unless the
+    # request itself names exactly one incomplete implementation
+    # symbol.  Structural incompleteness alone must not turn a
+    # generic multi-file update into an implicit edit.
+    if len(explicit_paths) > 1:
+        explicit_symbol_matches = [
+            path
+            for path in symbol_matches
+            if path in existing_explicit
+        ]
+
+        if len(explicit_symbol_matches) == 1:
+            return (
+                explicit_symbol_matches[0],
+                "unique requested-symbol structural stub",
+            )
+
+        return (
+            None,
+            "fast path requires exactly one explicit Python target",
+        )
+
+    # With zero or one explicit path, a uniquely requested symbol
+    # is strong authority for the incomplete implementation target.
+    if len(symbol_matches) == 1:
+        return (
+            symbol_matches[0],
+            "unique requested-symbol structural stub",
+        )
+
+    # A single explicitly mentioned incomplete file is also safe.
+    if len(explicit_incomplete) == 1:
+        return (
+            explicit_incomplete[0],
+            "unique explicitly mentioned structural stub",
+        )
+
+    # Preserve historical behavior for the normal one-path case.
+    if len(explicit_paths) == 1:
+        return (
+            explicit_paths[0],
+            "single explicit Python target",
+        )
+
+    # Structural-only resolution is allowed only when the request
+    # actually names a callable/class symbol.  This prevents
+    # unrelated requests such as "Inspect sample.py.bak" from
+    # opportunistically selecting an arbitrary workspace stub.
+    if (
+        requested_symbols
+        and len(structural) == 1
+    ):
+        return (
+            structural[0][0],
+            "unique workspace structural stub",
+        )
+
+    return (
+        None,
+        (
+            "fast path could not resolve one safe Python target; "
+            f"explicit={len(explicit_paths)} "
+            f"structural={len(structural)}"
+        ),
+    )
+
+
 def _extract_source(text: str) -> str:
     raw = str(text or "").strip()
 
@@ -1325,14 +1645,20 @@ def try_fast_local_python_coding(
     root = Path(workspace).expanduser().resolve()
     paths = _explicit_python_paths(request)
 
-    if len(paths) != 1:
+    relative_path, target_reason = (
+        _resolve_fast_python_target(
+            root=root,
+            request=request,
+            explicit_paths=paths,
+        )
+    )
+
+    if relative_path is None:
         return FastCodingResult(
             attempted=False,
             success=False,
-            reason="fast path requires exactly one explicit Python target",
+            reason=target_reason,
         )
-
-    relative_path = paths[0]
     target = (root / relative_path).resolve()
 
     try:
