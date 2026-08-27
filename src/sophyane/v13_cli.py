@@ -1440,6 +1440,50 @@ def main() -> int:
         enabled=not args.no_progress,
         heartbeat_seconds=args.progress_heartbeat,
     )
+
+    # SOPHYANE_FAST_LOCAL_CODING_TIER1_V1
+    #
+    # Small local models should not pay strict planner/schema/verifier
+    # overhead for a bounded single-Python-file task when objective pytest
+    # evidence is already present.  Try one direct candidate and at most one
+    # compact evidence repair.  Failure is transactional: the original file
+    # is restored and the canonical strict runtime remains authoritative.
+    if (
+        str(config.get("provider") or "").lower() == "local_gguf"
+        and not args.single_agent
+        and not args.multi_agent
+    ):
+        try:
+            from sophyane.fast_local_coding import (
+                try_fast_local_python_coding,
+            )
+
+            fast_result = try_fast_local_python_coding(
+                request=original_prompt,
+                workspace=Path(args.workspace),
+                backend=backend,
+                max_model_calls=2,
+            )
+        except Exception as fast_error:  # noqa: BLE001
+            logger.warning(
+                "Tier-1 local coding fast path unavailable: %s",
+                fast_error,
+            )
+            fast_result = None
+
+        if fast_result is not None and fast_result.attempted:
+            if fast_result.success:
+                print(
+                    "Objective completed with verified Tier-1 "
+                    "local execution evidence."
+                )
+                return 0
+
+            logger.info(
+                "Tier-1 local coding declined after verification: %s",
+                fast_result.reason,
+            )
+
     runtime = StrictInteractiveCodingDoerRuntime(
         backend=backend,
         memory=memory,
