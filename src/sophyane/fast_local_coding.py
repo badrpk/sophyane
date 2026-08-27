@@ -2141,11 +2141,54 @@ def _function_calls_int_on_name(
     *,
     name: str,
 ) -> bool:
-    return _function_calls_constructor_on_name(
+    # Direct conversion of the local itself.
+    if _function_calls_constructor_on_name(
         function,
         constructor="int",
         name=name,
-    )
+    ):
+        return True
+
+    # Also treat a direct binding such as:
+    #
+    #     amount = int(order[1])
+    #
+    # as an existing explicit conversion of ``amount``.
+    # The previous implementation recognized only
+    # ``amount = int(amount)``-shaped usage indirectly,
+    # which caused duplicate conversions to be inserted.
+    for statement in function.body:
+        parsed = _single_name_assignment(
+            statement
+        )
+
+        if parsed is None:
+            continue
+
+        target_name, value = parsed
+
+        if target_name != name:
+            continue
+
+        if not isinstance(
+            value,
+            ast.Call,
+        ):
+            continue
+
+        if not _is_name(
+            value.func,
+            "int",
+        ):
+            continue
+
+        if (
+            len(value.args) == 1
+            and not value.keywords
+        ):
+            return True
+
+    return False
 
 
 def _binding_insertion_line(
@@ -3139,6 +3182,406 @@ def _repair_explicit_pair_availability_contract(
     return candidate
 
 
+def _is_constant_zero(
+    node: ast.AST,
+) -> bool:
+    return (
+        isinstance(
+            node,
+            ast.Constant,
+        )
+        and node.value == 0
+    )
+
+
+def _is_pair_field_subscript(
+    node: ast.AST,
+    *,
+    pair_name: str,
+    index: int,
+) -> bool:
+    if not isinstance(
+        node,
+        ast.Subscript,
+    ):
+        return False
+
+    if not _is_name(
+        node.value,
+        pair_name,
+    ):
+        return False
+
+    slice_node = node.slice
+
+    return (
+        isinstance(
+            slice_node,
+            ast.Constant,
+        )
+        and slice_node.value == index
+    )
+
+
+def _negative_pair_field_guard(
+    statement: ast.stmt,
+    *,
+    pair_name: str,
+    index: int,
+) -> bool:
+    if not _if_only_raises_valueerror(
+        statement
+    ):
+        return False
+
+    test = statement.test
+
+    if not isinstance(
+        test,
+        ast.Compare,
+    ):
+        return False
+
+    if (
+        len(test.ops) != 1
+        or len(test.comparators) != 1
+    ):
+        return False
+
+    operator = test.ops[0]
+    right = test.comparators[0]
+
+    if (
+        isinstance(
+            operator,
+            ast.Lt,
+        )
+        and _is_pair_field_subscript(
+            test.left,
+            pair_name=pair_name,
+            index=index,
+        )
+        and _is_constant_zero(
+            right
+        )
+    ):
+        return True
+
+    if (
+        isinstance(
+            operator,
+            ast.Gt,
+        )
+        and _is_constant_zero(
+            test.left
+        )
+        and _is_pair_field_subscript(
+            right,
+            pair_name=pair_name,
+            index=index,
+        )
+    ):
+        return True
+
+    return False
+
+
+def _int_pair_field_assignment(
+    statement: ast.stmt,
+    *,
+    local_name: str,
+    pair_name: str,
+    index: int,
+) -> bool:
+    parsed = _single_name_assignment(
+        statement
+    )
+
+    if parsed is None:
+        return False
+
+    target_name, value = parsed
+
+    if target_name != local_name:
+        return False
+
+    if not isinstance(
+        value,
+        ast.Call,
+    ):
+        return False
+
+    if not _is_name(
+        value.func,
+        "int",
+    ):
+        return False
+
+    if (
+        len(value.args) != 1
+        or value.keywords
+    ):
+        return False
+
+    return _is_pair_field_subscript(
+        value.args[0],
+        pair_name=pair_name,
+        index=index,
+    )
+
+
+def _rewrite_negative_guard_to_local(
+    statement: ast.If,
+    *,
+    local_name: str,
+) -> None:
+    test = statement.test
+
+    if not isinstance(
+        test,
+        ast.Compare,
+    ):
+        return
+
+    operator = test.ops[0]
+
+    if isinstance(
+        operator,
+        ast.Lt,
+    ):
+        test.left = ast.Name(
+            id=local_name,
+            ctx=ast.Load(),
+        )
+
+    elif isinstance(
+        operator,
+        ast.Gt,
+    ):
+        test.comparators[0] = ast.Name(
+            id=local_name,
+            ctx=ast.Load(),
+        )
+
+
+def _failure_proves_preconversion_numeric_compare(
+    failure: str,
+) -> bool:
+    text = str(
+        failure or ""
+    ).casefold()
+
+    return (
+        "typeerror"
+        in text
+        and "not supported"
+        in text
+        and "str"
+        in text
+        and "int"
+        in text
+    )
+
+
+def _repair_pair_field_int_conversion_order(
+    *,
+    request: str,
+    source: str,
+    failure: str,
+) -> str | None:
+    contract = (
+        _requested_pair_contract(
+            request
+        )
+    )
+
+    if contract is None:
+        return None
+
+    (
+        pair_contract_name,
+        _key_contract_name,
+        quantity_contract_name,
+    ) = contract
+
+    if quantity_contract_name not in set(
+        _requested_int_contract_names(
+            request
+        )
+    ):
+        return None
+
+    if not _request_requires_negative_valueerror(
+        request
+    ):
+        return None
+
+    if not _failure_proves_preconversion_numeric_compare(
+        failure
+    ):
+        return None
+
+    tree = _parse_module(
+        source
+    )
+
+    if tree is None:
+        return None
+
+    function = _first_top_level_function(
+        tree
+    )
+
+    if function is None:
+        return None
+
+    pair_local = (
+        _resolve_contract_local_name(
+            function,
+            contract_name=pair_contract_name,
+        )
+    )
+
+    quantity_local = (
+        _resolve_contract_local_name(
+            function,
+            contract_name=quantity_contract_name,
+        )
+    )
+
+    if (
+        pair_local is None
+        or quantity_local is None
+    ):
+        return None
+
+    positional = (
+        _function_positional_argument_names(
+            function
+        )
+    )
+
+    if pair_local not in positional:
+        return None
+
+    guard_matches: list[
+        tuple[
+            int,
+            ast.If,
+        ]
+    ] = []
+
+    conversion_matches: list[
+        tuple[
+            int,
+            ast.stmt,
+        ]
+    ] = []
+
+    for position, statement in enumerate(
+        function.body
+    ):
+        if (
+            isinstance(
+                statement,
+                ast.If,
+            )
+            and _negative_pair_field_guard(
+                statement,
+                pair_name=pair_local,
+                index=1,
+            )
+        ):
+            guard_matches.append(
+                (
+                    position,
+                    statement,
+                )
+            )
+
+        if _int_pair_field_assignment(
+            statement,
+            local_name=quantity_local,
+            pair_name=pair_local,
+            index=1,
+        ):
+            conversion_matches.append(
+                (
+                    position,
+                    statement,
+                )
+            )
+
+    if (
+        len(guard_matches) != 1
+        or len(conversion_matches) != 1
+    ):
+        return None
+
+    (
+        guard_position,
+        guard,
+    ) = guard_matches[0]
+
+    (
+        conversion_position,
+        conversion,
+    ) = conversion_matches[0]
+
+    # The only authority for this repair is conversion occurring
+    # after a negative numeric use of the same pair field.
+    if conversion_position <= guard_position:
+        return None
+
+    # Move the existing conversion; do not synthesize a second one.
+    function.body.pop(
+        conversion_position
+    )
+
+    function.body.insert(
+        guard_position,
+        conversion
+    )
+
+    # The guard moved one slot to the right.
+    moved_guard = function.body[
+        guard_position + 1
+    ]
+
+    if not isinstance(
+        moved_guard,
+        ast.If,
+    ):
+        return None
+
+    _rewrite_negative_guard_to_local(
+        moved_guard,
+        local_name=quantity_local,
+    )
+
+    ast.fix_missing_locations(
+        tree
+    )
+
+    candidate = (
+        ast.unparse(
+            tree
+        ).rstrip()
+        + "\n"
+    )
+
+    try:
+        compile(
+            candidate,
+            "<fast-local-pair-field-order>",
+            "exec",
+        )
+    except SyntaxError:
+        return None
+
+    return candidate
+
+
 def _repair_generic_explicit_contract_closure(
     *,
     request: str,
@@ -3147,6 +3590,23 @@ def _repair_generic_explicit_contract_closure(
 ) -> tuple[str | None, str]:
     current = source
     reasons: list[str] = []
+
+    candidate = (
+        _repair_pair_field_int_conversion_order(
+            request=request,
+            source=current,
+            failure=failure,
+        )
+    )
+
+    if (
+        candidate is not None
+        and candidate != current
+    ):
+        current = candidate
+        reasons.append(
+            "pair-field-int-order"
+        )
 
     candidate = (
         _repair_explicit_pair_availability_contract(

@@ -473,3 +473,314 @@ def test_pair_availability_repair_is_name_generic() -> None:
             1,
         ),
     )
+
+
+def test_pair_field_conversion_moves_before_negative_guard() -> None:
+    source = (
+        "def permitted(capacity, demand):\n"
+        "    if demand[1] < 0:\n"
+        "        raise ValueError('negative')\n"
+        "    units = int(demand[1])\n"
+        "    if units == 0:\n"
+        "        return True\n"
+        "    return capacity.get(demand[0], 0) >= units\n"
+    )
+
+    repaired, reason = (
+        _deterministic_contract_repair(
+            request=(
+                "Implement permitted(capacity, demand).\n"
+                "- demand is a (code, units) pair.\n"
+                "- Convert units to int.\n"
+                "- Missing capacity entries count as zero.\n"
+                "- Return True only when available stock is "
+                ">= requested quantity.\n"
+                "- Negative requested quantities raise ValueError.\n"
+            ),
+            source=source,
+            failure=(
+                "TypeError: '<' not supported between "
+                "instances of 'str' and 'int'"
+            ),
+        )
+    )
+
+    assert repaired is not None
+
+    assert (
+        "pair-field-int-order"
+        in reason
+    )
+
+    namespace = _load(
+        repaired
+    )
+
+    function = namespace[
+        "permitted"
+    ]
+
+    assert function(
+        {
+            "A": 5,
+        },
+        (
+            "A",
+            "4",
+        ),
+    )
+
+    assert not function(
+        {},
+        (
+            "A",
+            "1",
+        ),
+    )
+
+    assert function(
+        {},
+        (
+            "A",
+            0,
+        ),
+    )
+
+    with pytest.raises(
+        ValueError
+    ):
+        function(
+            {
+                "A": 3,
+            },
+            (
+                "A",
+                "-1",
+            ),
+        )
+
+    with pytest.raises(
+        ValueError
+    ):
+        function(
+            {
+                "A": 3,
+            },
+            (
+                "A",
+                "bad",
+            ),
+        )
+
+    conversion = (
+        "units = int(demand[1])"
+    )
+
+    guard = (
+        "if units < 0:"
+    )
+
+    assert conversion in repaired
+    assert guard in repaired
+
+    assert (
+        repaired.index(
+            conversion
+        )
+        < repaired.index(
+            guard
+        )
+    )
+
+
+def test_pair_field_order_repair_is_name_generic() -> None:
+    source = (
+        "def allowed(levels, order):\n"
+        "    if order[1] < 0:\n"
+        "        raise ValueError('negative')\n"
+        "    amount = int(order[1])\n"
+        "    return levels.get(order[0], 0) >= amount\n"
+    )
+
+    repaired, reason = (
+        _deterministic_contract_repair(
+            request=(
+                "Implement allowed(levels, order).\n"
+                "- order is a (label, amount) pair.\n"
+                "- Convert amount to int.\n"
+                "- Missing entries count as zero.\n"
+                "- Return True only when available stock is "
+                ">= requested amount.\n"
+                "- Negative requested amounts raise ValueError.\n"
+            ),
+            source=source,
+            failure=(
+                "TypeError: '<' not supported between "
+                "instances of 'str' and 'int'"
+            ),
+        )
+    )
+
+    assert repaired is not None
+
+    assert (
+        "pair-field-int-order"
+        in reason
+    )
+
+    function = _load(
+        repaired
+    )[
+        "allowed"
+    ]
+
+    assert function(
+        {
+            "bolt": 8,
+        },
+        (
+            "bolt",
+            "6",
+        ),
+    )
+
+
+def test_pair_field_order_requires_conversion_contract() -> None:
+    source = (
+        "def permitted(capacity, demand):\n"
+        "    if demand[1] < 0:\n"
+        "        raise ValueError('negative')\n"
+        "    units = int(demand[1])\n"
+        "    return True\n"
+    )
+
+    repaired, reason = (
+        _deterministic_contract_repair(
+            request=(
+                "Implement permitted(capacity, demand).\n"
+                "- demand is a (code, units) pair.\n"
+                "- Negative requested quantities raise ValueError.\n"
+            ),
+            source=source,
+            failure=(
+                "TypeError: '<' not supported between "
+                "instances of 'str' and 'int'"
+            ),
+        )
+    )
+
+    assert repaired is None
+    assert reason == ""
+
+
+def test_pair_field_order_requires_negative_valueerror_contract() -> None:
+    source = (
+        "def permitted(capacity, demand):\n"
+        "    if demand[1] < 0:\n"
+        "        return False\n"
+        "    units = int(demand[1])\n"
+        "    return True\n"
+    )
+
+    repaired, reason = (
+        _deterministic_contract_repair(
+            request=(
+                "Implement permitted(capacity, demand).\n"
+                "- demand is a (code, units) pair.\n"
+                "- Convert units to int.\n"
+            ),
+            source=source,
+            failure=(
+                "TypeError: '<' not supported between "
+                "instances of 'str' and 'int'"
+            ),
+        )
+    )
+
+    assert repaired is None
+    assert reason == ""
+
+
+def test_pair_field_order_does_not_fire_when_conversion_already_precedes_guard() -> None:
+    source = (
+        "def permitted(capacity, demand):\n"
+        "    units = int(demand[1])\n"
+        "    if units < 0:\n"
+        "        raise ValueError('negative')\n"
+        "    return capacity.get(demand[0], 0) >= units\n"
+    )
+
+    repaired, reason = (
+        _deterministic_contract_repair(
+            request=(
+                "Implement permitted(capacity, demand).\n"
+                "- demand is a (code, units) pair.\n"
+                "- Convert units to int.\n"
+                "- Missing capacity entries count as zero.\n"
+                "- Return True only when available stock is "
+                ">= requested quantity.\n"
+                "- Negative requested quantities raise ValueError.\n"
+            ),
+            source=source,
+            failure=(
+                "AssertionError"
+            ),
+        )
+    )
+
+    assert repaired is None
+    assert reason == ""
+
+
+def test_explicit_int_contract_recognizes_existing_int_expression_binding() -> None:
+    source = (
+        "def permitted(capacity, demand):\n"
+        "    units = int(demand[1])\n"
+        "    return capacity.get(demand[0], 0) >= units\n"
+    )
+
+    repaired, reason = (
+        _deterministic_contract_repair(
+            request=(
+                "Implement permitted(capacity, demand).\n"
+                "- demand is a (code, units) pair.\n"
+                "- Convert units to int.\n"
+            ),
+            source=source,
+            failure=(
+                "AssertionError"
+            ),
+        )
+    )
+
+    assert repaired is None
+    assert reason == ""
+
+
+def test_explicit_int_contract_does_not_duplicate_pair_field_conversion() -> None:
+    source = (
+        "def permitted(capacity, demand):\n"
+        "    units = int(demand[1])\n"
+        "    return units\n"
+    )
+
+    repaired, reason = (
+        _deterministic_contract_repair(
+            request=(
+                "Implement permitted(capacity, demand).\n"
+                "- demand is a (code, units) pair.\n"
+                "- Convert units to int.\n"
+            ),
+            source=source,
+            failure=(
+                "AssertionError"
+            ),
+        )
+    )
+
+    assert repaired is None
+    assert reason == ""
+
+    assert source.count(
+        "int("
+    ) == 1
