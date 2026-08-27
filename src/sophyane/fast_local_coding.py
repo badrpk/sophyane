@@ -532,6 +532,24 @@ CURRENT COMPLETE FILE:
 RELEVANT TESTS:
 {tests_text}
 
+Before returning source, perform a literal contract audit.
+
+CONTRACT AUDIT RULES:
+- Every explicit USER REQUEST requirement is mandatory.
+- Treat phrases such as "convert", "accept any iterable", "only when",
+  "must propagate", "exactly one", "raise", "preserve order", and
+  "do not" as behavioral invariants, not suggestions.
+- Check every bullet independently against the source you are returning.
+- Do not replace a requested conversion with an isinstance restriction.
+- Do not swallow an exception when the request says conversion/errors
+  must propagate.
+- Do not use len(), indexing, or slicing on an input that the request
+  says may be any iterable unless you first materialize it exactly once.
+- Do not recurse when the request explicitly bounds behavior to exactly
+  one nesting level.
+- A passing subset of tests does not override an unmet request clause.
+- Prefer the smallest implementation that satisfies all stated clauses.
+
 Return ONLY the complete final contents of {relative_path}.
 No JSON.
 No markdown.
@@ -563,13 +581,36 @@ OBJECTIVE PYTEST FAILURE EVIDENCE:
 
 Repair the CURRENT file directly.
 
-Use the pytest evidence literally:
-- Compare each reported actual value with the expected value.
+Use the pytest evidence literally, but repair against the USER REQUEST
+rather than merely editing around the observed example.
+
+MANDATORY REPAIR PROCEDURE:
+1. Identify the exact failed behavior from pytest.
+   Compare each reported actual value with the expected value.
+2. Identify which explicit USER REQUEST clause governs that behavior.
+3. Compare the CURRENT source against that clause.
+4. Change the source so the clause itself is satisfied generally.
+5. Re-audit every other explicit request clause before returning.
+
+Contract rules:
+- Every explicit requirement is mandatory.
 - Preserve behavior for tests that already pass.
-- Fix only behavior required by the user request and failed assertions.
-- Include every import required by the returned source.
-- Do not remove valid separators or characters unless the request requires it.
+- Preserve that behavior only when it is also consistent with the user
+  request.
+- A conversion requirement means perform that conversion; do not replace
+  it with a type restriction.
+- If errors are required to propagate, do not catch and convert them to
+  a fallback result.
+- If an argument may be any iterable, do not assume len(), indexing,
+  slicing, truthiness, or repeatable iteration unless the implementation
+  safely materializes it once.
+- If behavior is explicitly limited to one level, do not recurse.
+- If a negative or otherwise invalid value must raise, implement that
+  condition explicitly rather than relying on unrelated validation.
 - Do not special-case test names or literal test inputs.
+- Do not special-case expected values.
+- Include every import required by the returned source.
+- Return the smallest complete implementation satisfying the whole contract.
 
 Return ONLY the complete corrected contents of {relative_path}.
 No JSON.
