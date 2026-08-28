@@ -1,6 +1,8 @@
 """Difficulty-aware, provenance-safe Sophyane Task Compiler."""
 from __future__ import annotations
 
+import ast
+
 import os
 import re
 import subprocess
@@ -2569,47 +2571,142 @@ def _structural_grounding_score(
 
     # SOPHYANE_V62_PHASE_B_STRUCTURAL_GROUNDING
     elif contract == "redis_sliding_window_rate_limit":
-        redis_shape = any(
-            token in lower
-            for token in (
-                "redis",
-                "redis_client",
-                "redisclient",
-            )
-        )
-
-        request_shape = any(
-            token in lower
-            for token in (
-                "request.client",
-                "client.host",
-                "client_ip",
-                "remote_addr",
-                "request",
-            )
-        )
-
-        http_shape = any(
-            token in lower
-            for token in (
-                "middleware",
-                "call_next",
-                "http",
-                "request",
-                "response",
-                "route",
-                "handler",
-            )
-        )
-
-        if not (
-            redis_shape
-            and request_shape
-            and http_shape
-        ):
+        # Redis HTTP rate limiting is a mutation contract. File-wide lexical
+        # coincidence is not sufficient grounding: configuration, compiler
+        # source and routing policy can all contain words such as "redis",
+        # "request" and "middleware" without being an application request
+        # interception surface.
+        #
+        # Require one concrete Python function to prove, in the same lexical
+        # scope:
+        #   * request/req argument;
+        #   * explicit Redis dependency argument;
+        #   * real client-IP extraction;
+        #   * actual use of that Redis dependency;
+        #   * HTTP/middleware interception shape.
+        if not path_lower.endswith(".py"):
             return (
                 0.0,
-                "no-http-redis-client-ip-rate-limit-structure",
+                "redis-rate-limit-target-not-python",
+            )
+
+        try:
+            tree = ast.parse(
+                raw,
+                filename=relative,
+            )
+        except SyntaxError:
+            return (
+                0.0,
+                "redis-rate-limit-python-parse-failed",
+            )
+
+        proven_symbol = ""
+
+        for node in ast.walk(tree):
+            if not isinstance(
+                node,
+                (
+                    ast.FunctionDef,
+                    ast.AsyncFunctionDef,
+                ),
+            ):
+                continue
+
+            arg_names = [
+                item.arg
+                for item in (
+                    list(node.args.posonlyargs)
+                    + list(node.args.args)
+                    + list(node.args.kwonlyargs)
+                )
+            ]
+
+            request_args = [
+                name
+                for name in arg_names
+                if name.lower() in {
+                    "request",
+                    "req",
+                }
+            ]
+
+            redis_args = [
+                name
+                for name in arg_names
+                if "redis" in name.lower()
+            ]
+
+            if (
+                not request_args
+                or not redis_args
+            ):
+                continue
+
+            segment = (
+                ast.get_source_segment(
+                    raw,
+                    node,
+                )
+                or ""
+            )
+
+            segment_lower = segment.lower()
+
+            client_ip_shape = any(
+                token in segment_lower
+                for token in (
+                    "request.client.host",
+                    "req.client.host",
+                    "client.host",
+                    "client_ip",
+                    "remote_addr",
+                )
+            )
+
+            redis_use = any(
+                (
+                    name.lower() + "."
+                )
+                in segment_lower
+                for name in redis_args
+            )
+
+            http_shape = (
+                "middleware"
+                in node.name.lower()
+                or any(
+                    name.lower()
+                    in {
+                        "call_next",
+                        "next_handler",
+                        "handler",
+                    }
+                    for name in arg_names
+                )
+                or any(
+                    token in segment_lower
+                    for token in (
+                        "call_next(",
+                        "response",
+                        "status_code",
+                        "http",
+                    )
+                )
+            )
+
+            if (
+                client_ip_shape
+                and redis_use
+                and http_shape
+            ):
+                proven_symbol = node.name
+                break
+
+        if not proven_symbol:
+            return (
+                0.0,
+                "no-function-scoped-http-redis-client-ip-structure",
             )
 
         score += 16.0
@@ -2619,6 +2716,7 @@ def _structural_grounding_score(
                 "redis-dependency",
                 "http-request-path",
                 "client-ip-identity",
+                "function:" + proven_symbol,
             )
         )
 

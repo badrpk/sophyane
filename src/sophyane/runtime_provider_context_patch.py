@@ -114,11 +114,18 @@ def install_provider_context_patch() -> None:
             or ""
         ).lower()
 
-        # Local inference is latency-bounded.  A local response may only
-        # affect the active request if it completes within ten seconds.
-        # Preserve any caller-requested timeout that is already stricter.
+        # Normalize the caller-owned timeout without imposing a separate
+        # short local-inference deadline at the provider-context layer.
         if primary in {"local_gguf"}:
-            timeout = min(float(timeout), 6.0)
+            # The provider-context wrapper is the live TUI timeout
+            # authority. Do not silently reduce the caller/configured provider
+            # budget to a short UI deadline. Local GGUF inference and coding
+            # requests can legitimately require minutes on CPU/mobile hosts.
+            #
+            # Explicit call_provider(..., timeout=N) remains authoritative.
+            # The normal call path still supplies the TUI/provider timeout
+            # chosen by its caller.
+            timeout = max(1.0, float(timeout))
 
         original_message = message
         live_instructions: list[str] = []

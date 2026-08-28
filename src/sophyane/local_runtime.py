@@ -677,14 +677,172 @@ exec "{real_binary}" "$@"
     return wrapper
 
 
+def _discover_native_llama_cpp() -> dict[str, str] | None:
+    """Return a verified existing llama.cpp runtime without downloading.
+
+    Discovery is deliberately portable. A candidate is trusted only when it
+    is executable and ``--version`` succeeds. Broken PATH wrappers therefore
+    cannot shadow a working Android/Termux build.
+    """
+    home = Path.home()
+
+    roots = (
+        LLAMA_RUNTIME_DIR,
+        home
+        / "llama.cpp-termux"
+        / "build-termux"
+        / "bin",
+        home
+        / "llama.cpp"
+        / "build"
+        / "bin",
+    )
+
+    server_candidates: list[Path] = []
+
+    for root in roots:
+        server_candidates.append(
+            root / "llama-server"
+        )
+
+    path_server = shutil.which(
+        "llama-server"
+    )
+
+    if path_server:
+        server_candidates.append(
+            Path(path_server)
+        )
+
+    seen: set[str] = set()
+
+    for server in server_candidates:
+        try:
+            key = str(
+                server.expanduser().resolve()
+            )
+        except OSError:
+            key = str(
+                server.expanduser()
+            )
+
+        if key in seen:
+            continue
+
+        seen.add(
+            key
+        )
+
+        if not (
+            server.is_file()
+            and os.access(
+                server,
+                os.X_OK,
+            )
+        ):
+            continue
+
+        probe = _run(
+            [
+                str(server),
+                "--version",
+            ],
+            timeout=10,
+        )
+
+        if probe.returncode != 0:
+            continue
+
+        root = server.parent
+
+        cli = None
+
+        cli_candidates = [
+            root / "llama-cli",
+            root / "llama-completion",
+            root / "main",
+        ]
+
+        path_cli = shutil.which(
+            "llama-cli"
+        )
+
+        if path_cli:
+            cli_candidates.append(
+                Path(path_cli)
+            )
+
+        cli_seen: set[str] = set()
+
+        for candidate in cli_candidates:
+            try:
+                cli_key = str(
+                    candidate.expanduser().resolve()
+                )
+            except OSError:
+                cli_key = str(
+                    candidate.expanduser()
+                )
+
+            if cli_key in cli_seen:
+                continue
+
+            cli_seen.add(
+                cli_key
+            )
+
+            if not (
+                candidate.is_file()
+                and os.access(
+                    candidate,
+                    os.X_OK,
+                )
+            ):
+                continue
+
+            candidate_probe = _run(
+                [
+                    str(candidate),
+                    "--version",
+                ],
+                timeout=10,
+            )
+
+            if candidate_probe.returncode == 0:
+                cli = candidate
+                break
+
+        return {
+            "server": str(server),
+            "cli": (
+                str(cli)
+                if cli is not None
+                else ""
+            ),
+            "runtime": str(root),
+        }
+
+    return None
+
 def install_llama_cpp(
     progress: ProgressFn | None = None,
     *,
     force: bool = False,
 ) -> dict[str, str]:
-    """Download full llama.cpp runtime (binaries + .so) from GitHub releases."""
+    """Resolve an existing native llama.cpp runtime before downloading."""
     LLAMA_DIR.mkdir(parents=True, exist_ok=True)
     BIN_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not force:
+        native = _discover_native_llama_cpp()
+
+        if native is not None:
+            _progress(
+                progress,
+                "Using existing native llama.cpp runtime: "
+                + native["server"],
+            )
+            return native
 
     if not force and _llama_libs_ok(LLAMA_RUNTIME_DIR):
         server_real = next(LLAMA_RUNTIME_DIR.rglob("llama-server"), None)
