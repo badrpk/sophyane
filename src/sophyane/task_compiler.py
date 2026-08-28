@@ -443,9 +443,16 @@ def _discover_badrpk_repositories() -> list[Path]:
 def retrieve(
     requirement: Requirement,
     *,
-    max_hits: int = 6,
+    workspace: str | Path | None = None,
+    max_hits: int = 12,
 ) -> list[dict[str, str]]:
-    """Ground one requirement against locally available BADRPK code."""
+    """Retrieve advisory evidence only from the explicitly active workspace.
+
+    Repository retrieval is supporting evidence, never mutation authority.
+    When a workspace is supplied by compile_task(), no implicit home-level,
+    sibling-repository, historical checkout, or global repository fallback
+    is permitted.
+    """
     words = re.findall(
         r"[A-Za-z][A-Za-z0-9_+-]{3,}",
         requirement.text,
@@ -468,7 +475,7 @@ def retrieve(
         "integrate",
     }
 
-    terms = []
+    terms: list[str] = []
 
     for word in words:
         lower = word.lower()
@@ -482,7 +489,9 @@ def retrieve(
         ):
             continue
 
-        terms.append(word)
+        terms.append(
+            word
+        )
 
         if len(terms) >= 6:
             break
@@ -490,45 +499,78 @@ def retrieve(
     if not terms:
         return []
 
+    if workspace is None:
+        return []
+
+    root = Path(
+        workspace
+    ).expanduser().resolve()
+
+    if not root.is_dir():
+        return []
+
     hits: list[dict[str, str]] = []
 
-    for repo in _discover_badrpk_repositories():
-        for term in terms:
-            try:
-                proc = subprocess.run(
-                    [
-                        "grep",
-                        "-RniI",
-                        "-m",
-                        "2",
-                        "--exclude-dir=.git",
-                        "--exclude-dir=.venv",
-                        "--exclude-dir=node_modules",
-                        "--exclude-dir=dist",
-                        "--exclude-dir=build",
-                        term,
-                        str(repo),
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    text=True,
-                    timeout=3,
-                )
-            except Exception:
+    for term in terms:
+        try:
+            proc = subprocess.run(
+                [
+                    "grep",
+                    "-RniI",
+                    "-m",
+                    "2",
+                    "--exclude-dir=.git",
+                    "--exclude-dir=.venv",
+                    "--exclude-dir=venv",
+                    "--exclude-dir=node_modules",
+                    "--exclude-dir=dist",
+                    "--exclude-dir=build",
+                    term,
+                    str(root),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=3,
+            )
+        except Exception:
+            continue
+
+        for line in proc.stdout.splitlines():
+            if not line.strip():
                 continue
 
-            for line in proc.stdout.splitlines():
-                if not line.strip():
-                    continue
+            # grep was rooted at `root`, but assert the emitted path remains
+            # inside the requested workspace before exposing it as evidence.
+            source_text = line.split(
+                ":",
+                1,
+            )[0]
 
-                hits.append({
-                    "repo": repo.name,
+            try:
+                source = Path(
+                    source_text
+                ).expanduser().resolve()
+
+                source.relative_to(
+                    root
+                )
+            except (
+                OSError,
+                ValueError,
+            ):
+                continue
+
+            hits.append(
+                {
+                    "repo": root.name,
                     "term": term,
                     "line": line[:700],
-                })
+                }
+            )
 
-                if len(hits) >= max_hits:
-                    return hits
+            if len(hits) >= max_hits:
+                return hits
 
     return hits
 
@@ -1270,9 +1312,32 @@ def validate_requirement_evidence(
         return True, "orm_eager_fetch"
 
     if contract == "circuit_breaker":
-        if not (
+        open_behavior = (
             "open" in text
-            and "fallback" in text
+        )
+
+        fallback_behavior = (
+            "fallback" in text
+            or (
+                "secondary" in text
+                and any(
+                    marker in text
+                    for marker in (
+                        "send",
+                        "route",
+                        "use",
+                        "call",
+                        "delegate",
+                        "switch",
+                        "forward",
+                    )
+                )
+            )
+        )
+
+        if not (
+            open_behavior
+            and fallback_behavior
         ):
             return (
                 False,
@@ -4215,6 +4280,12 @@ def compile_task(
         objective=value,
     )
 
+    active_workspace = Path(
+        workspace
+        if workspace is not None
+        else Path.cwd()
+    ).resolve()
+
     evidence: dict[str, Evidence] = {}
 
     repository_hits = []
@@ -4223,7 +4294,8 @@ def compile_task(
         # User-supplied facts are authoritative context, not something
         # the local model should be asked to regenerate.
         hits = retrieve(
-            requirement
+            requirement,
+            workspace=active_workspace,
         )
 
         repository_hits.extend(
@@ -4280,11 +4352,6 @@ def compile_task(
         )
     ]
 
-    active_workspace = Path(
-        workspace
-        if workspace is not None
-        else Path.cwd()
-    ).resolve()
 
     groundings = {
         requirement.requirement_id: (
