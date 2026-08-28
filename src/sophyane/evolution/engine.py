@@ -17,6 +17,7 @@ import random
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.parse
@@ -42,6 +43,19 @@ from .models import (
 )
 from .principles import PrincipleStore
 from .validators import validate
+from .red_queen_policy import (
+    ChallengeRequest,
+    RedQueenExecutionPolicy,
+)
+from .red_queen import (
+    STATUS_ACTIVE,
+    EvaluatorSpec,
+    RedQueenState,
+    build_adversarial_challenger,
+    compare_evaluators,
+    promote_at_epoch_boundary,
+    selectively_invalidate_utility,
+)
 
 
 COMPONENT_PATHS = {
@@ -125,6 +139,39 @@ class EvolutionEngine:
         )
         self._focus_capability = ""
         self._focus_remaining = 0
+
+        # RED_QUEEN_ENGINE_STATE_V1
+        #
+        # The trusted anchor is intentionally outside the evolving evaluator
+        # population. Existing executed held-out/generalization tasks remain
+        # the authority used to gate evaluator promotion.
+        initial_evaluator = EvaluatorSpec(
+            evaluator_id="sophyane-evaluator-v1",
+            version=1,
+            objective=(
+                "Detect candidate regressions while preserving "
+                "targeted, regression, held-out, and security gates"
+            ),
+            tests=("existing-evolution-gates",),
+            generation=0,
+            status=STATUS_ACTIVE,
+            adversarial=False,
+        )
+
+        # RED_QUEEN_EXECUTION_POLICY_V1
+        self.red_queen_execution_policy = (
+            RedQueenExecutionPolicy(
+                max_requests=4,
+            )
+        )
+
+        self.red_queen = RedQueenState(
+            epoch=1,
+            trusted_anchor_id=(
+                "sophyane-heldout-anchor-v1"
+            ),
+            active=initial_evaluator,
+        )
 
     def _run_sli(
         self,
@@ -1426,6 +1473,8 @@ Return:
     def _gate(
         self,
         record: EvolutionRecord,
+        *,
+        defer_promotion: bool = False,
     ) -> GateResult | None:
         proposal = record.proposal
 
@@ -1687,9 +1736,15 @@ Return:
 
             promotion_committed = False
 
+            # RED_QUEEN_DEFERRED_PROMOTION_V1
+            #
+            # Historical/direct _gate() callers keep the original promotion
+            # behavior. Native cycle() sets defer_promotion=True so trusted
+            # supplemental probes and the one-way veto execute first.
             if (
                 promotable
                 and self.config.allow_promotion
+                and not defer_promotion
             ):
                 try:
                     subprocess.run(
@@ -1866,6 +1921,1492 @@ Return:
                     text=True,
                 )
 
+    @staticmethod
+    @staticmethod
+    def _red_queen_changed_patch_tokens(
+        patch: str,
+    ) -> frozenset[str]:
+        """Return identifiers only from actual +/- patch lines.
+
+        Diff metadata and unchanged context are deliberately excluded.
+        """
+
+        import keyword
+        import re
+
+        identifier = re.compile(
+            r"\b[A-Za-z_][A-Za-z0-9_]*\b"
+        )
+
+        tokens: set[str] = set()
+
+        for line in patch.splitlines():
+            if line.startswith(
+                (
+                    "+++",
+                    "---",
+                )
+            ):
+                continue
+
+            if not (
+                line.startswith("+")
+                or line.startswith("-")
+            ):
+                continue
+
+            payload = line[1:]
+
+            for token in identifier.findall(
+                payload
+            ):
+                if keyword.iskeyword(
+                    token
+                ):
+                    continue
+
+                if len(token) <= 1:
+                    continue
+
+                tokens.add(token)
+
+        return frozenset(tokens)
+
+
+    @staticmethod
+    def _red_queen_python_code_identifiers(
+        source: str,
+    ) -> frozenset[str]:
+        """Extract identifiers from Python code, excluding comments/strings."""
+
+        import io
+        import keyword
+        import tokenize
+
+        result: set[str] = set()
+
+        try:
+            stream = io.StringIO(
+                source
+            ).readline
+
+            for token in tokenize.generate_tokens(
+                stream
+            ):
+                if token.type != tokenize.NAME:
+                    continue
+
+                value = token.string
+
+                if keyword.iskeyword(
+                    value
+                ):
+                    continue
+
+                if len(value) <= 1:
+                    continue
+
+                result.add(value)
+
+        except (
+            tokenize.TokenError,
+            IndentationError,
+        ):
+            return frozenset()
+
+        return frozenset(result)
+
+    @classmethod
+    def _red_queen_changed_python_tokens(
+        cls,
+        patch: str,
+    ) -> frozenset[str]:
+        """Identifiers from +/- Python code only.
+
+        Comments and string-literal contents cannot inject selector tokens.
+        """
+
+        tokens: set[str] = set()
+
+        for line in patch.splitlines():
+            if line.startswith(
+                (
+                    "+++",
+                    "---",
+                )
+            ):
+                continue
+
+            if not (
+                line.startswith("+")
+                or line.startswith("-")
+            ):
+                continue
+
+            payload = line[1:]
+
+            tokens.update(
+                cls._red_queen_python_code_identifiers(
+                    payload + "\n"
+                )
+            )
+
+        return frozenset(tokens)
+
+    @classmethod
+    def _red_queen_patch_relevance_tokens(
+        cls,
+        patch: str,
+        *,
+        worktree: Path | None = None,
+    ) -> frozenset[str]:
+        """Return syntax-aware changed identifiers plus enclosing symbols.
+
+        Rules:
+        - comments/string contents do not contribute identifiers;
+        - unchanged context can update enclosure state but is not relevance;
+        - a hunk-tail declaration establishes enclosure state only;
+        - an enclosure becomes relevant only when a changed line occurs;
+        - changed def/class lines remain directly relevant;
+        - trusted candidate source can recover missing enclosure information.
+        """
+
+        import re
+
+        tokens = set(
+            cls._red_queen_changed_python_tokens(
+                patch
+            )
+        )
+
+        declaration = re.compile(
+            r"(?:^|\s)"
+            r"(?:async\s+def|def|class)"
+            r"\s+"
+            r"([A-Za-z_][A-Za-z0-9_]*)"
+            r"\b"
+        )
+
+        enclosing: str | None = None
+
+        for line in patch.splitlines():
+            if line.startswith(
+                (
+                    "+++",
+                    "---",
+                )
+            ):
+                continue
+
+            if line.startswith("@@"):
+                enclosing = None
+
+                parts = line.split(
+                    "@@",
+                    2,
+                )
+
+                tail = (
+                    parts[2]
+                    if len(parts) >= 3
+                    else ""
+                )
+
+                match = declaration.search(
+                    tail
+                )
+
+                if match:
+                    # Important:
+                    # hunk-tail declaration establishes state only.
+                    # It is not evidence of a changed symbol by itself.
+                    enclosing = match.group(1)
+
+                continue
+
+            if line.startswith(" "):
+                payload = line[1:]
+
+                match = declaration.search(
+                    payload
+                )
+
+                if match:
+                    # Unchanged context may move us into a later
+                    # function/class before the actual changed line.
+                    enclosing = match.group(1)
+
+                continue
+
+            if not (
+                line.startswith("+")
+                or line.startswith("-")
+            ):
+                continue
+
+            payload = line[1:]
+
+            match = declaration.search(
+                payload
+            )
+
+            if match:
+                # The declaration itself changed.
+                enclosing = match.group(1)
+                tokens.add(enclosing)
+                continue
+
+            # A body-level changed line makes only the currently
+            # active enclosure relevant.
+            if enclosing:
+                tokens.add(enclosing)
+
+        if worktree is not None:
+            tokens.update(
+                cls._red_queen_candidate_enclosing_symbols(
+                    worktree=worktree,
+                    patch=patch,
+                )
+            )
+
+        return frozenset(tokens)
+
+
+
+
+    @staticmethod
+    def _red_queen_candidate_enclosing_symbols(
+        *,
+        worktree: Path,
+        patch: str,
+    ) -> frozenset[str]:
+        """Recover enclosing Python declarations from candidate source."""
+
+        import ast
+        import re
+
+        symbols: set[str] = set()
+
+        current_file: Path | None = None
+        new_line: int | None = None
+
+        hunk = re.compile(
+            r"^@@ -\d+(?:,\d+)? "
+            r"\+(\d+)(?:,\d+)? @@"
+        )
+
+        def enclosing_for_line(
+            source_path: Path,
+            lineno: int,
+        ) -> None:
+            if not source_path.is_file():
+                return
+
+            if source_path.suffix != ".py":
+                return
+
+            try:
+                tree = ast.parse(
+                    source_path.read_text(
+                        encoding="utf-8"
+                    )
+                )
+            except (
+                SyntaxError,
+                OSError,
+            ):
+                return
+
+            candidates: list[
+                tuple[int, int, str]
+            ] = []
+
+            for node in ast.walk(tree):
+                if not isinstance(
+                    node,
+                    (
+                        ast.FunctionDef,
+                        ast.AsyncFunctionDef,
+                        ast.ClassDef,
+                    ),
+                ):
+                    continue
+
+                start = int(
+                    node.lineno
+                )
+
+                end = int(
+                    getattr(
+                        node,
+                        "end_lineno",
+                        start,
+                    )
+                )
+
+                if (
+                    start
+                    <= lineno
+                    <= end
+                ):
+                    candidates.append(
+                        (
+                            start,
+                            end,
+                            node.name,
+                        )
+                    )
+
+            if not candidates:
+                return
+
+            candidates.sort(
+                key=lambda item: (
+                    item[1] - item[0],
+                    -item[0],
+                )
+            )
+
+            symbols.add(
+                candidates[0][2]
+            )
+
+        for line in patch.splitlines():
+            if line.startswith(
+                "+++ b/"
+            ):
+                relative = line[
+                    len("+++ b/"):
+                ]
+
+                candidate = Path(
+                    relative
+                )
+
+                if candidate.is_absolute():
+                    current_file = None
+                    continue
+
+                if ".." in candidate.parts:
+                    current_file = None
+                    continue
+
+                current_file = (
+                    worktree
+                    / candidate
+                )
+
+                continue
+
+            match = hunk.match(
+                line
+            )
+
+            if match:
+                new_line = int(
+                    match.group(1)
+                )
+                continue
+
+            if (
+                current_file is None
+                or new_line is None
+            ):
+                continue
+
+            if line.startswith("\\"):
+                continue
+
+            if line.startswith("-"):
+                continue
+
+            if line.startswith("+"):
+                enclosing_for_line(
+                    current_file,
+                    new_line,
+                )
+
+                new_line += 1
+                continue
+
+            if line.startswith(" "):
+                new_line += 1
+
+        return frozenset(
+            symbols
+        )
+
+
+    @staticmethod
+    def _red_queen_test_identifier_tokens(
+        path: Path,
+    ) -> frozenset[str]:
+        """Extract identifiers from an engine-selected supplemental test."""
+
+        import ast
+
+        if not path.is_file():
+            return frozenset()
+
+        text = path.read_text(
+            encoding="utf-8"
+        )
+
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            return frozenset()
+
+        tokens: set[str] = set()
+
+        for node in ast.walk(tree):
+            if isinstance(
+                node,
+                ast.Name,
+            ):
+                tokens.add(node.id)
+
+            elif isinstance(
+                node,
+                ast.Attribute,
+            ):
+                tokens.add(node.attr)
+
+            elif isinstance(
+                node,
+                ast.ImportFrom,
+            ):
+                for alias in node.names:
+                    tokens.add(alias.name)
+
+                    if alias.asname:
+                        tokens.add(alias.asname)
+
+            elif isinstance(
+                node,
+                ast.Import,
+            ):
+                for alias in node.names:
+                    tokens.add(
+                        alias.name.split(".")[-1]
+                    )
+
+                    if alias.asname:
+                        tokens.add(alias.asname)
+
+        return frozenset(tokens)
+
+    def _select_red_queen_native_challenges(
+        self,
+        gate: GateResult | None,
+    ) -> tuple[ChallengeRequest, ...]:
+        """Select relevant learned probes using engine-fixed test paths."""
+
+        if gate is None:
+            return ()
+
+        details = (
+            gate.details
+            if isinstance(
+                gate.details,
+                dict,
+            )
+            else {}
+        )
+
+        raw_worktree = details.get(
+            "worktree"
+        )
+
+        if not raw_worktree:
+            return ()
+
+        worktree = Path(
+            str(raw_worktree)
+        )
+
+        if not worktree.is_dir():
+            return ()
+
+        learned = (
+            self.red_queen_challenges()
+        )
+
+        patch_file = (
+            worktree
+            / ".candidate.patch"
+        )
+
+        if not patch_file.is_file():
+            details[
+                "red_queen_selector"
+            ] = "patch_missing_fallback_all"
+
+            details[
+                "red_queen_selector_selected_families"
+            ] = [
+                request.family
+                for request in learned
+            ]
+
+            details[
+                "red_queen_selector_candidate_count"
+            ] = len(learned)
+
+            details[
+                "red_queen_selector_selected_count"
+            ] = len(learned)
+
+            gate.details = details
+
+            return learned
+
+        patch_text = patch_file.read_text(
+            encoding="utf-8"
+        )
+
+        changed_tokens = (
+            self._red_queen_changed_patch_tokens(
+                patch_text
+            )
+        )
+
+        # RED_QUEEN_AST_AWARE_RELEVANCE_V1
+        relevance_tokens = (
+            self._red_queen_patch_relevance_tokens(
+                patch_text,
+                worktree=worktree,
+            )
+        )
+
+        selected: list[
+            ChallengeRequest
+        ] = []
+
+        intersections: dict[
+            str,
+            list[str],
+        ] = {}
+
+        allowed = {
+            "targeted",
+            "regression",
+            "security",
+            "held_out",
+        }
+
+        for request in learned:
+            family = request.family
+
+            if family not in allowed:
+                continue
+
+            relative_test = (
+                Path("tests")
+                / "red_queen"
+                / (
+                    "test_"
+                    + family
+                    + "_supplemental.py"
+                )
+            )
+
+            test_path = (
+                worktree
+                / relative_test
+            )
+
+            test_tokens = (
+                self._red_queen_test_identifier_tokens(
+                    test_path
+                )
+            )
+
+            overlap = sorted(
+                relevance_tokens
+                & test_tokens
+            )
+
+            intersections[
+                family
+            ] = overlap
+
+            if overlap:
+                selected.append(
+                    request
+                )
+
+        details[
+            "red_queen_selector"
+        ] = (
+            "ast_aware_changed_python_tokens_plus_"
+            "trusted_candidate_enclosing_symbols_"
+            "intersection_with_engine_fixed_"
+            "supplemental_test_identifiers"
+        )
+
+        details[
+            "red_queen_selector_patch_tokens"
+        ] = sorted(
+            changed_tokens
+        )
+
+        details[
+            "red_queen_selector_relevance_tokens"
+        ] = sorted(
+            relevance_tokens
+        )
+
+        details[
+            "red_queen_selector_intersections"
+        ] = intersections
+
+        details[
+            "red_queen_selector_selected_families"
+        ] = [
+            request.family
+            for request in selected
+        ]
+
+        details[
+            "red_queen_selector_candidate_count"
+        ] = len(learned)
+
+        details[
+            "red_queen_selector_selected_count"
+        ] = len(selected)
+
+        gate.details = details
+
+        return tuple(selected)
+
+
+    # RED_QUEEN_NATIVE_RELEVANCE_SELECTOR_V1
+
+    def _run_red_queen_native_challenges(
+        self,
+        gate: GateResult | None,
+    ) -> tuple[dict[str, object], ...]:
+        """Execute previously learned Red Queen supplemental probes.
+
+        The existing GateResult remains authoritative. These probes attach
+        real execution evidence only and cannot alter source promotion state.
+
+        ChallengeRequest does not carry executable commands or paths. The
+        engine maps each bounded family to one fixed repository-relative
+        convention:
+
+            tests/red_queen/test_<family>_supplemental.py
+
+        Missing files are skipped. No shell is used.
+        """
+
+        if gate is None:
+            return ()
+
+        details = (
+            gate.details
+            if isinstance(
+                gate.details,
+                dict,
+            )
+            else {}
+        )
+
+        raw_worktree = details.get(
+            "worktree"
+        )
+
+        if not raw_worktree:
+            details[
+                "red_queen_native_probes"
+            ] = []
+            details[
+                "red_queen_native_probe_detected"
+            ] = False
+            gate.details = details
+            return ()
+
+        worktree = Path(
+            str(
+                raw_worktree
+            )
+        )
+
+        if not worktree.is_dir():
+            details[
+                "red_queen_native_probes"
+            ] = []
+            details[
+                "red_queen_native_probe_detected"
+            ] = False
+            gate.details = details
+            return ()
+
+        # RED_QUEEN_NATIVE_RELEVANCE_SELECTION_EXECUTION_V1
+        requests = (
+            self._select_red_queen_native_challenges(
+                gate
+            )
+        )
+
+        evidence: list[
+            dict[str, object]
+        ] = []
+
+        allowed = {
+            "targeted",
+            "regression",
+            "security",
+            "held_out",
+        }
+
+        for request in requests:
+            family = request.family
+
+            if family not in allowed:
+                continue
+
+            relative_test = Path(
+                "tests"
+            ) / "red_queen" / (
+                "test_"
+                + family
+                + "_supplemental.py"
+            )
+
+            test_path = (
+                worktree
+                / relative_test
+            )
+
+            if not test_path.is_file():
+                evidence.append(
+                    {
+                        "family": family,
+                        "challenge_id": (
+                            request.challenge_id
+                        ),
+                        "test": str(
+                            relative_test
+                        ),
+                        "executed": False,
+                        "passed": None,
+                        "returncode": None,
+                        "reason": (
+                            "supplemental test absent"
+                        ),
+                    }
+                )
+                continue
+
+            started = time.monotonic()
+
+            try:
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "pytest",
+                        "-q",
+                        str(
+                            relative_test
+                        ),
+                    ],
+                    cwd=worktree,
+                    capture_output=True,
+                    text=True,
+                    timeout=(
+                        self.config
+                        .timeout_seconds
+                    ),
+                    check=False,
+                )
+
+                elapsed = (
+                    time.monotonic()
+                    - started
+                )
+
+                evidence.append(
+                    {
+                        "family": family,
+                        "challenge_id": (
+                            request.challenge_id
+                        ),
+                        "test": str(
+                            relative_test
+                        ),
+                        "executed": True,
+                        "passed": (
+                            result.returncode
+                            == 0
+                        ),
+                        "returncode": (
+                            result.returncode
+                        ),
+                        "elapsed_seconds": (
+                            elapsed
+                        ),
+                        "stdout": (
+                            result.stdout[
+                                -4000:
+                            ]
+                        ),
+                        "stderr": (
+                            result.stderr[
+                                -4000:
+                            ]
+                        ),
+                    }
+                )
+
+            except subprocess.TimeoutExpired as exc:
+                elapsed = (
+                    time.monotonic()
+                    - started
+                )
+
+                evidence.append(
+                    {
+                        "family": family,
+                        "challenge_id": (
+                            request.challenge_id
+                        ),
+                        "test": str(
+                            relative_test
+                        ),
+                        "executed": True,
+                        "passed": False,
+                        "returncode": None,
+                        "elapsed_seconds": (
+                            elapsed
+                        ),
+                        "timeout": True,
+                        "stdout": str(
+                            exc.stdout or ""
+                        )[
+                            -4000:
+                        ],
+                        "stderr": str(
+                            exc.stderr or ""
+                        )[
+                            -4000:
+                        ],
+                    }
+                )
+
+        detected = any(
+            bool(
+                item.get(
+                    "executed"
+                )
+            )
+            and (
+                item.get(
+                    "passed"
+                )
+                is False
+            )
+            for item in evidence
+        )
+
+        details[
+            "red_queen_native_probes"
+        ] = evidence
+
+        details[
+            "red_queen_native_probe_detected"
+        ] = detected
+
+        details[
+            "red_queen_native_probe_count"
+        ] = sum(
+            bool(
+                item.get(
+                    "executed"
+                )
+            )
+            for item in evidence
+        )
+
+        gate.details = details
+
+        return tuple(
+            evidence
+        )
+
+    def _apply_trusted_red_queen_probe_veto(
+        self,
+        gate: GateResult | None,
+    ) -> bool:
+        """Apply a one-way trusted-executor veto from native probe evidence.
+
+        Red Queen may select bounded challenge families, but it has no direct
+        source-promotion authority. Only evidence produced by the engine's
+        native executor can conservatively change promotable True -> False.
+
+        This method can never change promotable False -> True.
+        """
+
+        if gate is None:
+            return False
+
+        details = (
+            gate.details
+            if isinstance(
+                gate.details,
+                dict,
+            )
+            else {}
+        )
+
+        evidence = details.get(
+            "red_queen_native_probes"
+        )
+
+        if not isinstance(
+            evidence,
+            list,
+        ):
+            details[
+                "red_queen_trusted_probe_veto"
+            ] = False
+            details[
+                "red_queen_trusted_probe_veto_reasons"
+            ] = []
+            gate.details = details
+            return False
+
+        failed_executed = []
+
+        for item in evidence:
+            if not isinstance(
+                item,
+                dict,
+            ):
+                continue
+
+            if (
+                item.get("executed") is True
+                and item.get("passed") is False
+            ):
+                failed_executed.append(
+                    item
+                )
+
+        veto = bool(
+            gate.promotable
+            and failed_executed
+        )
+
+        reasons = [
+            {
+                "family": item.get(
+                    "family"
+                ),
+                "challenge_id": item.get(
+                    "challenge_id"
+                ),
+                "test": item.get(
+                    "test"
+                ),
+                "returncode": item.get(
+                    "returncode"
+                ),
+                "timeout": bool(
+                    item.get(
+                        "timeout",
+                        False,
+                    )
+                ),
+            }
+            for item in failed_executed
+        ]
+
+        details[
+            "red_queen_trusted_probe_veto"
+        ] = veto
+
+        details[
+            "red_queen_trusted_probe_veto_reasons"
+        ] = reasons
+
+        details[
+            "red_queen_pre_veto_promotable"
+        ] = bool(
+            gate.promotable
+        )
+
+        if veto:
+            gate.promotable = False
+
+        details[
+            "red_queen_post_veto_promotable"
+        ] = bool(
+            gate.promotable
+        )
+
+        gate.details = details
+
+        return veto
+
+    def red_queen_challenges(
+        self,
+    ) -> tuple[ChallengeRequest, ...]:
+        """Return bounded supplemental challenges selected by the active
+        evaluator policy.
+
+        Returned requests are selection metadata only. They carry no
+        execution or source-promotion authority.
+        """
+
+        return (
+            self.red_queen_execution_policy
+            .requests()
+        )
+
+    def _promote_after_trusted_red_queen_veto(
+        self,
+        record: EvolutionRecord,
+    ) -> bool:
+        """Commit a deferred candidate only after trusted probe veto.
+
+        This is the positive promotion boundary used by cycle().
+
+        Authority properties:
+        - Red Queen itself cannot call arbitrary commands;
+        - GateResult.promotable must already be True;
+        - trusted supplemental veto has already run;
+        - False can never become True here;
+        - direct _gate() compatibility remains unchanged.
+        """
+
+        gate = record.gate
+        proposal = record.proposal
+
+        if (
+            gate is None
+            or proposal is None
+            or not gate.promotable
+            or not self.config.allow_promotion
+        ):
+            return False
+
+        details = (
+            gate.details
+            if isinstance(
+                gate.details,
+                dict,
+            )
+            else {}
+        )
+
+        raw_worktree = details.get(
+            "worktree"
+        )
+
+        if not raw_worktree:
+            gate.promotable = False
+            details[
+                "promotion_stage"
+            ] = "deferred_missing_worktree"
+            details[
+                "promotion_committed"
+            ] = False
+            gate.details = details
+            return False
+
+        worktree = Path(
+            str(
+                raw_worktree
+            )
+        )
+
+        if not worktree.is_dir():
+            gate.promotable = False
+            details[
+                "promotion_stage"
+            ] = "deferred_missing_worktree"
+            details[
+                "promotion_committed"
+            ] = False
+            gate.details = details
+            return False
+
+        try:
+            subprocess.run(
+                [
+                    "git",
+                    "add",
+                    "-A",
+                ],
+                cwd=worktree,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+        except subprocess.CalledProcessError as exc:
+            gate.promotable = False
+
+            details[
+                "promotion_stage"
+            ] = "git_add"
+
+            details[
+                "promotion_error"
+            ] = (
+                exc.stderr
+                or exc.stdout
+                or str(exc)
+            )
+
+            details[
+                "promotion_returncode"
+            ] = exc.returncode
+
+            details[
+                "promotion_committed"
+            ] = False
+
+            gate.details = details
+            return False
+
+        try:
+            subprocess.run(
+                [
+                    "git",
+                    "commit",
+                    "-m",
+                    (
+                        "sophyane evolution: "
+                        + proposal.component
+                    ),
+                ],
+                cwd=worktree,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+        except subprocess.CalledProcessError as exc:
+            gate.promotable = False
+
+            details[
+                "promotion_stage"
+            ] = "git_commit"
+
+            details[
+                "promotion_error"
+            ] = (
+                exc.stderr
+                or exc.stdout
+                or str(exc)
+            )
+
+            details[
+                "promotion_returncode"
+            ] = exc.returncode
+
+            details[
+                "promotion_committed"
+            ] = False
+
+            gate.details = details
+            return False
+
+        details[
+            "promotion_stage"
+        ] = "post_trusted_probe_veto"
+
+        details[
+            "promotion_committed"
+        ] = True
+
+        details[
+            "promotion_deferred"
+        ] = True
+
+        gate.details = details
+
+        return True
+
+    def _red_queen_attribution(
+        self,
+        record: EvolutionRecord,
+    ) -> None:
+        """Attribute an executed gate result to the evaluator lifecycle.
+
+        Existing GateResult authority is immutable here. Red Queen may evolve
+        evaluator state only after real targeted/regression/generalization
+        execution has completed; it cannot promote a rejected source patch.
+        """
+
+        gate = record.gate
+
+        if gate is None:
+            return
+
+        active_before = self.red_queen.active
+        active_identity = (
+            active_before.identity()
+        )
+
+        record.evaluator_id = (
+            active_before.evaluator_id
+        )
+        record.evaluator_version = (
+            active_before.version
+        )
+        record.evaluator_identity = (
+            active_identity
+        )
+        record.evaluator_epoch = (
+            self.red_queen.epoch
+        )
+
+        details = (
+            gate.details
+            if isinstance(
+                gate.details,
+                dict,
+            )
+            else {}
+        )
+
+        # This value was produced by _score_generalization_tasks() against
+        # the candidate worktree. It is therefore executed held-out evidence,
+        # not a caller-provided synthetic Red Queen score.
+        raw_anchor = details.get(
+            "candidate_generalization_score"
+        )
+
+        if raw_anchor is None:
+            raw_anchor = (
+                gate.baseline_score
+                if gate.held_out_passed
+                else 0.0
+            )
+
+        try:
+            anchor_score = float(
+                raw_anchor
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            anchor_score = 0.0
+
+        anchor_score = max(
+            0.0,
+            min(
+                1.0,
+                anchor_score,
+            ),
+        )
+
+        record.trusted_anchor_score = (
+            anchor_score
+        )
+
+        # Persist active-evaluator utility attribution for every completed
+        # real gate, irrespective of source-patch promotion permission.
+        incumbent_detection_score = (
+            (
+                float(
+                    bool(
+                        gate.targeted_passed
+                    )
+                )
+                + float(
+                    bool(
+                        gate.regression_passed
+                    )
+                )
+                + float(
+                    bool(
+                        gate.security_passed
+                    )
+                )
+            )
+            / 3.0
+        )
+
+        self.red_queen.record_outcome(
+            candidate_id=record.run_id,
+            evaluator=active_before,
+            score=incumbent_detection_score,
+            passed=(
+                gate.targeted_passed
+                and gate.regression_passed
+                and gate.security_passed
+            ),
+            evidence=(
+                "targeted_passed="
+                + str(
+                    gate.targeted_passed
+                ),
+                "regression_passed="
+                + str(
+                    gate.regression_passed
+                ),
+                "security_passed="
+                + str(
+                    gate.security_passed
+                ),
+                "held_out_passed="
+                + str(
+                    gate.held_out_passed
+                ),
+                "trusted_anchor_score="
+                + str(
+                    anchor_score
+                ),
+            ),
+        )
+
+        # A challenger is meaningful only when the incumbent has an observed
+        # blind spot. This keeps ordinary passing cycles from manufacturing
+        # evaluator churn.
+        failures: list[str] = []
+
+        if not gate.targeted_passed:
+            failures.append(
+                "targeted validation failure"
+            )
+
+        if not gate.regression_passed:
+            failures.append(
+                "regression validation failure"
+            )
+
+        if not gate.security_passed:
+            failures.append(
+                "security validation failure"
+            )
+
+        if not gate.held_out_passed:
+            failures.append(
+                "held-out generalization failure"
+            )
+
+        if not failures:
+            record.evaluator_promotion_reason = (
+                "no observed evaluator blind spot"
+            )
+            return
+
+        challenger_id = (
+            active_before.evaluator_id
+            + "-challenger-e"
+            + str(
+                self.red_queen.epoch + 1
+            )
+        )
+
+        challenger = (
+            build_adversarial_challenger(
+                incumbent=active_before,
+                observed_failures=failures,
+                evaluator_id=challenger_id,
+            )
+        )
+
+        self.red_queen.register_challenger(
+            challenger
+        )
+
+        # RQ2 does not invent a second model score. Challenger detection
+        # fitness is derived deterministically from the failures actually
+        # exposed by the current execution. More surfaced failed authorities
+        # means more opportunity for the adversarial evaluator.
+        failed_authorities = len(
+            failures
+        )
+
+        challenger_detection_score = min(
+            1.0,
+            incumbent_detection_score
+            + (
+                0.05
+                * failed_authorities
+            ),
+        )
+
+        self.red_queen.record_outcome(
+            candidate_id=record.run_id,
+            evaluator=challenger,
+            score=challenger_detection_score,
+            passed=(
+                challenger_detection_score
+                >= 0.5
+            ),
+            evidence=tuple(
+                "observed::" + item
+                for item in failures
+            ),
+        )
+
+        match = compare_evaluators(
+            incumbent=active_before,
+            challenger=challenger,
+            incumbent_detection_score=(
+                incumbent_detection_score
+            ),
+            challenger_detection_score=(
+                challenger_detection_score
+            ),
+            trusted_anchor_score=(
+                anchor_score
+            ),
+        )
+
+        decision = (
+            promote_at_epoch_boundary(
+                self.red_queen,
+                challenger_id=challenger_id,
+                match=match,
+            )
+        )
+
+        record.evaluator_promotion_accepted = (
+            decision.accepted
+        )
+        record.evaluator_promotion_reason = (
+            decision.reason
+        )
+
+        if decision.accepted:
+            # RED_QUEEN_EXECUTION_POLICY_LEARNING_V1
+            #
+            # Only an evaluator transition accepted by the existing trusted
+            # anchor may teach future supplemental challenge selection.
+            self.red_queen_execution_policy.learn(
+                failures=tuple(
+                    failures
+                ),
+                epoch=(
+                    self.red_queen.epoch
+                ),
+                evaluator_identity=(
+                    self.red_queen
+                    .active.identity()
+                ),
+            )
+
+            selectively_invalidate_utility(
+                self.red_queen,
+                evaluator_identity=(
+                    active_identity
+                ),
+            )
+
+        # Absolute safety invariant:
+        # Red Queen evaluator evolution can never upgrade the source-patch
+        # GateResult. gate.promotable remains exactly what _gate() decided.
+
     def cycle(
         self,
         number: int,
@@ -1989,8 +3530,85 @@ Return:
                 self._proposal(record)
             )
             record.gate = self._gate(
+                record,
+                defer_promotion=True,
+            )
+
+            # RED_QUEEN_NATIVE_PROBE_EXECUTION_V1
+            #
+            # Execute only challenges learned from PRIOR candidates. The
+            # current candidate has not yet entered Red Queen attribution.
+            # Supplemental evidence cannot modify GateResult.promotable.
+            native_probe_promotable = (
+                record.gate.promotable
+                if record.gate
+                else None
+            )
+
+            self._run_red_queen_native_challenges(
+                record.gate
+            )
+
+            # RED_QUEEN_TRUSTED_PROBE_VETO_V1
+            #
+            # Native probe execution itself cannot mutate source authority.
+            # A separate trusted-executor decision may apply a one-way veto:
+            #
+            #   promotable True -> False
+            #
+            # It can never promote False -> True.
+            if record.gate is not None:
+                assert (
+                    record.gate.promotable
+                    == native_probe_promotable
+                )
+
+            self._apply_trusted_red_queen_probe_veto(
+                record.gate
+            )
+
+            # RED_QUEEN_POST_VETO_PROMOTION_V1
+            #
+            # Positive source promotion happens only after:
+            #
+            #   native gate
+            #   -> native supplemental probes
+            #   -> trusted one-way veto
+            #
+            # A vetoed candidate cannot reach git commit here.
+            self._promote_after_trusted_red_queen_veto(
                 record
             )
+
+            if (
+                record.gate is not None
+                and native_probe_promotable is False
+            ):
+                assert (
+                    record.gate.promotable
+                    is False
+                )
+
+            # RED_QUEEN_ENGINE_WIRING_V1
+            #
+            # Run evaluator lifecycle only after the existing real gate and
+            # any previously learned supplemental probes have finished.
+            # Attribution cannot modify GateResult.promotable.
+            original_promotable = (
+                record.gate.promotable
+                if record.gate
+                else None
+            )
+
+            self._red_queen_attribution(
+                record
+            )
+
+            if record.gate is not None:
+                assert (
+                    record.gate.promotable
+                    == original_promotable
+                )
 
             if (
                 record.gate

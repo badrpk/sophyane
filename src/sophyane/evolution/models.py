@@ -95,6 +95,21 @@ class EvolutionRecord:
     hindsight_report: FeedbackReport | None = None
     proposal: PatchProposal | None = None
     gate: GateResult | None = None
+
+    # RED_QUEEN_ENGINE_ATTRIBUTION_V1
+    #
+    # These fields are deliberately defaulted so historical EvolutionRecord
+    # construction and previously serialized record consumers remain
+    # compatible. They describe evaluator authority; they do not replace
+    # the existing targeted/regression/held-out/security GateResult.
+    evaluator_id: str = ""
+    evaluator_version: int = 0
+    evaluator_identity: str = ""
+    evaluator_epoch: int = 0
+    evaluator_promotion_accepted: bool = False
+    evaluator_promotion_reason: str = ""
+    trusted_anchor_score: float | None = None
+
     status: str = "observed"
     created_at: float = field(
         default_factory=time.time
