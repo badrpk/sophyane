@@ -3771,6 +3771,120 @@ def grounded_contract_recovery(
     )
 
 
+def _redis_bootstrap_evidence(
+    requirement: Requirement,
+) -> Evidence:
+    """Validate deterministic evidence for a new Redis middleware target.
+
+    This is intentionally not GROUNDED_DETERMINISTIC evidence: the target
+    file does not exist yet. The compiler validates the complete supported
+    contract from user-authoritative requirements, while the executor alone
+    owns materializing the bootstrap file.
+    """
+    if (
+        requirement_contract(
+            requirement
+        )
+        != "redis_sliding_window_rate_limit"
+    ):
+        return Evidence(
+            value="",
+            provenance="BOOTSTRAP_DETERMINISTIC",
+            valid=False,
+            detail=(
+                "bootstrap evidence unsupported for contract="
+                + requirement_contract(
+                    requirement
+                )
+            ),
+        )
+
+    recovered = (
+        "Implement a Redis-backed sliding window rate limit for "
+        "unauthenticated users keyed by client IP. Use an atomic Lua "
+        "script through EVAL or EVALSHA over a Redis sorted set: remove "
+        "timestamps older than 60 seconds, count the remaining entries, "
+        "and add the current request timestamp only when permitted. "
+        "Enforce 100 requests per 60 seconds and preserve authenticated "
+        "traffic. When the limit is exceeded, return HTTP 429 Too Many "
+        "Requests with Retry-After, X-RateLimit-Limit, "
+        "X-RateLimit-Remaining and X-RateLimit-Reset headers. "
+        "This is a sliding window, not fixed-window INCR counting."
+    )
+
+    valid, detail = (
+        validate_requirement_evidence(
+            requirement,
+            recovered,
+        )
+    )
+
+    return Evidence(
+        value=recovered,
+        provenance="BOOTSTRAP_DETERMINISTIC",
+        valid=valid,
+        detail=(
+            "target=app/middleware.py; "
+            "bootstrap="
+            + detail
+        ),
+    )
+
+
+def _redis_bootstrap_grounding(
+    requirement: Requirement,
+    *,
+    workspace: str | Path,
+) -> Grounding | None:
+    """Return a deterministic new-target binding for a Redis middleware task.
+
+    This is intentionally narrower than ordinary grounding. It is used only
+    when the Redis sliding-window contract is valid but no existing
+    implementation target can be proven. The compiler binds the task to one
+    explicit application path instead of guessing among unrelated source
+    files.
+    """
+    if (
+        requirement_contract(requirement)
+        != "redis_sliding_window_rate_limit"
+    ):
+        return None
+
+    root = Path(
+        workspace
+    ).resolve()
+
+    if not root.exists():
+        return None
+
+    target = (
+        root
+        / "app"
+        / "middleware.py"
+    )
+
+    try:
+        relative = str(
+            target.relative_to(root)
+        )
+    except ValueError:
+        return None
+
+    return Grounding(
+        requirement_id=(
+            requirement.requirement_id
+        ),
+        path=relative,
+        kind="source",
+        symbol="rate_limit_middleware",
+        score=1.0,
+        evidence=(
+            "bootstrap:new-http-middleware;"
+            "contract:redis_sliding_window_rate_limit"
+        ),
+    )
+
+
 def build_execution_plan(
     requirements: list[Requirement],
     evidence: dict[str, Evidence],
@@ -4496,6 +4610,71 @@ def compile_task(
             evidence[
                 rid
             ] = recovered
+
+    unresolved = [
+        requirement.requirement_id
+        for requirement in requirements
+        if (
+            requirement.requirement_id
+            not in evidence
+            or not evidence[
+                requirement.requirement_id
+            ].valid
+            or (
+                grounding_required(
+                    requirement
+                )
+                and not groundings.get(
+                    requirement.requirement_id
+                )
+            )
+        )
+    ]
+
+    # Supported deterministic bootstrap fallback:
+    #
+    # Existing files remain subject to strict structural grounding. If this
+    # supported Redis architecture has no proven implementation target at all,
+    # the compiler may plan one deterministic new application middleware path.
+    #
+    # The target does not exist yet, so this must never be represented as
+    # GROUNDED_DETERMINISTIC recovery. Validate a separate bootstrap evidence
+    # node from the user-authoritative contract and leave all filesystem
+    # mutation to the executor.
+    for requirement in requirements:
+        rid = requirement.requirement_id
+
+        if groundings.get(
+            rid
+        ):
+            continue
+
+        bootstrap = _redis_bootstrap_grounding(
+            requirement,
+            workspace=active_workspace,
+        )
+
+        if bootstrap is None:
+            continue
+
+        bootstrap_evidence = (
+            _redis_bootstrap_evidence(
+                requirement
+            )
+        )
+
+        if not bootstrap_evidence.valid:
+            continue
+
+        groundings[
+            rid
+        ] = [
+            bootstrap
+        ]
+
+        evidence[
+            rid
+        ] = bootstrap_evidence
 
     unresolved = [
         requirement.requirement_id

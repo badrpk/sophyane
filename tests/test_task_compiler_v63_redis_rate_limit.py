@@ -223,8 +223,43 @@ REDIS_URL = "redis://localhost:6379/0"
     )
 
     assert result.handled
-    assert not result.ok
-    assert result.unresolved
+    assert result.ok
+    assert result.unresolved == []
+
+    refs = result.groundings.get(
+        "r1",
+        [],
+    )
+
+    assert [
+        ref.path
+        for ref in refs
+    ] == [
+        "app/middleware.py"
+    ]
+
+    assert (
+        result.evidence[
+            "r1"
+        ].provenance
+        == "BOOTSTRAP_DETERMINISTIC"
+    )
+
+    assert [
+        target["path"]
+        for step in result.execution_plan
+        for target in step[
+            "targets"
+        ]
+    ] == [
+        "app/middleware.py"
+    ]
+
+    # The unrelated Redis configuration is supporting repository text only.
+    # It must never become the mutation target.
+    assert path.read_text(
+        encoding="utf-8",
+    ) == 'REDIS_URL = "redis://localhost:6379/0"\n'
 
 
 def test_v63_phase_b_executor_authority(

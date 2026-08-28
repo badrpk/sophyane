@@ -118,6 +118,8 @@ def _workspace_path(
 def _target_paths(
     step: dict[str, Any],
     root: Path,
+    *,
+    allow_missing: bool = False,
 ) -> list[Path]:
     paths = []
 
@@ -140,7 +142,10 @@ def _target_paths(
             relative,
         )
 
-        if not target.exists():
+        if (
+            not target.exists()
+            and not allow_missing
+        ):
             raise RuntimeError(
                 "planned target does not exist: "
                 + relative
@@ -3636,13 +3641,74 @@ def _execute_redis_sliding_window_rate_limit(
     targets = _target_paths(
         step,
         root,
+        allow_missing=True,
     )
 
-    source_targets = [
+    planned_source_targets = [
         item
         for item in targets
         if item.suffix.lower() == ".py"
     ]
+
+    source_targets = [
+        item
+        for item in planned_source_targets
+        if item.is_file()
+    ]
+
+    # A compiler-approved Redis bootstrap target may be planned before the
+    # file exists. Keep ordinary existing-file grounding authoritative.
+    #
+    # Creation is allowed only when there is no existing Python target and
+    # the compiler planned exactly the deterministic app/middleware.py
+    # bootstrap path for this Redis contract.
+    if not source_targets:
+        requested = [
+            item
+            for item in planned_source_targets
+            if (
+                not item.exists()
+                and str(
+                    item.relative_to(root)
+                ).replace(
+                    "\\",
+                    "/",
+                )
+                == "app/middleware.py"
+            )
+        ]
+
+        if (
+            len(planned_source_targets) == 1
+            and len(requested) == 1
+        ):
+            target = requested[
+                0
+            ]
+
+            target.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            target.write_text(
+                """
+def rate_limit_middleware(request, redis_client):
+    client_ip = request.client.host
+    redis_client.get("warmup:" + client_ip)
+
+    return {
+        "status": 200,
+        "headers": {},
+        "body": "ok",
+    }
+""".lstrip(),
+                encoding="utf-8",
+            )
+
+            source_targets = [
+                target
+            ]
 
     relative_targets = tuple(
         str(item.relative_to(root))

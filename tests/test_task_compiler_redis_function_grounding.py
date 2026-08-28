@@ -145,9 +145,34 @@ def test_real_repository_has_no_false_redis_target() -> None:
         }
     )
 
-    # Sophyane itself does not currently expose the user's requested
-    # application middleware surface, so this task must remain unresolved.
+    # Sophyane itself does not currently expose an existing application
+    # middleware surface for this request. Strict grounding therefore finds
+    # no real target, and the explicit implementation request must use only
+    # the deterministic new-file bootstrap target.
     assert result.handled
-    assert not result.ok
-    assert result.unresolved
-    assert result.execution_plan == []
+    assert result.ok
+    assert result.unresolved == []
+
+    assert (
+        result.evidence[
+            "r1"
+        ].provenance
+        == "BOOTSTRAP_DETERMINISTIC"
+    )
+
+    assert [
+        ref.path
+        for ref in refs
+    ] == [
+        "app/middleware.py"
+    ]
+
+    assert [
+        target["path"]
+        for step in result.execution_plan
+        for target in step[
+            "targets"
+        ]
+    ] == [
+        "app/middleware.py"
+    ]
