@@ -2504,6 +2504,83 @@ def grounded_contract_recovery(
     # Database diagnostic recovery.
     # --------------------------------------------------------
 
+    if contract == "database_index":
+        target_table = _extract_target_table(
+            requirement
+        )
+
+        # The requested column list is user authority.
+        requested_columns: list[str] = []
+
+        match = re.search(
+            r"\(([^)]+)\)",
+            requirement.text,
+        )
+
+        if match:
+            for item in match.group(1).split(","):
+                item = item.strip()
+
+                if re.fullmatch(
+                    r"[A-Za-z_][A-Za-z0-9_]*",
+                    item,
+                ):
+                    requested_columns.append(
+                        item
+                    )
+
+        if (
+            target_table
+            and requested_columns
+        ):
+            # A deterministic index artifact is permitted only after the
+            # requirement has already been bound to a real same-domain
+            # schema/model grounding.
+            name_parts = [
+                target_table,
+                *requested_columns,
+            ]
+
+            index_name = (
+                "idx_"
+                + "_".join(
+                    name_parts
+                )
+            )
+
+            recovered = (
+                f"CREATE INDEX {index_name} "
+                f"ON {target_table} "
+                f"({', '.join(requested_columns)});"
+            )
+
+            valid, detail = (
+                validate_requirement_evidence(
+                    requirement,
+                    recovered,
+                )
+            )
+
+            return Evidence(
+                value=recovered,
+                provenance="GROUNDED_DETERMINISTIC",
+                valid=valid,
+                detail=(
+                    f"source={grounding.path}; "
+                    f"recovery={detail}"
+                ),
+            )
+
+        return Evidence(
+            value="",
+            provenance="GROUNDED_DETERMINISTIC",
+            valid=False,
+            detail=(
+                "database-index recovery could not derive "
+                "authoritative target table/columns"
+            ),
+        )
+
     if contract == "database_analysis":
         if not table:
             return Evidence(

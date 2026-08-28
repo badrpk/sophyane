@@ -131,6 +131,250 @@ def _coding_handler(request: ExecutionRequest) -> ExecutionResult | None:
     )
 
 
+def _bounded_deterministic_reasoning(
+    text: str,
+) -> str | None:
+    """Resolve tiny, explicit engineering contracts without another model call."""
+    import re
+
+    raw = str(
+        text or ""
+    )
+
+    lower = raw.lower()
+
+    # --------------------------------------------------------
+    # Exponential-backoff policy
+    # --------------------------------------------------------
+    if (
+        "backoff" in lower
+        and "retry" in lower
+    ):
+        retries_match = re.search(
+            r"(?:maximum|max)\s+(\d+)\s+retr(?:y|ies)",
+            lower,
+        )
+
+        if retries_match:
+            retries = int(
+                retries_match.group(1)
+            )
+
+            if (
+                1
+                <= retries
+                <= 10
+            ):
+                delays = [
+                    2 ** attempt
+                    for attempt in range(
+                        retries
+                    )
+                ]
+
+                rendered = ", ".join(
+                    f"{seconds}s"
+                    for seconds
+                    in delays
+                )
+
+                return (
+                    f"Use this exponential backoff retry policy for "
+                    f"{retries} retries: wait {rendered} before "
+                    "successive retry attempts."
+                )
+
+    return None
+
+
+def _direct_local_reasoning_handler(
+    request: ExecutionRequest,
+) -> ExecutionResult | None:
+    """Handle D1-D3 bounded reasoning through the local model."""
+    from sophyane.task_compiler import (
+        estimate_difficulty,
+        should_compile,
+    )
+    from sophyane.config import load_config
+    import sophyane.race_orchestrator as race
+
+    difficulty = estimate_difficulty(
+        request.text
+    )
+
+    # Canonical protocol facts should not depend on stochastic generation.
+    # Python's stdlib is authoritative for registered HTTP status phrases.
+    import re
+    from http import HTTPStatus
+
+    http_match = re.search(
+        r"\bHTTP\s+(\d{3})\b",
+        request.text,
+        flags=re.IGNORECASE,
+    )
+
+    if http_match:
+        code = int(
+            http_match.group(1)
+        )
+
+        try:
+            status = HTTPStatus(
+                code
+            )
+        except ValueError:
+            status = None
+
+        if status is not None:
+            lower = request.text.lower()
+
+            if (
+                "mean" in lower
+                or "means" in lower
+                or "what is" in lower
+                or "explain" in lower
+            ):
+                started = time.time()
+                finished = time.time()
+
+                return ExecutionResult(
+                    handled=True,
+                    ok=True,
+                    capability="reasoning.direct_local",
+                    output=(
+                        f"HTTP {code} means "
+                        f"{status.phrase}."
+                    ),
+                    evidence={
+                        "difficulty": difficulty,
+                        "source": "PYTHON_HTTPSTATUS",
+                    },
+                    started_at=started,
+                    finished_at=finished,
+                )
+
+    if difficulty >= 4:
+        return None
+
+    if (
+        difficulty == 3
+        and should_compile(
+            request.text
+        )
+    ):
+        return None
+
+    started = time.time()
+
+    previous = (
+        race._LOCAL_RACE_APPLICATION_DEADLINE_SECONDS
+    )
+
+    # Direct easy reasoning gets the same bounded philosophy:
+    # no long monolithic local inference.
+    lower_request = request.text.lower()
+
+    bounded_engineering = any(
+        marker in lower_request
+        for marker in (
+            "retry",
+            "backoff",
+            "algorithm",
+            "pseudocode",
+            "policy",
+            "configuration",
+            "regex",
+            "sql",
+            "command",
+            "code fragment",
+        )
+    )
+
+    deadline = (
+        3.0
+        if (
+            difficulty >= 3
+            or bounded_engineering
+        )
+        else 2.0
+    )
+
+    race._LOCAL_RACE_APPLICATION_DEADLINE_SECONDS = (
+        deadline
+    )
+
+    try:
+        provider = race._single_provider(
+            provider_id="local_gguf",
+            config=dict(
+                load_config()
+            ),
+        )
+
+        output = str(
+            race._generate_provider_for_race(
+                provider=provider,
+                provider_id="local_gguf",
+                prompt=request.text,
+                system_prompt=(
+                    "Answer the user's bounded request directly. "
+                    "Be concise and concrete. "
+                    "Do not expand into a larger parent task."
+                ),
+            )
+            or ""
+        ).strip()
+
+    except Exception:
+        fallback = (
+            _bounded_deterministic_reasoning(
+                request.text
+            )
+        )
+
+        if fallback is None:
+            return None
+
+        finished = time.time()
+
+        return ExecutionResult(
+            handled=True,
+            ok=True,
+            capability="reasoning.direct_local",
+            output=fallback,
+            evidence={
+                "difficulty": difficulty,
+                "deadline": deadline,
+                "source": "BOUNDED_DETERMINISTIC_FALLBACK",
+            },
+            started_at=started,
+            finished_at=finished,
+        )
+
+    finally:
+        race._LOCAL_RACE_APPLICATION_DEADLINE_SECONDS = (
+            previous
+        )
+
+    if not output:
+        return None
+
+    finished = time.time()
+
+    return ExecutionResult(
+        handled=True,
+        ok=True,
+        capability="reasoning.direct_local",
+        output=output,
+        evidence={
+            "difficulty": difficulty,
+            "deadline": deadline,
+        },
+        started_at=started,
+        finished_at=finished,
+    )
+
+
 def _task_compiler_handler(
     request: ExecutionRequest,
 ) -> ExecutionResult | None:
@@ -214,6 +458,16 @@ def initialize_registry() -> CapabilityRegistry:
                 "C++ and Python artifacts."
             ),
             priority=10,
+        )
+
+        _REGISTRY.register(
+            "reasoning.direct_local",
+            _direct_local_reasoning_handler,
+            description=(
+                "Handle D1-D3 bounded reasoning directly with "
+                "strict local latency ceilings."
+            ),
+            priority=12,
         )
 
         _REGISTRY.register(
