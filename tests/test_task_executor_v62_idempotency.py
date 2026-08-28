@@ -111,7 +111,9 @@ def test_c3_catalog_is_exact():
         "cache_stampede",
         "transactional_outbox",
         "saga_compensation",
+        "redis_sliding_window_rate_limit",
     }
+
 
 
 def test_c1_mutates_proven_shape(
@@ -222,4 +224,5 @@ def test_post_c3_remaining_families_still_unregistered():
         "cache_stampede",
         "transactional_outbox",
         "saga_compensation",
+        "redis_sliding_window_rate_limit",
     }

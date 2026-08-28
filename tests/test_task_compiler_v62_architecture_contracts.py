@@ -214,4 +214,5 @@ def test_v62_executor_authority_boundary_after_c3():
         "cache_stampede",
         "transactional_outbox",
         "saga_compensation",
+        "redis_sliding_window_rate_limit",
     }

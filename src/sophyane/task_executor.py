@@ -3622,6 +3622,607 @@ def _execute_saga_compensation(
 
 
 
+
+# SOPHYANE_V63_REDIS_SLIDING_WINDOW_EXECUTOR
+
+@register_executor(
+    "redis_sliding_window_rate_limit"
+)
+def _execute_redis_sliding_window_rate_limit(
+    step: dict[str, Any],
+    requirement: dict[str, Any],
+    root: Path,
+) -> ExecutionStepResult:
+    targets = _target_paths(
+        step,
+        root,
+    )
+
+    source_targets = [
+        item
+        for item in targets
+        if item.suffix.lower() == ".py"
+    ]
+
+    relative_targets = tuple(
+        str(item.relative_to(root))
+        for item in source_targets
+    )
+
+    if not source_targets:
+        return ExecutionStepResult(
+            requirement_id=step["requirement_id"],
+            contract="redis_sliding_window_rate_limit",
+            operation=step["operation"],
+            ok=False,
+            mutated=False,
+            targets=(),
+            detail="no grounded Python HTTP middleware source",
+        )
+
+    validated = str(
+        step.get(
+            "validated_value",
+            "",
+        )
+    ).lower()
+
+    required_groups = (
+        ("sliding window", "sliding-window"),
+        ("redis",),
+        ("lua", "eval", "evalsha"),
+        ("100",),
+        ("60 seconds", "60 second", "per minute"),
+        ("ip", "client ip"),
+        ("unauthenticated",),
+        ("429",),
+        ("retry-after",),
+        ("x-ratelimit-limit",),
+        ("x-ratelimit-remaining",),
+        ("x-ratelimit-reset",),
+    )
+
+    if not all(
+        any(
+            token in validated
+            for token in group
+        )
+        for group in required_groups
+    ):
+        return ExecutionStepResult(
+            requirement_id=step["requirement_id"],
+            contract="redis_sliding_window_rate_limit",
+            operation=step["operation"],
+            ok=False,
+            mutated=False,
+            targets=relative_targets,
+            detail=(
+                "validated rate-limit contract lacks "
+                "required sliding-window semantics"
+            ),
+        )
+
+    chosen = None
+    function_node = None
+    request_name = None
+    redis_name = None
+
+    for candidate in source_targets:
+        raw = candidate.read_text(
+            encoding="utf-8",
+            errors="replace",
+        )
+
+        if (
+            "SOPHYANE_REDIS_SLIDING_WINDOW_RATE_LIMIT_V1"
+            in raw
+        ):
+            return ExecutionStepResult(
+                requirement_id=step["requirement_id"],
+                contract="redis_sliding_window_rate_limit",
+                operation=step["operation"],
+                ok=True,
+                mutated=False,
+                targets=(
+                    str(candidate.relative_to(root)),
+                ),
+                detail=(
+                    "Redis sliding-window rate limiter "
+                    "already installed"
+                ),
+            )
+
+        try:
+            tree = ast.parse(
+                raw,
+                filename=str(candidate),
+            )
+        except SyntaxError:
+            continue
+
+        for node in tree.body:
+            if not isinstance(
+                node,
+                (
+                    ast.FunctionDef,
+                    ast.AsyncFunctionDef,
+                ),
+            ):
+                continue
+
+            # Phase B deliberately supports a narrow, structurally
+            # provable function form. Unknown shapes fail closed.
+            if (
+                node.args.vararg is not None
+                or node.args.kwarg is not None
+                or node.args.kwonlyargs
+                or node.args.posonlyargs
+            ):
+                continue
+
+            arg_names = [
+                item.arg
+                for item in node.args.args
+            ]
+
+            req_candidates = [
+                name
+                for name in arg_names
+                if name.lower() in {
+                    "request",
+                    "req",
+                }
+            ]
+
+            redis_candidates = [
+                name
+                for name in arg_names
+                if "redis" in name.lower()
+            ]
+
+            if (
+                not req_candidates
+                or not redis_candidates
+            ):
+                continue
+
+            segment = (
+                ast.get_source_segment(
+                    raw,
+                    node,
+                )
+                or ""
+            )
+
+            lower = segment.lower()
+
+            has_request_identity = any(
+                token in lower
+                for token in (
+                    "client.host",
+                    "client_ip",
+                    "remote_addr",
+                    "request.client",
+                )
+            )
+
+            has_redis_dependency = any(
+                token in lower
+                for token in (
+                    "redis",
+                    ".get(",
+                    ".eval(",
+                    ".evalsha(",
+                    ".zadd(",
+                )
+            )
+
+            if not (
+                has_request_identity
+                and has_redis_dependency
+            ):
+                continue
+
+            chosen = candidate
+            function_node = node
+            request_name = req_candidates[0]
+            redis_name = redis_candidates[0]
+            break
+
+        if chosen is not None:
+            break
+
+    if (
+        chosen is None
+        or function_node is None
+        or request_name is None
+        or redis_name is None
+    ):
+        return ExecutionStepResult(
+            requirement_id=step["requirement_id"],
+            contract="redis_sliding_window_rate_limit",
+            operation=step["operation"],
+            ok=False,
+            mutated=False,
+            targets=relative_targets,
+            detail=(
+                "grounded source lacks proven request/client-IP "
+                "and explicit Redis dependency"
+            ),
+        )
+
+    raw = chosen.read_text(
+        encoding="utf-8"
+    )
+
+    lines = raw.splitlines(
+        keepends=True
+    )
+
+    offsets = [0]
+
+    for line in lines:
+        offsets.append(
+            offsets[-1] + len(line)
+        )
+
+    start = offsets[
+        function_node.lineno - 1
+    ]
+
+    end = offsets[
+        function_node.end_lineno
+    ]
+
+    region = raw[
+        start:end
+    ]
+
+    region_lines = region.splitlines(
+        keepends=True
+    )
+
+    if not region_lines:
+        return ExecutionStepResult(
+            requirement_id=step["requirement_id"],
+            contract="redis_sliding_window_rate_limit",
+            operation=step["operation"],
+            ok=False,
+            mutated=False,
+            targets=(
+                str(chosen.relative_to(root)),
+            ),
+            detail="empty grounded middleware function",
+        )
+
+    first_line = region_lines[0]
+
+    # Keep Phase B intentionally narrow: require a one-line function
+    # signature so the transformation cannot guess at complex syntax.
+    import re as _re
+
+    match = _re.match(
+        r"^(?P<indent>\s*)"
+        r"(?P<async>async\s+)?"
+        r"def\s+"
+        + _re.escape(function_node.name)
+        + r"\s*\((?P<args>[^)]*)\)\s*:\s*$",
+        first_line.rstrip("\n"),
+    )
+
+    if match is None:
+        return ExecutionStepResult(
+            requirement_id=step["requirement_id"],
+            contract="redis_sliding_window_rate_limit",
+            operation=step["operation"],
+            ok=False,
+            mutated=False,
+            targets=(
+                str(chosen.relative_to(root)),
+            ),
+            detail=(
+                "unsupported middleware signature; "
+                "refusing structural guess"
+            ),
+        )
+
+    indent = match.group("indent")
+    async_prefix = (
+        match.group("async")
+        or ""
+    )
+
+    args_source = match.group("args")
+    original_name = (
+        "_sophyane_original_"
+        + function_node.name
+    )
+
+    renamed_first = first_line.replace(
+        "def " + function_node.name + "(",
+        "def " + original_name + "(",
+        1,
+    )
+
+    renamed_region = (
+        renamed_first
+        + "".join(
+            region_lines[1:]
+        )
+    )
+
+    arg_names = [
+        item.arg
+        for item in function_node.args.args
+    ]
+
+    call_args = ", ".join(
+        arg_names
+    )
+
+    original_call = (
+        f"{original_name}({call_args})"
+    )
+
+    if isinstance(
+        function_node,
+        ast.AsyncFunctionDef,
+    ):
+        original_call = (
+            "await "
+            + original_call
+        )
+
+    wrapper = f'''
+{async_prefix}def {function_node.name}({args_source}):
+    # SOPHYANE_REDIS_SLIDING_WINDOW_RATE_LIMIT_V1
+    import time
+    import uuid
+
+    request = {request_name}
+    redis_client = {redis_name}
+
+    user = getattr(
+        request,
+        "user",
+        None,
+    )
+
+    authenticated = bool(
+        user is not None
+        and getattr(
+            user,
+            "is_authenticated",
+            False,
+        )
+    )
+
+    # The V6.3 contract limits unauthenticated users only.
+    if authenticated:
+        return {original_call}
+
+    client = getattr(
+        request,
+        "client",
+        None,
+    )
+
+    client_ip = getattr(
+        client,
+        "host",
+        None,
+    )
+
+    if not client_ip:
+        client_ip = getattr(
+            request,
+            "client_ip",
+            None,
+        )
+
+    if not client_ip:
+        raise RuntimeError(
+            "cannot determine unauthenticated client IP"
+        )
+
+    limit = 100
+    window_seconds = 60
+
+    now_ms = int(
+        time.time() * 1000
+    )
+
+    window_ms = (
+        window_seconds * 1000
+    )
+
+    key = (
+        "sophyane:rate-limit:ip:"
+        + str(client_ip)
+    )
+
+    member = (
+        str(now_ms)
+        + ":"
+        + uuid.uuid4().hex
+    )
+
+    lua = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local member = ARGV[4]
+
+redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+
+local count = redis.call('ZCARD', key)
+
+if count >= limit then
+    local oldest = redis.call(
+        'ZRANGE',
+        key,
+        0,
+        0,
+        'WITHSCORES'
+    )
+
+    local reset = now
+
+    if oldest[2] then
+        reset = tonumber(oldest[2]) + window
+    end
+
+    redis.call('PEXPIRE', key, window)
+
+    return {{0, count, reset}}
+end
+
+redis.call('ZADD', key, now, member)
+
+count = count + 1
+
+redis.call('PEXPIRE', key, window)
+
+return {{1, count, now + window}}
+"""
+
+    allowed, count, reset_ms = redis_client.eval(
+        lua,
+        1,
+        key,
+        now_ms,
+        window_ms,
+        limit,
+        member,
+    )
+
+    allowed = int(
+        allowed
+    )
+
+    count = int(
+        count
+    )
+
+    reset_ms = int(
+        reset_ms
+    )
+
+    remaining = max(
+        0,
+        limit - count,
+    )
+
+    retry_after = max(
+        1,
+        (
+            reset_ms
+            - now_ms
+            + 999
+        )
+        // 1000,
+    )
+
+    rate_headers = {{
+        "X-RateLimit-Limit": str(limit),
+        "X-RateLimit-Remaining": str(remaining),
+        "X-RateLimit-Reset": str(
+            reset_ms // 1000
+        ),
+    }}
+
+    if not allowed:
+        headers = dict(
+            rate_headers
+        )
+
+        headers[
+            "Retry-After"
+        ] = str(
+            retry_after
+        )
+
+        return {{
+            "status": 429,
+            "status_code": 429,
+            "body": "Too Many Requests",
+            "headers": headers,
+        }}
+
+    result = {original_call}
+
+    if isinstance(
+        result,
+        dict,
+    ):
+        headers = dict(
+            result.get(
+                "headers",
+                {{}},
+            )
+        )
+
+        headers.update(
+            rate_headers
+        )
+
+        result[
+            "headers"
+        ] = headers
+
+    return result
+'''
+
+    updated = (
+        raw[:start]
+        + renamed_region
+        + "\n"
+        + wrapper
+        + raw[end:]
+    )
+
+    try:
+        ast.parse(
+            updated,
+            filename=str(chosen),
+        )
+    except SyntaxError as exc:
+        return ExecutionStepResult(
+            requirement_id=step["requirement_id"],
+            contract="redis_sliding_window_rate_limit",
+            operation=step["operation"],
+            ok=False,
+            mutated=False,
+            targets=(
+                str(chosen.relative_to(root)),
+            ),
+            detail=(
+                "generated middleware failed syntax validation: "
+                + str(exc)
+            ),
+        )
+
+    chosen.write_text(
+        updated,
+        encoding="utf-8",
+    )
+
+    return ExecutionStepResult(
+        requirement_id=step["requirement_id"],
+        contract="redis_sliding_window_rate_limit",
+        operation=step["operation"],
+        ok=True,
+        mutated=True,
+        targets=(
+            str(chosen.relative_to(root)),
+        ),
+        detail=(
+            "Redis Lua sliding-window rate limiter "
+            "installed structurally"
+        ),
+    )
+
 def execute_compiled_task(
     compiled: Any,
     *,

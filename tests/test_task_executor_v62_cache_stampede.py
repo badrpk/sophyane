@@ -77,7 +77,9 @@ def test_c2_executor_authority_boundary():
         "cache_stampede",
         "transactional_outbox",
         "saga_compensation",
+        "redis_sliding_window_rate_limit",
     }
+
 
 
 def test_raw_cache_prompt_mutates(

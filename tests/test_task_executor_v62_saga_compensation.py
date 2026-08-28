@@ -67,9 +67,11 @@ def _write(
 
 
 def test_c4_catalog_is_final():
-    assert set(
+    catalog = set(
         executor_catalog()
-    ) == {
+    )
+
+    assert catalog == {
         "database_analysis",
         "database_index",
         "orm_eager_fetch",
@@ -79,7 +81,9 @@ def test_c4_catalog_is_final():
         "cache_stampede",
         "transactional_outbox",
         "saga_compensation",
+        "redis_sliding_window_rate_limit",
     }
+
 
 
 def test_raw_saga_prompt_mutates(

@@ -568,6 +568,7 @@ def requirement_contract(
         "idempotency_key",
         "transactional_outbox",
         "saga_compensation",
+        "redis_sliding_window_rate_limit",
     }:
         return architecture_marker
 
@@ -674,6 +675,22 @@ def requirement_contract(
     ):
         return "saga_compensation"
 
+    # SOPHYANE_V63_REDIS_SLIDING_WINDOW_RATE_LIMIT
+    if (
+        (
+            "rate limit" in text
+            or "rate limiting" in text
+            or "rate limiter" in text
+        )
+        and "redis" in text
+        and (
+            "sliding window" in text
+            or "sorted set" in text
+            or "zset" in text
+        )
+    ):
+        return "redis_sliding_window_rate_limit"
+
     return "generic"
 
 
@@ -749,6 +766,18 @@ def _contract_instruction(
             "payment and inventory steps, persisted state transitions, "
             "and compensation/refund when a later inventory step fails "
             "after payment succeeds."
+        )
+
+    if contract == "redis_sliding_window_rate_limit":
+        return (
+            "Return one concrete Redis sliding-window HTTP rate-limit "
+            "mechanism. Use an atomic Lua/EVAL operation over a Redis "
+            "sorted set keyed by unauthenticated client IP, enforce "
+            "100 requests per 60 seconds, preserve authenticated traffic, "
+            "and define HTTP 429 with Retry-After plus "
+            "X-RateLimit-Limit, X-RateLimit-Remaining and "
+            "X-RateLimit-Reset headers. Do not substitute a fixed-window "
+            "INCR counter."
         )
 
     return (
@@ -1539,6 +1568,93 @@ def validate_requirement_evidence(
 
         return True, "saga_compensation"
 
+    if contract == "redis_sliding_window_rate_limit":
+        required_groups = (
+            (
+                "sliding window",
+                "sliding-window",
+            ),
+            (
+                "redis",
+            ),
+            (
+                "lua",
+                "eval",
+                "evalsha",
+            ),
+            (
+                "sorted set",
+                "zset",
+                "zadd",
+                "zremrangebyscore",
+            ),
+            (
+                "100",
+            ),
+            (
+                "60 second",
+                "60s",
+                "one minute",
+                "1 minute",
+            ),
+            (
+                "ip",
+                "client ip",
+                "client address",
+            ),
+            (
+                "unauthenticated",
+                "anonymous",
+            ),
+            (
+                "429",
+                "too many requests",
+            ),
+            (
+                "retry-after",
+                "retry after",
+            ),
+            (
+                "x-ratelimit-limit",
+                "x ratelimit limit",
+            ),
+            (
+                "x-ratelimit-remaining",
+                "x ratelimit remaining",
+            ),
+            (
+                "x-ratelimit-reset",
+                "x ratelimit reset",
+            ),
+        )
+
+        for choices in required_groups:
+            if not any(
+                token in text
+                for token in choices
+            ):
+                return (
+                    False,
+                    (
+                        "redis sliding-window rate-limit evidence "
+                        "lacks required contract semantics"
+                    ),
+                )
+
+        if (
+            "fixed window" in text
+            and not (
+                "not fixed window" in text
+                or "avoid fixed window" in text
+            )
+        ):
+            return (
+                False,
+                "fixed-window evidence is not a sliding-window contract",
+            )
+
+        return True, "redis_sliding_window_rate_limit"
+
     # Generic fallback: reject near-verbatim restatement.
     source_tokens = {
         item
@@ -1856,6 +1972,20 @@ def _grounding_terms(
             if token not in terms:
                 terms.append(token)
 
+    elif contract == "redis_sliding_window_rate_limit":
+        for token in (
+            "redis",
+            "middleware",
+            "request",
+            "client",
+            "host",
+            "rate_limit",
+            "rate limiter",
+            "unauthenticated",
+        ):
+            if token not in terms:
+                terms.append(token)
+
     # SOPHYANE_V62_PHASE_B_GROUNDING_TERM_PRIORITY
     #
     # Structural architecture contracts must place problem-site
@@ -1895,6 +2025,14 @@ def _grounding_terms(
             "charge",
             "reserve",
             "order",
+        ),
+        "redis_sliding_window_rate_limit": (
+            "redis",
+            "middleware",
+            "request",
+            "client",
+            "host",
+            "rate_limit",
         ),
     }
 
@@ -2365,6 +2503,60 @@ def _structural_grounding_score(
                 )
 
     # SOPHYANE_V62_PHASE_B_STRUCTURAL_GROUNDING
+    elif contract == "redis_sliding_window_rate_limit":
+        redis_shape = any(
+            token in lower
+            for token in (
+                "redis",
+                "redis_client",
+                "redisclient",
+            )
+        )
+
+        request_shape = any(
+            token in lower
+            for token in (
+                "request.client",
+                "client.host",
+                "client_ip",
+                "remote_addr",
+                "request",
+            )
+        )
+
+        http_shape = any(
+            token in lower
+            for token in (
+                "middleware",
+                "call_next",
+                "http",
+                "request",
+                "response",
+                "route",
+                "handler",
+            )
+        )
+
+        if not (
+            redis_shape
+            and request_shape
+            and http_shape
+        ):
+            return (
+                0.0,
+                "no-http-redis-client-ip-rate-limit-structure",
+            )
+
+        score += 16.0
+
+        signals.extend(
+            (
+                "redis-dependency",
+                "http-request-path",
+                "client-ip-identity",
+            )
+        )
+
     elif contract == "cache_stampede":
         cache_shape = any(
             token in lower
@@ -2783,6 +2975,7 @@ def grounding_required(
         "idempotency_key",
         "transactional_outbox",
         "saga_compensation",
+        "redis_sliding_window_rate_limit",
     }
 
 
@@ -2838,6 +3031,35 @@ def grounded_contract_recovery(
     contract = requirement_contract(
         requirement
     )
+
+    if contract == "redis_sliding_window_rate_limit":
+        recovered = (
+            "Implement a Redis-backed sliding window rate limit for "
+            "unauthenticated users keyed by client IP. Use an atomic Lua "
+            "script through EVAL or EVALSHA over a Redis sorted set: remove "
+            "timestamps older than 60 seconds, count the remaining entries, "
+            "and add the current request timestamp only when permitted. "
+            "Enforce 100 requests per 60 seconds and preserve authenticated "
+            "traffic. When the limit is exceeded, return HTTP 429 Too Many "
+            "Requests with Retry-After, X-RateLimit-Limit, "
+            "X-RateLimit-Remaining and X-RateLimit-Reset headers. "
+            "This is a sliding window, not fixed-window INCR counting."
+        )
+
+        valid, detail = validate_requirement_evidence(
+            requirement,
+            recovered,
+        )
+
+        return Evidence(
+            value=recovered,
+            provenance="GROUNDED_DETERMINISTIC",
+            valid=valid,
+            detail=(
+                f"source={grounding.path}; "
+                f"recovery={detail}"
+            ),
+        )
 
     if contract == "cache_stampede":
         recovered = (
@@ -3453,6 +3675,9 @@ def build_execution_plan(
         elif contract == "saga_compensation":
             operation = "modify_checkout_orchestration"
 
+        elif contract == "redis_sliding_window_rate_limit":
+            operation = "modify_http_rate_limit_middleware"
+
         plan.append({
             "requirement_id": rid,
             "contract": contract,
@@ -3675,6 +3900,26 @@ def _objective_architecture_contract(
         )
     ):
         return "saga_compensation"
+
+    if (
+        (
+            "rate limit" in value
+            or "rate limiting" in value
+            or "rate limiter" in value
+        )
+        and "sliding window" in value
+        and "redis" in value
+        and "lua" in value
+        and (
+            "ip" in value
+            or "client" in value
+        )
+        and (
+            "429" in value
+            or "too many requests" in value
+        )
+    ):
+        return "redis_sliding_window_rate_limit"
 
     return None
 

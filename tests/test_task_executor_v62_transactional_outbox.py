@@ -86,7 +86,9 @@ def test_c3_catalog_is_exact():
         "cache_stampede",
         "transactional_outbox",
         "saga_compensation",
+        "redis_sliding_window_rate_limit",
     }
+
 
 
 
@@ -342,4 +344,5 @@ def test_saga_still_unregistered():
         "cache_stampede",
         "transactional_outbox",
         "saga_compensation",
+        "redis_sliding_window_rate_limit",
     }
