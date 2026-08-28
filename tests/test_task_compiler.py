@@ -1,80 +1,97 @@
+from __future__ import annotations
+
+from pathlib import Path
+
 from sophyane.task_compiler import (
-    compile_task,
-    should_compile_task,
+    decompose,
+    estimate_difficulty,
+    extract_explicit_facts,
+    should_compile,
 )
-from sophyane.task_execution import (
-    validate_generated_source,
-)
 
 
-def test_simple_latest_email_does_not_compile() -> None:
-    assert (
-        should_compile_task(
-            "show my latest email"
-        )
-        is False
+def test_easy_question_is_not_stolen_by_compiler():
+    text = "What is 2 + 2?"
+
+    assert estimate_difficulty(text) <= 2
+    assert not should_compile(text)
+
+
+def test_complex_engineering_task_is_compiler_candidate():
+    text = (
+        "Analyze slow orders queries, add a composite index on "
+        "(user_id, status, created_at), and rewrite N+1 ORM queries."
     )
 
-    assert (
-        compile_task(
-            "show my latest email"
-        )
-        is None
+    assert estimate_difficulty(text) >= 3
+    assert should_compile(text)
+
+
+def test_explicit_user_facts_are_extracted():
+    facts = extract_explicit_facts(
+        "Open after 5 failures within 30 seconds and emit "
+        "OrderPlaced with X-RateLimit-Limit."
     )
 
+    assert "5" in facts
+    assert any("30" in item for item in facts)
+    assert "OrderPlaced" in facts
+    assert "X-RateLimit-Limit" in facts
 
-def test_complex_correspondent_task_compiles() -> None:
-    task = compile_task(
-        "Determine the five people I communicate with "
-        "most frequently by email over the last 90 days. "
-        "Show received count, sent count and total messages."
+
+def test_decomposition_creates_bounded_requirements():
+    parts = decompose(
+        "Analyze the query, add an index, and rewrite the ORM fetch."
     )
 
-    assert task is not None
-    assert (
-        task.task_id
-        == "gmail-top-correspondents"
+    assert len(parts) >= 2
+    assert all(item.requirement_id for item in parts)
+    assert all(item.text for item in parts)
+
+
+def test_production_module_does_not_embed_proof_task_solutions():
+    source = Path(
+        "src/sophyane/task_compiler.py"
+    ).read_text()
+
+    forbidden = (
+        "idx_orders_user_id_status_created_at",
+        "failure_threshold=5",
+        "OrderPlaced through Kafka",
+        "ZREMRANGEBYSCORE",
     )
 
-    assert task.source_kind == "gmail_imap"
-    assert task.privileges == ("read",)
-    assert task.ephemeral is True
+    for value in forbidden:
+        assert value not in source
 
 
-def test_generated_email_task_has_no_embedded_secret() -> None:
-    task = compile_task(
-        "Determine my top five email correspondents "
-        "and show received count and sent count."
+def test_n_plus_one_does_not_create_fake_numeric_user_truth():
+    facts = extract_explicit_facts(
+        "Rewrite N+1 ORM queries using eager loading."
     )
 
-    assert task is not None
-
-    source = task.source_code.lower()
-
-    assert "app_password =" not in source
-    assert "sophyane_imap_app_password" in source
+    assert "1" not in facts
 
 
-def test_generated_email_task_passes_static_gate() -> None:
-    task = compile_task(
-        "Determine my top five email correspondents "
-        "and show received count and sent count."
+def test_real_standalone_numeric_facts_remain_authoritative():
+    facts = extract_explicit_facts(
+        "Open after 5 failures within 30 seconds."
     )
 
-    assert task is not None
-
-    assert (
-        validate_generated_source(
-            task
-        )
-        == []
-    )
+    assert "5" in facts
+    assert any(item.startswith("30") for item in facts)
 
 
-def test_mutating_email_request_is_not_compiled() -> None:
-    assert (
-        compile_task(
-            "send an email to Alice"
-        )
-        is None
-    )
+def test_lexical_repository_hit_is_not_automatic_truth():
+    source = Path(
+        "src/sophyane/task_compiler.py"
+    ).read_text()
+
+    # Repository evidence must not directly create valid=True evidence
+    # and then continue past local residual resolution.
+    forbidden = '''if hits:
+            best = hits[0]
+
+            evidence['''
+
+    assert forbidden not in source

@@ -131,6 +131,35 @@ def _coding_handler(request: ExecutionRequest) -> ExecutionResult | None:
     )
 
 
+def _task_compiler_handler(
+    request: ExecutionRequest,
+) -> ExecutionResult | None:
+    """Compile complex objectives into grounded atomic work packets."""
+    from sophyane.task_compiler import compile_task
+
+    started = time.time()
+
+    compiled = compile_task(
+        request.text,
+        workspace=request.workspace,
+    )
+
+    if not compiled.handled:
+        return None
+
+    finished = time.time()
+
+    return ExecutionResult(
+        handled=True,
+        ok=compiled.ok,
+        capability="reasoning.task_compiler",
+        output=compiled.output,
+        evidence=compiled.to_dict(),
+        started_at=started,
+        finished_at=finished,
+    )
+
+
 def _existing_deterministic_handler(
     request: ExecutionRequest,
 ) -> ExecutionResult | None:
@@ -185,6 +214,17 @@ def initialize_registry() -> CapabilityRegistry:
                 "C++ and Python artifacts."
             ),
             priority=10,
+        )
+
+        _REGISTRY.register(
+            "reasoning.task_compiler",
+            _task_compiler_handler,
+            description=(
+                "Compile difficult objectives into provenance-safe "
+                "atomic requirements using BADRPK retrieval, bounded "
+                "local reasoning, structured assembly and verification."
+            ),
+            priority=15,
         )
 
         _REGISTRY.register(

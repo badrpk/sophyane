@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import shutil
 import tempfile
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -388,6 +391,161 @@ def _race_user_prompt(
         "Generate only the next useful action. "
         "Do not execute it."
     )
+
+# SOPHYANE_RACE_LOCAL_HARD_DEADLINE_V1
+_LOCAL_RACE_APPLICATION_DEADLINE_SECONDS = 6.0
+
+
+def _generate_provider_for_race(
+    *,
+    provider: Any,
+    provider_id: str,
+    prompt: str,
+    system_prompt: str,
+) -> Any:
+    """Generate one race proposal with a hard local application deadline.
+
+    Local GGUF generation runs behind an external deadline because the
+    provider itself intentionally permits longer on-device generations.
+    A local result reaching this boundary is cancelled and can never cross
+    back into race proposal validation or winner selection.
+
+    Non-local providers retain their existing synchronous behaviour.
+    """
+    normalized = str(
+        provider_id
+        or ""
+    ).strip().lower()
+
+    if normalized != "local_gguf":
+        return provider.generate(
+            prompt,
+            system_prompt,
+        )
+
+    from sophyane.runtime_cancel import (
+        bind_generation,
+        cancel_generation,
+        new_generation,
+        release_generation,
+    )
+
+    generation = new_generation()
+
+    result_queue: queue.Queue[
+        tuple[str, Any]
+    ] = queue.Queue(
+        maxsize=1
+    )
+
+    started = time.monotonic()
+    deadline = (
+        started
+        + _LOCAL_RACE_APPLICATION_DEADLINE_SECONDS
+    )
+
+    def worker() -> None:
+        bind_generation(
+            generation
+        )
+
+        try:
+            value = provider.generate(
+                prompt,
+                system_prompt,
+            )
+
+            item = (
+                "ok",
+                value,
+            )
+
+        except BaseException as error:  # noqa: BLE001
+            item = (
+                "error",
+                error,
+            )
+
+        finally:
+            release_generation(
+                generation
+            )
+
+        try:
+            result_queue.put_nowait(
+                item
+            )
+        except queue.Full:
+            # The parent may already have timed out and abandoned the queue.
+            pass
+
+    thread = threading.Thread(
+        target=worker,
+        daemon=True,
+        name="sophyane-race-local-provider",
+    )
+
+    thread.start()
+
+    while True:
+        remaining = (
+            deadline
+            - time.monotonic()
+        )
+
+        if remaining <= 0:
+            cancel_generation(
+                generation
+            )
+
+            # Never wait for the late provider thread. Its queue is private
+            # to this invocation and nothing after this point can be applied.
+            try:
+                while True:
+                    result_queue.get_nowait()
+            except queue.Empty:
+                pass
+
+            raise TimeoutError(
+                "race local_gguf response exceeded "
+                f"{_LOCAL_RACE_APPLICATION_DEADLINE_SECONDS:g}s "
+                "and was discarded"
+            )
+
+        try:
+            status, value = (
+                result_queue.get(
+                    timeout=min(
+                        0.05,
+                        remaining,
+                    )
+                )
+            )
+        except queue.Empty:
+            continue
+
+        completed_at = (
+            time.monotonic()
+        )
+
+        # Completion at the deadline is late. Do this check after dequeueing
+        # so a scheduling race cannot smuggle an over-budget result through.
+        if completed_at >= deadline:
+            cancel_generation(
+                generation
+            )
+
+            raise TimeoutError(
+                "race local_gguf response exceeded "
+                f"{_LOCAL_RACE_APPLICATION_DEADLINE_SECONDS:g}s "
+                "and was discarded"
+            )
+
+        if status == "error":
+            raise value
+
+        return value
+
 
 def _single_provider(
     *,
@@ -1280,13 +1438,15 @@ def make_provider_producer(
             ),
         )
 
-        raw = provider.generate(
-            _race_user_prompt(
+        raw = _generate_provider_for_race(
+            provider=provider,
+            provider_id=provider_id,
+            prompt=_race_user_prompt(
                 request,
                 workspace,
                 mode=mode,
             ),
-            _race_system_prompt(
+            system_prompt=_race_system_prompt(
                 mode=mode,
             ),
         )

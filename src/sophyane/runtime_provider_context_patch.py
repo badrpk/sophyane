@@ -114,8 +114,11 @@ def install_provider_context_patch() -> None:
             or ""
         ).lower()
 
+        # Local inference is latency-bounded.  A local response may only
+        # affect the active request if it completes within ten seconds.
+        # Preserve any caller-requested timeout that is already stricter.
         if primary in {"local_gguf"}:
-            timeout = max(timeout, 180)
+            timeout = min(float(timeout), 6.0)
 
         original_message = message
         live_instructions: list[str] = []
@@ -179,6 +182,7 @@ def install_provider_context_patch() -> None:
                 results: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
                 worker_done = threading.Event()
                 started = time.monotonic()
+                deadline = started + float(timeout)
 
                 def worker() -> None:
                     bind_generation(generation)
@@ -444,17 +448,69 @@ def install_provider_context_patch() -> None:
                         restart_requested = True
                         break
 
-                    if not steering:
+                    active = _active_name(self)
+
+                    # Enforce the deadline before inspecting the result queue.
+                    # Therefore a reply that becomes visible after the local
+                    # 10s boundary can never be accepted/applied.
+                    if not steering and time.monotonic() >= deadline:
+                        cancel_generation(generation)
+
+                        # Do not wait for the provider worker here. The hard
+                        # deadline also bounds how quickly control returns.
+                        # The daemon worker may unwind asynchronously, but its
+                        # result queue is discarded and can never be applied.
+
+                        # Explicitly discard a result racing with cancellation.
                         try:
-                            status, value = results.get(timeout=0.10)
+                            while True:
+                                results.get_nowait()
+                        except queue.Empty:
+                            pass
+
+                        self.last_elapsed = time.monotonic() - started
+                        publish(
+                            primary=primary,
+                            active=active,
+                            mode="timeout",
+                        )
+                        raise TimeoutError(
+                            f"{active} did not respond within "
+                            f"{float(timeout):g}s."
+                        )
+
+                    if not steering:
+                        remaining = max(
+                            0.0,
+                            deadline - time.monotonic(),
+                        )
+                        try:
+                            status, value = results.get(
+                                timeout=min(0.10, remaining)
+                            )
                         except queue.Empty:
                             status = ""
                             value = None
 
-                        if status:
-                            self.last_elapsed = (
-                                time.monotonic() - started
+                        # Check the deadline again after blocking on the queue.
+                        # A result crossing the boundary is late and unusable.
+                        completed_at = time.monotonic()
+                        if status and completed_at >= deadline:
+                            cancel_generation(generation)
+                            # Never block past the application deadline.
+                            self.last_elapsed = completed_at - started
+                            publish(
+                                primary=primary,
+                                active=active,
+                                mode="timeout",
                             )
+                            raise TimeoutError(
+                                f"{active} response exceeded "
+                                f"{float(timeout):g}s and was discarded."
+                            )
+
+                        if status:
+                            self.last_elapsed = completed_at - started
 
                             if status == "error":
                                 raise value
@@ -500,19 +556,6 @@ def install_provider_context_patch() -> None:
                                 "Ctrl+C cancels."
                             )
                             next_update += 5
-
-                        if elapsed >= timeout:
-                            cancel_generation(generation)
-                            worker_done.wait(timeout=2.0)
-                            publish(
-                                primary=primary,
-                                active=active,
-                                mode="timeout",
-                            )
-                            raise TimeoutError(
-                                f"{active} did not respond "
-                                f"within {timeout}s."
-                            )
 
                     time.sleep(0.02)
 
