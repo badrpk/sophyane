@@ -27,6 +27,19 @@ _COMPLEX_MARKERS = (
     "build",
     "add ",
     "create ",
+    # SOPHYANE_V62_ARCHITECTURE_MARKERS
+    "cache stampede",
+    "single-flight",
+    "single flight",
+    "idempotency",
+    "idempotency-key",
+    "transactional outbox",
+    "outbox pattern",
+    "saga",
+    "compensation",
+    "durable state transitions",
+    "duplicate protection",
+
 )
 
 _CONNECTORS = re.compile(
@@ -547,9 +560,14 @@ def requirement_contract(
         None,
     )
 
+    # SOPHYANE_V62_PHASE_B_TYPED_ARCHITECTURE
     if architecture_marker in {
         "circuit_breaker",
         "async_event",
+        "cache_stampede",
+        "idempotency_key",
+        "transactional_outbox",
+        "saga_compensation",
     }:
         return architecture_marker
 
@@ -612,6 +630,50 @@ def requirement_contract(
     ):
         return "async_event"
 
+    if (
+        "cache stampede" in text
+        or "single-flight" in text
+        or "single flight" in text
+    ):
+        return "cache_stampede"
+
+    if (
+        "idempotency-key" in text
+        or "idempotency key" in text
+        or (
+            "idempotency" in text
+            and (
+                "post" in text
+                or "payment" in text
+                or "charge" in text
+            )
+        )
+    ):
+        return "idempotency_key"
+
+    if (
+        "transactional outbox" in text
+        or "outbox pattern" in text
+        or (
+            "outbox" in text
+            and (
+                "event" in text
+                or "publish" in text
+            )
+        )
+    ):
+        return "transactional_outbox"
+
+    if (
+        "saga" in text
+        and (
+            "compensation" in text
+            or "compensat" in text
+            or "refund" in text
+        )
+    ):
+        return "saga_compensation"
+
     return "generic"
 
 
@@ -655,6 +717,38 @@ def _contract_instruction(
         return (
             "Return a concrete event publication/consumer wiring fragment "
             "or structured architecture mapping."
+        )
+
+    if contract == "cache_stampede":
+        return (
+            "Return a concrete cache-stampede mechanism. Require a "
+            "single-flight/per-key lock, bounded stale serving, a real "
+            "database-backed refresh/fallback path, and guaranteed lock "
+            "release. Do not merely name cache stampede prevention."
+        )
+
+    if contract == "idempotency_key":
+        return (
+            "Return concrete idempotency-key handling for the grounded "
+            "POST/payment path. Persist the key and request identity, "
+            "store the original result/response, replay duplicates "
+            "without charging twice, and reject conflicting reuse."
+        )
+
+    if contract == "transactional_outbox":
+        return (
+            "Return a concrete transactional-outbox mechanism. Domain "
+            "state and the outbox event must commit atomically in the "
+            "same transaction; a background worker must publish with "
+            "retry and duplicate/idempotent-delivery protection."
+        )
+
+    if contract == "saga_compensation":
+        return (
+            "Return a concrete durable checkout saga. Include explicit "
+            "payment and inventory steps, persisted state transitions, "
+            "and compensation/refund when a later inventory step fails "
+            "after payment succeeds."
         )
 
     return (
@@ -1290,6 +1384,161 @@ def validate_requirement_evidence(
 
         return True, "async_event"
 
+    if contract == "cache_stampede":
+        groups = (
+            (
+                "single-flight",
+                "single flight",
+                "per-key lock",
+                "lock",
+            ),
+            (
+                "stale",
+            ),
+            (
+                "database",
+                "db",
+                "backing store",
+            ),
+            (
+                "fallback",
+                "refresh",
+            ),
+        )
+
+        for choices in groups:
+            if not any(
+                item in text
+                for item in choices
+            ):
+                return (
+                    False,
+                    "cache-stampede evidence lacks required mechanism",
+                )
+
+        return True, "cache_stampede"
+
+    if contract == "idempotency_key":
+        groups = (
+            (
+                "idempotency-key",
+                "idempotency key",
+                "idempotency",
+            ),
+            (
+                "persist",
+                "store",
+                "record",
+            ),
+            (
+                "response",
+                "result",
+            ),
+            (
+                "replay",
+                "original response",
+                "same response",
+            ),
+        )
+
+        for choices in groups:
+            if not any(
+                item in text
+                for item in choices
+            ):
+                return (
+                    False,
+                    "idempotency evidence lacks persisted replay contract",
+                )
+
+        if not any(
+            item in text
+            for item in (
+                "cannot charge twice",
+                "without charging twice",
+                "at-most-once",
+                "at most once",
+                "duplicate",
+            )
+        ):
+            return (
+                False,
+                "idempotency evidence lacks duplicate-charge prevention",
+            )
+
+        return True, "idempotency_key"
+
+    if contract == "transactional_outbox":
+        groups = (
+            (
+                "outbox",
+            ),
+            (
+                "same transaction",
+                "atomic",
+                "atomically",
+            ),
+            (
+                "publisher",
+                "worker",
+                "background",
+            ),
+            (
+                "retry",
+            ),
+            (
+                "duplicate",
+                "idempotent",
+                "dedup",
+            ),
+        )
+
+        for choices in groups:
+            if not any(
+                item in text
+                for item in choices
+            ):
+                return (
+                    False,
+                    "transactional-outbox evidence lacks required contract",
+                )
+
+        return True, "transactional_outbox"
+
+    if contract == "saga_compensation":
+        groups = (
+            (
+                "saga",
+            ),
+            (
+                "payment",
+            ),
+            (
+                "inventory",
+            ),
+            (
+                "compensat",
+                "refund",
+            ),
+            (
+                "durable",
+                "persist",
+                "state",
+            ),
+        )
+
+        for choices in groups:
+            if not any(
+                item in text
+                for item in choices
+            ):
+                return (
+                    False,
+                    "saga evidence lacks required compensation contract",
+                )
+
+        return True, "saga_compensation"
+
     # Generic fallback: reject near-verbatim restatement.
     source_tokens = {
         item
@@ -1559,7 +1808,122 @@ def _grounding_terms(
             if token not in terms:
                 terms.append(token)
 
-    return terms[:12]
+    elif contract == "cache_stampede":
+        for token in (
+            "cache",
+            "product",
+            "database",
+            "get_product",
+            "lookup",
+            "redis",
+        ):
+            if token not in terms:
+                terms.append(token)
+
+    elif contract == "idempotency_key":
+        for token in (
+            "payment",
+            "post",
+            "request",
+            "charge",
+            "response",
+            "handler",
+        ):
+            if token not in terms:
+                terms.append(token)
+
+    elif contract == "transactional_outbox":
+        for token in (
+            "session",
+            "commit",
+            "publish",
+            "broker",
+            "event",
+            "order",
+        ):
+            if token not in terms:
+                terms.append(token)
+
+    elif contract == "saga_compensation":
+        for token in (
+            "checkout",
+            "payment",
+            "inventory",
+            "charge",
+            "reserve",
+            "order",
+        ):
+            if token not in terms:
+                terms.append(token)
+
+    # SOPHYANE_V62_PHASE_B_GROUNDING_TERM_PRIORITY
+    #
+    # Structural architecture contracts must place problem-site
+    # vocabulary ahead of generic objective prose. Otherwise the
+    # fixed 12-term ceiling can discard terms such as session,
+    # commit, broker and publish before ground_requirement() gets
+    # a chance to invoke structural scoring.
+    priority_by_contract = {
+        "cache_stampede": (
+            "cache",
+            "get_product",
+            "product",
+            "database",
+            "redis",
+            "lookup",
+        ),
+        "idempotency_key": (
+            "payment",
+            "charge",
+            "request",
+            "post",
+            "handler",
+            "response",
+        ),
+        "transactional_outbox": (
+            "session",
+            "commit",
+            "publish",
+            "broker",
+            "event",
+            "order",
+        ),
+        "saga_compensation": (
+            "checkout",
+            "payment",
+            "inventory",
+            "charge",
+            "reserve",
+            "order",
+        ),
+    }
+
+    priority = priority_by_contract.get(
+        contract,
+        (),
+    )
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    for token in (
+        *priority,
+        *terms,
+    ):
+        key = token.lower()
+
+        if key in seen:
+            continue
+
+        seen.add(
+            key
+        )
+
+        ordered.append(
+            token
+        )
+
+    return ordered[:12]
 
 
 def _grounding_path_allowed(
@@ -2000,6 +2364,167 @@ def _structural_grounding_score(
                     "relationship-structure"
                 )
 
+    # SOPHYANE_V62_PHASE_B_STRUCTURAL_GROUNDING
+    elif contract == "cache_stampede":
+        cache_shape = any(
+            token in lower
+            for token in (
+                "cache.get",
+                "cache.set",
+                "redis",
+                "cache[",
+            )
+        )
+
+        lookup_shape = any(
+            token in lower
+            for token in (
+                "get_product",
+                "product",
+                "lookup",
+                "database",
+                "db.",
+            )
+        )
+
+        if not (
+            cache_shape
+            and lookup_shape
+        ):
+            return (
+                0.0,
+                "no-cache-backed-lookup-structure",
+            )
+
+        score += 12.0
+        signals.extend(
+            (
+                "cache-structure",
+                "lookup-structure",
+            )
+        )
+
+    elif contract == "idempotency_key":
+        payment_shape = any(
+            token in lower
+            for token in (
+                "payment",
+                "charge(",
+                "payment_gateway",
+            )
+        )
+
+        request_shape = any(
+            token in lower
+            for token in (
+                "post_",
+                "post(",
+                "request",
+                "handler",
+                "route",
+                "api",
+            )
+        )
+
+        if not (
+            payment_shape
+            and request_shape
+        ):
+            return (
+                0.0,
+                "no-payment-post-handler-structure",
+            )
+
+        score += 12.0
+        signals.extend(
+            (
+                "payment-domain",
+                "request-handler",
+            )
+        )
+
+    elif contract == "transactional_outbox":
+        transaction_shape = any(
+            token in lower
+            for token in (
+                "commit(",
+                "transaction",
+                "session.",
+                "begin(",
+            )
+        )
+
+        event_shape = any(
+            token in lower
+            for token in (
+                "publish(",
+                "broker.",
+                "event",
+                "producer",
+            )
+        )
+
+        if not (
+            transaction_shape
+            and event_shape
+        ):
+            return (
+                0.0,
+                "no-db-write-plus-event-publication-structure",
+            )
+
+        score += 12.0
+        signals.extend(
+            (
+                "transaction-structure",
+                "event-publication",
+            )
+        )
+
+    elif contract == "saga_compensation":
+        checkout_shape = any(
+            token in lower
+            for token in (
+                "checkout",
+                "order",
+            )
+        )
+
+        payment_shape = any(
+            token in lower
+            for token in (
+                "payment",
+                "charge(",
+            )
+        )
+
+        inventory_shape = any(
+            token in lower
+            for token in (
+                "inventory",
+                "reserve(",
+            )
+        )
+
+        if not (
+            checkout_shape
+            and payment_shape
+            and inventory_shape
+        ):
+            return (
+                0.0,
+                "no-checkout-payment-inventory-structure",
+            )
+
+        score += 14.0
+        signals.extend(
+            (
+                "checkout-domain",
+                "payment-step",
+                "inventory-step",
+            )
+        )
+
     elif contract == "circuit_breaker":
         structural = any(
             re.search(
@@ -2254,6 +2779,10 @@ def grounding_required(
         "database_analysis",
         "circuit_breaker",
         "async_event",
+        "cache_stampede",
+        "idempotency_key",
+        "transactional_outbox",
+        "saga_compensation",
     }
 
 
@@ -2309,6 +2838,106 @@ def grounded_contract_recovery(
     contract = requirement_contract(
         requirement
     )
+
+    if contract == "cache_stampede":
+        recovered = (
+            "Use a per-key single-flight lock around the grounded "
+            "database-backed cache lookup. On a miss, one lock owner "
+            "refreshes from the database while concurrent callers may "
+            "serve a bounded stale value. If refresh fails, use the "
+            "bounded stale value or database fallback, and always "
+            "release the lock."
+        )
+
+        valid, detail = validate_requirement_evidence(
+            requirement,
+            recovered,
+        )
+
+        return Evidence(
+            value=recovered,
+            provenance="GROUNDED_DETERMINISTIC",
+            valid=valid,
+            detail=(
+                f"source={grounding.path}; "
+                f"recovery={detail}"
+            ),
+        )
+
+    if contract == "idempotency_key":
+        recovered = (
+            "Read the Idempotency-Key in the grounded POST/payment "
+            "handler. Persist the idempotency key, request fingerprint, "
+            "execution result and original response. Duplicate requests "
+            "with the same fingerprint replay the original response "
+            "without charging twice; conflicting key reuse is rejected, "
+            "giving at-most-once charge execution."
+        )
+
+        valid, detail = validate_requirement_evidence(
+            requirement,
+            recovered,
+        )
+
+        return Evidence(
+            value=recovered,
+            provenance="GROUNDED_DETERMINISTIC",
+            valid=valid,
+            detail=(
+                f"source={grounding.path}; "
+                f"recovery={detail}"
+            ),
+        )
+
+    if contract == "transactional_outbox":
+        recovered = (
+            "Use a transactional outbox in the grounded database/event "
+            "path. Persist the domain state change and outbox event row "
+            "atomically in the same transaction. A background publisher "
+            "worker reads unsent outbox rows, publishes with retry, marks "
+            "success durably, and uses the event identifier for duplicate "
+            "or idempotent delivery protection."
+        )
+
+        valid, detail = validate_requirement_evidence(
+            requirement,
+            recovered,
+        )
+
+        return Evidence(
+            value=recovered,
+            provenance="GROUNDED_DETERMINISTIC",
+            valid=valid,
+            detail=(
+                f"source={grounding.path}; "
+                f"recovery={detail}"
+            ),
+        )
+
+    if contract == "saga_compensation":
+        recovered = (
+            "Use a durable checkout saga around the grounded payment and "
+            "inventory path. Persist saga state before each step, perform "
+            "the payment step and then inventory reservation. If inventory "
+            "fails after payment succeeds, run the compensation/refund "
+            "action, persist the compensated state, and make saga retries "
+            "idempotent."
+        )
+
+        valid, detail = validate_requirement_evidence(
+            requirement,
+            recovered,
+        )
+
+        return Evidence(
+            value=recovered,
+            provenance="GROUNDED_DETERMINISTIC",
+            valid=valid,
+            detail=(
+                f"source={grounding.path}; "
+                f"recovery={detail}"
+            ),
+        )
 
 
     if contract == "circuit_breaker":
@@ -2812,6 +3441,18 @@ def build_execution_plan(
         elif contract == "async_event":
             operation = "modify_event_pipeline"
 
+        elif contract == "cache_stampede":
+            operation = "modify_cache_lookup"
+
+        elif contract == "idempotency_key":
+            operation = "modify_payment_handler"
+
+        elif contract == "transactional_outbox":
+            operation = "modify_transaction_event_boundary"
+
+        elif contract == "saga_compensation":
+            operation = "modify_checkout_orchestration"
+
         plan.append({
             "requirement_id": rid,
             "contract": contract,
@@ -2983,6 +3624,57 @@ def _objective_architecture_contract(
         )
     ):
         return "async_event"
+
+    if (
+        "cache stampede" in value
+        and (
+            "single-flight" in value
+            or "single flight" in value
+        )
+        and (
+            "cache" in value
+            or "product" in value
+        )
+    ):
+        return "cache_stampede"
+
+    if (
+        (
+            "idempotency-key" in value
+            or "idempotency key" in value
+        )
+        and (
+            "payment" in value
+            or "charge" in value
+        )
+        and "post" in value
+    ):
+        return "idempotency_key"
+
+    if (
+        "outbox" in value
+        and (
+            "transaction" in value
+            or "atomically" in value
+            or "atomic" in value
+        )
+        and (
+            "publish" in value
+            or "event" in value
+        )
+    ):
+        return "transactional_outbox"
+
+    if (
+        "saga" in value
+        and "payment" in value
+        and "inventory" in value
+        and (
+            "compensation" in value
+            or "compensat" in value
+        )
+    ):
+        return "saga_compensation"
 
     return None
 

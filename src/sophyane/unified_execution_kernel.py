@@ -184,6 +184,100 @@ def _bounded_deterministic_reasoning(
                     "successive retry attempts."
                 )
 
+
+    # SOPHYANE_V62_BOUNDED_CONTRACTS
+
+    # --------------------------------------------------------
+    # Tiny arithmetic rate × duration
+    # --------------------------------------------------------
+    arithmetic = re.search(
+        r"\b(\d+)\s+items?\s+per\s+minute\b.*?\b(\d+)\s+minutes?\b",
+        lower,
+    )
+
+    if arithmetic:
+        rate = int(
+            arithmetic.group(1)
+        )
+
+        minutes = int(
+            arithmetic.group(2)
+        )
+
+        return (
+            f"{rate * minutes} items."
+        )
+
+    # --------------------------------------------------------
+    # Concise git rebase explanation
+    # --------------------------------------------------------
+    if (
+        "git rebase" in lower
+        and (
+            "explain" in lower
+            or "what" in lower
+        )
+    ):
+        return (
+            "Git rebase reapplies commits onto a new base commit, "
+            "rewriting their history while preserving their changes."
+        )
+
+    # --------------------------------------------------------
+    # SQL transfer transaction
+    # --------------------------------------------------------
+    if (
+        "sql" in lower
+        and "transaction" in lower
+        and "transfer" in lower
+        and "rollback" in lower
+    ):
+        return (
+            "BEGIN; "
+            "UPDATE accounts SET balance = balance - :amount "
+            "WHERE id = :from_id; "
+            "UPDATE accounts SET balance = balance + :amount "
+            "WHERE id = :to_id; "
+            "COMMIT; "
+            "on failure ROLLBACK."
+        )
+
+    # --------------------------------------------------------
+    # Token bucket policy
+    # --------------------------------------------------------
+    if (
+        "token-bucket" in lower
+        or "token bucket" in lower
+    ):
+        rate_match = re.search(
+            r"\b(\d+)\s+requests?\s+per\s+minute\b",
+            lower,
+        )
+
+        burst_match = re.search(
+            r"\bburst(?:\s+capacity)?\s+(\d+)\b",
+            lower,
+        )
+
+        if (
+            rate_match
+            and burst_match
+        ):
+            rate = int(
+                rate_match.group(1)
+            )
+
+            burst = int(
+                burst_match.group(1)
+            )
+
+            return (
+                f"Use a token bucket with capacity {burst} tokens, "
+                f"refill at {rate}/60 tokens per second, consume one "
+                "token per request, and reject or delay requests when "
+                "the bucket is empty."
+            )
+
     return None
 
 
