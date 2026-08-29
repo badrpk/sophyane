@@ -58,7 +58,7 @@ def test_download_page_documents_supported_upgrade_contract() -> None:
     assert "newest stable semantic release tag (`vX.Y.Z`)" in text
     assert "`SOPHYANE_REF`" in text
     assert "`pip check`" in text
-    assert "Current stable release: `v21.4.2`" in text
+    assert "Current stable release: `v21.5.0`" in text
 
     normalized = " ".join(text.split())
 

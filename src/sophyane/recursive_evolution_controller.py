@@ -2500,6 +2500,31 @@ def run_supervised_mode3_nifdu_rsi(
                         evolution_context,
                     )
                 )
+                # SOPHYANE_MODE3_META_RSI_TXQ_V3
+                #
+                # Local GGUF remains the candidate worker.
+                # TXQ only shapes bounded effort/context/decomposition.
+                #
+                import time as _mode3_txq_time
+
+                from sophyane.mode3_meta_rsi import (
+                    apply_txq_to_instruction,
+                )
+
+                (
+                    grounded_instruction,
+                    txq_policy,
+                ) = apply_txq_to_instruction(
+                    grounded_instruction,
+                    objective=objective,
+                    evolution_context=(
+                        evolution_context
+                    ),
+                )
+
+                txq_iteration_started = (
+                    _mode3_txq_time.monotonic()
+                )
 
                 candidate_prompt = (
                     build_real_local_llm_candidate_prompt(
@@ -2679,6 +2704,51 @@ def run_supervised_mode3_nifdu_rsi(
                         "END_NATIVE_SOPHYANE_HELD_OUT"
                     )
 
+                # SOPHYANE_MODE3_NIFDU_META_SUPERVISION_V3
+                #
+                # NIFDU receives deterministic measurements as evidence.
+                # It remains advisory and cannot manufacture success.
+                #
+                from sophyane.mode3_meta_rsi import (
+                    build_nifdu_meta_context,
+                )
+
+                txq_elapsed_sec = max(
+                    0.0,
+                    (
+                        _mode3_txq_time.monotonic()
+                        - txq_iteration_started
+                    ),
+                )
+
+                txq_meta_context = (
+                    build_nifdu_meta_context(
+                        objective=objective,
+                        policy=txq_policy,
+                        elapsed_sec=(
+                            txq_elapsed_sec
+                        ),
+                        verification_ok=(
+                            verification_ok
+                        ),
+                        held_out_attempted=bool(
+                            held_out_result.get(
+                                "attempted"
+                            )
+                        ),
+                        held_out_not_regressed=bool(
+                            held_out_result.get(
+                                "not_regressed"
+                            )
+                        ),
+                        failure=failure,
+                    )
+                )
+
+                review_verification_evidence += (
+                    "\n\n"
+                    + txq_meta_context
+                )
                 review_prompt = (
                     build_supervised_nifdu_review_prompt(
                         original_goal=objective,
@@ -2707,6 +2777,76 @@ def run_supervised_mode3_nifdu_rsi(
                         review_response
                     )
                 )
+                # SOPHYANE_MODE3_TXQ_OBSERVATION_V3
+                #
+                # Learn from the actual candidate identity.
+                # Same candidate + same verification commands are idempotent.
+                #
+                from sophyane.mode3_meta_rsi import (
+                    accept_meta_proposal,
+                    parse_meta_proposal,
+                    record_observation,
+                )
+
+                (
+                    txq_observation,
+                    txq_observation_new,
+                ) = record_observation(
+                    objective=objective,
+                    policy=txq_policy,
+                    candidate_diff=diff,
+                    verification_commands=(
+                        verification_commands
+                    ),
+                    elapsed_sec=(
+                        txq_elapsed_sec
+                    ),
+                    verification_ok=(
+                        verification_ok
+                    ),
+                    held_out_attempted=bool(
+                        held_out_result.get(
+                            "attempted"
+                        )
+                    ),
+                    held_out_not_regressed=bool(
+                        held_out_result.get(
+                            "not_regressed"
+                        )
+                    ),
+                    nifdu_status=(
+                        review.status
+                    ),
+                    retry_index=iteration,
+                )
+
+                txq_meta_proposal = (
+                    parse_meta_proposal(
+                        review_response
+                    )
+                )
+
+                txq_meta_proposal_accepted = False
+
+                if txq_meta_proposal is not None:
+                    txq_meta_proposal_accepted = (
+                        accept_meta_proposal(
+                            txq_meta_proposal,
+                            deterministic_verification_ok=(
+                                verification_ok
+                            ),
+                            held_out_attempted=bool(
+                                held_out_result.get(
+                                    "attempted"
+                                )
+                            ),
+                            held_out_not_regressed=bool(
+                                held_out_result.get(
+                                    "not_regressed"
+                                )
+                            ),
+                        )
+                    )
 
                 evidence_record_path = (
                     _persist_supervised_rsi_evidence(
