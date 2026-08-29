@@ -1,4 +1,4 @@
-# Download Sophyane 21.4.2
+# Download Sophyane 21.5.0
 
 This is the single download page for every supported device.
 
@@ -71,14 +71,14 @@ To intentionally install a particular release or development ref, set
 POSIX example:
 
 ```bash
-SOPHYANE_REF=v21.4.2 \
+SOPHYANE_REF=v21.5.0 \
   bash -c "$(curl -fsSL https://raw.githubusercontent.com/badrpk/sophyane/main/install.sh)"
 ```
 
 PowerShell example:
 
 ```powershell
-$env:SOPHYANE_REF = "v21.4.2"
+$env:SOPHYANE_REF = "v21.5.0"
 irm https://raw.githubusercontent.com/badrpk/sophyane/main/install.ps1 | iex
 ```
 
@@ -100,6 +100,6 @@ Rerun the installer for your platform at any time. By default it installs the
 newest stable `vX.Y.Z` release and removes the prior managed runtime only after
 validation passes.
 
-Current stable release: `v21.4.2`
+Current stable release: `v21.5.0`
 
 Source repository: https://github.com/badrpk/sophyane
