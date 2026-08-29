@@ -2522,6 +2522,33 @@ def run_supervised_mode3_nifdu_rsi(
                     ),
                 )
 
+                # SOPHYANE_MODE3_AGENTIC_MEMORY_RETRIEVAL_V1
+                #
+                # Retrieve only compact VERIFIED cross-session memories.
+                # TXQ owns the historical-context budget.
+                # Current deterministic evidence always remains authoritative.
+                #
+                from sophyane.agentic_memory import (
+                    augment_instruction_with_memory,
+                )
+
+                (
+                    grounded_instruction,
+                    mode3_retrieved_memories,
+                ) = augment_instruction_with_memory(
+                    grounded_instruction,
+                    objective=objective,
+                    difficulty=(
+                        txq_policy.difficulty
+                    ),
+                    quality_target=(
+                        txq_policy.quality_target
+                    ),
+                    context_budget_chars=(
+                        txq_policy.context_budget_chars
+                    ),
+                )
+
                 txq_iteration_started = (
                     _mode3_txq_time.monotonic()
                 )
@@ -2549,7 +2576,13 @@ def run_supervised_mode3_nifdu_rsi(
                     "Do not claim execution. "
                     "Do not stage, commit, merge, push, rebase, "
                     "cherry-pick, reset, restore, install packages, "
-                    "or transfer files externally."
+                    "or transfer files externally. "
+                    "SOPHYANE_MODE3_MEMORY_ACTION_CONTRACT_V1 "
+                    "If durable memory behavior is materially useful, you MAY "
+                    "append exactly one MEMORY_ACTION_JSON object. "
+                    "Allowed actions are STORE, RETRIEVE, UPDATE, SUMMARIZE, "
+                    "DISCARD, CONSOLIDATE, PROMOTE, DEMOTE. "
+                    "A memory proposal is not truth and Sophyane may reject it."
                 )
 
                 try:
@@ -2843,6 +2876,122 @@ def run_supervised_mode3_nifdu_rsi(
                             held_out_not_regressed=bool(
                                 held_out_result.get(
                                     "not_regressed"
+                                )
+                            ),
+                        )
+                    )
+
+                # SOPHYANE_MODE3_AGENTIC_MEMORY_LEARNING_V1
+                #
+                # Durable memory learns only after:
+                #   1. deterministic verification,
+                #   2. held-out non-regression when attempted,
+                #   3. parsed NIFDU supervisory status.
+                #
+                # Neither the local LLM nor NIFDU can independently establish
+                # durable truth.
+                #
+                from sophyane.agentic_memory import (
+                    MemoryProvenance,
+                    apply_verified_memory_action,
+                    learn_verified_mode3_experience,
+                    parse_memory_action,
+                )
+                from sophyane.mode3_meta_rsi import (
+                    estimate_task_family,
+                    observation_identity,
+                )
+
+                mode3_memory_candidate_identity = (
+                    observation_identity(
+                        objective=objective,
+                        candidate_diff=diff,
+                        verification_commands=(
+                            verification_commands
+                        ),
+                    )
+                )
+
+                (
+                    mode3_learned_memory,
+                    mode3_memory_new,
+                ) = learn_verified_mode3_experience(
+                    objective=objective,
+                    candidate_identity=(
+                        mode3_memory_candidate_identity
+                    ),
+                    candidate_diff=diff,
+                    task_family=(
+                        estimate_task_family(
+                            objective
+                        )
+                    ),
+                    verification_ok=(
+                        verification_ok
+                    ),
+                    held_out_attempted=bool(
+                        held_out_result.get(
+                            "attempted"
+                        )
+                    ),
+                    held_out_not_regressed=bool(
+                        held_out_result.get(
+                            "not_regressed"
+                        )
+                    ),
+                    review_status=(
+                        review.status
+                    ),
+                )
+
+                mode3_memory_action = (
+                    parse_memory_action(
+                        (
+                            str(
+                                mode3_response
+                                or ""
+                            )
+                            + "\n"
+                            + str(
+                                review_response
+                                or ""
+                            )
+                        )
+                    )
+                )
+
+                mode3_memory_action_accepted = False
+
+                if mode3_memory_action is not None:
+                    mode3_memory_action_accepted = (
+                        apply_verified_memory_action(
+                            mode3_memory_action,
+                            provenance=(
+                                MemoryProvenance(
+                                    source=(
+                                        "mode3-proposed-action"
+                                    ),
+                                    task_family=(
+                                        estimate_task_family(
+                                            objective
+                                        )
+                                    ),
+                                    candidate_identity=(
+                                        mode3_memory_candidate_identity
+                                    ),
+                                    verification_ok=(
+                                        verification_ok
+                                    ),
+                                    held_out_attempted=bool(
+                                        held_out_result.get(
+                                            "attempted"
+                                        )
+                                    ),
+                                    held_out_not_regressed=bool(
+                                        held_out_result.get(
+                                            "not_regressed"
+                                        )
+                                    ),
                                 )
                             ),
                         )
