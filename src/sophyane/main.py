@@ -121,6 +121,22 @@ def create_provider(config: dict[str, Any]):
         or ""
     ).strip().lower()
 
+    # SOPHYANE_TRANSIENT_SESSION_PROVIDER_V1
+    session_provider = str(
+        os.environ.get("SOPHYANE_SESSION_PROVIDER")
+        or ""
+    ).strip()
+
+    session_model = str(
+        os.environ.get("SOPHYANE_SESSION_MODEL")
+        or ""
+    ).strip()
+
+    session_timeout = str(
+        os.environ.get("SOPHYANE_SESSION_TIMEOUT")
+        or ""
+    ).strip()
+
     if session_mode in {"sli_graph", "sli_chunks"}:
         raise RuntimeError(
             "SLI-only session forbids LLM provider construction. "
@@ -129,13 +145,35 @@ def create_provider(config: dict[str, Any]):
 
     if session_mode == "local_llm":
         config = dict(config)
-        config["provider"] = "local_gguf"
+        config["provider"] = (
+            session_provider
+            or "local_gguf"
+        )
+
+        if session_model:
+            config["model"] = session_model
+
+        if session_timeout:
+            config["timeout"] = int(
+                session_timeout
+            )
 
         os.environ["SOPHYANE_LOCAL_ONLY"] = "1"
         os.environ["SOPHYANE_DISABLE_CLOUD_FALLBACK"] = "1"
 
     if session_mode == "cloud_llm":
         config = dict(config)
+
+        if session_provider:
+            config["provider"] = session_provider
+
+        if session_model:
+            config["model"] = session_model
+
+        if session_timeout:
+            config["timeout"] = int(
+                session_timeout
+            )
 
         # Cloud mode must not silently rescue through a local model.
         os.environ["SOPHYANE_DISABLE_LOCAL_FALLBACK"] = "1"

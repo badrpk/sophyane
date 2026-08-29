@@ -460,7 +460,12 @@ def choose_startup_provider() -> dict[str, Any]:
                 "company": "Local",
                 "timeout": 300,
             })
-            save_config(updated)
+
+            # SOPHYANE_TRANSIENT_SESSION_PROVIDER_V1
+            # Explicit startup provider selection is session-scoped.
+            os.environ["SOPHYANE_SESSION_PROVIDER"] = local_id
+            os.environ["SOPHYANE_SESSION_MODEL"] = local_model
+            os.environ["SOPHYANE_SESSION_TIMEOUT"] = "300"
 
             llm["active_provider"] = local_id
             llm["fallback_order"] = [local_id]
@@ -494,14 +499,26 @@ def choose_startup_provider() -> dict[str, Any]:
             os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
 
             cloud_id, label = clouds[0]
+            cloud_model = _cloud_model(
+                cloud_id,
+                config,
+                llm,
+            )
+
             updated = dict(config)
             updated.update({
                 "provider": cloud_id,
-                "model": _cloud_model(cloud_id, config, llm),
+                "model": cloud_model,
                 "company": label,
                 "timeout": 180,
             })
-            save_config(updated)
+
+            # SOPHYANE_TRANSIENT_SESSION_PROVIDER_V1
+            # Explicit startup provider selection is session-scoped.
+            os.environ["SOPHYANE_SESSION_PROVIDER"] = cloud_id
+            os.environ["SOPHYANE_SESSION_MODEL"] = cloud_model
+            os.environ["SOPHYANE_SESSION_TIMEOUT"] = "180"
+
             llm["active_provider"] = cloud_id
             save_json(LLM_FILE, llm, private=False)
             print(f"Mode: Cloud LLM ({cloud_id})", file=sys.stderr)

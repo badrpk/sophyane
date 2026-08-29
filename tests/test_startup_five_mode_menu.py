@@ -1,4 +1,7 @@
 from __future__ import annotations
+import os
+import pytest
+
 
 import io
 from contextlib import (
@@ -7,6 +10,41 @@ from contextlib import (
 )
 
 import sophyane.startup_policy as policy
+
+
+STARTUP_SESSION_KEYS = (
+    "SOPHYANE_SESSION_MODE",
+    "SOPHYANE_SLI_GRAPH",
+    "SOPHYANE_SLI_ONLY",
+    "SOPHYANE_SLI_CONTINUOUS",
+    "SOPHYANE_TOPIC_LEARNING",
+    "SOPHYANE_LOCAL_ONLY",
+    "SOPHYANE_DISABLE_CLOUD_FALLBACK",
+    "SOPHYANE_DISABLE_LOCAL_FALLBACK",
+    "SOPHYANE_ALLOW_CLOUD_LOCAL_RESCUE",
+    "SOPHYANE_SESSION_PROVIDER",
+    "SOPHYANE_SESSION_MODEL",
+    "SOPHYANE_SESSION_TIMEOUT",
+)
+
+
+@pytest.fixture(autouse=True)
+def clean_startup_session_environment():
+    """Keep startup-mode tests isolated inside one pytest process."""
+
+    for key in STARTUP_SESSION_KEYS:
+        os.environ.pop(
+            key,
+            None,
+        )
+
+    yield
+
+    for key in STARTUP_SESSION_KEYS:
+        os.environ.pop(
+            key,
+            None,
+        )
 
 
 def _interactive(monkeypatch):
