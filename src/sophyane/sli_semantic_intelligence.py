@@ -14,6 +14,11 @@ It does not contain product templates and does not call an LLM.
 """
 from __future__ import annotations
 
+import time
+
+# SOPHYANE_MODE2_SEMANTIC_DEADLINE_V1
+SEMANTIC_PLANNING_DEADLINE_SECONDS = 3.0
+
 import math
 import re
 
@@ -1747,6 +1752,7 @@ def retrieve_for_capability(
     *,
     limit: int = 6,
     minimum_score: float = 0.75,
+    deadline: float | None = None,
 ) -> list[ChunkMatch]:
     """Retrieve final-policy compatible evidence for one capability.
 
@@ -1758,6 +1764,15 @@ def retrieve_for_capability(
     ranked: list[tuple[object, float]] = []
 
     for chunk in store.chunks.values():
+        if (
+            deadline is not None
+            and time.monotonic() >= deadline
+        ):
+            raise TimeoutError(
+                "SLI semantic planning exceeded "
+                f"{SEMANTIC_PLANNING_DEADLINE_SECONDS:g}s"
+            )
+
         if not _final_compatible(
             chunk,
             plan,
@@ -1890,9 +1905,21 @@ def retrieve_semantic_plan(
     per_capability: int = 6,
 ) -> tuple[SemanticPlan, dict[str, list[ChunkMatch]]]:
     """Retrieve compatible evidence for every requirement in a semantic plan."""
+    started = time.monotonic()
+    deadline = (
+        started
+        + SEMANTIC_PLANNING_DEADLINE_SECONDS
+    )
+
     plan = build_semantic_plan(
         request
     )
+
+    if time.monotonic() >= deadline:
+        raise TimeoutError(
+            "SLI semantic planning exceeded "
+            f"{SEMANTIC_PLANNING_DEADLINE_SECONDS:g}s"
+        )
 
     output: dict[
         str,
@@ -1908,6 +1935,7 @@ def retrieve_semantic_plan(
             requirement,
             limit=per_capability,
             minimum_score=0.75,
+            deadline=deadline,
         )
 
     return plan, output

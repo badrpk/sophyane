@@ -200,8 +200,94 @@ def test_four_selects_cloud(monkeypatch):
 def test_five_selects_learning(monkeypatch):
     _invoke(monkeypatch, "5")
 
-    assert os.environ.get("SOPHYANE_SESSION_MODE") == "sli_graph"
-    assert os.environ.get("SOPHYANE_SLI_GRAPH") == "1"
-    assert os.environ.get("SOPHYANE_SLI_ONLY") == "1"
+    assert os.environ.get("SOPHYANE_SESSION_MODE") == "learning"
+    assert os.environ.get("SOPHYANE_SLI_GRAPH") is None
+    assert os.environ.get("SOPHYANE_SLI_ONLY") is None
     assert os.environ.get("SOPHYANE_SLI_CONTINUOUS") == "1"
     assert os.environ.get("SOPHYANE_TOPIC_LEARNING") == "1"
+
+
+def test_mode2_does_not_persist_transient_sli_config(
+    monkeypatch,
+):
+    writes = []
+
+    monkeypatch.setattr(
+        startup_policy,
+        "save_config",
+        lambda value: writes.append(dict(value)),
+    )
+
+    _invoke(
+        monkeypatch,
+        "2",
+    )
+
+    assert writes == []
+
+
+def test_mode5_does_not_persist_learning_config(
+    monkeypatch,
+):
+    writes = []
+
+    monkeypatch.setattr(
+        startup_policy,
+        "save_config",
+        lambda value: writes.append(dict(value)),
+    )
+
+    _invoke(
+        monkeypatch,
+        "5",
+    )
+
+    assert writes == []
+
+
+@pytest.mark.parametrize(
+    "answer,expected_mode",
+    [
+        ("1", "race"),
+        ("3", "local_llm"),
+        ("4", "cloud_llm"),
+    ],
+)
+def test_non_sli_modes_clear_stale_sli_and_learning_flags(
+    monkeypatch,
+    answer,
+    expected_mode,
+):
+    for key in (
+        "SOPHYANE_SLI_GRAPH",
+        "SOPHYANE_SLI_ONLY",
+        "SOPHYANE_SLI_CONTINUOUS",
+        "SOPHYANE_TOPIC_LEARNING",
+    ):
+        monkeypatch.setenv(
+            key,
+            "1",
+        )
+
+    _invoke(
+        monkeypatch,
+        answer,
+    )
+
+    assert (
+        os.environ.get(
+            "SOPHYANE_SESSION_MODE"
+        )
+        == expected_mode
+    )
+
+    for key in (
+        "SOPHYANE_SLI_GRAPH",
+        "SOPHYANE_SLI_ONLY",
+        "SOPHYANE_SLI_CONTINUOUS",
+        "SOPHYANE_TOPIC_LEARNING",
+    ):
+        assert (
+            os.environ.get(key)
+            is None
+        )

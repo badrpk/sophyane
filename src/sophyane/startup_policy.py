@@ -203,10 +203,31 @@ def choose_startup_provider() -> dict[str, Any]:
 
             return updated
 
+        if requested_mode == "learning":
+            # SOPHYANE_NONINTERACTIVE_MODE5_LEARNING_V1
+            os.environ["SOPHYANE_SESSION_MODE"] = "learning"
+            os.environ.pop("SOPHYANE_SLI_GRAPH", None)
+            os.environ.pop("SOPHYANE_SLI_ONLY", None)
+            os.environ["SOPHYANE_SLI_CONTINUOUS"] = "1"
+            os.environ["SOPHYANE_TOPIC_LEARNING"] = "1"
+            _install_topic_learning_mode()
+
+            updated = dict(config)
+            updated.update({
+                "company": "Sophyane Learning",
+                "timeout": 300,
+            })
+
+            return updated
+
         if requested_mode == "local_llm":
             if not local:
                 return config
 
+            os.environ.pop("SOPHYANE_SLI_GRAPH", None)
+            os.environ.pop("SOPHYANE_SLI_ONLY", None)
+            os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
+            os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
             os.environ["SOPHYANE_LOCAL_ONLY"] = "1"
             os.environ["SOPHYANE_DISABLE_CLOUD_FALLBACK"] = "1"
 
@@ -232,6 +253,13 @@ def choose_startup_provider() -> dict[str, Any]:
         if requested_mode == "cloud_llm":
             if not clouds:
                 return config
+
+            os.environ.pop("SOPHYANE_SLI_GRAPH", None)
+            os.environ.pop("SOPHYANE_SLI_ONLY", None)
+            os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
+            os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
+            os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
+            os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
 
             cloud_id, label = clouds[0]
 
@@ -345,6 +373,7 @@ def choose_startup_provider() -> dict[str, Any]:
 
             # Remove strict-mode flags that could otherwise constrain
             # Sophyane's adaptive decision/race.
+            os.environ.pop("SOPHYANE_SLI_GRAPH", None)
             os.environ.pop("SOPHYANE_SLI_ONLY", None)
             os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
             os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
@@ -361,26 +390,52 @@ def choose_startup_provider() -> dict[str, Any]:
             os.environ["SOPHYANE_SESSION_MODE"] = "sli_graph"
             os.environ["SOPHYANE_SLI_GRAPH"] = "1"
             os.environ["SOPHYANE_SLI_ONLY"] = "1"
+            # SOPHYANE_MODE2_TRANSIENT_CONFIG_V1
+            #
+            # Mode-2 execution policy is session-local. Never persist
+            # SLI company/timeout metadata into the provider configuration,
+            # otherwise a later Local/Cloud session inherits Mode-2 state.
+            os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
+            os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
+            os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
+            os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
+
             updated = dict(config)
             updated.update({"company": "SLI", "timeout": 60})
-            save_config(updated)
-            print("Mode: SLI Graph + internet (no local/cloud LLM)", file=sys.stderr)
+
+            print(
+                "Mode: SLI Graph + internet (no local/cloud LLM)",
+                file=sys.stderr,
+            )
             return updated
 
         if answer == "5":
-            os.environ["SOPHYANE_SESSION_MODE"] = "sli_graph"
-            os.environ["SOPHYANE_SLI_GRAPH"] = "1"
-            os.environ["SOPHYANE_SLI_ONLY"] = "1"
+            # SOPHYANE_MODE5_DEDICATED_LEARNING_AUTHORITY_V1
+            #
+            # Learning is intentionally independent from Mode-2 SLI Graph.
+            # It may acquire/embed training material through its dedicated
+            # learning loop, but must not acquire SLI execution authority.
+            os.environ["SOPHYANE_SESSION_MODE"] = "learning"
+            os.environ.pop("SOPHYANE_SLI_GRAPH", None)
+            os.environ.pop("SOPHYANE_SLI_ONLY", None)
             os.environ["SOPHYANE_SLI_CONTINUOUS"] = "1"
             os.environ["SOPHYANE_TOPIC_LEARNING"] = "1"
             _install_topic_learning_mode()
 
+            # SOPHYANE_MODE5_TRANSIENT_CONFIG_V1
+            #
+            # Learning mode is session policy, not provider configuration.
+            os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
+            os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
+
             updated = dict(config)
-            updated.update({"company": "SLI Topic Learning", "timeout": 300})
-            save_config(updated)
+            updated.update({
+                "company": "Sophyane Learning",
+                "timeout": 300,
+            })
             print(
-                "Mode: Continuous SLI topic learning "
-                "(multi-iteration acquisition + vector embedding; Ctrl+C stops)",
+                "Mode: Sophyane Learning "
+                "(acquire + embed until saturation/Ctrl+C)",
                 file=sys.stderr,
             )
             return updated
@@ -389,6 +444,10 @@ def choose_startup_provider() -> dict[str, Any]:
             # Option 3 is intentionally strict local-only mode.
             # Never consult, rescue through, or fall back to a cloud model.
             os.environ["SOPHYANE_SESSION_MODE"] = "local_llm"
+            os.environ.pop("SOPHYANE_SLI_GRAPH", None)
+            os.environ.pop("SOPHYANE_SLI_ONLY", None)
+            os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
+            os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
             os.environ["SOPHYANE_LOCAL_ONLY"] = "1"
             os.environ["SOPHYANE_DISABLE_CLOUD_FALLBACK"] = "1"
 
@@ -427,6 +486,13 @@ def choose_startup_provider() -> dict[str, Any]:
 
         if answer == "4":
             os.environ["SOPHYANE_SESSION_MODE"] = "cloud_llm"
+            os.environ.pop("SOPHYANE_SLI_GRAPH", None)
+            os.environ.pop("SOPHYANE_SLI_ONLY", None)
+            os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
+            os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
+            os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
+            os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
+
             cloud_id, label = clouds[0]
             updated = dict(config)
             updated.update({

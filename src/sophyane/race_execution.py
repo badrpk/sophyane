@@ -596,7 +596,6 @@ class RaceStrategy:
     max_rounds: int = 3
     require_executable_action: bool = True
     success_mode: str = "pytest"  # pytest | applied | plan_ok
-    prefer_sli_only: bool = False
 
 
 def race_strategy_for(request: str) -> RaceStrategy:
@@ -606,7 +605,6 @@ def race_strategy_for(request: str) -> RaceStrategy:
             max_rounds=2,
             require_executable_action=False,
             success_mode="plan_ok",
-            prefer_sli_only=True,
         )
     return RaceStrategy()
 

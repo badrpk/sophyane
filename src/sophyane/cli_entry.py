@@ -193,14 +193,8 @@ def main() -> int:
     from sophyane.runtime_provider_error_patch import install_provider_error_patch
     from sophyane.runtime_quality_escalation import install_quality_escalation
     from sophyane.runtime_safety import install_runtime_safety
-    from sophyane.runtime_sli_brain import install_sli_brain
-    from sophyane.runtime_sli_builder import install_sli_builder
-    from sophyane.runtime_sli_capability_planner import install_sli_capability_planner
     # SOPHYANE_FILESYSTEM_CAPABILITIES_V20
     from sophyane.runtime_filesystem_capabilities_v20 import install_filesystem_capabilities_v20
-    from sophyane.runtime_sli_intent_patch import install_sli_intent_routing
-    from sophyane.runtime_sli_mission_os import install_sli_mission_os
-    from sophyane.runtime_sli_onset_feedback import install_sli_onset_feedback
     from sophyane.runtime_software_routing_guard import install_software_routing_guard
     from sophyane.runtime_snake_semantic_repair import install_snake_semantic_repair
     from sophyane.runtime_stagnation_patch import install_stagnation_patch
@@ -219,24 +213,10 @@ def main() -> int:
     install_interrupt_patch()
     install_provider_error_patch()
     install_input_patch()
-    install_sli_intent_routing()
     install_intent_refinement()
-    install_sli_onset_feedback()
-    # Install capability planning before specialized browser builders so software
-    # requests receive a deterministic project type and safe scaffold first.
-    install_sli_capability_planner()
     # SOPHYANE_FILESYSTEM_CAPABILITIES_V20
     install_filesystem_capabilities_v20()
-    # SLI assembles premium browser artifacts itself. Install before the asset
-    # pipeline so verified downloaded photos are supplied to the builder.
-    install_sli_builder()
     install_premium_asset_pipeline()
-    # Mission OS installs after all artifact builders so complex multi-service
-    # requests are intercepted before any one-shot provider artifact is requested.
-    install_sli_mission_os()
-    # Final authority: SLI owns routing, profile selection, prompt budgets and
-    # deterministic fallbacks. Local/cloud LLMs remain replaceable workers.
-    install_sli_brain()
     # Keep mission routing outermost after all provider wrappers.
     install_capability_acquisition_patch()
     # Executable software projects must bypass editable visual-session routing.
@@ -262,26 +242,57 @@ def main() -> int:
         except Exception as error:
             print(f"◆ Startup provider selection warning: {error}", file=sys.stderr)
 
+    # SOPHYANE_MODE2_RUNTIME_ISOLATION_V1
+    #
+    # SLI execution/runtime wrappers are not global Sophyane authority.
+    # They exist only inside an explicitly selected Mode-2 session.
+    if (
+        os.environ.get("SOPHYANE_SESSION_MODE")
+        == "sli_graph"
+    ):
+        from sophyane.runtime_sli_brain import install_sli_brain
+        from sophyane.runtime_sli_builder import install_sli_builder
+        from sophyane.runtime_sli_capability_planner import (
+            install_sli_capability_planner,
+        )
+        from sophyane.runtime_sli_intent_patch import (
+            install_sli_intent_routing,
+        )
+        from sophyane.runtime_sli_mission_os import install_sli_mission_os
+        from sophyane.runtime_sli_onset_feedback import (
+            install_sli_onset_feedback,
+        )
+
+        install_sli_intent_routing()
+        install_sli_onset_feedback()
+        install_sli_capability_planner()
+        install_sli_builder()
+        install_sli_mission_os()
+        install_sli_brain()
 
     # SOPHYANE_FRESH_PREVIEW_INSTALL_V1
     # All explicit SLI previews use the exact-workspace, no-store server.
-    try:
-        import sophyane.sli_capability_engine as _sli_engine
+    if (
+        os.environ.get("SOPHYANE_SESSION_MODE")
+        == "sli_graph"
+    ):
+        try:
+            import sophyane.sli_capability_engine as _sli_engine
 
-        from sophyane.code_memory.fresh_preview import (
-            preview_workspace as _fresh_preview_workspace,
-        )
+            from sophyane.code_memory.fresh_preview import (
+                preview_workspace as _fresh_preview_workspace,
+            )
 
-        _sli_engine.preview_sli_artifact = (
-            _fresh_preview_workspace
-        )
+            _sli_engine.preview_sli_artifact = (
+                _fresh_preview_workspace
+            )
 
-    except Exception as error:
-        print(
-            f"◆ Fresh preview installation warning: {error}",
-            file=sys.stderr,
-            flush=True,
-        )
+        except Exception as error:
+            print(
+                f"◆ Fresh preview installation warning: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     print(_runtime_identity(), file=sys.stderr, flush=True)
     _start_local_server_if_needed()
