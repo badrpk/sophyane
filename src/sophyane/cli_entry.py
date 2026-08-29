@@ -7,6 +7,45 @@ import sys
 from sophyane.config import load_config
 from sophyane.version import __version__
 
+# SOPHYANE_TRANSIENT_SESSION_BANNER_V1
+def _session_ready_model(
+    configured_model: str | None,
+) -> str:
+    """Resolve the model label owned by the current session mode.
+
+    SOPHYANE_SESSION_MODEL is transient process state. It is authoritative
+    only when the current process explicitly selected a model-bearing
+    transient mode. Otherwise persisted/current config owns the banner.
+    """
+
+    configured = str(
+        configured_model
+        or ""
+    ).strip()
+
+    session_mode = str(
+        os.environ.get(
+            "SOPHYANE_SESSION_MODE"
+        )
+        or ""
+    ).strip()
+
+    if session_mode not in {
+        "local_llm",
+        "cloud_llm",
+        "nifdu_llm",
+    }:
+        return configured
+
+    return str(
+        os.environ.get(
+            "SOPHYANE_SESSION_MODEL"
+        )
+        or configured
+    ).strip()
+
+
+
 
 def _runtime_identity() -> str:
     try:
@@ -14,7 +53,7 @@ def _runtime_identity() -> str:
     except Exception:
         config = {}
 
-    model = str(config.get("model") or "not configured")
+    model = str(_session_ready_model(config.get("model")) or "not configured")
 
     try:
         from sophyane.connectors.runtime import list_connectors

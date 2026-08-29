@@ -93,6 +93,32 @@ def install_orchestration_patch() -> None:
         original_execution_requested = tui_v2._execution_requested
 
         def execution_requested(message: str) -> bool:
+            # SOPHYANE_ORCHESTRATION_MAKE_USE_OF_CHAT_GUARD_V1
+            #
+            # The base TUI classifier intentionally treats conversational
+            # "make use of ..." as chat. Preserve that decision here before
+            # orchestration's broader execution heuristics are considered.
+            _orchestration_guard_text = " ".join(
+                str(message or "").casefold().split()
+            )
+
+            if (
+                "make use of"
+                in _orchestration_guard_text
+                and not _orchestration_guard_text.startswith(
+                    (
+                        "make a ",
+                        "make an ",
+                        "make the ",
+                        "make file ",
+                        "make website ",
+                        "make app ",
+                        "make game ",
+                    )
+                )
+            ):
+                return False
+
             # Explicit imperative requests take precedence over a mistaken native
             # chat classification. This keeps requests such as "Create index.html"
             # inside the validated execution runtime.

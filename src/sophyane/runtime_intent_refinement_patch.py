@@ -189,6 +189,256 @@ def install_intent_refinement() -> None:
 
             self.emit("You", message)
 
+            # SOPHYANE_NIFDU_ACTIVE_PATH_STATE_V1
+            #
+            # Runtime execution code expects active_workspace to expose
+            # pathlib.Path methods such as exists(). Keep that invariant
+            # even when older patches stored a string.
+            from pathlib import Path as _SophyaneActivePath
+
+            if (
+                self.active_workspace
+                and not isinstance(
+                    self.active_workspace,
+                    _SophyaneActivePath,
+                )
+            ):
+                self.active_workspace = _SophyaneActivePath(
+                    self.active_workspace
+                )
+
+            # SOPHYANE_NIFDU_EFFECTIVE_LOCAL_GROUNDING_V1
+            #
+            # install_intent_refinement() replaces ObservableTUI.run()
+            # completely. Therefore Option-4/NIFDU filesystem reads and
+            # discovery must be intercepted HERE at the effective original
+            # user-request boundary, before preflight, refinement, simple
+            # chat routing or any provider call.
+            import os as _nifdu_ground_os
+
+            if (
+                _nifdu_ground_os.environ.get(
+                    "SOPHYANE_SESSION_MODE",
+                    "",
+                ).strip().lower()
+                == "nifdu_llm"
+            ):
+                from pathlib import Path as _NifduGroundPath
+
+                from sophyane.nifdu_guarded_execution import (
+                    grounded_nifdu_file_followup,
+                    grounded_nifdu_largest_file,
+                    grounded_nifdu_named_file_discovery,
+                    grounded_nifdu_python_file_read,
+                    requested_python_read_filename,
+                )
+
+                if not hasattr(
+                    self,
+                    "_nifdu_grounded_file",
+                ):
+                    self._nifdu_grounded_file = None
+
+                if not hasattr(
+                    self,
+                    "_nifdu_grounded_matches",
+                ):
+                    self._nifdu_grounded_matches = []
+
+                # SOPHYANE_NIFDU_EFFECTIVE_LARGEST_FILE_DISPATCH_V1
+                _nifdu_largest = grounded_nifdu_largest_file(
+                    message,
+                    workspace=_NifduGroundPath.cwd().resolve(),
+                )
+
+                if _nifdu_largest is not None:
+                    self.last_mode = "chat"
+                    self.last_raw = _nifdu_largest
+
+                    self.history.extend(
+                        [
+                            ("user", message[:300]),
+                            ("assistant", _nifdu_largest[:500]),
+                        ]
+                    )
+                    self.history = self.history[-4:]
+
+                    self.emit(
+                        "Sophyane",
+                        _nifdu_largest,
+                    )
+                    continue
+
+                # Device/local-root discovery is deterministic and never
+                # delegated to ChatGPT.
+                _nifdu_discovery = (
+                    grounded_nifdu_named_file_discovery(
+                        message
+                    )
+                )
+
+                if _nifdu_discovery is not None:
+                    _nifdu_paths = list(
+                        _nifdu_discovery.get(
+                            "paths",
+                            [],
+                        )
+                    )
+
+                    self._nifdu_grounded_matches = (
+                        _nifdu_paths
+                    )
+
+                    self._nifdu_grounded_file = (
+                        _nifdu_paths[0]
+                        if len(_nifdu_paths) == 1
+                        else None
+                    )
+
+                    self.last_mode = "chat"
+                    self.last_raw = str(
+                        _nifdu_discovery[
+                            "message"
+                        ]
+                    )
+
+                    self.history.extend(
+                        [
+                            (
+                                "user",
+                                message[:300],
+                            ),
+                            (
+                                "assistant",
+                                self.last_raw[:500],
+                            ),
+                        ]
+                    )
+
+                    self.history = (
+                        self.history[-4:]
+                    )
+
+                    self.emit(
+                        "Sophyane",
+                        self.last_raw,
+                    )
+
+                    continue
+
+                # Follow-ups such as "what is content of this file?" are
+                # resolved only against runtime-grounded state. Multiple
+                # matches remain explicitly ambiguous.
+                _nifdu_followup = (
+                    grounded_nifdu_file_followup(
+                        message,
+                        active_file=(
+                            self._nifdu_grounded_file
+                        ),
+                        candidate_paths=(
+                            self._nifdu_grounded_matches
+                        ),
+                    )
+                )
+
+                if _nifdu_followup is not None:
+                    self.last_mode = "chat"
+                    self.last_raw = (
+                        _nifdu_followup
+                    )
+
+                    self.history.extend(
+                        [
+                            (
+                                "user",
+                                message[:300],
+                            ),
+                            (
+                                "assistant",
+                                _nifdu_followup[:500],
+                            ),
+                        ]
+                    )
+
+                    self.history = (
+                        self.history[-4:]
+                    )
+
+                    self.emit(
+                        "Sophyane",
+                        _nifdu_followup,
+                    )
+
+                    continue
+
+                # Explicit workspace-relative reads, e.g.
+                # "code of yaqeen.py", are grounded in cwd and never
+                # answered from model memory.
+                _nifdu_grounded_read = (
+                    grounded_nifdu_python_file_read(
+                        message,
+                        workspace=(
+                            _NifduGroundPath.cwd().resolve()
+                        ),
+                    )
+                )
+
+                if _nifdu_grounded_read is not None:
+                    _nifdu_read_name = (
+                        requested_python_read_filename(
+                            message
+                        )
+                    )
+
+                    if _nifdu_read_name is not None:
+                        _nifdu_read_path = (
+                            _NifduGroundPath.cwd().resolve()
+                            / _nifdu_read_name
+                        )
+
+                        if _nifdu_read_path.is_file():
+                            self._nifdu_grounded_file = (
+                                _nifdu_read_path.resolve()
+                            )
+
+                            self._nifdu_grounded_matches = [
+                                self._nifdu_grounded_file
+                            ]
+
+                        else:
+                            self._nifdu_grounded_file = None
+                            self._nifdu_grounded_matches = []
+
+                    self.last_mode = "chat"
+                    self.last_raw = (
+                        _nifdu_grounded_read
+                    )
+
+                    self.history.extend(
+                        [
+                            (
+                                "user",
+                                message[:300],
+                            ),
+                            (
+                                "assistant",
+                                _nifdu_grounded_read[:500],
+                            ),
+                        ]
+                    )
+
+                    self.history = (
+                        self.history[-4:]
+                    )
+
+                    self.emit(
+                        "Sophyane",
+                        _nifdu_grounded_read,
+                    )
+
+                    continue
+
+
             # SOPHYANE_AUTHORITATIVE_OBJECTIVE_PREFLIGHT
             # Consume the ORIGINAL user request before adaptive dispatch,
             # intent refinement, SLI acquisition, races or provider calls.
@@ -208,6 +458,557 @@ def install_intent_refinement() -> None:
 
                 self.active_request = ""
                 continue
+
+
+            # SOPHYANE_NIFDU_NATIVE_EXECUTION_HANDOFF_V1
+            #
+            # Option 4 -> NIFDU uses ChatGPT only as the model/provider.
+            # Once the original user request is classified as executable,
+            # the same native Sophyane execution_runtime used by every
+            # other provider owns:
+            #
+            #   action parsing
+            #   workspace mutation
+            #   safe command execution
+            #   verification
+            #   browser preview/opening
+            #   continuation
+            #
+            # Do not route through NIFDU-specific WRITE_FILE, replacement,
+            # process-launch or browser-launch primitives.
+            import os as _nifdu_native_os
+
+            if (
+                _nifdu_native_os.environ.get(
+                    "SOPHYANE_SESSION_MODE",
+                    "",
+                ).strip().lower()
+                == "nifdu_llm"
+                and tui_v2._execution_requested(
+                    message
+                )
+            ):
+                from pathlib import Path as _NifduNativePath
+
+                _nifdu_workspace = (
+                    _NifduNativePath.cwd().resolve()
+                )
+
+                # pathlib.Path is the native execution-runtime contract.
+                # Never persist a string workspace into continuation state.
+                self.active_workspace = (
+                    _nifdu_workspace
+                )
+
+                _nifdu_continuing = bool(
+                    self.active_request
+                    and self.project_requirements
+                )
+
+                if _nifdu_continuing:
+                    self.project_requirements.append(
+                        message
+                    )
+                else:
+                    self.active_request = message
+                    self.project_requirements = [
+                        message
+                    ]
+
+                self.last_mode = "execution"
+
+                _nifdu_native_prompt = (
+                    "Execute the user's request using Sophyane's "
+                    "existing structured action runtime.\n\n"
+                    "Return ONLY the next concrete Sophyane action "
+                    "or completion response.\n\n"
+                    "Use existing action schema such as:\n"
+                    '{"type":"write_file","path":"relative-file",'
+                    '"content":"complete content"}\n'
+                    '{"type":"append_file","path":"relative-file",'
+                    '"content":"content"}\n'
+                    '{"type":"run","command":"concrete command"}\n\n'
+                    "Use relative workspace paths only.\n"
+                    "Do not claim a file, process, test, server or browser "
+                    "operation succeeded unless Sophyane executes and "
+                    "verifies it.\n"
+                    "Do not return WRITE_FILE / END_WRITE_FILE wrappers.\n"
+                    "Do not return shell commands as prose.\n\n"
+                    "AUTHORITATIVE USER REQUEST:\n"
+                    + message
+                )
+
+                self.progress(
+                    "Planning with NIFDU; native Sophyane runtime "
+                    "owns execution"
+                )
+
+                try:
+                    _nifdu_initial = self.call_provider(
+                        _nifdu_native_prompt
+                    )
+
+                    _nifdu_initial_text = getattr(
+                        _nifdu_initial,
+                        "text",
+                        str(_nifdu_initial),
+                    )
+
+                    self.last_raw = (
+                        _nifdu_initial_text
+                    )
+
+                    _nifdu_result = (
+                        tui_v2.run_structured_loop(
+                            initial_text=(
+                                _nifdu_initial_text
+                            ),
+                            original_request=message,
+                            ask=lambda prompt: (
+                                self.call_provider(
+                                    prompt
+                                )
+                            ),
+                            workspace=(
+                                _nifdu_workspace
+                            ),
+                            max_steps=(
+                                8
+                                if self.small_local
+                                else 16
+                            ),
+                            progress=self.progress,
+                        )
+                    )
+
+                except Exception as error:  # noqa: BLE001
+                    self.emit(
+                        "system",
+                        (
+                            "Native Sophyane execution failed safely: "
+                            + f"{type(error).__name__}: {error}"
+                        ),
+                    )
+
+                    continue
+
+                self.history.extend(
+                    [
+                        (
+                            "user",
+                            message[:300],
+                        ),
+                        (
+                            "assistant",
+                            str(_nifdu_result)[:500],
+                        ),
+                    ]
+                )
+
+                self.history = (
+                    self.history[-4:]
+                )
+
+                self.emit(
+                    "Sophyane",
+                    str(_nifdu_result),
+                )
+
+                continue
+
+                        # SOPHYANE_NIFDU_GUARDED_BROWSER_LAUNCH_V1
+            #
+            # Running/opening is a distinct action from editing.
+            # Handle it before NIFDU continuation mutation so a request
+            # such as "run yaqeen.py in browser" cannot rewrite the file.
+            import os as _nifdu_launch_os
+
+            if (
+                _nifdu_launch_os.environ.get(
+                    "SOPHYANE_SESSION_MODE",
+                    "",
+                ).strip().lower()
+                == "nifdu_llm"
+            ):
+                from pathlib import Path as _NifduLaunchPath
+
+                from sophyane.nifdu_guarded_execution import (
+                    NifduExecutionError as _NifduLaunchError,
+                    launch_guarded_browser_python,
+                )
+
+                try:
+                    _nifdu_launch_result = (
+                        launch_guarded_browser_python(
+                            message,
+                            workspace=_NifduLaunchPath.cwd().resolve(),
+                        )
+                    )
+
+                except _NifduLaunchError as error:
+                    self.emit(
+                        "system",
+                        "Guarded browser launch refused: "
+                        + str(error),
+                    )
+                    continue
+
+                if _nifdu_launch_result is not None:
+                    _nifdu_launch_target, _nifdu_launch_pid = (
+                        _nifdu_launch_result
+                    )
+
+                    self.emit(
+                        "Sophyane",
+                        (
+                            "Started "
+                            + _nifdu_launch_target.name
+                            + " through Sophyane's guarded "
+                            "execution authority.\n\n"
+                            + "PID: "
+                            + str(_nifdu_launch_pid)
+                        ),
+                    )
+
+                    continue
+
+# SOPHYANE_NIFDU_DETERMINISTIC_EMPTY_CREATE_V1
+            #
+            # A bare request such as "create a file yaqeen.py"
+            # needs no LLM intelligence. Sophyane can safely create
+            # the empty file itself and remember it as the active
+            # continuation target.
+            import os as _nifdu_empty_os
+
+            if (
+                _nifdu_empty_os.environ.get(
+                    "SOPHYANE_SESSION_MODE",
+                    "",
+                ).strip().lower()
+                == "nifdu_llm"
+            ):
+                from pathlib import Path as _NifduEmptyPath
+
+                from sophyane.nifdu_guarded_execution import (
+                    NifduExecutionError as _NifduEmptyError,
+                    deterministic_empty_python_create,
+                )
+
+                try:
+                    _nifdu_empty_target = (
+                        deterministic_empty_python_create(
+                            message,
+                            workspace=_NifduEmptyPath.cwd().resolve(),
+                        )
+                    )
+                except _NifduEmptyError as error:
+                    self.emit(
+                        "system",
+                        "NIFDU deterministic create rejected: "
+                        + str(error),
+                    )
+                    continue
+
+                if _nifdu_empty_target is not None:
+                    self.active_workspace = (
+                        _nifdu_empty_target.parent
+                    )
+
+                    self.active_request = message
+
+                    self.project_requirements = [
+                        message
+                    ]
+
+                    # Explicit active file for guarded continuation.
+                    self._nifdu_active_file = (
+                        _nifdu_empty_target
+                    )
+
+                    self.last_raw = (
+                        "Created empty file natively: "
+                        + str(_nifdu_empty_target)
+                    )
+
+                    self.history.extend(
+                        [
+                            (
+                                "user",
+                                message[:300],
+                            ),
+                            (
+                                "assistant",
+                                self.last_raw[:500],
+                            ),
+                        ]
+                    )
+
+                    self.history = self.history[-4:]
+
+                    self.emit(
+                        "Sophyane",
+                        (
+                            "Created "
+                            + _nifdu_empty_target.name
+                            + " directly through Sophyane's "
+                            "guarded filesystem authority.\n\n"
+                            + "Path: "
+                            + str(_nifdu_empty_target)
+                        ),
+                    )
+
+                    continue
+
+            # SOPHYANE_NIFDU_EFFECTIVE_RUN_GUARDED_EXECUTION_V1
+            #
+            # install_intent_refinement() replaces ObservableTUI.run()
+            # completely. Therefore explicit Option 4 -> 2 guarded file
+            # execution must live at this effective user-request boundary,
+            # before intent refinement can rewrite the request into a
+            # compiled work packet.
+            import os as _nifdu_effective_os
+
+            if (
+                _nifdu_effective_os.environ.get(
+                    "SOPHYANE_SESSION_MODE",
+                    "",
+                ).strip().lower()
+                == "nifdu_llm"
+            ):
+                from pathlib import Path as _NifduEffectivePath
+
+                from sophyane.nifdu_guarded_execution import (
+                    NifduExecutionError,
+                    execute_nifdu_file_request,
+                )
+
+                try:
+                    _nifdu_effective_target = (
+                        execute_nifdu_file_request(
+                            message,
+                            workspace=(
+                                _NifduEffectivePath.cwd().resolve()
+                            ),
+                        )
+                    )
+
+                except NifduExecutionError as error:
+                    self.emit(
+                        "system",
+                        (
+                            "NIFDU proposal rejected by "
+                            "Sophyane's guarded executor: "
+                            + str(error)
+                        ),
+                    )
+                    continue
+
+                except Exception as error:  # noqa: BLE001
+                    self.emit(
+                        "system",
+                        (
+                            "NIFDU guarded execution failed safely: "
+                            f"{type(error).__name__}: {error}"
+                        ),
+                    )
+                    continue
+
+                if _nifdu_effective_target is not None:
+                    _nifdu_effective_content = (
+                        _nifdu_effective_target.read_text(
+                            encoding="utf-8",
+                        )
+                    )
+
+                    self.last_mode = "execution"
+                    self.last_raw = (
+                        "Created guarded NIFDU file: "
+                        + str(
+                            _nifdu_effective_target
+                        )
+                    )
+
+                    self.active_request = message
+                    self.active_workspace = str(
+                        _NifduEffectivePath.cwd().resolve()
+                    )
+
+                    self.project_requirements = [
+                        message
+                    ]
+
+                    self.history.extend(
+                        [
+                            (
+                                "user",
+                                message[:300],
+                            ),
+                            (
+                                "assistant",
+                                self.last_raw[:500],
+                            ),
+                        ]
+                    )
+
+                    self.history = self.history[-4:]
+
+                    self.emit(
+                        "Sophyane",
+                        (
+                            "Created "
+                            + _nifdu_effective_target.name
+                            + " through the guarded NIFDU "
+                            "execution path.\n\n"
+                            + "Path: "
+                            + str(
+                                _nifdu_effective_target
+                            )
+                            + "\n"
+                            + "Contents:\n"
+                            + _nifdu_effective_content.rstrip(
+                                "\n"
+                            )
+                        ),
+                    )
+
+                    # Remember guarded execution state using Path
+                    # objects so future continuations such as "edit it"
+                    # can deterministically resolve to this exact file.
+                    self.active_workspace = (
+                        _nifdu_effective_target.parent
+                    )
+
+                    self._nifdu_active_file = (
+                        _nifdu_effective_target
+                    )
+
+                    self.active_request = message
+
+                    self.project_requirements = [
+                        message
+                    ]
+
+                    continue
+
+            # SOPHYANE_NIFDU_GUARDED_CONTINUATION_DISPATCH_V1
+            #
+            # A supported continuation targeting the remembered Python
+            # file must remain in the guarded NIFDU path. Do not send it
+            # through generic intent refinement or the legacy structured
+            # execution loop.
+            if (
+                _nifdu_effective_os.environ.get(
+                    "SOPHYANE_SESSION_MODE",
+                    "",
+                ).strip().lower()
+                == "nifdu_llm"
+            ):
+                from sophyane.nifdu_guarded_execution import (
+                    execute_nifdu_file_continuation,
+                    is_nifdu_file_continuation_request,
+                )
+
+                _nifdu_active_file = getattr(
+                    self,
+                    "_nifdu_active_file",
+                    None,
+                )
+
+                _nifdu_workspace = (
+                    _NifduEffectivePath(
+                        self.active_workspace
+                    ).resolve()
+                    if self.active_workspace
+                    else _NifduEffectivePath.cwd().resolve()
+                )
+
+                if is_nifdu_file_continuation_request(
+                    message,
+                    active_file=_nifdu_active_file,
+                    workspace=_nifdu_workspace,
+                ):
+                    try:
+                        _nifdu_updated = (
+                            execute_nifdu_file_continuation(
+                                message,
+                                workspace=_nifdu_workspace,
+                                active_file=_nifdu_active_file,
+                            )
+                        )
+
+                    except NifduExecutionError as error:
+                        self.emit(
+                            "system",
+                            "NIFDU continuation rejected by "
+                            "Sophyane's guarded executor: "
+                            f"{error}",
+                        )
+                        continue
+
+                    if _nifdu_updated is not None:
+                        self.active_workspace = (
+                            _nifdu_updated.parent
+                        )
+
+                        self._nifdu_active_file = (
+                            _nifdu_updated
+                        )
+
+                        self.active_request = (
+                            str(
+                                self.active_request
+                                or ""
+                            ).strip()
+                            + "\n"
+                            + message
+                        ).strip()
+
+                        self.project_requirements.append(
+                            message
+                        )
+
+                        _nifdu_updated_content = (
+                            _nifdu_updated.read_text(
+                                encoding="utf-8",
+                            )
+                        )
+
+                        self.last_raw = (
+                            "Updated guarded NIFDU file: "
+                            + str(_nifdu_updated)
+                        )
+
+                        self.history.extend(
+                            [
+                                (
+                                    "user",
+                                    message[:300],
+                                ),
+                                (
+                                    "assistant",
+                                    self.last_raw[:500],
+                                ),
+                            ]
+                        )
+
+                        self.history = self.history[-4:]
+
+                        self.emit(
+                            "Sophyane",
+                            (
+                                "Updated "
+                                + _nifdu_updated.name
+                                + " through the guarded NIFDU "
+                                "continuation path.\n\n"
+                                + "Path: "
+                                + str(_nifdu_updated)
+                                + "\n"
+                                + "Contents:\n"
+                                + _nifdu_updated_content.rstrip("\n")
+                            ),
+                        )
+
+                        continue
 
             # SOPHYANE_AUTO_EFFECTIVE_TUI_AUTHORITY_V1
             #

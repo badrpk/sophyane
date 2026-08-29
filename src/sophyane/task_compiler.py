@@ -4457,7 +4457,7 @@ def _ground_requirement_with_architecture(
     )
 
 
-def compile_task(
+def _compile_generic_task(
     text: str,
     *,
     workspace: str | Path | None = None,
@@ -4771,3 +4771,49 @@ __all__ = [
     "should_compile",
     "validate_requirement_evidence",
 ]
+# SOPHYANE_EXECUTABLE_TASK_COMPATIBILITY_FACADE_V1
+def compile_task(
+    value: str,
+    *args,
+    **kwargs,
+):
+    """Compile through the correct Sophyane task authority.
+
+    Known executable compatibility tasks retain their historical typed
+    execution contract. Everything else remains owned by the generic D4/D5
+    compiler above.
+
+    Returning an executable task here does not grant execution authority;
+    execution remains with task_execution / task_orchestrator.
+    """
+
+    #
+    # The historical executable compiler intentionally has a narrower
+    # contract. It returns None when the request is not one of its supported
+    # executable task families.
+    #
+    if not args and not kwargs:
+        try:
+            from sophyane.task_executable_compiler import (
+                compile_task as compile_executable_task,
+            )
+
+            executable = compile_executable_task(
+                value
+            )
+
+        except Exception:
+            executable = None
+
+        if executable is not None:
+            return executable
+
+    #
+    # Preserve the newer generic D4/D5 compiler exactly for all other input,
+    # including its workspace/grounding keyword arguments.
+    #
+    return _compile_generic_task(
+        value,
+        *args,
+        **kwargs,
+    )

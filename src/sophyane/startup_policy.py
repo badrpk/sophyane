@@ -490,6 +490,62 @@ def choose_startup_provider() -> dict[str, Any]:
             return updated
 
         if answer == "4":
+            print(
+                "",
+                file=sys.stderr,
+            )
+            print(
+                "Choose external LLM intelligence:",
+                file=sys.stderr,
+            )
+            print(
+                "  1. Cloud API — configured cloud provider",
+                file=sys.stderr,
+            )
+            print(
+                "  2. NIFDU Browser — ChatGPT via Chromium/screenshots",
+                file=sys.stderr,
+            )
+
+            intelligence = input(
+                "Select [1-2, default 1]: "
+            ).strip() or "1"
+
+            if intelligence == "2":
+                os.environ["SOPHYANE_SESSION_MODE"] = "nifdu_llm"
+                os.environ["SOPHYANE_SESSION_PROVIDER"] = "nifdu_browser"
+                os.environ["SOPHYANE_SESSION_MODEL"] = "chatgpt-browser"
+                os.environ["SOPHYANE_SESSION_TIMEOUT"] = "180"
+
+                os.environ.pop("SOPHYANE_SLI_GRAPH", None)
+                os.environ.pop("SOPHYANE_SLI_ONLY", None)
+                os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
+                os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
+                os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
+                os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
+
+                updated = dict(config)
+                updated.update({
+                    "provider": "nifdu_browser",
+                    "model": "chatgpt-browser",
+                    "company": "NIFDU / ChatGPT Browser",
+                    "timeout": 180,
+                })
+
+                print(
+                    "Mode: NIFDU Browser LLM "
+                    "(ChatGPT via Chromium/screenshots)",
+                    file=sys.stderr,
+                )
+
+                return updated
+
+            if intelligence != "1":
+                print(
+                    "Invalid external LLM choice; using Cloud API.",
+                    file=sys.stderr,
+                )
+
             os.environ["SOPHYANE_SESSION_MODE"] = "cloud_llm"
             os.environ.pop("SOPHYANE_SLI_GRAPH", None)
             os.environ.pop("SOPHYANE_SLI_ONLY", None)

@@ -657,6 +657,25 @@ def _email_option_digit_reply(message: str) -> str | None:
 
 
 def _execution_requested(message: str) -> bool:
+    # SOPHYANE_MAKE_USE_OF_CHAT_GUARD_V1
+    _guard_text = " ".join(
+        str(message or "").casefold().split()
+    )
+
+    if "make use of" in _guard_text:
+        imperative_prefixes = (
+            "make a ",
+            "make an ",
+            "make the ",
+            "make file ",
+            "make website ",
+            "make app ",
+            "make game ",
+        )
+
+        if not _guard_text.startswith(imperative_prefixes):
+            return False
+
     # Strong repository/build requests must be resolved before narrower
     # capability classifiers are allowed to veto execution.
     try:
@@ -1446,6 +1465,255 @@ class ObservableTUI:
             # rewrite it into "Answer directly", "Execute:", semantic prompts,
             # or structured-loop repair prompts.  Those are low-level provider
             # concerns and would recursively launch another adaptive race.
+            # SOPHYANE_NIFDU_TUI_GUARDED_EXECUTION_V1
+            #
+            # Explicit Option 4 -> 2 sessions use NIFDU/ChatGPT
+            # for intelligence only. Filesystem mutation remains
+            # inside Sophyane's validated executor.
+            import os as _nifdu_os
+
+            if (
+                _nifdu_os.environ.get(
+                    "SOPHYANE_SESSION_MODE",
+                    "",
+                ).strip().lower()
+                == "nifdu_llm"
+            ):
+                from pathlib import Path as _NifduPath
+
+                from sophyane.nifdu_guarded_execution import (
+                    NifduExecutionError,
+                    execute_nifdu_file_request,
+                    grounded_nifdu_python_file_read,
+                    ungrounded_nifdu_browser_reference,
+                    grounded_nifdu_named_file_discovery,
+                    grounded_nifdu_file_followup,
+                )
+
+                # SOPHYANE_NIFDU_GROUNDED_FILE_STATE_V1
+                if not hasattr(
+                    self,
+                    "_nifdu_grounded_file",
+                ):
+                    self._nifdu_grounded_file = None
+
+                # SOPHYANE_NIFDU_NAMED_FILE_DISCOVERY_DISPATCH_V1
+                _nifdu_discovery = grounded_nifdu_named_file_discovery(
+                    message
+                )
+
+                if _nifdu_discovery is not None:
+                    _paths = _nifdu_discovery["paths"]
+
+                    self._nifdu_grounded_file = (
+                        _paths[0]
+                        if len(_paths) == 1
+                        else None
+                    )
+
+                    self.last_raw = _nifdu_discovery["message"]
+
+                    self.history.extend(
+                        [
+                            (
+                                "user",
+                                message[:300],
+                            ),
+                            (
+                                "assistant",
+                                self.last_raw[:500],
+                            ),
+                        ]
+                    )
+
+                    self.history = self.history[-4:]
+
+                    self.emit(
+                        "Sophyane",
+                        self.last_raw,
+                    )
+
+                    continue
+
+                # SOPHYANE_NIFDU_GROUNDED_FILE_FOLLOWUP_DISPATCH_V1
+                _nifdu_followup = grounded_nifdu_file_followup(
+                    message,
+                    active_file=self._nifdu_grounded_file,
+                )
+
+                if _nifdu_followup is not None:
+                    self.last_raw = _nifdu_followup
+
+                    self.history.extend(
+                        [
+                            (
+                                "user",
+                                message[:300],
+                            ),
+                            (
+                                "assistant",
+                                _nifdu_followup[:500],
+                            ),
+                        ]
+                    )
+
+                    self.history = self.history[-4:]
+
+                    self.emit(
+                        "Sophyane",
+                        _nifdu_followup,
+                    )
+
+                    continue
+
+                # SOPHYANE_NIFDU_TUI_LOCAL_GROUNDING_DISPATCH_V1
+                #
+                # Explicit local file reads are resolved from the active
+                # workspace before NIFDU is allowed to answer. This prevents
+                # browser-LLM prose from being mistaken for filesystem state.
+                #
+                # SOPHYANE_NIFDU_EXPLICIT_FILE_READ_GROUNDING_V1
+                _nifdu_grounded_read = grounded_nifdu_python_file_read(
+                    message,
+                    workspace=_NifduPath.cwd().resolve(),
+                )
+
+                if _nifdu_grounded_read is not None:
+                    from sophyane.nifdu_guarded_execution import (
+                        requested_python_read_filename,
+                    )
+
+                    _read_name = requested_python_read_filename(
+                        message
+                    )
+
+                    if _read_name is not None:
+                        _read_path = (
+                            _NifduPath.cwd().resolve()
+                            / _read_name
+                        )
+
+                        self._nifdu_grounded_file = (
+                            _read_path.resolve()
+                            if _read_path.is_file()
+                            else None
+                        )
+
+                    self.last_raw = _nifdu_grounded_read
+
+                    self.history.extend(
+                        [
+                            (
+                                "user",
+                                message[:300],
+                            ),
+                            (
+                                "assistant",
+                                _nifdu_grounded_read[:500],
+                            ),
+                        ]
+                    )
+
+                    self.history = self.history[-4:]
+
+                    self.emit(
+                        "Sophyane",
+                        _nifdu_grounded_read,
+                    )
+
+                    continue
+
+                # SOPHYANE_NIFDU_UNGROUNDED_BROWSER_REFERENCE_V1
+                #
+                # Never reinterpret model prose such as "this code" as a real
+                # executable artifact. An explicit filename is required.
+                _nifdu_ungrounded_browser = (
+                    ungrounded_nifdu_browser_reference(
+                        message,
+                        workspace=_NifduPath.cwd().resolve(),
+                    )
+                )
+
+                if _nifdu_ungrounded_browser is not None:
+                    self.last_raw = _nifdu_ungrounded_browser
+
+                    self.history.extend(
+                        [
+                            (
+                                "user",
+                                message[:300],
+                            ),
+                            (
+                                "assistant",
+                                _nifdu_ungrounded_browser[:500],
+                            ),
+                        ]
+                    )
+
+                    self.history = self.history[-4:]
+
+                    self.emit(
+                        "Sophyane",
+                        _nifdu_ungrounded_browser,
+                    )
+
+                    continue
+
+                try:
+                    _nifdu_target = execute_nifdu_file_request(
+                        message,
+                        workspace=_NifduPath.cwd().resolve(),
+                    )
+                except NifduExecutionError as error:
+                    self.emit(
+                        "system",
+                        "NIFDU proposal rejected by Sophyane's "
+                        f"guarded executor: {error}",
+                    )
+                    continue
+
+                if _nifdu_target is not None:
+                    _nifdu_content = _nifdu_target.read_text(
+                        encoding="utf-8",
+                    )
+
+                    self.last_raw = (
+                        "Created guarded NIFDU file: "
+                        + str(_nifdu_target)
+                    )
+
+                    self.history.extend(
+                        [
+                            (
+                                "user",
+                                message[:300],
+                            ),
+                            (
+                                "assistant",
+                                self.last_raw[:500],
+                            ),
+                        ]
+                    )
+
+                    self.history = self.history[-4:]
+
+                    self.emit(
+                        "Sophyane",
+                        (
+                            "Created "
+                            + _nifdu_target.name
+                            + " through the guarded NIFDU "
+                            "execution path.\n\n"
+                            + "Path: "
+                            + str(_nifdu_target)
+                            + "\n"
+                            + "Contents:\n"
+                            + _nifdu_content.rstrip("\n")
+                        ),
+                    )
+
+                    continue
+
             if self.dispatch_user_request is not None:
                 try:
                     response = self.dispatch_user_request(message)

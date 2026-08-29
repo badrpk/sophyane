@@ -29,8 +29,41 @@ def _walk_provider(value: Any, seen: set[int] | None = None, depth: int = 0) -> 
     if marker in seen:
         return None
     seen.add(marker)
-    if _looks_like_provider(value) and (hasattr(value, "_providers") or hasattr(value, "primary")):
-        return value
+    if _looks_like_provider(value):
+        # A concrete provider is authoritative even when it is not a
+        # fallback/dispatcher object. Historically this walker only
+        # accepted providers exposing ``_providers`` or ``primary``;
+        # that discarded dedicated leaf providers such as
+        # NifduBrowserProvider and caused the TUI to fall back to stale
+        # saved configuration when reporting provider identity.
+        if (
+            hasattr(value, "_providers")
+            or hasattr(value, "primary")
+        ):
+            return value
+
+        metadata = getattr(
+            value,
+            "metadata",
+            None,
+        )
+
+        provider_id = str(
+            getattr(
+                metadata,
+                "provider_id",
+                "",
+            )
+            or getattr(
+                value,
+                "provider_id",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if provider_id:
+            return value
     owner = getattr(value, "__self__", None)
     found = _walk_provider(owner, seen, depth + 1)
     if found is not None:
@@ -74,10 +107,51 @@ def _active_name(tui: Any) -> str:
             value = str(getattr(provider, attr, "") or "").strip().lower()
             if value:
                 return value
-        primary = str(getattr(provider, "primary", "") or "").strip().lower()
+        primary = str(
+            getattr(
+                provider,
+                "primary",
+                "",
+            )
+            or ""
+        ).strip().lower()
+
         if primary:
             return primary
-    return str(getattr(tui, "config", {}).get("provider") or "provider").lower()
+
+        metadata = getattr(
+            provider,
+            "metadata",
+            None,
+        )
+
+        provider_id = str(
+            getattr(
+                metadata,
+                "provider_id",
+                "",
+            )
+            or getattr(
+                provider,
+                "provider_id",
+                "",
+            )
+            or ""
+        ).strip().lower()
+
+        if provider_id:
+            return provider_id
+
+    return str(
+        getattr(
+            tui,
+            "config",
+            {},
+        ).get(
+            "provider"
+        )
+        or "provider"
+    ).lower()
 
 
 def install_provider_context_patch() -> None:
@@ -108,9 +182,31 @@ def install_provider_context_patch() -> None:
         )
 
         provider = _provider_from_tui(self)
+        metadata = getattr(
+            provider,
+            "metadata",
+            None,
+        )
+
         primary = str(
-            getattr(provider, "primary", "")
-            or self.config.get("provider")
+            getattr(
+                provider,
+                "primary",
+                "",
+            )
+            or getattr(
+                metadata,
+                "provider_id",
+                "",
+            )
+            or getattr(
+                provider,
+                "provider_id",
+                "",
+            )
+            or self.config.get(
+                "provider"
+            )
             or ""
         ).lower()
 

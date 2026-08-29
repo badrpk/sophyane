@@ -161,6 +161,22 @@ def create_provider(config: dict[str, Any]):
         os.environ["SOPHYANE_LOCAL_ONLY"] = "1"
         os.environ["SOPHYANE_DISABLE_CLOUD_FALLBACK"] = "1"
 
+    if session_mode == "nifdu_llm":
+        from sophyane.providers.nifdu_browser import (
+            NifduBrowserProvider,
+        )
+
+        return NifduBrowserProvider(
+            model=(
+                session_model
+                or "chatgpt-browser"
+            ),
+            timeout=int(
+                session_timeout
+                or "180"
+            ),
+        )
+
     if session_mode == "cloud_llm":
         config = dict(config)
 

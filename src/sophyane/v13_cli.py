@@ -477,6 +477,10 @@ def _execution_session_mode() -> str:
         "cloud": "cloud_llm",
         "gemini": "cloud_llm",
 
+        "nifdu": "nifdu_llm",
+        "nifdu_browser": "nifdu_llm",
+        "browser_llm": "nifdu_llm",
+
         "0": "race",
         "adaptive": "race",
         "auto": "race",
@@ -492,6 +496,7 @@ def _execution_session_mode() -> str:
         "sli_graph",
         "local_llm",
         "cloud_llm",
+        "nifdu_llm",
         "race",
     }:
         return mode

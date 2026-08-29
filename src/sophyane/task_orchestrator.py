@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from sophyane.task_compiler import (
+from sophyane.task_executable_compiler import (
     compile_task,
 )
 from sophyane.task_execution import (
