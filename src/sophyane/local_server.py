@@ -91,9 +91,142 @@ def _expected_gguf(
     return Path(value).expanduser()
 
 
+def _discover_matching_local_server_pid(
+    port: int,
+    state: dict[str, object],
+) -> int | None:
+    """Find one live local llama-server that exactly matches configuration.
+
+    Discovery is intentionally conservative.  A process is adoptable only
+    when its command line identifies llama-server, the configured port, and
+    the configured GGUF path.  Ambiguous matches are never adopted.
+    """
+    expected_model = str(
+        state.get("gguf_path", "")
+        or ""
+    ).strip()
+
+    if not expected_model:
+        return None
+
+    proc_root = Path("/proc")
+
+    if not proc_root.is_dir():
+        return None
+
+    matches: list[int] = []
+
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+
+        pid = int(entry.name)
+
+        try:
+            raw = (
+                entry
+                / "cmdline"
+            ).read_bytes()
+        except OSError:
+            continue
+
+        if not raw:
+            continue
+
+        argv = [
+            token.decode(
+                "utf-8",
+                errors="replace",
+            )
+            for token in raw.split(b"\0")
+            if token
+        ]
+
+        if not argv:
+            continue
+
+        rendered = "\n".join(argv)
+
+        if "llama-server" not in rendered:
+            continue
+
+        if expected_model not in argv:
+            continue
+
+        port_match = False
+
+        for index, token in enumerate(argv):
+            if token in {
+                "--port",
+                "-p",
+            }:
+                if (
+                    index + 1 < len(argv)
+                    and argv[index + 1]
+                    == str(port)
+                ):
+                    port_match = True
+                    break
+
+            if token == f"--port={port}":
+                port_match = True
+                break
+
+        if not port_match:
+            continue
+
+        matches.append(pid)
+
+    if len(matches) != 1:
+        return None
+
+    return matches[0]
+
+
+def _reconcile_server_pid(
+    port: int,
+    state: dict[str, object],
+) -> int | None:
+    """Return the verified owner PID, adopting a unique exact live match."""
+    recorded_pid = _read_pid()
+
+    if (
+        recorded_pid is not None
+        and _pid_matches_expected_server(
+            recorded_pid,
+            state,
+            port,
+        )
+    ):
+        return recorded_pid
+
+    discovered_pid = (
+        _discover_matching_local_server_pid(
+            port,
+            state,
+        )
+    )
+
+    if discovered_pid is None:
+        return None
+
+    # Re-check immediately before persisting ownership.
+    if not _pid_matches_expected_server(
+        discovered_pid,
+        state,
+        port,
+    ):
+        return None
+
+    _write_pid(discovered_pid)
+
+    return discovered_pid
+
+
 def _pid_matches_expected_server(
     pid: int,
     state: dict | None = None,
+    port: int | None = None,
 ) -> bool:
     """Prove PID ownership before reuse or termination."""
     command = _process_cmdline(
@@ -110,10 +243,33 @@ def _pid_matches_expected_server(
     if gguf is None:
         return False
 
-    return (
+    if not (
         str(gguf) in command
         or gguf.name in command
-    )
+    ):
+        return False
+
+    if port is None:
+        return True
+
+    tokens = command.split()
+
+    for index, token in enumerate(tokens):
+        if token in {
+            "--port",
+            "-p",
+        }:
+            if (
+                index + 1 < len(tokens)
+                and tokens[index + 1]
+                == str(port)
+            ):
+                return True
+
+        if token == f"--port={port}":
+            return True
+
+    return False
 
 
 def _models_match_expected(
@@ -355,6 +511,16 @@ def _read_pid() -> int:
         return 0
 
 
+def _write_pid(
+    pid: int,
+) -> None:
+    """Persist verified llama-server ownership."""
+    PID_FILE.write_text(
+        str(pid),
+        encoding="utf-8",
+    )
+
+
 def _started_at() -> float:
     try:
         return float(START_FILE.read_text(encoding="utf-8").strip())
@@ -461,7 +627,10 @@ def server_status() -> tuple[str, str]:
     """Return ready, loading, stalled, foreign, stopped, or failed."""
     state = _state()
     port = _configured_port()
-    pid = _read_pid()
+    pid = _reconcile_server_pid(
+        port,
+        state,
+    )
 
     if _listening(
         port
@@ -484,6 +653,7 @@ def server_status() -> tuple[str, str]:
             and _pid_matches_expected_server(
                 pid,
                 state,
+                port,
             )
         ):
             age = _startup_age()
@@ -520,6 +690,7 @@ def server_status() -> tuple[str, str]:
         if not _pid_matches_expected_server(
             pid,
             state,
+            port,
         ):
             return (
                 "foreign",
@@ -670,6 +841,7 @@ def ensure_server_background() -> tuple[bool, str]:
         if not _pid_matches_expected_server(
             old_pid,
             state,
+            port,
         ):
             return (
                 False,
