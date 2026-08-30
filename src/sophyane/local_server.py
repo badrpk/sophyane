@@ -210,15 +210,24 @@ def _reconcile_server_pid(
     if discovered_pid is None:
         return None
 
-    # Re-check immediately before persisting ownership.
+    # SOPHYANE_DISCOVERY_IS_NOT_OWNERSHIP_V1
+    #
+    # Re-check immediately before reuse, but DO NOT persist an
+    # externally discovered PID as Sophyane-owned.
+    #
+    # Discovery proves compatibility only:
+    #
+    #     same llama-server + same model + same port
+    #
+    # It does not prove launch ownership.  Persisting this PID would
+    # allow a later stalled-server recovery path to terminate a
+    # persistent server that Sophyane merely discovered.
     if not _pid_matches_expected_server(
         discovered_pid,
         state,
         port,
     ):
         return None
-
-    _write_pid(discovered_pid)
 
     return discovered_pid
 
@@ -521,6 +530,271 @@ def _write_pid(
     )
 
 
+# SOPHYANE_LLAMA_PROCESS_INSTANCE_OWNERSHIP_V1
+def _process_start_ticks(
+    pid: int,
+) -> int | None:
+    """Return Linux /proc process start ticks for PID identity."""
+    if pid <= 0:
+        return None
+
+    try:
+        text = (
+            Path(
+                f"/proc/{pid}/stat"
+            )
+            .read_text(
+                encoding="utf-8",
+                errors="replace",
+            )
+        )
+    except OSError:
+        return None
+
+    #
+    # /proc/<pid>/stat field 2 is "(comm)" and may contain spaces.
+    # Split only after the final ") " so field numbering remains stable.
+    #
+    end = text.rfind(
+        ") "
+    )
+
+    if end < 0:
+        return None
+
+    fields = text[
+        end + 2:
+    ].split()
+
+    #
+    # fields[0] is original field 3 (state).
+    # Original field 22 (starttime) is therefore offset 19.
+    #
+    if len(fields) <= 19:
+        return None
+
+    try:
+        return int(
+            fields[19]
+        )
+    except ValueError:
+        return None
+
+
+def _ownership_file() -> Path:
+    return (
+        PID_FILE.with_name(
+            "llama-server.owner.json"
+        )
+    )
+
+
+def _ownership_payload(
+    pid: int,
+    state: dict[str, object],
+    port: int,
+) -> dict[str, object] | None:
+    start_ticks = (
+        _process_start_ticks(
+            pid
+        )
+    )
+
+    if start_ticks is None:
+        return None
+
+    gguf = _expected_gguf(
+        state
+    )
+
+    if gguf is None:
+        return None
+
+    return {
+        "pid": int(pid),
+        "boot_id": _boot_id(),
+        "start_ticks": int(
+            start_ticks
+        ),
+        "model": str(
+            gguf
+        ),
+        "port": int(
+            port
+        ),
+        "launcher": "sophyane",
+    }
+
+
+def _write_ownership(
+    pid: int,
+    state: dict[str, object],
+    port: int,
+) -> bool:
+    payload = _ownership_payload(
+        pid,
+        state,
+        port,
+    )
+
+    if payload is None:
+        return False
+
+    target = _ownership_file()
+    temporary = target.with_suffix(
+        target.suffix + ".tmp"
+    )
+
+    temporary.write_text(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    os.replace(
+        temporary,
+        target,
+    )
+
+    _write_pid(
+        pid
+    )
+
+    return True
+
+
+def _read_ownership() -> dict[str, object] | None:
+    try:
+        value = json.loads(
+            _ownership_file().read_text(
+                encoding="utf-8",
+            )
+        )
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+    ):
+        return None
+
+    if not isinstance(
+        value,
+        dict,
+    ):
+        return None
+
+    return value
+
+
+def _owned_process_matches(
+    pid: int,
+    state: dict[str, object],
+    port: int,
+) -> bool:
+    if pid <= 0:
+        return False
+
+    ownership = (
+        _read_ownership()
+    )
+
+    if ownership is None:
+        return False
+
+    try:
+        owner_pid = int(
+            ownership.get(
+                "pid",
+                0,
+            )
+        )
+        owner_start = int(
+            ownership.get(
+                "start_ticks",
+                -1,
+            )
+        )
+        owner_port = int(
+            ownership.get(
+                "port",
+                -1,
+            )
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return False
+
+    if owner_pid != pid:
+        return False
+
+    if owner_port != port:
+        return False
+
+    if (
+        ownership.get(
+            "launcher"
+        )
+        != "sophyane"
+    ):
+        return False
+
+    expected_boot = _boot_id()
+
+    if (
+        expected_boot
+        and ownership.get(
+            "boot_id"
+        )
+        != expected_boot
+    ):
+        return False
+
+    expected_model = (
+        _expected_gguf(
+            state
+        )
+    )
+
+    if expected_model is None:
+        return False
+
+    if (
+        ownership.get(
+            "model"
+        )
+        != str(
+            expected_model
+        )
+    ):
+        return False
+
+    live_start = (
+        _process_start_ticks(
+            pid
+        )
+    )
+
+    if live_start is None:
+        return False
+
+    if live_start != owner_start:
+        return False
+
+    return (
+        _pid_matches_expected_server(
+            pid,
+            state,
+            port,
+        )
+    )
+
+
 def _started_at() -> float:
     try:
         return float(START_FILE.read_text(encoding="utf-8").strip())
@@ -534,7 +808,12 @@ def _startup_age() -> float:
 
 
 def _clear_runtime_state() -> None:
-    for path in (PID_FILE, START_FILE):
+    # SOPHYANE_CLEAR_INSTANCE_OWNERSHIP_V1
+    for path in (
+        PID_FILE,
+        START_FILE,
+        _ownership_file(),
+    ):
         try:
             path.unlink()
         except OSError:
@@ -799,7 +1078,22 @@ def _launch(state: dict, port: int, *, minimal: bool = False) -> tuple[bool, str
         except OSError as error:
             return False, f"could not start llama-server: {error}"
 
-    PID_FILE.write_text(str(process.pid), encoding="utf-8")
+    # SOPHYANE_WRITE_PROCESS_INSTANCE_OWNERSHIP_V1
+    if not _write_ownership(
+        process.pid,
+        state,
+        port,
+    ):
+        try:
+            process.terminate()
+        except OSError:
+            pass
+
+        return (
+            False,
+            "llama-server launched but Sophyane could not "
+            "record process-instance ownership",
+        )
     START_FILE.write_text(str(time.time()), encoding="utf-8")
     for _ in range(12):
         time.sleep(0.25)
@@ -836,17 +1130,27 @@ def ensure_server_background() -> tuple[bool, str]:
 
     if status == "stalled":
 
+        # SOPHYANE_TERMINATE_ONLY_RECORDED_OWNER_V1
+        #
+        # A PID returned by discovery is reusable but not automatically
+        # owned.  Automatic recovery may terminate only the PID already
+        # present in Sophyane's explicit runtime ownership state.
         old_pid = _read_pid()
 
-        if not _pid_matches_expected_server(
-            old_pid,
-            state,
-            port,
+        # SOPHYANE_PROCESS_INSTANCE_TERMINATION_GATE_V1
+        if (
+            old_pid <= 0
+            or not _owned_process_matches(
+                old_pid,
+                state,
+                port,
+            )
         ):
             return (
                 False,
-                f"refusing to terminate "
-                f"unverified PID {old_pid}",
+                "configured llama-server appears stalled, "
+                "but Sophyane cannot prove process-instance ownership; "
+                "refusing automatic termination",
             )
 
         _terminate_process_group(
