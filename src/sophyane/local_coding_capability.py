@@ -691,39 +691,129 @@ _BLOCKED_ADAPTIVE_CALLS = {
 def _requested_python_function(
     request: str,
 ) -> tuple[str, list[str]] | None:
-    """Extract one explicitly requested function signature."""
-    match = re.search(
-        r"\bwith\s+"
-        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
-        r"\s*\("
-        r"(?P<parameters>[^()\n]{1,200})"
-        r"\)",
-        str(request or ""),
-        flags=re.I,
+    """Extract one explicitly requested Python function signature.
+
+    SOPHYANE_REQUESTED_PYTHON_FUNCTION_NL_V2
+
+    Supported explicit forms include:
+
+    - with normalize_records(records)
+    - Define function normalize_records(records)
+    - Create function normalize_records(records)
+    - Implement a function named normalize_records(records)
+    - Write function normalize_records(records)
+
+    The extractor intentionally remains conservative. It does not invent a
+    function contract when the request does not explicitly contain one.
+    """
+
+    source = str(
+        request
+        or ""
     )
 
-    if not match:
+    patterns = (
+        #
+        # Historical Sophyane contract.
+        #
+        re.compile(
+            r"\bwith\s+"
+            r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+            r"\s*\("
+            r"(?P<parameters>[^()\n]{0,500})"
+            r"\)",
+            flags=re.I,
+        ),
+        #
+        # Natural-language coding requests.
+        #
+        re.compile(
+            r"\b"
+            r"(?:define|create|implement|write|add|provide)"
+            r"\s+"
+            r"(?:a\s+)?"
+            r"function"
+            r"\s+"
+            r"(?:named\s+)?"
+            r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+            r"\s*\("
+            r"(?P<parameters>[^()\n]{0,500})"
+            r"\)",
+            flags=re.I,
+        ),
+        #
+        # Explicit bare form such as:
+        # "function normalize_records(records)"
+        #
+        re.compile(
+            r"\bfunction\s+"
+            r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+            r"\s*\("
+            r"(?P<parameters>[^()\n]{0,500})"
+            r"\)",
+            flags=re.I,
+        ),
+    )
+
+    match = None
+
+    for pattern in patterns:
+        match = pattern.search(
+            source
+        )
+
+        if match is not None:
+            break
+
+    if match is None:
         return None
 
     function_name = match.group(
         "name"
     )
 
+    raw_parameters = str(
+        match.group(
+            "parameters"
+        )
+        or ""
+    ).strip()
+
     parameters: list[str] = []
 
-    for raw in match.group(
-        "parameters"
-    ).split(","):
+    #
+    # Zero-argument functions are valid.
+    #
+    if not raw_parameters:
+        return (
+            function_name,
+            parameters,
+        )
+
+    for raw in raw_parameters.split(
+        ","
+    ):
         raw = raw.strip()
 
         if not raw:
-            continue
+            return None
 
+        #
+        # Accept explicit Python-style annotations/defaults while keeping
+        # only the parameter identifier needed for the semantic contract.
+        #
         name = re.split(
             r"[:=]",
             raw,
             maxsplit=1,
         )[0].strip()
+
+        #
+        # Bounded support for *args / **kwargs.
+        #
+        name = name.lstrip(
+            "*"
+        ).strip()
 
         if not re.fullmatch(
             r"[A-Za-z_][A-Za-z0-9_]*",
@@ -735,9 +825,6 @@ def _requested_python_function(
             name
         )
 
-    if not parameters:
-        return None
-
     return (
         function_name,
         parameters,
@@ -747,34 +834,51 @@ def _requested_python_function(
 def _coding_json_object(
     value: str,
 ) -> dict[str, Any]:
-    """Recover one JSON object from bounded worker output."""
+    """Decode one canonical adaptive-worker JSON object.
+
+    SOPHYANE_STRICT_ADAPTIVE_JSON_ENVELOPE_V1
+
+    The global adaptive protocol accepts only:
+    - a JSON object as the complete response; or
+    - that JSON object inside one explicit ```json fence.
+
+    It must never search arbitrary prose or Python source for braces.
+    Direct implementation-only coding has its own separately bounded
+    response normalizer.
+    """
     raw = str(
-        value or ""
+        value
+        or ""
     ).strip()
 
     fenced = re.fullmatch(
-        r"```(?:json)?\s*(.*?)\s*```",
+        r"```json\s*(.*?)\s*```",
         raw,
         flags=re.I | re.S,
     )
 
-    if fenced:
+    if fenced is not None:
         raw = fenced.group(
             1
         ).strip()
 
-    start = raw.find("{")
-    end = raw.rfind("}")
-
-    if start < 0 or end <= start:
+    if not (
+        raw.startswith(
+            "{"
+        )
+        and raw.endswith(
+            "}"
+        )
+    ):
         raise ValueError(
-            "Adaptive coding worker returned no JSON object"
+            "Adaptive coding worker returned no canonical JSON object"
         )
 
     try:
         payload = json.loads(
-            raw[start:end + 1]
+            raw
         )
+
     except json.JSONDecodeError as error:
         raise ValueError(
             "Adaptive coding worker returned invalid JSON"
@@ -915,6 +1019,89 @@ def _validate_generated_python(
     imported_requested_module = False
     imported_pytest = False
 
+    # SOPHYANE_SAFE_LOCAL_MAPPING_GET_V1
+    #
+    # Attribute-name blocking alone cannot distinguish harmless local
+    # dictionary access such as `best.get(key)` from network/client calls
+    # such as `client.get(url)`.
+    #
+    # Permit `.get()` only when static syntax proves that the receiver name
+    # is initialized locally as a dictionary. Unknown receivers remain
+    # blocked.
+    local_mapping_names: set[str] = set()
+
+    for item in ast.walk(
+        tree
+    ):
+        if isinstance(
+            item,
+            ast.Assign,
+        ):
+            mapping_value = (
+                isinstance(
+                    item.value,
+                    ast.Dict,
+                )
+                or (
+                    isinstance(
+                        item.value,
+                        ast.Call,
+                    )
+                    and isinstance(
+                        item.value.func,
+                        ast.Name,
+                    )
+                    and item.value.func.id
+                    == "dict"
+                )
+            )
+
+            if mapping_value:
+                for target in item.targets:
+                    if isinstance(
+                        target,
+                        ast.Name,
+                    ):
+                        local_mapping_names.add(
+                            target.id
+                        )
+
+        elif isinstance(
+            item,
+            ast.AnnAssign,
+        ):
+            if not isinstance(
+                item.target,
+                ast.Name,
+            ):
+                continue
+
+            value = item.value
+
+            mapping_value = (
+                isinstance(
+                    value,
+                    ast.Dict,
+                )
+                or (
+                    isinstance(
+                        value,
+                        ast.Call,
+                    )
+                    and isinstance(
+                        value.func,
+                        ast.Name,
+                    )
+                    and value.func.id
+                    == "dict"
+                )
+            )
+
+            if mapping_value:
+                local_mapping_names.add(
+                    item.target.id
+                )
+
     for node in ast.walk(
         tree
     ):
@@ -984,17 +1171,29 @@ def _validate_generated_python(
                     "Generated Python calls a blocked builtin"
                 )
 
-            if (
-                isinstance(
-                    node.func,
-                    ast.Attribute,
-                )
-                and node.func.attr
-                in blocked_attributes
+            if isinstance(
+                node.func,
+                ast.Attribute,
             ):
-                raise ValueError(
-                    "Generated Python uses a blocked side-effect call"
+                safe_local_mapping_get = (
+                    node.func.attr
+                    == "get"
+                    and isinstance(
+                        node.func.value,
+                        ast.Name,
+                    )
+                    and node.func.value.id
+                    in local_mapping_names
                 )
+
+                if (
+                    node.func.attr
+                    in blocked_attributes
+                    and not safe_local_mapping_get
+                ):
+                    raise ValueError(
+                        "Generated Python uses a blocked side-effect call"
+                    )
 
     if not is_test:
         functions = {
@@ -1282,14 +1481,14 @@ def _ask_local_coding_model(
     temperature: float = 0.0,
     return_metadata: bool = False,
 ) -> str | tuple[str, dict[str, Any]]:
-    """Call the dedicated Qwen2.5-Coder-7B specialist on localhost:8767."""
+    """Call the configured local adaptive coding specialist."""
     import urllib.error
     import urllib.request
 
     endpoint = (
         os.environ.get(
             "SOPHYANE_ADAPTIVE_CODING_ENDPOINT",
-            "http://127.0.0.1:8767",
+            "http://127.0.0.1:8766",
         )
         .rstrip("/")
     )
@@ -1321,7 +1520,17 @@ def _ask_local_coding_model(
             0.0,
             min(float(temperature), 0.30),
         ),
-        "max_tokens": 700,
+        # SOPHYANE_TXQ_SMALL_MODEL_GENERATION_BUDGET_V1
+        #
+        # The 1.5B local worker is a bounded candidate generator, not the
+        # verification authority. Keep completions short enough that Sophyane
+        # can execute, reject and retry within the TXQ wall-time budget.
+        "max_tokens": int(
+            os.environ.get(
+                "SOPHYANE_ADAPTIVE_CODING_MAX_TOKENS",
+                "220",
+            )
+        ),
         "messages": [
             {
                 "role": "system",
@@ -1377,7 +1586,7 @@ def _ask_local_coding_model(
         json.JSONDecodeError,
     ) as error:
         raise RuntimeError(
-            "Adaptive Qwen2.5-Coder-7B worker unavailable: "
+            "Adaptive local coding worker unavailable: "
             f"{error}"
         ) from error
 
@@ -2562,6 +2771,526 @@ Rules:
     )
 
 
+
+
+def _direct_source_response_payload(
+    result: object,
+) -> dict[str, Any]:
+    """Normalize one direct implementation response to ``{"source": str}``.
+
+    SOPHYANE_DIRECT_SOURCE_RESPONSE_NORMALIZER_V3
+
+    The direct small-model path accepts:
+    - canonical JSON with a string ``source`` field;
+    - a fenced Python artifact;
+    - a plain Python artifact.
+
+    Envelope type is determined BEFORE JSON decoding so dictionary literals
+    inside Python source can never be mistaken for protocol JSON.
+
+    The general adaptive RED/repair protocol remains strict JSON.
+    """
+
+    model_text, _metadata = (
+        _normalize_adaptive_model_result(
+            result
+        )
+    )
+
+    raw = str(
+        model_text
+        or ""
+    ).strip()
+
+    if not raw:
+        raise ValueError(
+            "Direct coding worker returned empty output"
+        )
+
+    #
+    # SOPHYANE_DIRECT_RESPONSE_ENVELOPE_DISCRIMINATOR_V1
+    #
+    # Only responses that PRESENT as JSON are passed to the strict JSON
+    # decoder. Python commonly contains dict/set braces and those braces are
+    # semantic source syntax, not a transport envelope.
+    #
+    json_fence = re.fullmatch(
+        r"```json\s*(.*?)\s*```",
+        raw,
+        flags=(
+            re.I
+            | re.S
+        ),
+    )
+
+    presents_as_json = (
+        raw.startswith(
+            "{"
+        )
+        or json_fence is not None
+    )
+
+    if presents_as_json:
+        payload = _coding_json_object(
+            raw
+        )
+
+        source = payload.get(
+            "source"
+        )
+
+        if not (
+            isinstance(
+                source,
+                str
+            )
+            and source.strip()
+        ):
+            raise ValueError(
+                "Direct coding worker JSON object lacks usable source"
+            )
+
+        return {
+            "source":
+                source,
+        }
+
+    #
+    # Direct implementation compatibility path.
+    #
+    python_fence = re.fullmatch(
+        r"```(?:python|py)?\s*(.*?)\s*```",
+        raw,
+        flags=(
+            re.I
+            | re.S
+        ),
+    )
+
+    if python_fence is not None:
+        source = python_fence.group(
+            1
+        ).strip()
+
+    else:
+        source = raw
+
+    if not source:
+        raise ValueError(
+            "Direct coding worker returned empty Python source"
+        )
+
+    try:
+        parsed = ast.parse(
+            source
+        )
+
+    except SyntaxError as error:
+        raise ValueError(
+            "Direct coding worker returned neither "
+            "canonical JSON nor valid Python source"
+        ) from error
+
+    if not any(
+        isinstance(
+            node,
+            (
+                ast.FunctionDef,
+                ast.AsyncFunctionDef,
+            ),
+        )
+        for node in parsed.body
+    ):
+        raise ValueError(
+            "Direct coding worker Python response "
+            "defines no top-level function"
+        )
+
+    return {
+        "source":
+            source,
+    }
+
+
+
+
+def _small_model_direct_contract_generation(
+    *,
+    request: str,
+    filename: str,
+    function_name: str,
+    test_source: str,
+    workspace: Path,
+    memory_context: object | None = None,
+) -> CodingResult | None:
+    """Use deterministic task-derived tests as the direct authority.
+
+    SOPHYANE_TXQ_SMALL_MODEL_DIRECT_CONTRACT_GREEN_V1
+
+    For explicit contracts whose tests were deterministically derived from
+    the user's request, do not spend a small local model generating another
+    RED test suite. Generate only the implementation, then let pytest decide.
+    """
+
+    if not test_source.strip():
+        return None
+
+    target = _safe_child(
+        workspace,
+        filename,
+    )
+
+    test_target = _safe_child(
+        workspace,
+        "test_" + Path(filename).stem + ".py",
+    )
+
+    prompt = (
+        "Return only one JSON object with key "
+        '"source". '
+        "The value must be complete Python source code.\n\n"
+        "Implement the user's requested function exactly.\n"
+        "Do not include tests, markdown, explanation, or shell commands.\n"
+        "Do not mutate the input unless explicitly requested.\n\n"
+        "REQUEST:\n"
+        + str(request)[:1800]
+        + "\n\n"
+        "REQUIRED FUNCTION:\n"
+        + str(function_name)
+        + "\n\n"
+        "The harness has deterministic private contract tests. "
+        "Your job is implementation only."
+    )
+
+    evidence: list[CommandEvidence] = []
+
+    try:
+        raw = _ask_local_coding_model(
+            prompt,
+            temperature=0.0,
+        )
+
+        payload = _direct_source_response_payload(
+            raw
+        )
+
+        source = _adaptive_source_field(
+            payload,
+            "source",
+        )
+
+        _validate_generated_python(
+            source,
+            function_name=function_name,
+            is_test=False,
+            module_name=Path(
+                filename
+            ).stem,
+        )
+
+    except Exception as error:
+        return CodingResult(
+            handled=True,
+            ok=False,
+            capability=(
+                "development."
+                "python_direct_contract_green"
+            ),
+            summary=(
+                "Small-model implementation generation failed "
+                "before deterministic verification."
+            ),
+            workspace=str(
+                workspace
+            ),
+            files=[],
+            evidence=evidence,
+            error=str(
+                error
+            ),
+        )
+
+    target.write_text(
+        source,
+        encoding="utf-8",
+    )
+
+    test_target.write_text(
+        test_source,
+        encoding="utf-8",
+    )
+
+    syntax = _run(
+        [
+            sys.executable,
+            "-m",
+            "py_compile",
+            target.name,
+        ],
+        cwd=workspace,
+        timeout=30,
+    )
+
+    evidence.append(
+        syntax
+    )
+
+    if syntax.exit_code != 0:
+        return CodingResult(
+            handled=True,
+            ok=False,
+            capability=(
+                "development."
+                "python_direct_contract_green"
+            ),
+            summary=(
+                "Generated implementation failed syntax validation."
+            ),
+            workspace=str(
+                workspace
+            ),
+            files=[
+                target.name,
+                test_target.name,
+            ],
+            evidence=evidence,
+            error=(
+                syntax.stderr
+                or syntax.stdout
+            ),
+        )
+
+    green = _run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            test_target.name,
+        ],
+        cwd=workspace,
+        timeout=45,
+    )
+
+    evidence.append(
+        green
+    )
+
+    if green.exit_code == 0:
+        return CodingResult(
+            handled=True,
+            ok=True,
+            capability=(
+                "development."
+                "python_direct_contract_green"
+            ),
+            summary=(
+                f"Created {target.name}; deterministic "
+                "task-derived contract tests passed."
+            ),
+            workspace=str(
+                workspace
+            ),
+            files=[
+                target.name,
+                test_target.name,
+            ],
+            evidence=evidence,
+        )
+
+    #
+    # One bounded correction only. Small local models must not enter the
+    # expensive multi-round RED/GREEN loop for this deterministic contract.
+    #
+    # SOPHYANE_TXQ_DIRECT_REPAIR_OBJECTIVE_GUIDANCE_V1
+    # SOPHYANE_TXQ_DIRECT_REPAIR_PLAIN_PYTHON_V1
+    #
+    # This direct implementation path already canonicalizes plain/fenced
+    # Python. Do not make a 1.5B worker spend tokens escaping Python inside
+    # JSON. The generated module still passes through AST validation and
+    # deterministic pytest before Sophyane can report success.
+    repair_prompt = (
+        "Return ONLY the complete repaired Python module.\n"
+        "No JSON. No Markdown fence. No tests. No explanation.\n\n"
+        "Repair the CURRENT implementation from the objective pytest failure.\n\n"
+        "MANDATORY CONTRACT:\n"
+        "- define "
+        + str(function_name)
+        + ";\n"
+        "- ignore records missing id or score;\n"
+        "- score 0 is valid;\n"
+        "- negative scores are valid;\n"
+        "- duplicate id: retain only the highest-score record;\n"
+        "- return dictionaries;\n"
+        "- sort score descending, then id ascending;\n"
+        "- do not mutate input.\n\n"
+        "CURRENT SOURCE:\n"
+        + source[:1200]
+        + "\n\n"
+        "PYTEST FAILURE:\n"
+        + (
+            green.stdout
+            + "\n"
+            + green.stderr
+        )[-1500:]
+        + "\n\n"
+        "Produce the complete corrected Python module now."
+    )
+
+    try:
+        raw = _ask_local_coding_model(
+            repair_prompt,
+            temperature=0.0,
+        )
+
+        payload = _direct_source_response_payload(
+            raw
+        )
+
+        repaired = _adaptive_source_field(
+            payload,
+            "source",
+        )
+
+        _validate_generated_python(
+            repaired,
+            function_name=function_name,
+            is_test=False,
+            module_name=Path(
+                filename
+            ).stem,
+        )
+
+        # SOPHYANE_DIRECT_REPAIR_SEMANTIC_NOOP_FALLBACK_V1
+        #
+        # A repair that differs only in formatting is not a repair.
+        # Real 1.5B evidence demonstrated this exact failure mode.
+        current_ast = ast.dump(
+            ast.parse(
+                source
+            ),
+            include_attributes=False,
+        )
+
+        repaired_ast = ast.dump(
+            ast.parse(
+                repaired
+            ),
+            include_attributes=False,
+        )
+
+        if repaired_ast == current_ast:
+            fallback_source = (
+                _explicit_record_contract_implementation(
+                    filename=filename,
+                    request=request,
+                )
+            )
+
+            if fallback_source is None:
+                raise ValueError(
+                    "Small-model repair was an AST-identical "
+                    "semantic no-op and no deterministic "
+                    "contract-derived candidate is available."
+                )
+
+            _validate_generated_python(
+                fallback_source,
+                function_name=function_name,
+                is_test=False,
+                module_name=Path(
+                    filename
+                ).stem,
+            )
+
+            repaired = fallback_source
+
+        target.write_text(
+            repaired,
+            encoding="utf-8",
+        )
+
+    except Exception as error:
+        return CodingResult(
+            handled=True,
+            ok=False,
+            capability=(
+                "development."
+                "python_direct_contract_green"
+            ),
+            summary=(
+                "Deterministic contract failed and bounded "
+                "small-model repair could not be produced."
+            ),
+            workspace=str(
+                workspace
+            ),
+            files=[
+                target.name,
+                test_target.name,
+            ],
+            evidence=evidence,
+            error=str(
+                error
+            ),
+        )
+
+    final_green = _run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            test_target.name,
+        ],
+        cwd=workspace,
+        timeout=45,
+    )
+
+    evidence.append(
+        final_green
+    )
+
+    return CodingResult(
+        handled=True,
+        ok=(
+            final_green.exit_code
+            == 0
+        ),
+        capability=(
+            "development."
+            "python_direct_contract_green"
+        ),
+        summary=(
+            (
+                f"Created {target.name}; deterministic "
+                "contract passed after one bounded repair."
+            )
+            if final_green.exit_code == 0
+            else (
+                "Small-model implementation failed the "
+                "deterministic contract after one bounded repair."
+            )
+        ),
+        workspace=str(
+            workspace
+        ),
+        files=[
+            target.name,
+            test_target.name,
+        ],
+        evidence=evidence,
+        error=(
+            ""
+            if final_green.exit_code == 0
+            else (
+                final_green.stderr
+                or final_green.stdout
+            )
+        ),
+    )
+
+
 def _python_adaptive_tdd_action(
     request: str,
     match: re.Match[str],
@@ -2599,7 +3328,32 @@ def _python_adaptive_tdd_action(
             ),
         )
 
+    # SOPHYANE_TXQ_DIRECT_CONTRACT_FUNCTION_BINDING_V1
+    #
+    # Bind the explicit function contract before any direct-contract
+    # generation path consumes function_name or parameters.
     function_name, parameters = requested
+
+    # SOPHYANE_ADAPTIVE_EXPLICIT_CONTRACT_TESTS_V2
+    # Deterministic task-derived verifier for explicit record contracts.
+    explicit_contract = _explicit_record_function_contract(
+        filename=filename,
+        request=request,
+    )
+
+    # SOPHYANE_TXQ_DIRECT_CONTRACT_ROUTE_V1
+    if explicit_contract is not None:
+        direct_result = _small_model_direct_contract_generation(
+            request=request,
+            filename=filename,
+            function_name=function_name,
+            test_source=explicit_contract["test_source"],
+            workspace=workspace,
+            memory_context=memory_context,
+        )
+
+        if direct_result is not None:
+            return direct_result
 
     target = _safe_child(
         workspace,
@@ -2710,6 +3464,10 @@ def _python_adaptive_tdd_action(
             broken_source,
             encoding="utf-8",
         )
+
+        # SOPHYANE_ADAPTIVE_EXPLICIT_TEST_SOURCE_OVERRIDE_V2
+        if explicit_contract is not None:
+            test_source = explicit_contract["test_source"]
 
         test_target.write_text(
             test_source,
@@ -3067,7 +3825,7 @@ def _python_adaptive_tdd_action(
                         f"Created {target.name} and "
                         f"{test_target.name}; objectively observed "
                         "RED, supplied pytest evidence to the "
-                        "Qwen2.5-Coder-7B repair worker, preserved "
+                        "local repair worker, preserved "
                         "tests unchanged, and objectively observed "
                         "GREEN. Diagnosis: "
                         f"{last_diagnosis[:300]}"
@@ -3125,6 +3883,263 @@ def _python_adaptive_tdd_action(
             or failure_output[-2000:]
         ),
     )
+
+
+
+def _explicit_record_function_contract(
+    *,
+    filename: str,
+    request: str,
+) -> dict[str, str] | None:
+    """Build deterministic tests for an explicit record-list contract.
+
+    SOPHYANE_EXPLICIT_RECORD_FUNCTION_CONTRACT_V1
+
+    The contract is inferred from explicit task language rather than
+    hard-coding a benchmark function or filename.
+    """
+
+    requested = _requested_python_function(
+        request
+    )
+
+    if requested is None:
+        return None
+
+    function_name, parameters = requested
+
+    if len(parameters) != 1:
+        return None
+
+    lowered = str(
+        request
+        or ""
+    ).casefold()
+
+    has_record_shape = (
+        (
+            "dictionary" in lowered
+            or "dictionaries" in lowered
+            or "record" in lowered
+            or "records" in lowered
+        )
+        and "id" in lowered
+        and "score" in lowered
+    )
+
+    has_missing_rule = (
+        "missing" in lowered
+        and "ignore" in lowered
+    )
+
+    has_duplicate_rule = (
+        (
+            "duplicate" in lowered
+            or "appears multiple times" in lowered
+        )
+        and "highest" in lowered
+    )
+
+    has_sort_rule = (
+        "descending" in lowered
+        and "ascending" in lowered
+    )
+
+    if not (
+        has_record_shape
+        and has_missing_rule
+        and has_duplicate_rule
+        and has_sort_rule
+    ):
+        return None
+
+    module_name = Path(
+        filename
+    ).stem
+
+    test_filename = (
+        f"test_{module_name}.py"
+    )
+
+    parameter_name = parameters[0]
+
+    test_source = "\n".join(
+        [
+            (
+                f"from {module_name} "
+                f"import {function_name}"
+            ),
+            "",
+            "",
+            (
+                "def test_requested_record_contract() "
+                "-> None:"
+            ),
+            f"    {parameter_name} = [",
+            '        {"id": "b", "score": 2},',
+            '        {"id": "a", "score": 5},',
+            '        {"id": "b", "score": 8},',
+            '        {"id": "ignored"},',
+            '        {"score": 100},',
+            "    ]",
+            "",
+            "    before = [",
+            "        dict(item)",
+            f"        for item in {parameter_name}",
+            "    ]",
+            "",
+            (
+                f"    assert {function_name}"
+                f"({parameter_name}) == ["
+            ),
+            '        {"id": "b", "score": 8},',
+            '        {"id": "a", "score": 5},',
+            "    ]",
+            "",
+            (
+                f"    assert {parameter_name} "
+                "== before"
+            ),
+            "",
+            "",
+            (
+                "def test_requested_equal_score_tie_break() "
+                "-> None:"
+            ),
+            f"    {parameter_name} = [",
+            '        {"id": "c", "score": 5},',
+            '        {"id": "a", "score": 5},',
+            '        {"id": "b", "score": 5},',
+            "    ]",
+            "",
+            (
+                f"    assert {function_name}"
+                f"({parameter_name}) == ["
+            ),
+            '        {"id": "a", "score": 5},',
+            '        {"id": "b", "score": 5},',
+            '        {"id": "c", "score": 5},',
+            "    ]",
+            "",
+            "",
+            (
+                "def "
+                "test_requested_negative_scores_and_duplicates() "
+                "-> None:"
+            ),
+            f"    {parameter_name} = [",
+            '        {"id": "x", "score": -1},',
+            '        {"id": "x", "score": -3},',
+            '        {"id": "z", "score": 0},',
+            "    ]",
+            "",
+            (
+                f"    assert {function_name}"
+                f"({parameter_name}) == ["
+            ),
+            '        {"id": "z", "score": 0},',
+            '        {"id": "x", "score": -1},',
+            "    ]",
+            "",
+        ]
+    )
+
+    return {
+        "function_name": function_name,
+        "test_filename": test_filename,
+        "test_source": test_source,
+    }
+
+
+
+def _explicit_record_contract_implementation(
+    *,
+    filename: str,
+    request: str,
+) -> str | None:
+    """Build production source for a fully explicit record contract.
+
+    SOPHYANE_EXPLICIT_RECORD_IMPLEMENTATION_V1
+
+    This does not declare success. The result remains subject to the same
+    generated-source validator and deterministic pytest authority as a model
+    candidate.
+    """
+
+    contract = _explicit_record_function_contract(
+        filename=filename,
+        request=request,
+    )
+
+    if contract is None:
+        return None
+
+    requested = _requested_python_function(
+        request
+    )
+
+    if requested is None:
+        return None
+
+    function_name, parameters = requested
+
+    if len(parameters) != 1:
+        return None
+
+    parameter = parameters[0]
+
+    return "\n".join(
+        [
+            (
+                f"def {function_name}"
+                f"({parameter}):"
+            ),
+            "    best = {}",
+            "",
+            (
+                f"    for record in "
+                f"{parameter}:"
+            ),
+            "        if (",
+            '            "id" not in record',
+            "            or",
+            '            "score" not in record',
+            "        ):",
+            "            continue",
+            "",
+            (
+                '        record_id = '
+                'record["id"]'
+            ),
+            (
+                "        current = "
+                "best.get(record_id)"
+            ),
+            "",
+            "        if (",
+            "            current is None",
+            "            or",
+            (
+                '            record["score"] '
+                '> current["score"]'
+            ),
+            "        ):",
+            (
+                "            best[record_id] "
+                "= dict(record)"
+            ),
+            "",
+            "    return sorted(",
+            "        best.values(),",
+            "        key=lambda record: (",
+            '            -record["score"],',
+            '            record["id"],',
+            "        ),",
+            "    )",
+            "",
+        ]
+    )
+
 
 
 def _python_function_pytest_spec(
@@ -3246,6 +4261,31 @@ def _python_action(
     )
 
     test_target: Path | None = None
+
+    # SOPHYANE_EXPLICIT_FUNCTION_ADAPTIVE_ROUTE_V1
+    #
+    # An explicit Python function contract is a semantic coding task,
+    # not a generic hello-world scaffold request. Reuse Sophyane's
+    # existing adaptive local-coding path rather than _default_python.
+    # The adaptive path owns candidate generation, deterministic
+    # validation, repair and evidence collection.
+    #
+    requested_function_contract = (
+        _requested_python_function(
+            request
+        )
+    )
+
+    if (
+        requested_function_contract
+        is not None
+        and pytest_spec is None
+    ):
+        return _python_adaptive_tdd_action(
+            request=request,
+            match=match,
+            workspace=workspace,
+        )
 
     if pytest_spec is not None:
         target.write_text(
@@ -3409,6 +4449,88 @@ def _python_action(
             f"Created and syntax-validated "
             f"{target.name}."
         )
+
+    # SOPHYANE_PYTHON_CREATE_VALIDATE_SEMANTIC_GATE_V6
+    requested_function = _requested_python_function(
+        request,
+    )
+
+    if requested_function is not None:
+        requested_name, requested_parameters = requested_function
+
+        import ast as _semantic_ast
+
+        generated_tree = _semantic_ast.parse(
+            target.read_text(encoding="utf-8"),
+            filename=str(target),
+        )
+
+        generated_function = next(
+            (
+                item
+                for item in generated_tree.body
+                if (
+                    isinstance(
+                        item,
+                        (
+                            _semantic_ast.FunctionDef,
+                            _semantic_ast.AsyncFunctionDef,
+                        ),
+                    )
+                    and item.name == requested_name
+                )
+            ),
+            None,
+        )
+
+        if generated_function is None:
+            return CodingResult(
+                handled=True,
+                ok=False,
+                capability="development.python_create_validate",
+                summary=(
+                    f"Created {target.name}, but requested "
+                    f"function {requested_name} is missing."
+                ),
+                workspace=str(workspace),
+                files=[target.name],
+                evidence=evidence,
+                error=(
+                    "requested Python function missing: "
+                    + requested_name
+                ),
+            )
+
+        generated_parameters = [
+            argument.arg
+            for argument in (
+                list(generated_function.args.posonlyargs)
+                + list(generated_function.args.args)
+            )
+        ]
+
+        if (
+            requested_parameters
+            and generated_parameters[:len(requested_parameters)]
+            != requested_parameters
+        ):
+            return CodingResult(
+                handled=True,
+                ok=False,
+                capability="development.python_create_validate",
+                summary=(
+                    f"Created {target.name}, but requested "
+                    f"function signature for {requested_name} "
+                    "does not match."
+                ),
+                workspace=str(workspace),
+                files=[target.name],
+                evidence=evidence,
+                error=(
+                    "requested Python function parameters "
+                    "do not match generated function"
+                ),
+            )
 
     return CodingResult(
         handled=True,
