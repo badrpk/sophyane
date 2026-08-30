@@ -538,6 +538,144 @@ def install_intent_refinement() -> None:
                     + message
                 )
 
+                # SOPHYANE_NIFDU_GUARDED_FAST_PATH_V2
+                #
+                # execute_nifdu_file_request() is itself the guarded executor.
+                # Its real contract is:
+                #
+                #   execute_nifdu_file_request(
+                #       request,
+                #       workspace=Path(...),
+                #   ) -> Path | None
+                #
+                # A returned Path means NIFDU proposed the contents and
+                # Sophyane parsed, validated and performed the local write.
+                # None means this request is not handled by that capability.
+                try:
+                    from sophyane.nifdu_guarded_execution import (
+                        execute_nifdu_file_request,
+                    )
+
+                    _nifdu_guarded_path = (
+                        execute_nifdu_file_request(
+                            message,
+                            workspace=_nifdu_workspace,
+                        )
+                    )
+
+                except Exception as _nifdu_guarded_error:  # noqa: BLE001
+                    self.progress(
+                        "Guarded NIFDU file path did not complete: "
+                        f"{type(_nifdu_guarded_error).__name__}: "
+                        f"{_nifdu_guarded_error}"
+                    )
+                    _nifdu_guarded_path = None
+
+                if _nifdu_guarded_path is not None:
+                    from pathlib import Path as _NifduResultPath
+                    # SOPHYANE_NIFDU_JSON_IMPORT_FREE_RENDER_V1
+                    #
+                    # Reuse tui_v2's existing json module; do not add
+                    # a json import to this intent-wrapper module.
+
+                    _nifdu_guarded_path = (
+                        _NifduResultPath(
+                            _nifdu_guarded_path
+                        ).resolve()
+                    )
+
+                    _nifdu_workspace_resolved = (
+                        _NifduResultPath(
+                            _nifdu_workspace
+                        ).resolve()
+                    )
+
+                    try:
+                        _nifdu_relative = (
+                            _nifdu_guarded_path.relative_to(
+                                _nifdu_workspace_resolved
+                            )
+                        )
+                    except ValueError:
+                        raise RuntimeError(
+                            "Guarded NIFDU returned a path "
+                            "outside the active workspace"
+                        )
+
+                    if not _nifdu_guarded_path.is_file():
+                        raise RuntimeError(
+                            "Guarded NIFDU reported a file "
+                            "that does not exist"
+                        )
+
+                    _nifdu_result_payload = {
+                        "handled": True,
+                        "ok": True,
+                        "capability": (
+                            "nifdu.guarded_python_file_write"
+                        ),
+                        "summary": (
+                            "Created and validated "
+                            f"{_nifdu_relative}."
+                        ),
+                        "workspace": str(
+                            _nifdu_workspace_resolved
+                        ),
+                        "files": [
+                            str(_nifdu_relative)
+                        ],
+                        "evidence": [
+                            {
+                                "path": str(
+                                    _nifdu_guarded_path
+                                ),
+                                "exists": True,
+                                "bytes": (
+                                    _nifdu_guarded_path
+                                    .stat()
+                                    .st_size
+                                ),
+                            }
+                        ],
+                        "error": "",
+                    }
+
+                    _nifdu_result_text = (
+                        tui_v2.json.dumps(
+                            _nifdu_result_payload,
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                    )
+
+                    self.last_raw = (
+                        _nifdu_result_text
+                    )
+
+                    self.history.extend(
+                        [
+                            (
+                                "user",
+                                message[:300],
+                            ),
+                            (
+                                "assistant",
+                                _nifdu_result_text[:500],
+                            ),
+                        ]
+                    )
+
+                    self.history = (
+                        self.history[-4:]
+                    )
+
+                    self.emit(
+                        "Sophyane",
+                        _nifdu_result_text,
+                    )
+
+                    continue
+
                 self.progress(
                     "Planning with NIFDU; native Sophyane runtime "
                     "owns execution"

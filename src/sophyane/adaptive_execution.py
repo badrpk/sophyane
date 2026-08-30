@@ -556,6 +556,117 @@ def _selected_action(runtime: Any, plan: dict[str, Any]) -> dict[str, Any] | Non
     return _normalise_action(runtime.selected_action(plan))
 
 
+
+# SOPHYANE_SIMPLE_EMPTY_FILE_RECOVERY_V1
+#
+# Very small local models sometimes understand a trivial filesystem request
+# correctly but emit the operation in an unsupported command-shaped schema,
+# for example:
+#
+#   {"action":"python3 -c ...","artifact":"/tmp/test.py"}
+#
+# Do not execute or normalize that arbitrary command string. When the
+# original user request itself is unambiguously only asking for creation of
+# one empty file, recover the requested relative path deterministically and
+# feed the existing guarded write_file executor instead.
+_SIMPLE_EMPTY_FILE_REQUEST = re.compile(
+    r"""
+    ^\s*
+    (?:please\s+)?
+    (?:make|create)
+    (?:\s+me)?
+    (?:\s+a|\s+an)?
+    (?:\s+new)?
+    \s+file
+    \s+
+    (?P<path>
+        (?:
+            "[^"]+"
+            |
+            '[^']+'
+            |
+            [^\s]+
+        )
+    )
+    \s*
+    [.!]?
+    \s*$
+    """,
+    flags=re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _recover_simple_empty_file_action(
+    original_request: str,
+    plan: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Recover only an unambiguous one-empty-file creation request."""
+
+    if not isinstance(plan, dict):
+        return None
+
+    raw_action = plan.get("action")
+
+    #
+    # A valid structured action must continue through the normal executor.
+    # Only malformed string-valued actions are candidates for this recovery.
+    #
+    if not isinstance(raw_action, str) or not raw_action.strip():
+        return None
+
+    match = _SIMPLE_EMPTY_FILE_REQUEST.fullmatch(
+        str(original_request or "")
+    )
+
+    if match is None:
+        return None
+
+    requested = match.group("path").strip()
+
+    if (
+        len(requested) >= 2
+        and requested[0] == requested[-1]
+        and requested[0] in {"'", '"'}
+    ):
+        requested = requested[1:-1].strip()
+
+    if not requested:
+        return None
+
+    candidate = Path(requested)
+
+    #
+    # Never create an absolute destination or escape the active workspace.
+    #
+    if candidate.is_absolute():
+        return None
+
+    if any(
+        part in {"", ".", ".."}
+        for part in candidate.parts
+    ):
+        return None
+
+    #
+    # The artifact field proves the malformed response was attempting a file
+    # operation, but its destination is not trusted. The user's relative path
+    # remains authoritative.
+    #
+    artifact = plan.get("artifact")
+
+    if not isinstance(artifact, str) or not artifact.strip():
+        return None
+
+    return {
+        "type": "write_file",
+        "path": requested,
+        "content": "",
+        "replace": True,
+        "artifact_source": "simple_empty_file_recovery",
+    }
+
+
+
 def _command_text(action: dict[str, Any]) -> str:
     argv = action.get("argv")
     if isinstance(argv, list):
@@ -680,7 +791,15 @@ def _execute(runtime: Any, action: dict[str, Any], workspace: Path,
         content = str(action.get("content") or action.get("text") or "")
         if not path:
             return False, "File action rejected: missing path."
-        if not content:
+
+        # SOPHYANE_INTENTIONAL_EMPTY_FILE_V1
+        # Ordinary empty model writes remain invalid. The deterministic
+        # simple-empty-file recovery is the only intentional exception.
+        if (
+            not content
+            and action.get("artifact_source")
+            != "simple_empty_file_recovery"
+        ):
             return False, "File action rejected: empty content."
         if kind == "append_file" and Path(path).suffix.lower() == ".html" and re.search(r"<!doctype\s+html|<html", content, re.I):
             action = dict(action)
@@ -1320,6 +1439,18 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
         else:
             plan = runtime.extract_plan(current)
             action = _selected_action(runtime, plan) if plan else None
+
+            if action is None and plan is not None:
+                action = _recover_simple_empty_file_action(
+                    original_request,
+                    plan,
+                )
+
+                if action is not None:
+                    progress(
+                        "Recovered simple empty-file request without "
+                        "provider schema repair"
+                    )
         if not action and not markdown_bundle_written:
             try:
                 from sophyane.multifile_artifact_extractor import (
