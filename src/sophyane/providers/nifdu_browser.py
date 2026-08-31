@@ -48,6 +48,37 @@ def _selection_path() -> Path:
     )
 
 
+def _tracked_bridge_path() -> Path:
+    # SOPHYANE_TRACKED_NIFDU_BRIDGE_AUTHORITY_V1
+    #
+    # The packaged bridge is the reproducible default authority.
+    # An explicit SOPHYANE_NIFDU_CALLABLE_FILE remains supported as
+    # a compatibility/development override.
+    return (
+        Path(__file__)
+        .with_name(
+            "nifdu_cdp_bridge.py"
+        )
+        .resolve()
+    )
+
+
+def _default_selection() -> dict[str, Any]:
+    return {
+        "kind": "function",
+        "module": str(
+            _tracked_bridge_path()
+        ),
+        "name": "ask",
+        "args": [
+            "prompt",
+            "image",
+        ],
+        "async": False,
+        "score": 1000,
+    }
+
+
 def _load_module(
     path: Path,
 ):
@@ -190,17 +221,58 @@ class NifduBrowserProvider(
             _selection_path()
         )
 
-        if not selection_file.is_file():
-            raise ProviderError(
-                "NIFDU callable selection is missing: "
-                f"{selection_file}"
-            )
-
-        selection = json.loads(
-            selection_file.read_text(
-                encoding="utf-8",
+        explicit_selection = bool(
+            os.environ.get(
+                "SOPHYANE_NIFDU_CALLABLE_FILE"
             )
         )
+
+        if explicit_selection:
+            if not selection_file.is_file():
+                raise ProviderError(
+                    "NIFDU callable selection is missing: "
+                    f"{selection_file}"
+                )
+
+            selection = json.loads(
+                selection_file.read_text(
+                    encoding="utf-8",
+                )
+            )
+        else:
+            selection = _default_selection()
+
+            # SOPHYANE_NIFDU_PROVIDER_BROWSER_BOOTSTRAP_AUTHORITY_V1
+            #
+            # Only the packaged/default ChatGPT CDP bridge owns the
+            # tracked NIFDU Chromium transport. Explicit external
+            # callable selections remain side-effect free and retain
+            # their existing compatibility/development contract.
+            from sophyane.browser import (
+                launch_nifdu_browser,
+            )
+
+            browser_state = (
+                launch_nifdu_browser()
+            )
+
+            if not browser_state.get(
+                "ok"
+            ):
+                detail = str(
+                    browser_state.get(
+                        "error"
+                    )
+                    or (
+                        "tracked Chromium/CDP "
+                        "browser failed to start"
+                    )
+                )
+
+                raise ProviderError(
+                    "NIFDU browser bootstrap failed: "
+                    + detail
+                )
 
         module_path = Path(
             selection["module"]
@@ -212,9 +284,40 @@ class NifduBrowserProvider(
                 f"{module_path}"
             )
 
-        module = _load_module(
-            module_path
+        # SOPHYANE_NIFDU_BRIDGE_TIMEOUT_AUTHORITY_V1
+        #
+        # The selected browser bridge reads SOPHYANE_CHATGPT_TIMEOUT
+        # at module-import time. Make this provider's timeout argument
+        # authoritative for this invocation instead of silently leaving
+        # the bridge on a stale global 300-second timeout.
+        _timeout_key = "SOPHYANE_CHATGPT_TIMEOUT"
+        _previous_bridge_timeout = os.environ.get(
+            _timeout_key
         )
+
+        os.environ[
+            _timeout_key
+        ] = str(
+            max(
+                1,
+                self.timeout,
+            )
+        )
+
+        try:
+            module = _load_module(
+                module_path
+            )
+        finally:
+            if _previous_bridge_timeout is None:
+                os.environ.pop(
+                    _timeout_key,
+                    None,
+                )
+            else:
+                os.environ[
+                    _timeout_key
+                ] = _previous_bridge_timeout
 
         user_prompt = prompt
 

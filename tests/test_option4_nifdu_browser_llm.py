@@ -984,15 +984,8 @@ def test_nifdu_browser_launch_guard_precedes_continuation():
         "SOPHYANE_NIFDU_GUARDED_BROWSER_LAUNCH_V1"
     )
 
-    continuation_tokens = (
-        "SOPHYANE_NIFDU_GUARDED_CONTINUATION",
-        "execute_nifdu_file_continuation",
-    )
-
-    continuation = min(
-        text.index(token)
-        for token in continuation_tokens
-        if token in text
+    continuation = text.index(
+        "SOPHYANE_NIFDU_GUARDED_CONTINUATION_DISPATCH_V1"
     )
 
     assert launch < continuation

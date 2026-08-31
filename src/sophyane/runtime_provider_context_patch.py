@@ -289,11 +289,76 @@ def install_provider_context_patch() -> None:
 
                 def worker() -> None:
                     bind_generation(generation)
+
                     try:
-                        value = self.ask(active_message)
+                        # SOPHYANE_NIFDU_LEAF_PROVIDER_CALL_AUTHORITY_V1
+                        #
+                        # In NIFDU Browser mode the provider discovered above
+                        # is the authoritative ChatGPT/CDP intelligence leaf.
+                        #
+                        # self.ask may be a higher-level Sophyane dispatcher
+                        # that enters the unified execution kernel and task
+                        # compiler. Feeding NIFDU action-schema prompts through
+                        # that wrapper can transform them into a Sophyane
+                        # compiled work packet instead of returning the model's
+                        # requested executable action.
+                        #
+                        # Keep every other provider/session on the historical
+                        # self.ask path. Only the dedicated nifdu_llm +
+                        # nifdu_browser leaf bypasses that contaminated wrapper.
+                        _session_mode = str(
+                            os.environ.get(
+                                "SOPHYANE_SESSION_MODE",
+                                "",
+                            )
+                            or ""
+                        ).strip().lower()
+
+                        _resolved_provider_id = str(
+                            getattr(
+                                getattr(
+                                    provider,
+                                    "metadata",
+                                    None,
+                                ),
+                                "provider_id",
+                                "",
+                            )
+                            or getattr(
+                                provider,
+                                "provider_id",
+                                "",
+                            )
+                            or ""
+                        ).strip().lower()
+
+                        _nifdu_leaf_authoritative = (
+                            _session_mode == "nifdu_llm"
+                            and _resolved_provider_id
+                            == "nifdu_browser"
+                            and callable(
+                                getattr(
+                                    provider,
+                                    "generate",
+                                    None,
+                                )
+                            )
+                        )
+
+                        if _nifdu_leaf_authoritative:
+                            value = provider.generate(
+                                active_message
+                            )
+                        else:
+                            value = self.ask(
+                                active_message
+                            )
+
                         item = ("ok", value)
+
                     except BaseException as error:  # noqa: BLE001
                         item = ("error", error)
+
                     finally:
                         worker_done.set()
                         release_generation(generation)

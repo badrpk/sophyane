@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import socket
 import subprocess
 import threading
 import time
+import urllib.request
 import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -17,7 +19,13 @@ from sophyane.version import __version__
 
 STATE_DIR = Path.home() / ".local" / "state" / "sophyane"
 BROWSER_PROFILE = STATE_DIR / "browser-profile"
+NIFDU_BROWSER_PROFILE = STATE_DIR / "nifdu-browser-profile"
 BROWSER_HOME = Path(__file__).resolve().parent / "home"
+
+# SOPHYANE_NIFDU_TRACKED_BROWSER_LAUNCH_AUTHORITY_V1
+NIFDU_CDP_HOST_DEFAULT = "127.0.0.1"
+NIFDU_CDP_PORT_DEFAULT = 9222
+NIFDU_CHATGPT_URL_DEFAULT = "https://chatgpt.com/"
 
 
 CHROMIUM_CANDIDATES = (
@@ -76,6 +84,396 @@ def serve_browser_home(port: int | None = None) -> tuple[ThreadingHTTPServer, in
     thread.start()
     url = f"http://127.0.0.1:{port}/index.html"
     return server, port, url
+
+
+
+def _nifdu_cdp_endpoint() -> tuple[str, int]:
+    """Return the configured NIFDU Chromium CDP endpoint."""
+
+    host = (
+        os.environ.get(
+            "SOPHYANE_CDP_HOST",
+            NIFDU_CDP_HOST_DEFAULT,
+        )
+        .strip()
+        or NIFDU_CDP_HOST_DEFAULT
+    )
+
+    raw_port = os.environ.get(
+        "SOPHYANE_CDP_PORT",
+        str(NIFDU_CDP_PORT_DEFAULT),
+    )
+
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            "SOPHYANE_CDP_PORT must be an integer"
+        ) from error
+
+    if not 1 <= port <= 65535:
+        raise ValueError(
+            "SOPHYANE_CDP_PORT must be between 1 and 65535"
+        )
+
+    return host, port
+
+
+def _nifdu_cdp_ready(
+    host: str,
+    port: int,
+    *,
+    timeout: float = 0.5,
+) -> bool:
+    """Return True only for a responding Chromium DevTools endpoint."""
+
+    url = (
+        f"http://{host}:{port}"
+        "/json/version"
+    )
+
+    try:
+        with urllib.request.urlopen(
+            url,
+            timeout=timeout,
+        ) as response:
+            payload = json.loads(
+                response.read().decode(
+                    "utf-8"
+                )
+            )
+    except Exception:  # noqa: BLE001
+        return False
+
+    browser = str(
+        payload.get(
+            "Browser",
+            "",
+        )
+    ).lower()
+
+    websocket_url = str(
+        payload.get(
+            "webSocketDebuggerUrl",
+            "",
+        )
+    )
+
+    return (
+        (
+            "chromium" in browser
+            or "chrome" in browser
+            or "headlesschrome" in browser
+        )
+        and websocket_url.startswith(
+            "ws"
+        )
+    )
+
+
+# SOPHYANE_NIFDU_CDP_STARTUP_READINESS_AUTHORITY_V1
+def _wait_for_nifdu_cdp(
+    process: subprocess.Popen[Any],
+    host: str,
+    port: int,
+    *,
+    timeout: float = 15.0,
+    interval: float = 0.20,
+) -> tuple[bool, str]:
+    """Wait boundedly for the launched Chromium DevTools endpoint."""
+
+    deadline = (
+        time.monotonic()
+        + max(
+            0.1,
+            float(timeout),
+        )
+    )
+
+    while time.monotonic() < deadline:
+        return_code = process.poll()
+
+        if return_code is not None:
+            return (
+                False,
+                (
+                    "Chromium exited before CDP became ready "
+                    f"with status {return_code}"
+                ),
+            )
+
+        if _nifdu_cdp_ready(
+            host,
+            port,
+        ):
+            return (
+                True,
+                "",
+            )
+
+        time.sleep(
+            max(
+                0.01,
+                float(interval),
+            )
+        )
+
+    if _nifdu_cdp_ready(
+        host,
+        port,
+    ):
+        return (
+            True,
+            "",
+        )
+
+    return (
+        False,
+        (
+            "Chromium CDP endpoint did not become ready at "
+            f"{host}:{port} within {timeout:g} seconds"
+        ),
+    )
+
+
+def launch_nifdu_browser(
+    *,
+    open_chatgpt: bool = True,
+    extra_args: list[str] | None = None,
+) -> dict[str, Any]:
+    """Ensure the tracked NIFDU Chromium/CDP browser is running.
+
+    NIFDU owns a dedicated Chromium profile and CDP endpoint. If the
+    configured DevTools endpoint is already live, it is reused instead
+    of starting a second Chromium instance.
+    """
+
+    host, port = _nifdu_cdp_endpoint()
+
+    if _nifdu_cdp_ready(
+        host,
+        port,
+    ):
+        return {
+            "ok": True,
+            "reused": True,
+            "launched": False,
+            "pid": None,
+            "chromium": find_chromium(),
+            "host": host,
+            "port": port,
+            "profile": str(
+                NIFDU_BROWSER_PROFILE
+            ),
+            "headless": not bool(
+                os.environ.get("DISPLAY")
+                or os.environ.get("WAYLAND_DISPLAY")
+            ),
+        }
+
+    chromium = find_chromium()
+
+    if not chromium:
+        return {
+            "ok": False,
+            "reused": False,
+            "launched": False,
+            "pid": None,
+            "chromium": None,
+            "host": host,
+            "port": port,
+            "profile": str(
+                NIFDU_BROWSER_PROFILE
+            ),
+            "error": (
+                "Chromium executable was not found."
+            ),
+        }
+
+    NIFDU_BROWSER_PROFILE.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    args = [
+        chromium,
+        (
+            "--user-data-dir="
+            f"{NIFDU_BROWSER_PROFILE}"
+        ),
+        (
+            "--remote-debugging-address="
+            f"{host}"
+        ),
+        (
+            "--remote-debugging-port="
+            f"{port}"
+        ),
+        # SOPHYANE_NIFDU_CDP_WEBSOCKET_ORIGIN_AUTHORITY_V1
+        (
+            "--remote-allow-origins="
+            f"http://{host}:{port}"
+        ),
+        "--no-first-run",
+        "--no-default-browser-check",
+    ]
+
+    # SOPHYANE_NIFDU_AUTO_HEADLESS_DISPLAY_AUTHORITY_V1
+    #
+    # NIFDU requires Chromium/CDP, not necessarily a visible window.
+    # On Termux/Android there is commonly no X11/Wayland display.
+    # In that environment GUI Chromium exits before CDP starts, so
+    # use Chromium's native headless mode automatically.
+    has_display = bool(
+        os.environ.get(
+            "DISPLAY"
+        )
+        or os.environ.get(
+            "WAYLAND_DISPLAY"
+        )
+    )
+
+    if has_display:
+        args.append(
+            "--new-window"
+        )
+    else:
+        args.extend(
+            [
+                "--headless=new",
+                "--disable-gpu",
+            ]
+        )
+
+    # SOPHYANE_NIFDU_TERMUX_SINGLE_PROCESS_AUTHORITY_V1
+    #
+    # Play-store Termux injects libtermux-exec through LD_PRELOAD.
+    # Chromium child processes using /proc/self/exe can then fail in
+    # Android's linker namespace, repeatedly crashing the network service.
+    # The bounded live probe proved that containing Chromium in one process
+    # removes both the child linker failure and the network-service loop.
+    termux_exec_preload = (
+        "libtermux-exec.so"
+        in os.environ.get(
+            "LD_PRELOAD",
+            "",
+        )
+    )
+
+    termux_prefix = (
+        os.environ.get(
+            "PREFIX",
+            ""
+        ).startswith(
+            "/data/data/com.termux/files/"
+        )
+    )
+
+    termux_single_process = (
+        termux_exec_preload
+        and termux_prefix
+    )
+
+    if termux_single_process:
+        for flag in (
+            "--no-sandbox",
+            "--no-zygote",
+            "--single-process",
+        ):
+            if flag not in args:
+                args.append(flag)
+
+    if (
+        os.environ.get(
+            "SOPHYANE_BROWSER_NO_SANDBOX",
+            "",
+        ).lower()
+        in {
+            "1",
+            "true",
+            "yes",
+        }
+    ):
+        args.append(
+            "--no-sandbox"
+        )
+
+    if extra_args:
+        args.extend(
+            extra_args
+        )
+
+    if open_chatgpt:
+        args.append(
+            os.environ.get(
+                "SOPHYANE_NIFDU_CHAT_URL",
+                NIFDU_CHATGPT_URL_DEFAULT,
+            )
+        )
+
+    try:
+        process = subprocess.Popen(
+            args,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as error:  # noqa: BLE001
+        return {
+            "ok": False,
+            "reused": False,
+            "launched": False,
+            "pid": None,
+            "chromium": chromium,
+            "host": host,
+            "port": port,
+            "profile": str(
+                NIFDU_BROWSER_PROFILE
+            ),
+            "error": str(error),
+        }
+
+    ready, readiness_error = (
+        _wait_for_nifdu_cdp(
+            process,
+            host,
+            port,
+        )
+    )
+
+    if not ready:
+        return {
+            "ok": False,
+            "reused": False,
+            "launched": True,
+            "pid": process.pid,
+            "chromium": chromium,
+            "host": host,
+            "port": port,
+            "profile": str(
+                NIFDU_BROWSER_PROFILE
+            ),
+            "headless": not has_display,
+            "argv": args,
+            "error": readiness_error,
+        }
+
+    return {
+        "ok": True,
+        "reused": False,
+        "launched": True,
+        "pid": process.pid,
+        "chromium": chromium,
+        "host": host,
+        "port": port,
+        "profile": str(
+            NIFDU_BROWSER_PROFILE
+        ),
+        "headless": not has_display,
+        "argv": args,
+        "cdp_ready": True,
+    }
 
 
 def launch_sophyane_browser(

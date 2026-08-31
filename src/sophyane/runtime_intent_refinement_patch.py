@@ -520,8 +520,8 @@ def install_intent_refinement() -> None:
                 _nifdu_native_prompt = (
                     "Execute the user's request using Sophyane's "
                     "existing structured action runtime.\n\n"
-                    "Return ONLY the next concrete Sophyane action "
-                    "or completion response.\n\n"
+                    "Return ONLY the next concrete executable Sophyane "
+                    "action. Do not return a completion/result envelope.\n\n"
                     "Use existing action schema such as:\n"
                     '{"type":"write_file","path":"relative-file",'
                     '"content":"complete content"}\n'
@@ -553,15 +553,87 @@ def install_intent_refinement() -> None:
                 # None means this request is not handled by that capability.
                 try:
                     from sophyane.nifdu_guarded_execution import (
+                        NifduExecutionError as _NifduFastPathError,
+                        execute_nifdu_file_continuation,
                         execute_nifdu_file_request,
+                        requested_python_filename,
                     )
 
-                    _nifdu_guarded_path = (
-                        execute_nifdu_file_request(
-                            message,
-                            workspace=_nifdu_workspace,
+                    _nifdu_guarded_existing_update = False
+
+                    try:
+                        _nifdu_guarded_path = (
+                            execute_nifdu_file_request(
+                                message,
+                                workspace=_nifdu_workspace,
+                            )
                         )
-                    )
+
+                    except _NifduFastPathError as _nifdu_fast_error:
+                        _nifdu_existing_name = (
+                            requested_python_filename(
+                                message
+                            )
+                        )
+
+                        _nifdu_existing_target = (
+                            (
+                                _nifdu_workspace
+                                / _nifdu_existing_name
+                            ).resolve()
+                            if _nifdu_existing_name
+                            else None
+                        )
+
+                        _nifdu_existing_update = bool(
+                            _nifdu_existing_target is not None
+                            and _nifdu_existing_target.is_file()
+                            and str(
+                                _nifdu_fast_error
+                            ).startswith(
+                                "target already exists:"
+                            )
+                        )
+
+                        if not _nifdu_existing_update:
+                            raise
+
+                        try:
+                            _nifdu_existing_target.relative_to(
+                                _nifdu_workspace
+                            )
+                        except ValueError as _nifdu_escape_error:
+                            raise _NifduFastPathError(
+                                "existing target escapes workspace"
+                            ) from _nifdu_escape_error
+
+                        # SOPHYANE_NIFDU_EXISTING_NAMED_FILE_UPDATE_V1
+                        #
+                        # WRITE_FILE remains strictly create-only.
+                        # An explicitly named existing Python target instead
+                        # uses the already-authoritative guarded REPLACE_FILE
+                        # continuation contract.
+                        _nifdu_guarded_path = (
+                            execute_nifdu_file_continuation(
+                                (
+                                    "Update the existing Python file "
+                                    + _nifdu_existing_name
+                                    + " so that it satisfies this exact "
+                                    "authoritative request:\n"
+                                    + message
+                                ),
+                                workspace=_nifdu_workspace,
+                                active_file=_nifdu_existing_target,
+                            )
+                        )
+
+                        if _nifdu_guarded_path is None:
+                            raise _NifduFastPathError(
+                                "guarded existing-file continuation "
+                                "did not accept the request"
+                            )
+
+                        _nifdu_guarded_existing_update = True
 
                 except Exception as _nifdu_guarded_error:  # noqa: BLE001
                     self.progress(
@@ -570,6 +642,7 @@ def install_intent_refinement() -> None:
                         f"{_nifdu_guarded_error}"
                     )
                     _nifdu_guarded_path = None
+                    _nifdu_guarded_existing_update = False
 
                 if _nifdu_guarded_path is not None:
                     from pathlib import Path as _NifduResultPath
@@ -615,8 +688,12 @@ def install_intent_refinement() -> None:
                             "nifdu.guarded_python_file_write"
                         ),
                         "summary": (
-                            "Created and validated "
-                            f"{_nifdu_relative}."
+                            (
+                                "Updated and validated "
+                                if _nifdu_guarded_existing_update
+                                else "Created and validated "
+                            )
+                            + f"{_nifdu_relative}."
                         ),
                         "workspace": str(
                             _nifdu_workspace_resolved

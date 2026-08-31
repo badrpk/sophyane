@@ -355,6 +355,20 @@ def _normalise_action(action: Any) -> dict[str, Any] | None:
 
     value = dict(action)
 
+    # SOPHYANE_NESTED_FILE_BUNDLE_NORMALIZATION_V1
+    #
+    # Providers may put a multi-file bundle inside the explicit `action`
+    # envelope:
+    #
+    #   {"action": {"files": [...]}}
+    #
+    # _selected_action() passes that nested dictionary through this
+    # normalizer, so recognize the same bundle shape accepted at plan level
+    # before attempting scalar action normalization.
+    nested_bundle = _file_bundle_action(value)
+    if nested_bundle is not None:
+        return nested_bundle
+
     # SOPHYANE_ADAPTIVE_STRING_ACTION_CANONICALIZATION_V1
     #
     # Provider schemas frequently put the operation name in `action`
@@ -521,6 +535,16 @@ def _normalise_action(action: Any) -> dict[str, Any] | None:
             return None
         value["path"] = path.strip()
 
+    # SOPHYANE_EXECUTABLE_ACTION_TYPE_GATE_V1
+    #
+    # A dictionary is not automatically an executable action. Returning an
+    # untyped object here makes _selected_action() treat provider metadata or
+    # unsupported envelopes as executable merely because the dict is truthy.
+    # Every normalized action crossing this boundary must identify its runtime
+    # operation explicitly.
+    if not str(value.get("type") or "").strip():
+        return None
+
     return value
 
 
@@ -534,6 +558,15 @@ def _selected_action(runtime: Any, plan: dict[str, Any]) -> dict[str, Any] | Non
     explicit = _normalise_action(plan.get("action"))
     if explicit:
         return explicit
+
+    # SOPHYANE_DIRECT_TOP_LEVEL_ACTION_V1
+    #
+    # Some providers return the executable action itself instead of wrapping
+    # it in {"action": ...}. Accept that canonical shape directly rather than
+    # relying on adapter-specific selected_action() behavior.
+    direct = _normalise_action(plan)
+    if direct:
+        return direct
 
     selected_index = plan.get("selected_index")
     candidates = plan.get("candidates")
@@ -672,6 +705,67 @@ def _command_text(action: dict[str, Any]) -> str:
     if isinstance(argv, list):
         return shlex.join(str(x) for x in argv)
     return str(action.get("command") or action.get("content") or action.get("cmd") or "").strip()
+
+
+# SOPHYANE_DUPLICATE_READ_ONLY_INSPECTION_V1
+#
+# A repeated read-only inspection may be useful evidence, but it cannot prove
+# that a requested mutation happened. This classifier is intentionally scoped
+# to the duplicate-command completion boundary.
+def _is_read_only_inspection_command(
+    command: str,
+) -> bool:
+    try:
+        tokens = shlex.split(
+            str(command or "").strip()
+        )
+    except ValueError:
+        return False
+
+    if not tokens:
+        return False
+
+    first = Path(
+        tokens[0]
+    ).name.casefold()
+
+    if first in {
+        "cat",
+        "head",
+        "tail",
+        "sed",
+        "grep",
+        "egrep",
+        "fgrep",
+        "find",
+        "ls",
+        "stat",
+        "wc",
+        "pwd",
+        "tree",
+        "file",
+        "readlink",
+        "realpath",
+    }:
+        return True
+
+    if first != "git":
+        return False
+
+    if len(tokens) < 2:
+        return True
+
+    subcommand = tokens[1].casefold()
+
+    return subcommand in {
+        "status",
+        "diff",
+        "show",
+        "log",
+        "rev-parse",
+        "ls-files",
+        "remote",
+    }
 
 
 def _command_problem(action: dict[str, Any], workspace: Path) -> str:
@@ -972,11 +1066,128 @@ def _full_stack_next_increment_prompt(
     return None
 
 
+
+# SOPHYANE_SINGLE_FILE_EXECUTION_VERIFICATION_V1
+#
+# Some small coding requests contain three explicit acceptance requirements:
+#
+#   1. write one Python file;
+#   2. run that file;
+#   3. verify an exact stdout value.
+#
+# A successful write, including an identical/no-op replacement, satisfies only
+# the filesystem part.  Detect the remaining deterministic execution contract
+# locally so the provider is not asked to rediscover the next action.
+def _single_file_execution_verification(
+    original_request: str,
+    action: dict[str, Any],
+) -> tuple[str, str] | None:
+    kind = str(action.get("type") or "").strip().casefold()
+
+    if kind not in {"write_file", "append_file"}:
+        return None
+
+    relative_path = str(
+        action.get("path")
+        or action.get("file")
+        or ""
+    ).strip()
+
+    if (
+        not relative_path
+        or not relative_path.casefold().endswith(".py")
+    ):
+        return None
+
+    request = str(original_request or "")
+
+    # Require an explicit execution/verification request.  Merely asking for a
+    # Python file must retain the existing simple-file completion behavior.
+    execution_requested = bool(
+        re.search(
+            r"""
+            (?:
+                \bthen\s+run\b
+                |
+                \brun\s+(?:the\s+)?file\b
+                |
+                \bexecute\s+(?:the\s+)?file\b
+                |
+                \brun\s+it\b
+                |
+                \bverify\b[^\n]{0,120}\boutput\b
+            )
+            """,
+            request,
+            flags=re.I | re.X,
+        )
+    )
+
+    if not execution_requested:
+        return None
+
+    expected: str | None = None
+
+    patterns = (
+        # Example:
+        #
+        # prints exactly:
+        #
+        # SOPHYANE_TEST_OK
+        r"""
+        \bprints?\s+exactly\s*:?
+        [ \t]*(?:\r?\n)+
+        [ \t]*([^\r\n]+)
+        """,
+
+        # Example:
+        # output is exactly SOPHYANE_TEST_OK
+        r"""
+        \boutput\s+(?:is|must\s+be|should\s+be)\s+exactly
+        \s*:?\s*
+        ["'`]?
+        ([^\r\n"'`]+?)
+        ["'`]?
+        (?=\s*(?:[.!]?\s*$|\r?\n))
+        """,
+    )
+
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            request,
+            flags=re.I | re.X,
+        )
+
+        if match:
+            candidate = match.group(1).strip()
+
+            # Do not accidentally capture the next instruction.
+            if candidate:
+                expected = candidate
+                break
+
+    if expected is None:
+        return None
+
+    command = (
+        f"{shlex.quote(sys.executable)} "
+        f"{shlex.quote(relative_path)}"
+    )
+
+    return command, expected
+
+
 def _compact_repair_prompt(request: str, files: list[str], result: str) -> str:
     existing = ", ".join(files[-40:]) if files else "(none)"
     return (
         "ADAPTIVE EXECUTION REPAIR FOR THE CURRENT TASK. "
         "Ignore unrelated cached output and any previous-task response. "
+        "Repair response serialization/schema only; preserve the exact "
+        "original task semantics. Do not introduce pytest, TDD, a function "
+        "signature, or another requirement unless ORIGINAL TASK requests it. "
+        "A handled/ok/capability/summary/evidence object is an execution "
+        "RESULT, not an executable action; never return that result shape. "
         "This prompt requires a local software-runtime JSON action only. "
         "Do not answer with explanation, planning prose, Markdown, or examples. "
         "Return exactly one valid JSON object with no markdown. "
@@ -1247,6 +1458,13 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     evidence: list[str] = []
     repairs = 0
     successful_commands: set[str] = set()
+
+    # SOPHYANE_VERIFIED_MUTATION_COMPLETION_STOP_V1
+    #
+    # Track whether this execution loop has actually changed workspace
+    # artifact state. A later successful meaningful verification command may
+    # terminate the request only after such a mutation has occurred.
+    workspace_mutated = False
 
     # A provider may initially return a complete multi-file Markdown project.
     # Materialize that bundle once. Subsequent iterations must inspect, build,
@@ -1567,18 +1785,67 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             and command_text in successful_commands
             and not command_text.lstrip().startswith(("echo ", "printf "))
         ):
+            # SOPHYANE_DUPLICATE_COMMAND_COMPLETION_GATE_V1
+            #
+            # A previously successful command is not automatically proof that
+            # the user's task is complete. In particular, read-only inspection
+            # commands such as sed/cat/find/grep may exit 0 repeatedly while
+            # the requested source mutation has never happened.
+            #
+            # Only commands that the existing verification policy recognizes
+            # as meaningful verification may terminate the loop here.
+            synthetic_result = (
+                f"Command: {command_text}\n"
+                "Exit code: 0\n"
+                "STDOUT:\npreviously successful\n"
+                "STDERR:\n"
+            )
+
+            if (
+                not _is_read_only_inspection_command(
+                    command_text
+                )
+                and verification_result_is_meaningful(
+                    command_text,
+                    synthetic_result,
+                )
+            ):
+                result = (
+                    "Meaningful verification already passed earlier with "
+                    f"exit code 0: {command_text}"
+                )
+
+                evidence.append(
+                    f"Step {step}: {result}"
+                )
+
+                progress(result)
+
+                return (
+                    "Project implementation and verification completed "
+                    "successfully.\n\nExecution evidence:\n"
+                    + "\n".join(evidence)
+                )
+
             result = (
-                "Verification already passed earlier with exit code 0: "
+                "Previously successful command was inspection/non-verifying; "
+                "it cannot complete the task: "
                 f"{command_text}"
             )
-            evidence.append(f"Step {step}: {result}")
+
+            evidence.append(
+                f"Step {step}: {result}"
+            )
+
             progress(result)
 
-            return (
-                "Project implementation and verification completed "
-                "successfully.\n\nExecution evidence:\n"
-                + "\n".join(evidence)
+            current = _compact_repair_prompt(
+                original_request,
+                _files(workspace),
+                result,
             )
+
+            continue
 
         ok, result = _execute(runtime, action, workspace, progress)
 
@@ -1642,6 +1909,128 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                                 f"{raw_path}"
                             )
         evidence.append(f"Step {step}: {result}")
+
+        # SOPHYANE_SINGLE_FILE_EXECUTION_VERIFICATION_FLOW_V1
+        #
+        # Do not spend another provider turn asking what follows an explicitly
+        # requested Python write + run + exact-output task.  The execution
+        # requirement is deterministic and can be checked immediately.
+        #
+        # This deliberately also runs after an identical write_file semantic
+        # no-op.  A no-op may mean the file is already correct, or—as observed
+        # in the live regression—that the provider is repeatedly proposing the
+        # same wrong content.  Real execution distinguishes those cases.
+        # SOPHYANE_SINGLETON_BATCH_EXECUTION_VERIFICATION_V1
+        #
+        # Provider Markdown/file bundles are normalized to a batch even when
+        # they contain exactly one write_file.  For deterministic
+        # "write this Python file, run it, verify exact stdout" acceptance,
+        # treat that singleton child as the effective action.
+        verification_action = action
+
+        if (
+            ok
+            and kind == "batch"
+        ):
+            children = action.get("actions")
+
+            if (
+                isinstance(children, list)
+                and len(children) == 1
+                and isinstance(children[0], dict)
+                and str(
+                    children[0].get("type")
+                    or ""
+                ).strip().casefold()
+                in {"write_file", "append_file"}
+            ):
+                verification_action = children[0]
+
+        single_file_verification = (
+            _single_file_execution_verification(
+                original_request,
+                verification_action,
+            )
+            if ok
+            else None
+        )
+
+        if single_file_verification is not None:
+            verify_command, expected_stdout = (
+                single_file_verification
+            )
+
+            progress(
+                "Deterministic single-file verification: "
+                f"{verify_command}"
+            )
+
+            verify_action = {
+                "type": "run_command",
+                "command": verify_command,
+                "timeout": 60,
+            }
+
+            verify_ok, verify_result = _execute(
+                runtime,
+                verify_action,
+                workspace,
+                progress,
+            )
+
+            evidence.append(
+                f"Step {step} verification: {verify_result}"
+            )
+
+            actual_stdout = _command_stdout(
+                verify_result
+            )
+
+            if (
+                verify_ok
+                and actual_stdout == expected_stdout
+            ):
+                progress(
+                    "Deterministic single-file verification passed: "
+                    f"stdout exactly matched {expected_stdout!r}"
+                )
+
+                return (
+                    "Project implementation and verification completed "
+                    "successfully.\n\nWorkspace: "
+                    + str(workspace)
+                    + "\n\nExecution evidence:\n"
+                    + "\n".join(evidence)
+                )
+
+            ok = False
+            result = (
+                "Deterministic single-file execution verification failed.\n"
+                f"Command: {verify_command}\n"
+                f"Expected exact stdout: {expected_stdout!r}\n"
+                f"Actual stdout: {actual_stdout!r}\n"
+                "Repair the requested Python file, then it will be "
+                "executed and checked again."
+            )
+
+            evidence.append(
+                f"Step {step} acceptance: {result}"
+            )
+
+            progress(
+                "Deterministic single-file verification failed; "
+                "requesting targeted repair"
+            )
+
+        if (
+            ok
+            and kind in {
+                "write_file",
+                "append_file",
+                "batch",
+            }
+        ):
+            workspace_mutated = True
 
         verification_phase = action.get(
             "deterministic_post_bundle_verification"
@@ -1752,6 +2141,29 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             )
         ):
             successful_commands.add(command_text)
+
+            # SOPHYANE_VERIFIED_MUTATION_COMPLETION_STOP_V1
+            #
+            # A requested mutation followed by its first meaningful command
+            # verification is already a complete execution proof. Do not ask
+            # the provider to invent another verifier and then enter schema
+            # repair merely to rediscover the same success.
+            #
+            # Full-stack bundle verification remains owned by its explicit
+            # deterministic state machine and therefore does not use this
+            # generic early-stop path.
+            if (
+                workspace_mutated
+                and not deterministic_verification_stage
+                and not bundle_first_full_stack
+            ):
+                return (
+                    "Project implementation and verification completed "
+                    "successfully.\n\nWorkspace: "
+                    + str(workspace)
+                    + "\n\nExecution evidence:\n"
+                    + "\n".join(evidence)
+                )
 
         # Repair attempts are consecutive-failure limits, not a lifetime
         # allowance. A successful action proves recovery and resets the budget.

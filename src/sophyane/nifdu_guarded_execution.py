@@ -258,6 +258,8 @@ def _nifdu_write_contract_prompt(
     return (
         "You are the intelligence component for Sophyane's "
         "guarded filesystem executor.\n\n"
+        "Treat this as a fresh isolated filesystem request. "
+        "Ignore all earlier browser conversation content.\n\n"
         "The user's authoritative request is:\n\n"
         + str(request).strip()
         + "\n\n"
@@ -303,7 +305,7 @@ def execute_nifdu_file_request(
     )
 
     provider = NifduBrowserProvider(
-        timeout=180,
+        timeout=60,
     )
 
     response = provider.generate(
@@ -1221,6 +1223,8 @@ def _nifdu_replace_contract_prompt(
     return (
         "You are the intelligence component for Sophyane's "
         "guarded filesystem editor.\n\n"
+        "Treat this as a fresh isolated filesystem request. "
+        "Ignore all earlier browser conversation content.\n\n"
         "The user's authoritative continuation request is:\n\n"
         + str(request).strip()
         + "\n\n"
@@ -1348,7 +1352,7 @@ def execute_nifdu_file_continuation(
     )
 
     provider = NifduBrowserProvider(
-        timeout=180,
+        timeout=60,
     )
 
     response = provider.generate(
