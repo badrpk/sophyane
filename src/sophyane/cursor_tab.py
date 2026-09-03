@@ -7,11 +7,25 @@ import os
 import re
 import shlex
 import sys
+import select
+import hashlib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
 STATE_DIR = Path.home() / ".local" / "state" / "sophyane"
+try:
+    from sophyane.tui_v2 import _PENDING_TERMINAL_SUBMISSIONS as _PENDING_SUBMISSIONS
+except Exception:
+    _PENDING_SUBMISSIONS = []
+
+
+
+def _atomic_prompt_submission(read_first, prompt_text: str) -> str:
+    """Delegate all prompt framing to the canonical TUI ingress owner."""
+    from sophyane.tui_v2 import _read_atomic_submission
+    return _read_atomic_submission(prompt_text, read_first=read_first, editor_owned=True)
+
 CONFIG_PATH = STATE_DIR / "cursor_tab.json"
 HISTORY_PATH = STATE_DIR / "cursor_tab_history"
 
@@ -615,6 +629,12 @@ class CursorTabSession:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         bindings = KeyBindings()
 
+        @bindings.add("enter")
+        def accept_submission(event: Any) -> None:
+            # Enter accepts the complete editor buffer, including an
+            # unterminated final line from a bracketed paste.
+            event.current_buffer.validate_and_handle()
+
         @bindings.add("tab")
         def tab_accept(event: Any) -> None:
             if not accept_full(event):
@@ -671,7 +691,7 @@ class CursorTabSession:
             history=FileHistory(str(HISTORY_PATH)),
             auto_suggest=self.suggester,
             key_bindings=bindings,
-            multiline=False,
+            multiline=True,
             enable_history_search=True,
             complete_while_typing=False,
             mouse_support=False,
@@ -681,7 +701,7 @@ class CursorTabSession:
         while True:
             self.tui._cursor_tab_settings = load_settings()
 
-            message = self.session.prompt(prompt_text)
+            message = _atomic_prompt_submission(self.session.prompt, prompt_text)
 
             if handle_tab_command(self.tui, message):
                 continue
@@ -703,17 +723,17 @@ def read_main_prompt(
         or not sys.stdout.isatty()
         or os.environ.get("SOPHYANE_DISABLE_CURSOR_TAB") == "1"
     ):
-        return input(prompt_text)
+        return _atomic_prompt_submission(input, prompt_text)
 
     try:
         install_on_tui(tui)
         return tui._cursor_tab_session.prompt(prompt_text)
     except ImportError:
-        return input(prompt_text)
+        return _atomic_prompt_submission(input, prompt_text)
     except Exception as error:
         print(
             "\nCursor-style Tab unavailable; "
             f"using standard input: {type(error).__name__}: {error}",
             file=sys.stderr,
         )
-        return input(prompt_text)
+        return _atomic_prompt_submission(input, prompt_text)

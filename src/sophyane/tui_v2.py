@@ -11,6 +11,8 @@ import json
 import queue
 import re
 import sys
+import select
+import hashlib
 import threading
 import time
 from pathlib import Path
@@ -31,6 +33,61 @@ from .request_intercepts import (
 
 _sophyane_install_input_capture()
 _sophyane_print_startup_ontology_once()
+
+_PENDING_TERMINAL_SUBMISSIONS: list[str] = []
+
+def _read_atomic_submission(prompt: str, read_first=None, editor_owned: bool = False) -> str:
+    """Collect one submission; settle only after multiline paste evidence."""
+    reader = read_first or input
+    if _PENDING_TERMINAL_SUBMISSIONS:
+        first = _PENDING_TERMINAL_SUBMISSIONS.pop(0)
+    else:
+        first = reader(prompt)
+    lines = str(first).split("\n")
+    multiline = len(lines) > 1
+    deadline = time.monotonic()
+
+    def drain(initial_ready: bool = False) -> bool:
+        nonlocal multiline
+        changed = False
+        ready = initial_ready
+        while ready or select.select([sys.stdin], [], [], 0)[0]:
+            ready = False
+            line = sys.stdin.readline()
+            if line == "":
+                break
+            for physical in line.rstrip("\n").split("\n"):
+                if physical.strip().casefold() in {"exit", "/exit", "quit", "/quit"}:
+                    _PENDING_TERMINAL_SUBMISSIONS.append(physical.strip())
+                    return changed
+                lines.append(physical)
+                changed = True
+                multiline = True
+        return changed
+
+    try:
+        observed = drain()
+        if multiline or observed:
+            # Termux PTYs can expose one paste in delayed kernel batches.
+            # Once multiline evidence exists, reset a short settling window
+            # whenever bytes arrive; ordinary single-line Enter does not wait.
+            deadline = time.monotonic() + 0.150
+            while time.monotonic() < deadline:
+                remaining = max(0.0, deadline - time.monotonic())
+                ready = select.select([sys.stdin], [], [], remaining)[0]
+                if not ready:
+                    continue
+                if drain(initial_ready=True):
+                    deadline = time.monotonic() + 0.150
+    except (OSError, ValueError):
+        pass
+    objective = "\n".join(lines)
+    print(f"INPUT_PHYSICAL_LINES={len(lines)}", flush=True)
+    print("LOGICAL_OBJECTIVES=1", flush=True)
+    print(f"OBJECTIVE_BYTES={len(objective.encode('utf-8'))}", flush=True)
+    print("ORIGINAL_OBJECTIVE_HASH=" + hashlib.sha256(objective.encode("utf-8")).hexdigest(), flush=True)
+    return objective
+
 
 def _clean_message(message: str) -> str:
     """Remove copied terminal prompt glyphs and harmless leading whitespace."""
@@ -686,6 +743,52 @@ def _execution_requested(message: str) -> bool:
     except Exception:
         pass
 
+    # SOPHYANE_EXPLICIT_SOURCE_FILE_EDIT_EXECUTION_V1
+    #
+    # An imperative mutation request naming a concrete source/config file is
+    # execution authority. Resolve it before generic capability/media
+    # classifiers can misread words such as "image", "asset", "banner", or
+    # "style" as a non-executing media/chat request.
+    #
+    # Keep this deliberately narrow:
+    #   Update Footer.jsx ...     -> execute
+    #   Edit app.tsx ...          -> execute
+    #   Fix styles.css ...        -> execute
+    #   What is Footer.jsx?       -> chat
+    #   Show me an image ...      -> normal media routing
+    _explicit_source_edit = re.match(
+        (
+            r"^\s*(?:please\s+)?"
+            r"(?:edit|update|modify|fix|repair|patch|change|replace|"
+            r"add|remove|improve|refactor|rewrite|style)\b"
+        ),
+        _guard_text,
+    )
+
+    _explicit_source_file = re.search(
+        (
+            r"(?<![A-Za-z0-9_.-])"
+            r"[A-Za-z0-9_.-]+"
+            r"\.(?:"
+            r"py|pyi|js|jsx|mjs|cjs|ts|tsx|"
+            r"html?|css|scss|sass|less|"
+            r"json|jsonc|ya?ml|toml|ini|cfg|conf|"
+            r"md|mdx|sql|sh|bash|zsh|fish|"
+            r"c|cc|cpp|cxx|h|hh|hpp|hxx|"
+            r"java|kt|kts|rs|go|rb|php|swift|vue|svelte"
+            r")"
+            r"(?=$|[^A-Za-z0-9_-])"
+        ),
+        _guard_text,
+        re.IGNORECASE,
+    )
+
+    if (
+        _explicit_source_edit
+        and _explicit_source_file
+    ):
+        return True
+
     # explain-tool chat short-circuit: "explain pytest" is documentation, not a test run
     _t = " ".join(str(message or "").lower().split())
     if _t.startswith(("explain ", "what is ", "what are ", "how does ", "how do ")):
@@ -1306,7 +1409,7 @@ class ObservableTUI:
     def read_prompt(self, prompt: str = "❯ ") -> str:
         """Read one interactive user prompt."""
         try:
-            return input(prompt)
+            return _read_atomic_submission(prompt)
         except EOFError:
             raise
         except KeyboardInterrupt:
@@ -1320,6 +1423,57 @@ class ObservableTUI:
             except (EOFError, KeyboardInterrupt):
                 print()
                 return 0
+            # SOPHYANE_EARLY_CONVERSATIONAL_INTENT_AUTHORITY_V8_1
+            # Resolve retained graph and systematic capability intent
+            # before quick-chat or any direct provider surface.
+            from sophyane.conversational_graph_session import (
+                try_conversational_graph_followup,
+            )
+
+            _sophyane_early_graph = (
+                try_conversational_graph_followup(
+                    self,
+                    message,
+                )
+            )
+
+            if _sophyane_early_graph is not None:
+                self.last_raw = _sophyane_early_graph
+                self.history.extend(
+                    [
+                        (
+                            "user",
+                            message[:300],
+                        ),
+                        (
+                            "assistant",
+                            _sophyane_early_graph[:500],
+                        ),
+                    ]
+                )
+                self.history = self.history[-4:]
+                self.emit(
+                    "Sophyane",
+                    _sophyane_early_graph,
+                )
+                continue
+
+            from sophyane.capability_design import (
+                prepare_capability_design_request,
+            )
+
+            _sophyane_early_design_prompt = (
+                prepare_capability_design_request(
+                    request=message,
+                    conversational_context=message,
+                )
+            )
+
+            _sophyane_provider_message = (
+                _sophyane_early_design_prompt
+                if _sophyane_early_design_prompt is not None
+                else message
+            )
             if not message:
                 continue
             normalized = " ".join(message.lower().split())
@@ -1716,9 +1870,18 @@ class ObservableTUI:
 
             if self.dispatch_user_request is not None:
                 try:
-                    response = self.dispatch_user_request(message)
+                    response = self.dispatch_user_request(_sophyane_provider_message)
                     text = getattr(response, "text", str(response))
                     self.last_raw = text
+
+                    # SOPHYANE_EARLY_DIRECT_RESPONSE_RETENTION_V8_1
+                    from sophyane.conversational_graph_session import (
+                        remember_grounded_process_context,
+                    )
+                    remember_grounded_process_context(
+                        self,
+                        self.last_raw,
+                    )
                 except Exception as error:  # noqa: BLE001
                     self.emit(
                         "system",
@@ -1734,7 +1897,15 @@ class ObservableTUI:
                 self.emit("Sophyane", text)
                 continue
 
-            quick = _simple_chat_reply(message)
+            # SOPHYANE_CAPABILITY_DESIGN_BEFORE_QUICK_REPLY_V8_1
+            quick = (
+                None
+                if _sophyane_early_design_prompt
+                is not None
+                else _simple_chat_reply(
+                    message
+                )
+            )
             if quick is not None:
                 # SOPHYANE_NATIVE_CHOICE_STATE_STORE
                 if (
@@ -1771,7 +1942,24 @@ class ObservableTUI:
                     )
             else:
                 self.last_mode = "chat"
-                request_for_model = f"Answer directly. No JSON or tool action.\n{context_message}"
+                # SOPHYANE_SYSTEMATIC_CAPABILITY_DESIGN_DISPATCH_V6
+                from sophyane.capability_design import (
+                    prepare_capability_design_request,
+                )
+                _sophyane_capability_design_prompt = (
+                    prepare_capability_design_request(
+                        request=message,
+                        conversational_context=context_message,
+                    )
+                )
+                if _sophyane_capability_design_prompt is not None:
+                    request_for_model = (
+                        _sophyane_capability_design_prompt
+                    )
+                else:
+                    request_for_model = (
+                        f"Answer directly. No JSON or tool action.\n{context_message}"
+                    )
 
 
 # SOPHYANE_SEMANTIC_FILESYSTEM_V13
@@ -1826,11 +2014,41 @@ The runtime will execute the action deterministically and SLI will
 validate the returned filesystem evidence.
 """
 
+            # SOPHYANE_CONVERSATIONAL_GRAPH_LIVE_DISPATCH_V5
+            from sophyane.conversational_graph_session import (
+                try_conversational_graph_followup,
+            )
+            _sophyane_graph_followup = (
+                try_conversational_graph_followup(
+                    self,
+                    message,
+                )
+            )
+            if _sophyane_graph_followup is not None:
+                self.last_raw = _sophyane_graph_followup
+                self.history.extend([
+                    ("user", message[:300]),
+                    ("assistant", _sophyane_graph_followup[:500]),
+                ])
+                self.history = self.history[-4:]
+                self.emit(
+                    "Sophyane",
+                    _sophyane_graph_followup,
+                )
+                continue
             self.progress("Thinking and planning" if executable else "Getting direct response")
             try:
                 response = self.call_provider(request_for_model)
                 text = getattr(response, "text", str(response))
                 self.last_raw = text
+                # SOPHYANE_CONVERSATIONAL_GRAPH_RESPONSE_RETENTION_V5
+                from sophyane.conversational_graph_session import (
+                    remember_grounded_process_context,
+                )
+                remember_grounded_process_context(
+                    self,
+                    self.last_raw,
+                )
             except Exception as error:  # noqa: BLE001
                 self.emit("system", f"Error: {error}")
                 continue
@@ -1954,52 +2172,173 @@ def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
     # construct their own isolated capabilities/providers, so constructing a
     # conventional fallback provider here would be redundant and could
     # reintroduce startup/fallback failures before the race even begins.
-    if session_mode == "race":
-        workspace = Path.cwd().resolve()
-        tui_holder = {}
+    # SOPHYANE_GENERAL_VISUAL_DISPATCH_CHAIN_V3
+    #
+    # Deterministic grounded visual intent is handled before the existing
+    # mode/provider dispatch chain. The original chain is preserved intact
+    # under `else`, so unhandled requests retain identical routing.
+    try:
+        from pathlib import Path as _SophyaneVisualPath
+        from sophyane.visual_dispatch import (
+            try_general_visual_dispatch as _try_general_visual_dispatch,
+        )
 
-        def ask(message: str) -> AgentResponse:
-            raise RuntimeError(
-                "Auto mode low-level provider callback was invoked. "
-                "Original user requests must use dispatch_user_request()."
+        _sophyane_visual_result = _try_general_visual_dispatch(
+            message,
+            workspace=_SophyaneVisualPath.cwd(),
+        )
+
+    except Exception:
+        _sophyane_visual_result = None
+
+
+    if _sophyane_visual_result is not None:
+        print(
+            _sophyane_visual_result[
+                "response"
+            ]
+        )
+
+    else:
+        # SOPHYANE_GENERAL_DOCUMENT_IMPORT_CHAIN_V4
+        # Explicit visual intent already had first refusal. Plain local
+        # document import now gets one provider-independent opportunity
+        # before the unchanged mode/provider routing chain.
+        try:
+            from sophyane.document_dispatch import (
+                try_general_document_dispatch as _try_general_document_dispatch,
             )
 
-        def dispatch_user_request(message: str) -> AgentResponse:
-            # SOPHYANE_AUTO_RACE_LEARNING_HANDOFF_V1
-            #
-            # Auto mode bypasses run_structured_loop and therefore also
-            # bypasses runtime_orchestration_patch.learning_loop. Capture
-            # the authoritative workspace transition here so every
-            # successful top-level adaptive race can be learned exactly
-            # once after verified execution has completed.
-            import time
-            import uuid
-
-            from sophyane.runtime_orchestration_patch import _snapshot
-
-            before = _snapshot(workspace)
-            started = time.monotonic()
-
-            result = _run_adaptive_race_request(
+            _sophyane_document_result = _try_general_document_dispatch(
                 message,
-                workspace=workspace,
-                config=config,
-                progress=tui_holder["app"].progress,
+                workspace=_SophyaneVisualPath.cwd(),
             )
 
-            if result.get("ok"):
-                try:
-                    from sophyane.sli_learner import learn_execution
-                    from sophyane.sli_schema import ensure_current_schema
+        except Exception:
+            _sophyane_document_result = None
 
-                    ensure_current_schema()
+        if _sophyane_document_result is not None:
+            print(
+                _sophyane_document_result[
+                    "response"
+                ]
+            )
 
-                    winner = result.get("winner")
-                    worker = getattr(winner, "worker", None)
+        else:
+            # SOPHYANE_SESSION_DOCUMENT_NORMAL_PIPELINE_V1
+            # Follow-up reasoning may use the most recently imported grounded
+            # document, while the existing mode/provider still owns reasoning.
+            try:
+                from sophyane.document_session_context import (
+                    augment_request_with_current_document as _augment_request_with_current_document,
+                )
 
-                    learning_result = (
-                        str(result.get("answer") or "").strip()
-                        or (
+                message, _sophyane_session_document = (
+                    _augment_request_with_current_document(
+                        message,
+                        require_reference=True,
+                    )
+                )
+
+            except Exception:
+                pass
+
+            if session_mode == "race":
+                workspace = Path.cwd().resolve()
+                tui_holder = {}
+
+                def ask(message: str) -> AgentResponse:
+                    raise RuntimeError(
+                        "Auto mode low-level provider callback was invoked. "
+                        "Original user requests must use dispatch_user_request()."
+                    )
+
+                def dispatch_user_request(message: str) -> AgentResponse:
+                    # SOPHYANE_AUTO_RACE_LEARNING_HANDOFF_V1
+                    #
+                    # Auto mode bypasses run_structured_loop and therefore also
+                    # bypasses runtime_orchestration_patch.learning_loop. Capture
+                    # the authoritative workspace transition here so every
+                    # successful top-level adaptive race can be learned exactly
+                    # once after verified execution has completed.
+                    import time
+                    import uuid
+
+                    from sophyane.runtime_orchestration_patch import _snapshot
+
+                    before = _snapshot(workspace)
+                    started = time.monotonic()
+
+                    result = _run_adaptive_race_request(
+                        message,
+                        workspace=workspace,
+                        config=config,
+                        progress=tui_holder["app"].progress,
+                    )
+
+                    if result.get("ok"):
+                        try:
+                            from sophyane.sli_learner import learn_execution
+                            from sophyane.sli_schema import ensure_current_schema
+
+                            ensure_current_schema()
+
+                            winner = result.get("winner")
+                            worker = getattr(winner, "worker", None)
+
+                            learning_result = (
+                                str(result.get("answer") or "").strip()
+                                or (
+                                    "Adaptive race completed successfully"
+                                    + (
+                                        f" via {worker}."
+                                        if worker
+                                        else "."
+                                    )
+                                    + f" Attempts: {result.get('attempts', 0)}."
+                                    + f" Applied: {len(result.get('applied') or [])}."
+                                )
+                            )
+
+                            learned = learn_execution(
+                                trace_id=(
+                                    "auto-race-"
+                                    + uuid.uuid4().hex[:12]
+                                ),
+                                request=message,
+                                workspace_before=before,
+                                workspace_after=_snapshot(workspace),
+                                status="succeeded",
+                                reward=1.0,
+                                result=learning_result,
+                                elapsed_seconds=(
+                                    time.monotonic() - started
+                                ),
+                            )
+
+                            tui_holder["app"].progress(
+                                "SLI recorded adaptive race execution "
+                                f"{learned.get('trace_id')} "
+                                "reward="
+                                f"{float(learned.get('quality_reward', 0.0)):+.2f}"
+                            )
+
+                        except Exception as error:  # noqa: BLE001
+                            tui_holder["app"].progress(
+                                "SLI adaptive race recording skipped safely: "
+                                f"{type(error).__name__}: {error}"
+                            )
+                        direct_answer = str(
+                            result.get("answer") or ""
+                        ).strip()
+
+                        if direct_answer:
+                            return AgentResponse(direct_answer)
+
+                        winner = result.get("winner")
+                        worker = getattr(winner, "worker", None)
+
+                        summary = (
                             "Adaptive race completed successfully"
                             + (
                                 f" via {worker}."
@@ -2009,109 +2348,59 @@ def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
                             + f" Attempts: {result.get('attempts', 0)}."
                             + f" Applied: {len(result.get('applied') or [])}."
                         )
+                        return AgentResponse(summary)
+
+                    error = str(
+                        result.get("error")
+                        or "adaptive race produced no verified result"
+                    )
+                    return AgentResponse(
+                        f"Adaptive race failed safely: {error}"
                     )
 
-                    learned = learn_execution(
-                        trace_id=(
-                            "auto-race-"
-                            + uuid.uuid4().hex[:12]
-                        ),
-                        request=message,
-                        workspace_before=before,
-                        workspace_after=_snapshot(workspace),
-                        status="succeeded",
-                        reward=1.0,
-                        result=learning_result,
-                        elapsed_seconds=(
-                            time.monotonic() - started
-                        ),
-                    )
-
-                    tui_holder["app"].progress(
-                        "SLI recorded adaptive race execution "
-                        f"{learned.get('trace_id')} "
-                        "reward="
-                        f"{float(learned.get('quality_reward', 0.0)):+.2f}"
-                    )
-
-                except Exception as error:  # noqa: BLE001
-                    tui_holder["app"].progress(
-                        "SLI adaptive race recording skipped safely: "
-                        f"{type(error).__name__}: {error}"
-                    )
-                direct_answer = str(
-                    result.get("answer") or ""
-                ).strip()
-
-                if direct_answer:
-                    return AgentResponse(direct_answer)
-
-                winner = result.get("winner")
-                worker = getattr(winner, "worker", None)
-
-                summary = (
-                    "Adaptive race completed successfully"
-                    + (
-                        f" via {worker}."
-                        if worker
-                        else "."
-                    )
-                    + f" Attempts: {result.get('attempts', 0)}."
-                    + f" Applied: {len(result.get('applied') or [])}."
+            elif session_mode == "sli_graph":
+                # SOPHYANE_MODE2_SLI_TOP_LEVEL_AUTHORITY_V1
+                #
+                # Mode 2 intentionally has no LLM provider.
+                # The original request therefore enters SLI Graph
+                # directly instead of constructing SophyaneAgent(None).
+                workspace = (
+                    Path.cwd().resolve()
+                    / ".sophyane-workspace"
                 )
-                return AgentResponse(summary)
 
-            error = str(
-                result.get("error")
-                or "adaptive race produced no verified result"
-            )
-            return AgentResponse(
-                f"Adaptive race failed safely: {error}"
-            )
+                def ask(message: str) -> AgentResponse:
+                    raise RuntimeError(
+                        "SLI Graph mode low-level provider callback was invoked. "
+                        "Original user requests must use dispatch_user_request()."
+                    )
 
-    elif session_mode == "sli_graph":
-        # SOPHYANE_MODE2_SLI_TOP_LEVEL_AUTHORITY_V1
-        #
-        # Mode 2 intentionally has no LLM provider.
-        # The original request therefore enters SLI Graph
-        # directly instead of constructing SophyaneAgent(None).
-        workspace = (
-            Path.cwd().resolve()
-            / ".sophyane-workspace"
-        )
+                def dispatch_user_request(
+                    message: str,
+                ) -> AgentResponse:
+                    from sophyane.sli_graph import (
+                        run_sli_graph,
+                    )
 
-        def ask(message: str) -> AgentResponse:
-            raise RuntimeError(
-                "SLI Graph mode low-level provider callback was invoked. "
-                "Original user requests must use dispatch_user_request()."
-            )
+                    state = run_sli_graph(
+                        message,
+                        workspace=workspace,
+                        progress=lambda event: app.progress(event),
+                    )
 
-        def dispatch_user_request(
-            message: str,
-        ) -> AgentResponse:
-            from sophyane.sli_graph import (
-                run_sli_graph,
-            )
+                    return AgentResponse(
+                        state.report
+                    )
 
-            state = run_sli_graph(
-                message,
-                workspace=workspace,
-                progress=lambda event: app.progress(event),
-            )
-
-            return AgentResponse(
-                state.report
-            )
-
-    else:
-        # Explicit provider modes retain the conventional provider-backed
-        # SophyaneAgent path.
-        agent = SophyaneAgent(
-            _create_provider_for_observable_tui(config),
-            MemoryStore(),
-            logger,
-        )
-        ask = agent.ask
+            else:
+                # Explicit provider modes retain the conventional provider-backed
+                # SophyaneAgent path.
+                agent = SophyaneAgent(
+                    _create_provider_for_observable_tui(config),
+                    MemoryStore(),
+                    logger,
+                )
+                ask = agent.ask
 
     app = ObservableTUI(
         config=config,

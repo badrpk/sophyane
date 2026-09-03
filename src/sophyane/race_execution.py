@@ -309,6 +309,24 @@ def _apply_action(
     }:
         pass
 
+    elif kind in {
+        "open_browser",
+        "browser",
+    }:
+        from .execution_runtime import execute_action
+
+        ok, output = execute_action(
+            normalized,
+            workspace,
+            lambda _message: None,
+        )
+
+        if not ok:
+            raise RuntimeError(
+                "browser action failed: "
+                + str(output)
+            )
+
     else:
         raise ValueError(
             f"unsupported race action: {kind}"
@@ -596,6 +614,23 @@ class RaceStrategy:
     max_rounds: int = 3
     require_executable_action: bool = True
     success_mode: str = "pytest"  # pytest | applied | plan_ok
+
+
+def _requires_browser_delivery(request: str) -> bool:
+    """Require an explicit successful browser-open step for browser objectives."""
+    text = " ".join(str(request or "").lower().split())
+    return "browser" in text and any(
+        marker in text
+        for marker in ("open", "launch", "preview", "test", "run")
+    )
+
+
+def _browser_delivery_completed(applied: list[AppliedAction]) -> bool:
+    return any(
+        str(item.action.get("type") or "").strip().lower()
+        in {"open_browser", "browser"}
+        for item in applied
+    )
 
 
 def race_strategy_for(request: str) -> RaceStrategy:
@@ -1249,6 +1284,28 @@ def run_race_apply_verify(
         )
 
         if _trusted_exact_write:
+            # A trusted exact write is already deterministically verified and
+            # must retain its isolation from unrelated repository verification.
+            # Browser-delivery objectives, however, are multi-step and cannot
+            # complete until their explicit browser-open action succeeds.
+            if (
+                _requires_browser_delivery(request)
+                and applied.changed_paths
+                and not _browser_delivery_completed(result.applied)
+            ):
+                current_request = (
+                    request
+                    + "\n\n"
+                    + "The artifact write completed, but browser delivery has not. "
+                    + "Open the produced artifact in the browser and return one "
+                    + "explicit open_browser action."
+                )
+                _emit(
+                    progress,
+                    "Browser delivery pending; continuing to browser-open step",
+                )
+                continue
+
             result.ok = True
             result.error = ""
             return result
@@ -1331,6 +1388,23 @@ def run_race_apply_verify(
                 # Preserve existing deterministic race semantics rather than
                 # fabricating a negative Gemini judgement.
                 pass
+
+        # Browser-delivery objectives are multi-step: a verified write is
+        # not overall success until an explicit browser-open action succeeds.
+        if (
+            _requires_browser_delivery(request)
+            and applied.changed_paths
+            and not _browser_delivery_completed(result.applied)
+        ):
+            current_request = (
+                request
+                + "\n\n"
+                + "The artifact write completed, but browser delivery has not. "
+                + "Open the produced artifact in the browser and return one "
+                + "explicit open_browser action."
+            )
+            _emit(progress, "Browser delivery pending; continuing to browser-open step")
+            continue
 
         # applied / plan_ok strategies: a successfully applied action
         # is enough progress (no pytest gate).
