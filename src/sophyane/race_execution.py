@@ -2,6 +2,8 @@ from __future__ import annotations
 import json
 import re
 import os
+import hashlib
+import time
 
 # SOPHYANE_RACE_APPLY_VERIFY_LOOP_V1
 
@@ -42,6 +44,8 @@ class AppliedAction:
 @dataclass
 class RaceExecutionResult:
     ok: bool
+    original_objective: str = ""
+    original_objective_hash: str = ""
     winner: str | None = None
     applied: list[AppliedAction] = field(
         default_factory=list
@@ -51,6 +55,123 @@ class RaceExecutionResult:
     )
     attempts: int = 0
     error: str = ""
+    learning_event: dict[str, Any] | None = None
+
+
+def _capability_class(worker: str) -> str | None:
+    value = str(worker or "").strip().lower()
+    if value == "local":
+        return "local_gguf"
+    if value == "sli" or value.startswith("sli:"):
+        return "sli_graph"
+    if value.startswith("api:"):
+        return "external_api"
+    if value.startswith("browser:"):
+        return "external_browser"
+    if value.startswith("harness:"):
+        return "external_harness"
+    return None
+
+
+def _record_verified_learning(
+    *,
+    request: str,
+    workspace: Path,
+    result: RaceExecutionResult,
+    winner: object,
+    workspace_before: dict[str, str],
+) -> None:
+    """Persist exactly one structured event after deterministic acceptance."""
+    changed_paths = tuple(
+        path
+        for action in result.applied
+        for path in action.changed_paths
+    )
+    artifact_paths = tuple(
+        path
+        for path in changed_paths
+        if (workspace / path).is_file()
+    )
+    evidence = [
+        {
+            "ok": bool(item.ok),
+            "command": list(item.command),
+            "returncode": int(item.returncode),
+            "output": str(item.output),
+        }
+        for item in result.verifications
+    ]
+    if not evidence:
+        evidence = [{
+            "ok": True,
+            "command": ["deterministic-exact-write"],
+            "returncode": 0,
+            "output": "byte-for-byte verified",
+        }]
+    repository_identity = None
+    try:
+        from sophyane.sli_graph import _repository_memory_target
+        repository_identity = _repository_memory_target(request)
+    except Exception:
+        repository_identity = None
+    event = {
+        "objective_hash": result.original_objective_hash,
+        "original_objective": result.original_objective,
+        "status": "succeeded",
+        "verification_state": "verified",
+        "verification_evidence": evidence,
+        "accepted": True,
+        "workspace": str(workspace),
+        "changed_paths": list(changed_paths),
+        "artifact_paths": list(artifact_paths),
+        "repository_identity": repository_identity,
+        "provider_identity": str(getattr(winner, "worker", "") or ""),
+        "capability_class": _capability_class(getattr(winner, "worker", "")),
+        "result": "verified adaptive race execution",
+        "reward": 1.0,
+        "created_at": time.time(),
+    }
+    try:
+        from sophyane.runtime_orchestration_patch import _snapshot
+        before = workspace_before
+        after = _snapshot(workspace)
+    except Exception:
+        before = {}
+        after = {}
+    try:
+        from sophyane.sli_learner import learn_execution
+        event["trace_id"] = "race-verified-" + hashlib.sha256(
+            json.dumps(
+                {
+                    "objective_hash": event["objective_hash"],
+                    "workspace_after": after,
+                    "status": event["status"],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()[:32]
+        result.learning_event = event
+        learning = learn_execution(
+            trace_id=event["trace_id"],
+            request=request,
+            workspace_before=before,
+            workspace_after=after,
+            status="succeeded",
+            reward=1.0,
+            result=event["result"],
+            elapsed_seconds=0.0,
+            provenance=event,
+        )
+        try:
+            from sophyane.durable_memory import remember_verified_execution
+            remember_verified_execution(
+                learning.get("provenance") or event
+            )
+        except Exception as exc:
+            _emit(None, f"durable episodic memory skipped safely: {type(exc).__name__}: {exc}")
+    except Exception as exc:
+        _emit(None, f"verified learning skipped safely: {type(exc).__name__}: {exc}")
 
 
 def _emit(
@@ -891,11 +1012,21 @@ def run_race_apply_verify(
         workspace_path
     )
 
+    original_objective = str(request)
+    try:
+        from sophyane.runtime_orchestration_patch import _snapshot
+        learning_before = _snapshot(workspace_path)
+    except Exception:
+        learning_before = {}
     result = RaceExecutionResult(
-        ok=False
+        ok=False,
+        original_objective=original_objective,
+        original_objective_hash=hashlib.sha256(
+            original_objective.encode("utf-8")
+        ).hexdigest(),
     )
 
-    current_request = request
+    current_request = original_objective
 
     # SOPHYANE_RACE_BASELINE_DIFFERENTIAL_VERIFICATION_V2
     #
@@ -1306,6 +1437,13 @@ def run_race_apply_verify(
                 )
                 continue
 
+            _record_verified_learning(
+                request=original_objective,
+                workspace=workspace_path,
+                result=result,
+                winner=winner,
+                workspace_before=learning_before,
+            )
             result.ok = True
             result.error = ""
             return result
@@ -1420,6 +1558,13 @@ def run_race_apply_verify(
                 for item in verification
             )
         ):
+            _record_verified_learning(
+                request=original_objective,
+                workspace=workspace_path,
+                result=result,
+                winner=winner,
+                workspace_before=learning_before,
+            )
             result.ok = True
             result.error = ""
             return result

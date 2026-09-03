@@ -688,3 +688,90 @@ def test_atomic_learning_invalid_persistent_value_fails_closed(
         match="Unsupported atomic-learning value",
     ):
         sli_backend.atomic_learning_enabled()
+
+
+def test_repository_memory_hit_is_disk_first_and_target_bound(tmp_path, monkeypatch):
+    import json
+    import sophyane.sli_graph as graph
+    monkeypatch.setenv("HOME", str(tmp_path))
+    evidence = tmp_path / "1-xerus.json"
+    evidence.write_text(json.dumps({"target_name": "xerus", "status": "ready"}), encoding="utf-8")
+    monkeypatch.setattr(graph, "_local_repository_evidence", lambda target: (str(evidence),))
+    progress = []
+    state = graph.run_sli_graph(
+        "What existing local memory do you have about the Xerus repository? Search local stored memory first.",
+        workspace=tmp_path / "workspace", progress=progress,
+    )
+    assert state.success
+    assert state.route == "repository_memory"
+    assert "1-xerus.json" in state.report
+    assert "LOCAL_MEMORY_HIT=YES" in state.report
+    assert "internet acquire" not in " ".join(progress).lower()
+
+
+def test_repository_memory_miss_preserves_target_on_fallback(tmp_path, monkeypatch):
+    import sophyane.sli_graph as graph
+    monkeypatch.setenv("HOME", str(tmp_path))
+    captured = []
+    module = __import__("sophyane.code_memory.internet_acquire", fromlist=["acquire_and_build"])
+    monkeypatch.setattr(module, "acquire_and_build", lambda request, **kwargs: captured.append(request) or "fallback")
+    state = graph.SLIState("Tell me about the Droidra repository from stored memory", str(tmp_path / "workspace"))
+    progress = []
+    graph.try_memory_router(state, progress.append)
+    assert state.meta["local_memory_checked"] is True
+    assert state.meta["local_memory_hit"] is False
+    graph.try_internet(state, progress.append)
+    assert captured and "droidra" in captured[0].lower()
+    assert "what existing local memory" not in captured[0].lower()
+
+
+def test_request_authority_context_is_immutable_and_preserves_multiline_objective(tmp_path):
+    from dataclasses import FrozenInstanceError
+    import sophyane.sli_graph as graph
+    objective = "What local memory exists about Xerus?\nSearch local stored memory first.\nDo not use internet.\nReport route."
+    state = graph.run_sli_graph(objective, workspace=tmp_path / "workspace")
+    assert state.context is not None
+    assert state.context.original_objective == objective
+    import hashlib
+    assert state.context.original_objective_hash == hashlib.sha256(objective.encode()).hexdigest()
+    try:
+        state.context.original_objective = "fragment"
+    except FrozenInstanceError:
+        pass
+    else:
+        raise AssertionError("authority context must be frozen")
+    assert "LOGICAL_OBJECTIVES=1" in state.report
+
+
+def test_authority_diagnostics_record_txq_and_rsi(tmp_path):
+    import sophyane.sli_graph as graph
+    state = graph.run_sli_graph("What existing local memory do you have about Xerus?", workspace=tmp_path / "workspace")
+    assert "TXQ_CAPABILITY=repository_memory" in state.report
+    assert "RSI_OUTCOME_RECORDED=YES" in state.report
+
+
+def test_sli_context_supplied_to_graph_cannot_change_objective(tmp_path):
+    import hashlib
+    import sophyane.sli_graph as graph
+    objective = "Xerus repository memory\nlocal first"
+    context = graph.RequestAuthorityContext(objective, hashlib.sha256(objective.encode()).hexdigest(), txq_capability="repository_memory")
+    state = graph.run_sli_graph("fragment", workspace=tmp_path / "workspace", context=context)
+    assert state.request == objective
+    assert state.context.original_objective_hash == context.original_objective_hash
+
+
+def test_fallback_identity_authority_diagnostics_use_execution_truth():
+    import sophyane.sli_graph as graph
+    context = graph.RequestAuthorityContext("repo memory", "h", target_identity="xerus", fallback_identity_preserved=True)
+    state = graph.SLIState("repo memory", ".", context=context)
+    state.meta["repository_target"] = "xerus"
+    assert "FALLBACK_IDENTITY_PRESERVED=YES" in graph._authority_diagnostics(state)
+    state.context = context.evolve(fallback_identity_preserved=False)
+    assert "FALLBACK_IDENTITY_PRESERVED=NO" in graph._authority_diagnostics(state)
+
+
+def test_non_repository_fallback_identity_is_neutral():
+    import sophyane.sli_graph as graph
+    context = graph.RequestAuthorityContext("general question", "h")
+    state = graph.SLIState("general question", ".", context=context)
+    assert "FALLBACK_IDENTITY_PRESERVED=N/A" in graph._authority_diagnostics(state)

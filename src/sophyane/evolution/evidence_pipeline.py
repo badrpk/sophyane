@@ -113,6 +113,122 @@ class EvidenceStore:
 
         return result
 
+    def verified_execution_evidence(
+        self,
+        *,
+        limit: int = 16,
+        repository_identity: str | None = None,
+        capability_class: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Read bounded canonical verified executions for explicit evolution.
+
+        This adapter is observational: it never writes the learning store,
+        creates candidates, or invokes an evolution cycle.  Trust filtering is
+        delegated to ``sli_learner.read_verified_history`` and structured
+        verification evidence is required before records enter analysis.
+        """
+        try:
+            from sophyane.sli_learner import read_verified_history
+
+            rows = read_verified_history(
+                repository_identity=repository_identity,
+                capability_class=capability_class,
+                limit=max(1, min(int(limit), 16)),
+            )
+        except Exception:
+            return []
+
+        accepted: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in rows or ():
+            if not isinstance(row, dict):
+                continue
+            # Do not admit ambiguous/non-structured records.  RSI/candidate
+            # stores are separate today; if an origin marker is present, reject
+            # evolution-generated evidence from this ordinary-execution lane.
+            evidence = row.get("verification_evidence")
+            failure_marker = any(
+                bool(row.get(field))
+                for field in (
+                    "failure_category",
+                    "terminal_failure",
+                    "safety_failure",
+                    "approval_failure",
+                    "permission_failure",
+                    "transport_failure",
+                    "unusable_provider",
+                )
+            )
+            if (
+                row.get("accepted") is not True
+                or str(row.get("status") or "").casefold()
+                not in {"success", "succeeded", "completed"}
+                or str(row.get("verification_state") or "").casefold()
+                != "verified"
+                or not isinstance(evidence, (list, tuple, dict))
+                or not evidence
+                or failure_marker
+            ):
+                continue
+            origin = str(row.get("source") or row.get("origin") or "").casefold()
+            if any(token in origin for token in ("rsi", "candidate", "evolution")):
+                continue
+            key = (
+                str(row.get("event_key") or "").strip()
+                or str(row.get("trace_id") or "").strip()
+                or "|".join(
+                    str(row.get(field) or "").strip()
+                    for field in ("objective_hash", "workspace", "created_at")
+                )
+            )
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            accepted.append(dict(row))
+            if len(accepted) >= max(1, min(int(limit), 16)):
+                break
+        return accepted
+
+    def collect_verified_execution_evidence(
+        self,
+        *,
+        limit: int = 16,
+        repository_identity: str | None = None,
+        capability_class: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Explicit-analysis entry point for trusted execution evidence."""
+        return self.verified_execution_evidence(
+            limit=limit,
+            repository_identity=repository_identity,
+            capability_class=capability_class,
+        )
+
+    def record_verified_success_patterns(
+        self,
+        records: list[dict[str, Any]],
+    ) -> int:
+        """Accumulate trusted successes through existing recurrence storage."""
+        recorded = 0
+        data = self.principles._load()
+        patterns = data.get("success_patterns") or {}
+        for record in records or []:
+            capability = str(record.get("capability_class") or "verified_execution").strip()
+            repository = str(record.get("repository_identity") or "").strip()
+            pattern_key = capability + ("@" + repository if repository else "")
+            task_id = str(record.get("objective_hash") or record.get("event_key") or record.get("trace_id") or "").strip()
+            if not task_id:
+                continue
+            existing = patterns.get(pattern_key) or {}
+            if task_id in (existing.get("tasks") or []):
+                continue
+            self.principles.record_success(
+                capability=pattern_key,
+                task_id=task_id,
+                checks={"verified_execution": True},
+            )
+            recorded += 1
+        return recorded
+
     def status(self) -> dict[str, int]:
         total = failed = pending = synthesized = 0
 
@@ -476,6 +592,33 @@ class AnalysisPipeline:
         self.store = EvidenceStore(self.repo)
         self.local = LocalAnalyst()
         self.cloud = CloudAnalyst(self.repo)
+        # One explicit analysis cycle shares one bounded, read-only history
+        # snapshot across all records it analyzes.
+        self._verified_execution_evidence: list[dict[str, Any]] | None = None
+
+    def collect_verified_execution_evidence(
+        self,
+        *,
+        limit: int = 16,
+        repository_identity: str | None = None,
+        capability_class: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Load trusted ordinary execution evidence once per analysis cycle."""
+        if self._verified_execution_evidence is None:
+            self._verified_execution_evidence = self.store.collect_verified_execution_evidence(
+                limit=limit,
+                repository_identity=repository_identity,
+                capability_class=capability_class,
+            )
+            # Explicit analysis may accumulate trusted success patterns, but
+            # this does not create candidates or grant mutation authority.
+            self.store.record_verified_success_patterns(
+                self._verified_execution_evidence
+            )
+            self.store.principles.record_verified_success_principle(
+                self._verified_execution_evidence
+            )
+        return [dict(item) for item in self._verified_execution_evidence]
 
     @staticmethod
     def _select_final(
@@ -620,6 +763,10 @@ class AnalysisPipeline:
             cloud=cloud,
         )
 
+        verified_execution_evidence = self.collect_verified_execution_evidence(
+            capability_class=capability or None,
+        )
+
         learned = (
             self.store.principles.record_failure_principle(
                 component=final.suspected_component,
@@ -656,6 +803,9 @@ class AnalysisPipeline:
             "arbitration": arbitration,
             "principle": learned,
             "synthesized": learned is not None,
+            # Structured trusted history is analysis input only; it does not
+            # authorize candidate generation or mutation.
+            "verified_execution_evidence": verified_execution_evidence,
         }
 
         record["status"] = (

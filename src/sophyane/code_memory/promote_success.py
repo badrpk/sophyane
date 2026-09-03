@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+import shutil
+import tempfile
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 Progress = Callable[[str], None]
 
@@ -31,6 +33,8 @@ def promote_workspace(
     source: str = "promote:success",
     report: str | None = None,
     progress: Progress | None = None,
+    paths: Iterable[str] | None = None,
+    provenance: dict | None = None,
 ) -> dict:
     """Ingest files from a successful run into ChunkStore + weight bump."""
     progress = _progress(progress)
@@ -57,9 +61,29 @@ def promote_workspace(
         out["reason"] = f"import:{e}"
         return out
 
+    selected = tuple(str(item).strip() for item in (paths or ()) if str(item).strip())
+    temporary_root = None
+    acquisition_root = ws
     try:
+        if selected:
+            temporary_root = tempfile.TemporaryDirectory(prefix="sophyane-promote-")
+            acquisition_root = Path(temporary_root.name)
+            for relative in selected:
+                source_path = (ws / relative).resolve()
+                try:
+                    source_path.relative_to(ws.resolve())
+                except ValueError:
+                    continue
+                if not source_path.is_file():
+                    continue
+                target = acquisition_root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_path, target)
+
+        store_before = ChunkStore()
+        before_ids = set(store_before.ids)
         rep = acquire_tree(
-            ws,
+            acquisition_root,
             source=source,
             progress=progress,
             limit_files=80,
@@ -69,7 +93,19 @@ def promote_workspace(
             out["files_scanned"] = int(rep.get("files_scanned") or 0)
             out["chunks_added"] = int(rep.get("chunks_added") or 0)
         store = ChunkStore()
-        # mild weight bump on newest ids if learner supports used-list empty → skip
+        if provenance and out["chunks_added"]:
+            for chunk_id in set(store.ids) - before_ids:
+                chunk = store.chunks.get(chunk_id)
+                if chunk is not None:
+                    if selected:
+                        try:
+                            chunk.path = Path(chunk.path).relative_to(acquisition_root).as_posix()
+                        except ValueError:
+                            pass
+                    chunk.meta = dict(chunk.meta or {})
+                    chunk.meta["verified_provenance"] = dict(provenance)
+            store._dirty = True
+            store.flush()
         out["ok"] = True
         out["memory"] = len(store.ids)
         out["reason"] = "promoted"
@@ -80,6 +116,9 @@ def promote_workspace(
     except Exception as e:
         out["reason"] = f"error:{e}"
         progress(f"SLI promote error: {e}")
+    finally:
+        if temporary_root is not None:
+            temporary_root.cleanup()
     return out
 
 # SOPHYANE_PROMOTION_VALIDATION_GATE_V1

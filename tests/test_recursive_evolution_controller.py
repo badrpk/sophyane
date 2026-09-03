@@ -326,10 +326,6 @@ def test_extract_candidate_contents_contract():
 
     response = """CANDIDATE
 reason: improve classifier
-files:
-- src/example.py
-verification:
-- python -m py_compile src/example.py
 FILE
 path: src/example.py
 content:
@@ -353,36 +349,32 @@ END_CANDIDATE
     }
 
 
-def test_extract_candidate_rejects_undeclared_file():
+def test_extract_candidate_file_block_is_authoritative_path():
     from sophyane.recursive_evolution_controller import (
-        RecursiveEvolutionError,
         extract_candidate_contents,
     )
 
     response = """CANDIDATE
 reason: test
-files:
-- src/a.py
-verification:
-- python -m py_compile src/a.py
 FILE
 path: src/b.py
 content:
-print('bad')
+print('bounded')
 END_FILE
 END_CANDIDATE
 """
 
-    try:
-        extract_candidate_contents(
-            response
-        )
-    except RecursiveEvolutionError:
-        pass
-    else:
-        raise AssertionError(
-            "undeclared candidate file was accepted"
-        )
+    proposal, contents = extract_candidate_contents(
+        response
+    )
+
+    assert proposal.files == (
+        "src/b.py",
+    )
+
+    assert tuple(contents) == (
+        "src/b.py",
+    )
 
 
 def test_build_nifdu_review_bundle_contains_diff_and_verification():
@@ -904,6 +896,12 @@ def test_supervised_rsi_rejection_causes_bounded_retry(
         (
             """STATUS: CONTINUE
 NEXT_MODE3_INSTRUCTION:
+Create the harmless probe requested by the objective.
+REASON:
+Mode 4 authorizes one bounded initial implementation.
+""",
+            """STATUS: CONTINUE
+NEXT_MODE3_INSTRUCTION:
 Generate the same candidate but keep the implementation minimal.
 REASON:
 First candidate needs one bounded retry.
@@ -956,6 +954,8 @@ def test_supervised_rsi_approval_stops_immediately(
         def __init__(self):
             self.last_provider = ""
             self.calls = 0
+            self.speculative_calls = 0
+            self.authorized_calls = 0
 
         def generate(
             self,
@@ -964,6 +964,20 @@ def test_supervised_rsi_approval_stops_immediately(
         ):
             self.calls += 1
             self.last_provider = "local_gguf"
+
+            text = str(
+                prompt
+            )
+
+            if (
+                "MODE3_READ_ONLY_SPECULATIVE_PREPARATION"
+                in text
+            ):
+                self.speculative_calls += 1
+
+            else:
+                self.authorized_calls += 1
+
             return "candidate"
 
     class FakeController:
@@ -1040,16 +1054,40 @@ def test_supervised_rsi_approval_stops_immediately(
         repository=tmp_path,
         max_iterations=3,
         local_provider=provider,
-        nifdu_reviewer=lambda prompt: (
-            "STATUS: SUCCESS\n"
-            "EVIDENCE:\n"
-            "All gates passed.\n"
+        nifdu_reviewer=(
+            lambda prompt, responses=iter(
+                (
+                    (
+                        "STATUS: CONTINUE\n"
+                        "NEXT_MODE3_INSTRUCTION:\n"
+                        "Create the bounded probe requested by the objective.\n"
+                        "REASON:\n"
+                        "Mode 4 authorizes the initial implementation.\n"
+                    ),
+                    (
+                        "STATUS: SUCCESS\n"
+                        "EVIDENCE:\n"
+                        "All gates passed.\n"
+                    ),
+                )
+            ): next(responses)
         ),
         controller=FakeController(),
         authoritative_head_check=False,
     )
 
     assert result.success
+
+    # GLOBAL TXQ V3:
+    #
+    # Speculative preparation now runs through an isolated private provider
+    # clone. The provider passed to the RSI controller therefore retains
+    # authoritative Mode-3 candidate-generation authority only.
+    #
+    # Private speculative-call behavior is covered independently by
+    # test_global_txq_speculation.py.
+    assert provider.speculative_calls == 0
+    assert provider.authorized_calls == 1
     assert provider.calls == 1
     assert len(result.iterations) == 1
 
@@ -2654,10 +2692,23 @@ def test_supervised_rsi_synthetic_repository_does_not_claim_native_heldout(
         repository=tmp_path,
         max_iterations=1,
         local_provider=FakeProvider(),
-        nifdu_reviewer=lambda prompt: (
-            "STATUS: SUCCESS\n"
-            "EVIDENCE:\n"
-            "deterministic verification passed\n"
+        nifdu_reviewer=(
+            lambda prompt, responses=iter(
+                (
+                    (
+                        "STATUS: CONTINUE\n"
+                        "NEXT_MODE3_INSTRUCTION:\n"
+                        "Create the bounded synthetic probe requested.\n"
+                        "REASON:\n"
+                        "Mode 4 authorizes one initial operation.\n"
+                    ),
+                    (
+                        "STATUS: SUCCESS\n"
+                        "EVIDENCE:\n"
+                        "deterministic verification passed\n"
+                    ),
+                )
+            ): next(responses)
         ),
         controller=FakeController(),
         authoritative_head_check=False,
@@ -2988,3 +3039,1562 @@ def test_supervised_rsi_distinct_candidates_remain_distinct_score_observations(
         scores["python"]["passes"]
         == 2
     )
+
+
+# SOPHYANE_MODE4_RSI_INSTRUCTION_AUTHORITY_TESTS_V1
+
+def test_mode4_initial_instruction_prompt_owns_first_change():
+    from sophyane.recursive_evolution_controller import (
+        build_initial_nifdu_instruction_prompt,
+    )
+
+    prompt = build_initial_nifdu_instruction_prompt(
+        original_goal=(
+            "Improve one routing weakness."
+        ),
+        evolution_context=(
+            "focused_capability=routing"
+        ),
+        repository_summary=(
+            "tests currently pass"
+        ),
+    )
+
+    lowered = prompt.casefold()
+
+    assert (
+        "you decide the one bounded code-change instruction"
+        in lowered
+    )
+
+    assert (
+        "mode 3 is only the operational worker"
+        in lowered
+    )
+
+    assert (
+        "next_mode3_instruction"
+        in lowered
+    )
+
+    assert (
+        "do not claim success"
+        in lowered
+    )
+
+    assert (
+        "do not execute commands"
+        in lowered
+    )
+
+
+def test_mode3_prompt_treats_mode4_instruction_as_authoritative():
+    from sophyane.recursive_evolution_controller import (
+        build_real_local_llm_candidate_prompt,
+    )
+
+    prompt = build_real_local_llm_candidate_prompt(
+        objective=(
+            "Edit src/example.py only and preserve its public API."
+        ),
+        repository_summary="test repository",
+    )
+
+    lowered = prompt.casefold()
+
+    assert (
+        "authoritative bounded instruction"
+        in lowered
+    )
+
+    assert (
+        "mode 4 / nifdu"
+        in lowered
+    )
+
+    assert (
+        "do not choose a different improvement"
+        in lowered
+    )
+
+    assert (
+        "do not broaden"
+        in lowered
+    )
+
+
+def test_supervised_rsi_requires_mode4_instruction_before_mode3_generation():
+    import inspect
+
+    from sophyane.recursive_evolution_controller import (
+        run_supervised_mode3_nifdu_rsi,
+    )
+
+    source = inspect.getsource(
+        run_supervised_mode3_nifdu_rsi
+    )
+
+    assert (
+        "SOPHYANE_MODE4_RSI_FIRST_INSTRUCTION_GATE_V1"
+        in source
+    )
+
+    mode4_call = source.index(
+        "initial_review_response = str("
+    )
+
+    instruction_assignment = source.index(
+        "initial_review.next_instruction"
+    )
+
+    mode3_call = source.index(
+        "provider.generate("
+    )
+
+    assert mode4_call < instruction_assignment
+    assert instruction_assignment < mode3_call
+
+
+def test_initial_mode4_review_cannot_claim_unverified_success():
+    import inspect
+
+    from sophyane.recursive_evolution_controller import (
+        run_supervised_mode3_nifdu_rsi,
+    )
+
+    source = inspect.getsource(
+        run_supervised_mode3_nifdu_rsi
+    )
+
+    assert (
+        'if initial_review.status == "SUCCESS":'
+        in source
+    )
+
+    assert (
+        "cannot declare SUCCESS"
+        in source
+    )
+
+
+def test_controller_design_declares_mode4_instruction_authority():
+    from pathlib import Path
+
+    source = Path(
+        "src/sophyane/recursive_evolution_controller.py"
+    ).read_text(
+        encoding="utf-8",
+    )
+
+    assert (
+        "SOPHYANE_MODE4_RSI_INITIAL_INSTRUCTION_AUTHORITY_V1"
+        in source
+    )
+
+    assert (
+        "SOPHYANE_MODE4_RSI_FIRST_INSTRUCTION_GATE_V1"
+        in source
+    )
+
+    assert (
+        "Mode 4 / NIFDU owns code-change instruction"
+        in source
+    )
+
+
+def test_mode4_initial_instruction_receives_real_repository_evidence(
+    tmp_path,
+):
+    import subprocess
+
+    import sophyane.recursive_evolution_controller as rsi
+
+    repository = (
+        tmp_path
+        / "repo"
+    )
+
+    (
+        repository
+        / "src"
+        / "sophyane"
+    ).mkdir(
+        parents=True
+    )
+
+    (
+        repository
+        / "tests"
+    ).mkdir()
+
+    (
+        repository
+        / "src"
+        / "sophyane"
+        / "recursive_evolution_controller.py"
+    ).write_text(
+        (
+            "# SOPHYANE_MODE4_RSI_FIRST_INSTRUCTION_GATE_V1\n"
+            "def run_supervised_mode3_nifdu_rsi():\n"
+            "    pass\n"
+        ),
+        encoding="utf-8",
+    )
+
+    (
+        repository
+        / "tests"
+        / "test_recursive_evolution_controller.py"
+    ).write_text(
+        (
+            "def test_mode4_rsi_authority():\n"
+            "    assert True\n"
+        ),
+        encoding="utf-8",
+    )
+
+    subprocess.run(
+        [
+            "git",
+            "init",
+            "-q",
+        ],
+        cwd=repository,
+        check=True,
+    )
+
+    subprocess.run(
+        [
+            "git",
+            "add",
+            "src",
+            "tests",
+        ],
+        cwd=repository,
+        check=True,
+    )
+
+    summary = (
+        rsi._bounded_mode4_repository_summary(
+            repository,
+            (
+                "Improve one Mode-4 Mode-3 RSI "
+                "authority regression test."
+            ),
+        )
+    )
+
+    assert (
+        "MODE4_BOUNDED_REPOSITORY_EVIDENCE"
+        in summary
+    )
+
+    assert (
+        "recursive_evolution_controller.py"
+        in summary
+    )
+
+    assert (
+        "test_recursive_evolution_controller.py"
+        in summary
+    )
+
+    assert (
+        "SOPHYANE_MODE4_RSI_FIRST_INSTRUCTION_GATE_V1"
+        in summary
+    )
+
+
+def test_supervised_rsi_auto_grounds_initial_mode4_prompt(
+    tmp_path,
+    monkeypatch,
+):
+    import subprocess
+
+    import sophyane.recursive_evolution_controller as rsi
+
+    repository = (
+        tmp_path
+        / "repo"
+    )
+
+    (
+        repository
+        / "src"
+        / "sophyane"
+    ).mkdir(
+        parents=True
+    )
+
+    source_file = (
+        repository
+        / "src"
+        / "sophyane"
+        / "recursive_evolution_controller.py"
+    )
+
+    source_file.write_text(
+        (
+            "# SOPHYANE_MODE4_RSI_FIRST_INSTRUCTION_GATE_V1\n"
+            "def probe():\n"
+            "    return True\n"
+        ),
+        encoding="utf-8",
+    )
+
+    subprocess.run(
+        [
+            "git",
+            "init",
+            "-q",
+        ],
+        cwd=repository,
+        check=True,
+    )
+
+    subprocess.run(
+        [
+            "git",
+            "add",
+            "src",
+        ],
+        cwd=repository,
+        check=True,
+    )
+
+    class Provider:
+        primary = "local_gguf"
+
+        def __init__(self):
+            self._providers = [
+                (
+                    "local_gguf",
+                    object(),
+                ),
+            ]
+
+            self.last_provider = ""
+
+        def generate(
+            self,
+            prompt,
+            system_prompt,
+        ):
+            raise AssertionError(
+                "Mode 3 must not run after an explicit initial FAIL"
+            )
+
+    captured = {}
+
+    def reviewer(prompt):
+        captured[
+            "prompt"
+        ] = str(prompt)
+
+        return (
+            "STATUS: FAIL\n"
+            "REASON:\n"
+            "bounded diagnostic stop\n"
+        )
+
+    result = (
+        rsi.run_supervised_mode3_nifdu_rsi(
+            objective=(
+                "Improve one Mode-4 RSI authority regression test."
+            ),
+            repository=repository,
+            max_iterations=1,
+            local_provider=Provider(),
+            nifdu_reviewer=reviewer,
+            authoritative_head_check=False,
+        )
+    )
+
+    prompt = captured[
+        "prompt"
+    ]
+
+    assert (
+        "MODE4_BOUNDED_REPOSITORY_EVIDENCE"
+        in prompt
+    )
+
+    assert (
+        "recursive_evolution_controller.py"
+        in prompt
+    )
+
+    assert (
+        "SOPHYANE_MODE4_RSI_FIRST_INSTRUCTION_GATE_V1"
+        in prompt
+    )
+
+    assert result.success is False
+
+    assert (
+        result.stop_reason
+        == "mode4_initial_fail: bounded diagnostic stop"
+    )
+
+
+def test_supervised_rsi_initial_mode4_receives_global_txq(
+    tmp_path,
+):
+    import sophyane.recursive_evolution_controller as rsi
+
+    class Provider:
+        primary = "local_gguf"
+        _providers = [
+            (
+                "local_gguf",
+                object(),
+            ),
+        ]
+
+        def generate(
+            self,
+            prompt,
+            system_prompt,
+        ):
+            raise AssertionError(
+                "Mode 3 must not run after initial Mode-4 FAIL"
+            )
+
+    captured = {}
+
+    def reviewer(prompt):
+        captured[
+            "prompt"
+        ] = str(prompt)
+
+        return (
+            "STATUS: FAIL\n"
+            "REASON:\n"
+            "bounded stop\n"
+        )
+
+    result = rsi.run_supervised_mode3_nifdu_rsi(
+        objective=(
+            "Improve one bounded RSI regression test."
+        ),
+        repository=tmp_path,
+        max_iterations=1,
+        local_provider=Provider(),
+        nifdu_reviewer=reviewer,
+        authoritative_head_check=False,
+    )
+
+    prompt = captured[
+        "prompt"
+    ]
+
+    assert (
+        "SOPHYANE_GLOBAL_TXQ"
+        in prompt
+    )
+
+    assert (
+        "mode=4"
+        in prompt
+    )
+
+    assert (
+        "allow_speculative_mutation=0"
+        in prompt
+    )
+
+    assert result.success is False
+
+
+def test_global_txq_does_not_move_mode4_before_mode3_authority():
+    import inspect
+
+    import sophyane.recursive_evolution_controller as rsi
+
+    source = inspect.getsource(
+        rsi.run_supervised_mode3_nifdu_rsi
+    )
+
+    txq = source.index(
+        "mode4_initial_txq_context"
+    )
+
+    review = source.index(
+        "initial_review_response = str("
+    )
+
+    instruction = source.index(
+        "initial_review.next_instruction"
+    )
+
+    mode3 = source.index(
+        "provider.generate("
+    )
+
+    assert (
+        txq
+        < review
+        < instruction
+        < mode3
+    )
+
+
+def test_supervised_nifdu_review_accepts_inline_fail_reason():
+    import sophyane.recursive_evolution_controller as rsi
+
+    review = rsi.parse_supervised_nifdu_review(
+        (
+            "STATUS: FAIL\n"
+            "REASON:The selected bounded operation failed before "
+            "deterministic verification."
+        )
+    )
+
+    assert (
+        review.status
+        == "FAIL"
+    )
+
+    assert (
+        review.reason
+        == (
+            "The selected bounded operation failed before "
+            "deterministic verification."
+        )
+    )
+
+
+def test_supervised_nifdu_review_still_accepts_multiline_fail_reason():
+    import sophyane.recursive_evolution_controller as rsi
+
+    review = rsi.parse_supervised_nifdu_review(
+        (
+            "STATUS: FAIL\n"
+            "REASON:\n"
+            "The bounded operation cannot safely continue."
+        )
+    )
+
+    assert (
+        review.status
+        == "FAIL"
+    )
+
+    assert (
+        review.reason
+        == (
+            "The bounded operation cannot safely continue."
+        )
+    )
+
+
+def test_supervised_rsi_wires_global_txq_speculation_budget():
+    import inspect
+
+    import sophyane.recursive_evolution_controller as rsi
+
+    source = inspect.getsource(
+        rsi.run_supervised_mode3_nifdu_rsi
+    )
+
+    assert (
+        "mode4_initial_txq_policy.speculative_timeout_sec"
+        in source
+    )
+
+    assert (
+        "mode4_initial_txq_policy.speculative_max_tokens"
+        in source
+    )
+
+    assert (
+        "speculative_worker.drain("
+        in source
+    )
+
+    assert (
+        source.index(
+            "speculative_worker.drain("
+        )
+        < source.index(
+            "raw = provider.generate("
+        )
+    )
+
+def test_supervised_mode3_candidate_contract_isolated_from_txq_and_memory_grammar():
+    from pathlib import Path
+
+    source = Path(
+        "src/sophyane/recursive_evolution_controller.py"
+    ).read_text(
+        encoding="utf-8",
+    )
+
+    assert (
+        "SOPHYANE_MODE3_CANDIDATE_CONTRACT_ISOLATION_V1"
+        in source
+    )
+
+    assert (
+        "candidate_instruction = grounded_instruction"
+        in source
+    )
+
+    assert (
+        "objective=candidate_instruction"
+        in source
+    )
+
+    assert (
+        "Your first line must be CANDIDATE"
+        in source
+    )
+
+    assert (
+        "must be END_CANDIDATE"
+        in source
+    )
+
+    assert (
+        "Never use triple-backtick code fences, including inside "
+        in source
+    )
+
+    assert (
+        "Do not emit JSON, markdown commentary, policy metadata, "
+        in source
+    )
+
+    candidate_region = source[
+        source.index(
+            'system_prompt = (',
+            source.index(
+                "SOPHYANE_MODE3_CANDIDATE_CONTRACT_ISOLATION_V1"
+            ),
+        ):
+        source.index(
+            "raw = provider.generate(",
+            source.index(
+                "SOPHYANE_MODE3_CANDIDATE_CONTRACT_ISOLATION_V1"
+            ),
+        )
+    ]
+
+    assert "MEMORY_ACTION_JSON" not in candidate_region
+    assert "Allowed actions are STORE" not in candidate_region
+
+
+def test_mode3_candidate_prompt_reinforces_complete_materialization_schema():
+    from sophyane.recursive_evolution_controller import (
+        build_real_local_llm_candidate_prompt,
+    )
+
+    target = "tests/test_example.py"
+
+    prompt = build_real_local_llm_candidate_prompt(
+        objective=(
+            f"Add one bounded pytest to {target}."
+        ),
+        repository_summary="Synthetic repository.",
+    )
+
+    assert (
+        "OUTPUT CONTRACT — FOLLOW EXACTLY."
+        in prompt
+    )
+
+    assert (
+        "Do not use markdown fences or triple backticks anywhere."
+        in prompt
+    )
+
+    required = (
+        "CANDIDATE\n",
+        "reason: <short bounded reason>\n",
+        "FILE\n",
+        "path: <relative path from OBJECTIVE>\n",
+        "content:\n",
+        "<complete requested file contents>\n",
+        "END_FILE\n",
+        "END_CANDIDATE\n",
+    )
+
+    for token in required:
+        assert token in prompt
+
+    assert (
+        "tests/example_test.py"
+        not in prompt
+    )
+
+    assert (
+        "def test_example"
+        not in prompt
+    )
+
+    assert target in prompt
+
+    assert (
+        prompt.index(
+            "END_CANDIDATE"
+        )
+        < prompt.index(
+            "OBJECTIVE:"
+        )
+    )
+
+def test_supervised_mode4_malformed_review_preserves_raw_response(
+    tmp_path,
+    monkeypatch,
+):
+    import shutil
+
+    import pytest
+
+    import sophyane.recursive_evolution_controller as rsi
+
+    repository = (
+        tmp_path
+        / "repo"
+    )
+
+    repository.mkdir()
+
+    subprocess = __import__(
+        "subprocess"
+    )
+
+    subprocess.run(
+        [
+            "git",
+            "init",
+        ],
+        cwd=repository,
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+
+    subprocess.run(
+        [
+            "git",
+            "config",
+            "user.email",
+            "test@example.com",
+        ],
+        cwd=repository,
+        check=True,
+    )
+
+    subprocess.run(
+        [
+            "git",
+            "config",
+            "user.name",
+            "Test",
+        ],
+        cwd=repository,
+        check=True,
+    )
+
+    (
+        repository
+        / "probe.py"
+    ).write_text(
+        "VALUE = 1\n",
+        encoding="utf-8",
+    )
+
+    subprocess.run(
+        [
+            "git",
+            "add",
+            ".",
+        ],
+        cwd=repository,
+        check=True,
+    )
+
+    subprocess.run(
+        [
+            "git",
+            "commit",
+            "-m",
+            "baseline",
+        ],
+        cwd=repository,
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+
+    class Provider:
+        primary = "local_gguf"
+
+        _providers = [
+            (
+                "local_gguf",
+                object(),
+            )
+        ]
+
+        last_provider = (
+            "local_gguf"
+        )
+
+        def generate(
+            self,
+            prompt,
+            system_prompt,
+        ):
+            return """CANDIDATE
+reason: bounded probe
+files:
+- probe.py
+verification:
+- python -m py_compile probe.py
+FILE
+path: probe.py
+content:
+VALUE = 2
+END_FILE
+END_CANDIDATE"""
+
+    responses = iter(
+        (
+            (
+                "STATUS: CONTINUE\n"
+                "NEXT_MODE3_INSTRUCTION:\n"
+                "Perform the bounded probe.\n"
+                "REASON:\n"
+                "One bounded operation is authorized.\n"
+            ),
+            "STATUS: FAIL\n",
+        )
+    )
+
+    with pytest.raises(
+        rsi.RecursiveEvolutionError,
+    ) as caught:
+        rsi.run_supervised_mode3_nifdu_rsi(
+            objective=(
+                "Perform one bounded probe."
+            ),
+            repository=repository,
+            max_iterations=1,
+            local_provider=Provider(),
+            nifdu_reviewer=(
+                lambda prompt:
+                next(responses)
+            ),
+            authoritative_head_check=False,
+        )
+
+    message = str(
+        caught.value
+    )
+
+    assert (
+        "Mode-4 supervisory response failed strict parsing."
+        in message
+    )
+
+    assert (
+        "RAW_RESPONSE_BEGIN"
+        in message
+    )
+
+    assert (
+        "STATUS: FAIL"
+        in message
+    )
+
+    assert (
+        "RAW_RESPONSE_END"
+        in message
+    )
+
+    assert (
+        "FAIL requires REASON"
+        in message
+    )
+
+
+def test_mode3_candidate_schema_survives_local_gguf_4000_char_transport():
+    from sophyane.recursive_evolution_controller import (
+        build_real_local_llm_candidate_prompt,
+    )
+
+    target = (
+        "tests/test_recursive_evolution_controller.py"
+    )
+
+    prompt = build_real_local_llm_candidate_prompt(
+        objective=(
+            f"In {target}, add exactly one bounded pytest assertion."
+        ),
+        repository_summary=(
+            "R" * 12000
+        ),
+    )
+
+    transported = prompt[:4000]
+
+    required = (
+        "OUTPUT CONTRACT — FOLLOW EXACTLY.",
+        "Your first line MUST be CANDIDATE.",
+        "The second line MUST begin with reason:.",
+        "Do not use markdown fences or triple backticks anywhere.",
+        "reason: <short bounded reason>\n",
+        "FILE\n",
+        "path: <relative path from OBJECTIVE>\n",
+        "content:\n",
+        "END_FILE\n",
+        "END_CANDIDATE\n",
+        "OBJECTIVE:",
+        target,
+    )
+
+    for token in required:
+        assert token in transported
+
+    assert (
+        "tests/example_test.py"
+        not in transported
+    )
+
+    assert (
+        "def test_example"
+        not in transported
+    )
+
+    assert (
+        transported.index(
+            "END_CANDIDATE"
+        )
+        < transported.index(
+            "OBJECTIVE:"
+        )
+    )
+
+    assert (
+        transported.index(
+            "OBJECTIVE:"
+        )
+        < transported.index(
+            target
+        )
+    )
+
+def test_mode3_candidate_recovers_only_missing_final_end_candidate():
+    from sophyane.recursive_evolution_controller import (
+        extract_candidate_contents,
+    )
+
+    response = """CANDIDATE
+reason: bounded regression
+files:
+- tests/test_probe.py
+verification:
+- python -m pytest tests/test_probe.py -q
+FILE
+path: tests/test_probe.py
+content:
+def test_probe():
+    assert True
+END_FILE"""
+
+    proposal, contents = extract_candidate_contents(
+        response
+    )
+
+    assert proposal.files == (
+        "tests/test_probe.py",
+    )
+
+    assert (
+        "tests/test_probe.py"
+        in contents
+    )
+
+
+def test_mode3_candidate_missing_end_file_still_fails_closed():
+    import pytest
+
+    from sophyane.recursive_evolution_controller import (
+        RecursiveEvolutionError,
+        extract_candidate_contents,
+    )
+
+    response = """CANDIDATE
+reason: bounded regression
+files:
+- tests/test_probe.py
+verification:
+- python -m pytest tests/test_probe.py -q
+FILE
+path: tests/test_probe.py
+content:
+def test_probe():
+    assert True"""
+
+    with pytest.raises(
+        RecursiveEvolutionError
+    ):
+        extract_candidate_contents(
+            response
+        )
+
+
+def test_mode3_candidate_missing_header_fields_still_fails_closed():
+    import pytest
+
+    from sophyane.recursive_evolution_controller import (
+        RecursiveEvolutionError,
+        extract_candidate_contents,
+    )
+
+    response = """CANDIDATE
+FILE
+path: tests/test_probe.py
+content:
+def test_probe():
+    assert True
+END_FILE"""
+
+    with pytest.raises(
+        RecursiveEvolutionError
+    ):
+        extract_candidate_contents(
+            response
+        )
+
+
+def test_mode3_candidate_prompt_is_target_neutral_before_objective():
+    from sophyane.recursive_evolution_controller import (
+        build_real_local_llm_candidate_prompt,
+    )
+
+    target = "tests/test_recursive_evolution_controller.py"
+
+    prompt = build_real_local_llm_candidate_prompt(
+        objective=(
+            f"In {target}, add exactly one bounded assertion."
+        ),
+        repository_summary="R" * 12000,
+    )
+
+    transported = prompt[:4000]
+
+    assert (
+        "SOPHYANE_MODE3_TARGET_NEUTRAL_SCHEMA_V1"
+        not in transported
+    )
+
+    assert (
+        "Return exactly this structural shape:"
+        in transported
+    )
+
+    assert (
+        "path: <relative path from OBJECTIVE>"
+        in transported
+    )
+
+    assert (
+        "tests/example_test.py"
+        not in transported
+    )
+
+    assert (
+        "def test_example"
+        not in transported
+    )
+
+    assert target in transported
+
+    assert (
+        transported.index(
+            "OBJECTIVE:"
+        )
+        < transported.index(
+            target
+        )
+    )
+
+
+def test_mode3_verification_bare_python_uses_active_interpreter():
+    import shlex
+    import sys
+
+    from sophyane.recursive_evolution_controller import (
+        RecursiveEvolutionController,
+    )
+
+    command = (
+        RecursiveEvolutionController
+        .authoritative_verification_command(
+            "python -m pytest tests/test_probe.py -q"
+        )
+    )
+
+    argv = shlex.split(command)
+
+    assert argv[0] == sys.executable
+
+    assert argv[1:] == [
+        "-m",
+        "pytest",
+        "tests/test_probe.py",
+        "-q",
+    ]
+
+
+def test_mode3_verification_python3_uses_active_interpreter():
+    import shlex
+    import sys
+
+    from sophyane.recursive_evolution_controller import (
+        RecursiveEvolutionController,
+    )
+
+    command = (
+        RecursiveEvolutionController
+        .authoritative_verification_command(
+            "python3 -m pytest -q"
+        )
+    )
+
+    argv = shlex.split(command)
+
+    assert argv[0] == sys.executable
+    assert argv[1:] == [
+        "-m",
+        "pytest",
+        "-q",
+    ]
+
+
+def test_mode3_verification_non_python_command_is_unchanged():
+    from sophyane.recursive_evolution_controller import (
+        RecursiveEvolutionController,
+    )
+
+    command = "git diff --check"
+
+    assert (
+        RecursiveEvolutionController
+        .authoritative_verification_command(
+            command
+        )
+        == command
+    )
+
+
+def test_mode3_minimal_candidate_derives_file_and_pytest_verification():
+    from sophyane.recursive_evolution_controller import (
+        extract_candidate_contents,
+    )
+
+    response = """CANDIDATE
+reason: add bounded assertion
+FILE
+path: tests/test_probe.py
+content:
+def test_probe():
+    assert True
+END_FILE
+END_CANDIDATE"""
+
+    proposal, contents = extract_candidate_contents(
+        response
+    )
+
+    assert proposal.files == (
+        "tests/test_probe.py",
+    )
+
+    assert proposal.verification == (
+        "python -m pytest tests/test_probe.py -q",
+    )
+
+    assert contents == {
+        "tests/test_probe.py": (
+            "def test_probe():\n"
+            "    assert True\n"
+        ),
+    }
+
+
+def test_mode3_minimal_python_source_derives_py_compile():
+    from sophyane.recursive_evolution_controller import (
+        extract_candidate_contents,
+    )
+
+    response = """CANDIDATE
+reason: bounded source repair
+FILE
+path: src/sophyane/probe.py
+content:
+VALUE = 2
+END_FILE
+END_CANDIDATE"""
+
+    proposal, _ = extract_candidate_contents(
+        response
+    )
+
+    assert proposal.files == (
+        "src/sophyane/probe.py",
+    )
+
+    assert proposal.verification == (
+        "python -m py_compile src/sophyane/probe.py",
+    )
+
+
+def test_mode3_minimal_nonpython_candidate_derives_diff_check():
+    from sophyane.recursive_evolution_controller import (
+        extract_candidate_contents,
+    )
+
+    response = """CANDIDATE
+reason: bounded documentation repair
+FILE
+path: README.md
+content:
+updated
+END_FILE
+END_CANDIDATE"""
+
+    proposal, _ = extract_candidate_contents(
+        response
+    )
+
+    assert proposal.verification == (
+        "git diff --check",
+    )
+
+
+def test_mode3_minimal_candidate_missing_file_block_fails_closed():
+    import pytest
+
+    from sophyane.recursive_evolution_controller import (
+        RecursiveEvolutionError,
+        extract_candidate_contents,
+    )
+
+    with pytest.raises(
+        RecursiveEvolutionError,
+        match="candidate contains no FILE blocks",
+    ):
+        extract_candidate_contents(
+            """CANDIDATE
+reason: nothing materialized
+END_CANDIDATE"""
+        )
+
+
+def test_mode3_minimal_candidate_duplicate_file_still_fails_closed():
+    import pytest
+
+    from sophyane.recursive_evolution_controller import (
+        RecursiveEvolutionError,
+        extract_candidate_contents,
+    )
+
+    response = """CANDIDATE
+reason: duplicate path
+FILE
+path: tests/test_probe.py
+content:
+VALUE = 1
+END_FILE
+FILE
+path: tests/test_probe.py
+content:
+VALUE = 2
+END_FILE
+END_CANDIDATE"""
+
+    with pytest.raises(
+        RecursiveEvolutionError,
+        match="duplicate FILE block",
+    ):
+        extract_candidate_contents(
+            response
+        )
+
+
+# SOPHYANE_BOUNDED_UPDATE_MATERIALIZER_TESTS_V1
+
+def _bounded_update_proposal(path):
+    from sophyane.recursive_evolution_controller import CandidateProposal
+
+    return CandidateProposal(
+        reason="bounded exact update",
+        files=(path,),
+        verification=("git diff --check",),
+    )
+
+
+def test_candidate_update_changes_exactly_one_occurrence(tmp_path):
+    from sophyane.recursive_evolution_controller import (
+        CandidateUpdate,
+        apply_candidate_files,
+    )
+
+    target = tmp_path / "existing.py"
+    target.write_text("before = 1\nafter = 2\n", encoding="utf-8")
+
+    apply_candidate_files(
+        workspace=tmp_path,
+        proposal=_bounded_update_proposal("existing.py"),
+        contents={
+            "existing.py": CandidateUpdate(
+                old="before = 1",
+                new="before = 3",
+            ),
+        },
+    )
+
+    assert target.read_text(encoding="utf-8") == (
+        "before = 3\nafter = 2\n"
+    )
+
+
+def test_candidate_update_rejects_missing_old_text(tmp_path):
+    import pytest
+
+    from sophyane.recursive_evolution_controller import (
+        CandidateUpdate,
+        RecursiveEvolutionError,
+        apply_candidate_files,
+    )
+
+    target = tmp_path / "existing.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    with pytest.raises(RecursiveEvolutionError, match="not found"):
+        apply_candidate_files(
+            workspace=tmp_path,
+            proposal=_bounded_update_proposal("existing.py"),
+            contents={
+                "existing.py": CandidateUpdate(
+                    old="missing = 1",
+                    new="value = 2",
+                ),
+            },
+        )
+
+    assert target.read_text(encoding="utf-8") == "value = 1\n"
+
+
+def test_candidate_update_rejects_ambiguous_old_text(tmp_path):
+    import pytest
+
+    from sophyane.recursive_evolution_controller import (
+        CandidateUpdate,
+        RecursiveEvolutionError,
+        apply_candidate_files,
+    )
+
+    target = tmp_path / "existing.py"
+    target.write_text("same\nsame\n", encoding="utf-8")
+
+    with pytest.raises(RecursiveEvolutionError, match="ambiguous"):
+        apply_candidate_files(
+            workspace=tmp_path,
+            proposal=_bounded_update_proposal("existing.py"),
+            contents={
+                "existing.py": CandidateUpdate(
+                    old="same",
+                    new="changed",
+                ),
+            },
+        )
+
+    assert target.read_text(encoding="utf-8") == "same\nsame\n"
+
+
+def test_candidate_update_rejects_nonexistent_target(tmp_path):
+    import pytest
+
+    from sophyane.recursive_evolution_controller import (
+        CandidateUpdate,
+        RecursiveEvolutionError,
+        apply_candidate_files,
+    )
+
+    with pytest.raises(RecursiveEvolutionError, match="existing regular file"):
+        apply_candidate_files(
+            workspace=tmp_path,
+            proposal=_bounded_update_proposal("missing.py"),
+            contents={
+                "missing.py": CandidateUpdate(
+                    old="before",
+                    new="after",
+                ),
+            },
+        )
+
+    assert not (tmp_path / "missing.py").exists()
+
+
+# SOPHYANE_MODE3_UPDATE_CONTRACT_TESTS_V1
+
+def test_mode3_update_parses_and_materializes_exact_change(tmp_path):
+    from sophyane.recursive_evolution_controller import (
+        CandidateUpdate,
+        apply_candidate_files,
+        extract_candidate_contents,
+    )
+
+    target = tmp_path / "large.py"
+    target.write_text("alpha\nunique old\nomega\n", encoding="utf-8")
+
+    proposal, contents = extract_candidate_contents(
+        """CANDIDATE
+reason: bounded replacement
+UPDATE
+path: large.py
+old:
+unique old
+new:
+unique new
+END_UPDATE
+END_CANDIDATE"""
+    )
+
+    assert isinstance(contents["large.py"], CandidateUpdate)
+
+    apply_candidate_files(
+        workspace=tmp_path,
+        proposal=proposal,
+        contents=contents,
+    )
+
+    assert target.read_text(encoding="utf-8") == (
+        "alpha\nunique new\nomega\n"
+    )
+
+
+def test_mode3_file_and_update_blocks_may_coexist(tmp_path):
+    from sophyane.recursive_evolution_controller import (
+        apply_candidate_files,
+        extract_candidate_contents,
+    )
+
+    existing = tmp_path / "existing.py"
+    existing.write_text("value = 1\n", encoding="utf-8")
+
+    proposal, contents = extract_candidate_contents(
+        """CANDIDATE
+reason: bounded mixed materialization
+UPDATE
+path: existing.py
+old:
+value = 1
+new:
+value = 2
+END_UPDATE
+FILE
+path: new.py
+content:
+created = True
+END_FILE
+END_CANDIDATE"""
+    )
+
+    apply_candidate_files(
+        workspace=tmp_path,
+        proposal=proposal,
+        contents=contents,
+    )
+
+    assert existing.read_text(encoding="utf-8") == "value = 2\n"
+    assert (tmp_path / "new.py").read_text(
+        encoding="utf-8"
+    ) == "created = True\n"
+
+
+def test_mode3_update_path_escape_is_rejected():
+    import pytest
+
+    from sophyane.recursive_evolution_controller import (
+        RecursiveEvolutionError,
+        extract_candidate_contents,
+    )
+
+    with pytest.raises(RecursiveEvolutionError):
+        extract_candidate_contents(
+            """CANDIDATE
+reason: reject escape
+UPDATE
+path: ../escape.py
+old:
+before
+new:
+after
+END_UPDATE
+END_CANDIDATE"""
+        )
+
+
+def test_mode3_recovers_missing_terminator_after_complete_update():
+    from sophyane.recursive_evolution_controller import (
+        CandidateUpdate,
+        extract_candidate_contents,
+    )
+
+    proposal, contents = extract_candidate_contents(
+        """CANDIDATE
+reason: bounded recovery
+UPDATE
+path: existing.py
+old:
+before
+new:
+after
+END_UPDATE"""
+    )
+
+    assert proposal.files == ("existing.py",)
+    assert isinstance(contents["existing.py"], CandidateUpdate)
+
+
+def test_mode3_incomplete_update_is_not_terminator_recovered():
+    from sophyane.recursive_evolution_controller import (
+        normalize_complete_candidate_terminator,
+    )
+
+    malformed = """CANDIDATE
+reason: incomplete
+UPDATE
+path: existing.py
+old:
+before
+END_UPDATE"""
+
+    assert normalize_complete_candidate_terminator(
+        malformed
+    ) == malformed
+
+
+def test_mode3_prompt_routes_existing_files_to_update():
+    from sophyane.recursive_evolution_controller import (
+        build_real_local_llm_candidate_prompt,
+    )
+
+    prompt = build_real_local_llm_candidate_prompt(
+        objective="Modify one existing target selected by the objective.",
+        repository_summary="R" * 12000,
+    )
+
+    transported = prompt[:4000]
+
+    assert "For an EXISTING file, emit UPDATE" in transported
+    assert "For a genuinely NEW file, emit FILE" in transported
+    assert "Never reproduce an entire existing file" in transported
+    assert "old:" in transported
+    assert "new:" in transported
+    assert "END_UPDATE" in transported
+    assert transported.index("UPDATE") < transported.index("OBJECTIVE:")

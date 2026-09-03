@@ -1,11 +1,12 @@
-"""Bounded recursive self-improvement controller for Sophyane Mode 3.
+"""Bounded supervised recursive self-improvement for Sophyane.
 
 Design authority:
 
-- Local LLM proposes intelligence.
+- Mode 4 / NIFDU owns code-change instruction and review authority.
+- Mode 3 is the bounded local operations worker for one Mode-4 instruction.
 - Candidate mutation happens only in an isolated Git worktree.
-- Sophyane owns validation, testing, fitness and acceptance.
-- NIFDU may review a verified diff but never executes mutations.
+- Sophyane owns deterministic validation, testing, fitness and acceptance.
+- Mode 4 / NIFDU never directly executes filesystem mutations.
 - No commit or push is performed by this controller.
 """
 
@@ -36,6 +37,14 @@ class CandidateProposal:
     reason: str
     files: tuple[str, ...]
     verification: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CandidateUpdate:
+    """One exact, bounded replacement in an existing regular file."""
+
+    old: str
+    new: str
 
 
 _SAFE_RELATIVE = re.compile(
@@ -546,6 +555,48 @@ class RecursiveEvolutionController:
 
         return text
 
+    # SOPHYANE_MODE3_VERIFICATION_PYTHON_AUTHORITY_V1
+    @staticmethod
+    def authoritative_verification_command(
+        command: str,
+    ) -> str:
+        """Bind leading Python verification to Sophyane's active interpreter.
+
+        Candidate verification is controller-owned deterministic execution.
+        A model-written bare ``python`` or ``python3`` must not accidentally
+        resolve to an unrelated system interpreter outside Sophyane's venv.
+
+        Only the leading executable token is normalized. All remaining
+        arguments stay byte-for-byte shell-quoted through shlex.join().
+        """
+        import shlex
+        import sys
+
+        text = str(
+            command
+            or ""
+        ).strip()
+
+        argv = shlex.split(
+            text
+        )
+
+        if not argv:
+            return text
+
+        if argv[0] not in {
+            "python",
+            "python3",
+        }:
+            return text
+
+        argv[0] = sys.executable
+
+        return shlex.join(
+            argv
+        )
+
+
     def run_verification(
         self,
         *,
@@ -557,6 +608,10 @@ class RecursiveEvolutionController:
 
         for command in commands:
             command = self.validate_verification_command(
+                command
+            )
+
+            command = self.authoritative_verification_command(
                 command
             )
 
@@ -604,8 +659,10 @@ def apply_candidate_files(
     *,
     workspace: Path,
     proposal: CandidateProposal,
-    contents: dict[str, str],
+    contents: dict[str, str | CandidateUpdate],
 ) -> tuple[Path, ...]:
+    """Materialize declared FILE content or exact bounded UPDATE operations."""
+
     root = Path(
         workspace
     ).resolve()
@@ -639,17 +696,79 @@ def apply_candidate_files(
             relative,
         )
 
-        target.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+        materialization = contents[
+            relative
+        ]
 
-        target.write_text(
-            str(
-                contents[relative]
-            ),
-            encoding="utf-8",
-        )
+        if isinstance(
+            materialization,
+            CandidateUpdate,
+        ):
+            if (
+                not target.exists()
+                or not target.is_file()
+            ):
+                raise RecursiveEvolutionError(
+                    "candidate UPDATE target must be an "
+                    "existing regular file: "
+                    + relative
+                )
+
+            old = str(
+                materialization.old
+            )
+
+            if not old:
+                raise RecursiveEvolutionError(
+                    "candidate UPDATE old text is empty: "
+                    + relative
+                )
+
+            current = target.read_text(
+                encoding="utf-8"
+            )
+
+            matches = current.count(
+                old
+            )
+
+            if matches == 0:
+                raise RecursiveEvolutionError(
+                    "candidate UPDATE old text was not found: "
+                    + relative
+                )
+
+            if matches != 1:
+                raise RecursiveEvolutionError(
+                    "candidate UPDATE old text is ambiguous: "
+                    + relative
+                )
+
+            updated = current.replace(
+                old,
+                str(
+                    materialization.new
+                ),
+                1,
+            )
+
+            target.write_text(
+                updated,
+                encoding="utf-8",
+            )
+
+        else:
+            target.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            target.write_text(
+                str(
+                    materialization
+                ),
+                encoding="utf-8",
+            )
 
         written.append(
             target
@@ -658,6 +777,7 @@ def apply_candidate_files(
     return tuple(
         written
     )
+
 
 
 # SOPHYANE_RSI_COMPLETE_CANDIDATE_DIFF_V1
@@ -839,62 +959,246 @@ def parse_nifdu_review(
 
 # SOPHYANE_MODE3_RSI_LOCAL_LLM_V3
 
+
+# SOPHYANE_MODE3_DERIVED_VERIFICATION_AUTHORITY_V1
+def derive_candidate_verification(
+    files: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Derive bounded deterministic verification from candidate paths.
+
+    Mode 3 supplies implementation material only. Verification authority
+    belongs to Sophyane, not to the local model.
+
+    Python test files receive one focused pytest command.
+    Other Python-only candidates receive one py_compile command.
+    Non-Python candidates retain the universal read-only diff check.
+    """
+    normalized = tuple(
+        str(item).strip()
+        for item in files
+        if str(item).strip()
+    )
+
+    if not normalized:
+        raise RecursiveEvolutionError(
+            "cannot derive verification without candidate files"
+        )
+
+    python_tests = tuple(
+        item
+        for item in normalized
+        if (
+            item.endswith(".py")
+            and (
+                item.startswith("tests/")
+                or "/tests/" in item
+                or Path(item).name.startswith("test_")
+            )
+        )
+    )
+
+    if (
+        python_tests
+        and len(python_tests) == len(normalized)
+    ):
+        return (
+            "python -m pytest "
+            + " ".join(
+                python_tests
+            )
+            + " -q",
+        )
+
+    python_files = tuple(
+        item
+        for item in normalized
+        if item.endswith(".py")
+    )
+
+    if len(python_files) == len(normalized):
+        return (
+            "python -m py_compile "
+            + " ".join(
+                python_files
+            ),
+        )
+
+    return (
+        "git diff --check",
+    )
+
 def build_real_local_llm_candidate_prompt(
     *,
     objective: str,
     repository_summary: str,
 ) -> str:
     return (
-        "You are Sophyane's local Mode-3 RSI candidate generator.\n\n"
+        "You are Sophyane's Mode-3 RSI operations worker.\n\n"
+        "The OBJECTIVE below is an authoritative bounded instruction "
+        "issued by Mode 4 / NIFDU.\n"
+        "Do not choose a different improvement.\n"
+        "Do not broaden the requested scope.\n"
+        "Implement only that ONE bounded instruction inside the isolated "
+        "candidate worktree.\n"
+        "Return the exact bounded candidate materialization contract.\n\n"
+
+        # Keep authoritative grammar before truncatable repository context.
+        "OUTPUT CONTRACT — FOLLOW EXACTLY.\n"
+        "Your first line MUST be CANDIDATE.\n"
+        "The second line MUST begin with reason:.\n"
+        "Do not use markdown fences or triple backticks anywhere.\n"
+        "For an EXISTING file, emit UPDATE with exact old and new text.\n"
+        "For a genuinely NEW file, emit FILE with complete content.\n"
+        "FILE and UPDATE blocks may coexist.\n"
+        "Do NOT emit files:, verification:, unified diffs, commands, or JSON.\n"
+        "Use relative repository paths only.\n"
+        "Do not emit commentary, policy metadata, memory actions, "
+        "or text outside this contract.\n\n"
+
+        "Return exactly this structural shape:\n"
+        "Existing-file UPDATE:\n"
+        "CANDIDATE\n"
+        "reason: <short bounded reason>\n"
+        "UPDATE\n"
+        "path: <relative path from OBJECTIVE>\n"
+        "old:\n"
+        "<exact existing text occurring once>\n"
+        "new:\n"
+        "<replacement text>\n"
+        "END_UPDATE\n"
+        "END_CANDIDATE\n\n"
+
+        "New-file structural shape:\n"
+        "CANDIDATE\n"
+        "reason: <short bounded reason>\n"
+        "FILE\n"
+        "path: <relative path from OBJECTIVE>\n"
+        "content:\n"
+        "<complete requested file contents>\n"
+        "END_FILE\n"
+        "END_CANDIDATE\n\n"
+
+        "Repeat complete FILE/END_FILE or UPDATE/END_UPDATE blocks "
+        "only when the OBJECTIVE requires another file.\n"
+        "Never reproduce an entire existing file when UPDATE can express "
+        "the bounded change.\n"
+        "Replace every placeholder using only the OBJECTIVE and repository "
+        "evidence.\n"
+        "Never invent an example path, test name, or unrelated file.\n\n"
+
+        "OBJECTIVE:\n"
+        + str(objective).strip()
+        + "\n\n"
+
         "Produce ONE small bounded candidate only.\n"
         "Do not execute commands.\n"
         "Do not commit.\n"
         "Do not push.\n"
         "Do not merge.\n"
         "Do not modify files outside the candidate contract.\n\n"
-        "OBJECTIVE:\n"
-        + str(objective).strip()
-        + "\n\n"
+
         "REPOSITORY CONTEXT:\n"
         + str(repository_summary).strip()
-        + "\n\n"
-        "Return exactly:\n"
-        "CANDIDATE\n"
-        "reason: <short reason>\n"
-        "files:\n"
-        "- <relative path>\n"
-        "verification:\n"
-        "- <deterministic verification command>\n"
-        "FILE\n"
-        "path: <same declared relative path>\n"
-        "content:\n"
-        "<complete file contents>\n"
-        "END_FILE\n"
-        "END_CANDIDATE\n"
+        + "\n"
     )
+
+
+
+
+# SOPHYANE_MODE3_FINAL_TERMINATOR_RECOVERY_V1
+def normalize_complete_candidate_terminator(
+    response: str,
+) -> str:
+    """Recover only a structurally complete candidate missing its terminator."""
+
+    text = str(response or "").replace("\r\n", "\n").strip()
+
+    if text.endswith("\nEND_CANDIDATE"):
+        return text
+
+    if not text.startswith("CANDIDATE\n"):
+        return text
+
+    lines = text.splitlines()
+    if len(lines) < 2 or not lines[1].startswith("reason:"):
+        return text
+
+    if not (
+        text.endswith("\nEND_FILE")
+        or text.endswith("\nEND_UPDATE")
+    ):
+        return text
+
+    body = text[len("CANDIDATE\n"):]
+    first = re.search(r"\n(?:FILE|UPDATE)\n", body)
+
+    if first is None:
+        return text
+
+    block_text = body[first.start() + 1:]
+    blocks = re.split(r"\n(?=(?:FILE|UPDATE)\n)", block_text)
+
+    if not blocks:
+        return text
+
+    for block in blocks:
+        if block.startswith("FILE\n"):
+            if not block.endswith("\nEND_FILE"):
+                return text
+
+            payload = block[len("FILE\n"):-len("\nEND_FILE")]
+            payload_lines = payload.splitlines()
+
+            if (
+                len(payload_lines) < 2
+                or not payload_lines[0].startswith("path:")
+                or payload_lines[1].strip() != "content:"
+            ):
+                return text
+
+        elif block.startswith("UPDATE\n"):
+            if not block.endswith("\nEND_UPDATE"):
+                return text
+
+            payload = block[len("UPDATE\n"):-len("\nEND_UPDATE")]
+
+            if (
+                not payload.startswith("path:")
+                or "\nold:\n" not in payload
+                or "\nnew:\n" not in payload
+            ):
+                return text
+
+            path_part, remainder = payload.split("\nold:\n", 1)
+
+            if not path_part[len("path:"):].strip():
+                return text
+
+            old, _new = remainder.split("\nnew:\n", 1)
+
+            if not old:
+                return text
+
+        else:
+            return text
+
+    return text + "\nEND_CANDIDATE"
 
 
 def extract_candidate_contents(
     response: str,
-) -> tuple[CandidateProposal, dict[str, str]]:
-    text = str(
-        response
-        or ""
-    ).replace(
-        "\r\n",
-        "\n",
-    ).strip()
+) -> tuple[
+    CandidateProposal,
+    dict[str, str | CandidateUpdate],
+]:
+    text = normalize_complete_candidate_terminator(response)
 
-    if not text.startswith(
-        "CANDIDATE\n"
-    ):
+    if not text.startswith("CANDIDATE\n"):
         raise RecursiveEvolutionError(
             "local LLM candidate must begin with CANDIDATE"
         )
 
-    if not text.endswith(
-        "\nEND_CANDIDATE"
-    ):
+    if not text.endswith("\nEND_CANDIDATE"):
         raise RecursiveEvolutionError(
             "local LLM candidate must end with END_CANDIDATE"
         )
@@ -904,148 +1208,146 @@ def extract_candidate_contents(
         -len("\nEND_CANDIDATE")
     ]
 
-    parts = body.split(
-        "\nFILE\n"
-    )
+    first = re.search(r"\n(?:FILE|UPDATE)\n", body)
 
-    header = parts[0]
+    if first is None:
+        raise RecursiveEvolutionError(
+            "candidate contains no FILE blocks"
+        )
 
+    header = body[:first.start()]
+    block_text = body[first.start() + 1:]
     reason = ""
-    files: list[str] = []
-    verification: list[str] = []
-
-    mode = ""
 
     for raw_line in header.splitlines():
         line = raw_line.rstrip()
 
-        if line.startswith(
-            "reason:"
-        ):
-            reason = line[
-                len("reason:"):
-            ].strip()
-            mode = ""
-            continue
-
-        if line.strip() == "files:":
-            mode = "files"
-            continue
-
-        if line.strip() == "verification:":
-            mode = "verification"
-            continue
-
-        if line.startswith("- "):
-            value = line[2:].strip()
-
-            if mode == "files":
-                files.append(
-                    value
-                )
-
-            elif mode == "verification":
-                verification.append(
-                    value
-                )
+        if line.startswith("reason:"):
+            reason = line[len("reason:"):].strip()
+            break
 
     if not reason:
         raise RecursiveEvolutionError(
             "candidate reason is missing"
         )
 
-    if not files:
-        raise RecursiveEvolutionError(
-            "candidate files are missing"
-        )
-
-    if not verification:
-        raise RecursiveEvolutionError(
-            "candidate verification commands are missing"
-        )
-
-    proposal = CandidateProposal(
-        reason=reason,
-        files=tuple(
-            files
-        ),
-        verification=tuple(
-            verification
-        ),
+    contents: dict[str, str | CandidateUpdate] = {}
+    blocks = re.split(
+        r"\n(?=(?:FILE|UPDATE)\n)",
+        block_text,
     )
 
-    contents: dict[str, str] = {}
+    for block in blocks:
+        if block.startswith("FILE\n"):
+            if not block.endswith("\nEND_FILE"):
+                raise RecursiveEvolutionError(
+                    "candidate FILE block is incomplete"
+                )
 
-    for block in parts[1:]:
-        if "\nEND_FILE" not in block:
-            raise RecursiveEvolutionError(
-                "candidate FILE block is incomplete"
+            payload = block[len("FILE\n"):-len("\nEND_FILE")]
+            lines = payload.splitlines()
+
+            if len(lines) < 2:
+                raise RecursiveEvolutionError(
+                    "candidate FILE block is incomplete"
+                )
+
+            if not lines[0].startswith("path:"):
+                raise RecursiveEvolutionError(
+                    "candidate FILE block has no path"
+                )
+
+            relative = lines[0][len("path:"):].strip()
+
+            if not relative:
+                raise RecursiveEvolutionError(
+                    "candidate FILE block has empty path"
+                )
+
+            if lines[1].strip() != "content:":
+                raise RecursiveEvolutionError(
+                    "candidate FILE block has no content marker"
+                )
+
+            materialization: str | CandidateUpdate = "\n".join(lines[2:])
+
+            if materialization:
+                materialization += "\n"
+
+        elif block.startswith("UPDATE\n"):
+            if not block.endswith("\nEND_UPDATE"):
+                raise RecursiveEvolutionError(
+                    "candidate UPDATE block is incomplete"
+                )
+
+            payload = block[len("UPDATE\n"):-len("\nEND_UPDATE")]
+
+            if not payload.startswith("path:"):
+                raise RecursiveEvolutionError(
+                    "candidate UPDATE block has no path"
+                )
+
+            if "\nold:\n" not in payload:
+                raise RecursiveEvolutionError(
+                    "candidate UPDATE block has no old marker"
+                )
+
+            path_part, remainder = payload.split("\nold:\n", 1)
+            relative = path_part[len("path:"):].strip()
+
+            if not relative:
+                raise RecursiveEvolutionError(
+                    "candidate UPDATE block has empty path"
+                )
+
+            if "\nnew:\n" not in remainder:
+                raise RecursiveEvolutionError(
+                    "candidate UPDATE block has no new marker"
+                )
+
+            old, new = remainder.split("\nnew:\n", 1)
+
+            if not old:
+                raise RecursiveEvolutionError(
+                    "candidate UPDATE old text is empty"
+                )
+
+            materialization = CandidateUpdate(
+                old=old,
+                new=new,
             )
 
-        file_body, trailing = block.split(
-            "\nEND_FILE",
-            1,
+        else:
+            raise RecursiveEvolutionError(
+                "candidate contains an unknown materialization block"
+            )
+
+        resolve_candidate_path(
+            Path("/tmp/rsi-contract-root"),
+            relative,
         )
-
-        if trailing.strip():
-            raise RecursiveEvolutionError(
-                "unexpected content after END_FILE"
-            )
-
-        lines = file_body.splitlines()
-
-        if len(lines) < 3:
-            raise RecursiveEvolutionError(
-                "candidate FILE block is incomplete"
-            )
-
-        if not lines[0].startswith(
-            "path:"
-        ):
-            raise RecursiveEvolutionError(
-                "candidate FILE block has no path"
-            )
-
-        relative = lines[0][
-            len("path:"):
-        ].strip()
-
-        if lines[1].strip() != "content:":
-            raise RecursiveEvolutionError(
-                "candidate FILE block has no content marker"
-            )
-
-        content = "\n".join(
-            lines[2:]
-        )
-
-        if content:
-            content += "\n"
 
         if relative in contents:
+            if block.startswith("FILE\n"):
+                message = "candidate contains duplicate FILE block"
+            else:
+                message = "candidate contains duplicate UPDATE block"
+
             raise RecursiveEvolutionError(
-                "candidate contains duplicate FILE block"
+                message
             )
 
-        contents[
-            relative
-        ] = content
+        contents[relative] = materialization
 
-    declared = set(
-        proposal.files
-    )
-
-    supplied = set(
-        contents
-    )
-
-    if supplied != declared:
-        raise RecursiveEvolutionError(
-            "candidate FILE blocks do not match declared files"
-        )
+    files = tuple(contents.keys())
+    verification = derive_candidate_verification(files)
 
     return (
-        proposal,
+        CandidateProposal(
+            reason=reason,
+            files=files,
+            verification=verification,
+        ),
         contents,
     )
 
@@ -1132,6 +1434,30 @@ def parse_supervised_nifdu_review(
     response: str,
 ) -> SupervisedNifduReview:
     """Parse the strict external-review response fail-closed."""
+
+    # SOPHYANE_MODE4_INLINE_REASON_NORMALIZATION_V1
+    #
+    # Mode-4 reviewers may legally emit either:
+    #
+    #     REASON:
+    #     explanation
+    #
+    # or the compact equivalent:
+    #
+    #     REASON: explanation
+    #
+    # Normalize only the latter representation.  This changes no
+    # review authority or status semantics; it merely makes the
+    # parser insensitive to harmless field-line formatting.
+    import re as _mode4_review_re
+
+    response = _mode4_review_re.sub(
+        r"(?mi)^REASON:[ \t]*(?=\S)",
+        "REASON:\\n",
+        str(
+            response
+        ),
+    )
 
     raw = str(
         response
@@ -1252,6 +1578,58 @@ def parse_supervised_nifdu_review(
         next_instruction=next_instruction,
         reason=reason,
         evidence=evidence,
+    )
+
+
+
+# SOPHYANE_MODE4_RSI_INITIAL_INSTRUCTION_AUTHORITY_V1
+def build_initial_nifdu_instruction_prompt(
+    *,
+    original_goal: str,
+    evolution_context: str,
+    repository_summary: str = "",
+) -> str:
+    """Require Mode 4 to issue the first bounded Mode-3 operation."""
+
+    return (
+        "You are the external NIFDU/ChatGPT Mode-4 RSI controller "
+        "for Sophyane.\n\n"
+        "AUTHORITY CONTRACT:\n"
+        "- You decide the ONE bounded code-change instruction.\n"
+        "- Mode 3 is only the operational worker that performs your "
+        "instruction inside an isolated worktree.\n"
+        "- You do not execute commands or directly edit files.\n"
+        "- Sophyane independently performs deterministic verification, "
+        "held-out evaluation and acceptance gates.\n"
+        "- Do not stage, commit, merge, push, rebase, cherry-pick, "
+        "reset, restore, install packages or transfer files.\n\n"
+        "ORIGINAL RSI GOAL:\n"
+        + str(original_goal).strip()
+        + "\n\n"
+        "EXISTING SOPHYANE EVOLUTION EVIDENCE:\n"
+        + str(evolution_context).strip()
+        + "\n\n"
+        "REPOSITORY SUMMARY:\n"
+        + (
+            str(repository_summary).strip()
+            or "No additional repository summary supplied."
+        )
+        + "\n\n"
+        "Choose exactly ONE small concrete operation for Mode 3.\n"
+        "The instruction must identify a bounded implementation target "
+        "and must not delegate architectural choice back to Mode 3.\n"
+        "Do not claim success because no candidate has yet been "
+        "deterministically verified.\n\n"
+        "Return EXACTLY one of:\n\n"
+        "STATUS: CONTINUE\n"
+        "NEXT_MODE3_INSTRUCTION:\n"
+        "<one concise concrete bounded implementation instruction>\n"
+        "REASON:\n"
+        "<short evidence-grounded reason>\n\n"
+        "or:\n\n"
+        "STATUS: FAIL\n"
+        "REASON:\n"
+        "<specific reason a safe bounded instruction cannot be issued>\n"
     )
 
 
@@ -1448,6 +1826,37 @@ def create_mode3_local_provider():
                 ] = value
 
 
+# SOPHYANE_MODE4_CODEX_CANDIDATE_WORKER_AUTHORITY_V1
+def create_mode4_codex_candidate_provider(
+    repository: Path,
+):
+    """Create the read-only Codex worker for an explicit Mode-4.3 session."""
+
+    import os
+
+    from sophyane.providers.codex_cli import (
+        CodexCliProvider,
+    )
+
+    return CodexCliProvider(
+        workspace=Path(
+            repository
+        ).expanduser().resolve(),
+        model=(
+            os.environ.get(
+                "SOPHYANE_SESSION_MODEL"
+            )
+            or "codex-default"
+        ),
+        timeout=int(
+            os.environ.get(
+                "SOPHYANE_SESSION_TIMEOUT"
+            )
+            or "300"
+        ),
+    )
+
+
 def load_nifdu_supervisory_reviewer(
     selection_path: Path | None = None,
 ):
@@ -1486,6 +1895,32 @@ def load_nifdu_supervisory_reviewer(
             "",
         )
     ).expanduser().resolve()
+
+    # SOPHYANE_NIFDU_CANONICAL_TRACKED_BRIDGE_AUTHORITY_V1
+    #
+    # Historical NIFDU discovery persisted a copied ChatGPT bridge under
+    # ~/.local/share/sophyane-chatgpt-loop/chatgpt_cdp.py.
+    #
+    # That copy can become stale after the packaged bridge receives response
+    # freshness, timeout, safety or authority fixes.  The selection record is
+    # therefore treated as discovery metadata, not source-code authority, for
+    # this one known legacy bridge location.
+    #
+    # Genuine custom NIFDU modules remain untouched.
+    legacy_bridge = (
+        Path.home()
+        / ".local"
+        / "share"
+        / "sophyane-chatgpt-loop"
+        / "chatgpt_cdp.py"
+    ).expanduser().resolve()
+
+    if module_path == legacy_bridge:
+        module_path = (
+            Path(__file__).resolve().parent
+            / "providers"
+            / "nifdu_cdp_bridge.py"
+        ).resolve()
 
     if not module_path.is_file():
         raise RecursiveEvolutionError(
@@ -1595,6 +2030,65 @@ def load_nifdu_supervisory_reviewer(
     return review
 
 
+# SOPHYANE_MODE4_SUPERVISORY_PROVIDER_AUTHORITY_V1
+def load_mode4_supervisory_reviewer(
+    *,
+    repository: Path,
+):
+    """Load the reviewer selected by the explicit Mode-4 submode."""
+
+    import os
+
+    mode = str(
+        os.environ.get(
+            "SOPHYANE_SESSION_MODE"
+        )
+        or ""
+    ).strip().lower()
+
+    if mode in {
+        "codex",
+        "codex_cli",
+    }:
+        from sophyane.providers.codex_cli import (
+            CodexCliProvider,
+        )
+
+        provider = CodexCliProvider(
+            workspace=repository,
+            model=(
+                os.environ.get(
+                    "SOPHYANE_SESSION_MODEL"
+                )
+                or "codex-default"
+            ),
+            timeout=int(
+                os.environ.get(
+                    "SOPHYANE_SESSION_TIMEOUT"
+                )
+                or "300"
+            ),
+        )
+
+        def review(
+            prompt: str,
+        ) -> str:
+            return provider.generate(
+                prompt,
+                (
+                    "You are Sophyane's external Mode-4 "
+                    "supervisory reviewer. Select or review "
+                    "exactly one bounded operation. Remain "
+                    "read-only; Sophyane owns mutation and "
+                    "deterministic verification."
+                ),
+            )
+
+        return review
+
+    return load_nifdu_supervisory_reviewer()
+
+
 def _safe_git_head(
     repository: Path,
 ) -> str:
@@ -1621,6 +2115,229 @@ def _safe_git_head(
 
     return result.stdout.strip()
 
+
+
+# SOPHYANE_MODE4_RSI_REPOSITORY_GROUNDING_V1
+def _bounded_mode4_repository_summary(
+    repository: Path,
+    objective: str,
+    *,
+    maximum_files: int = 12,
+    maximum_chars: int = 12000,
+) -> str:
+    """Build bounded read-only source evidence for Mode-4 RSI selection.
+
+    Mode 4 owns code-change selection. Therefore it must receive enough real
+    repository evidence to identify a concrete bounded target instead of
+    guessing from the objective alone.
+
+    This helper is deliberately read-only and bounded. It does not give Mode 3
+    architectural authority and does not mutate the authoritative repository.
+    """
+
+    import re
+    import subprocess
+
+    root = Path(
+        repository
+    ).expanduser().resolve()
+
+    objective_text = str(
+        objective
+        or ""
+    ).casefold()
+
+    tokens = {
+        item
+        for item in re.findall(
+            r"[a-z0-9_]{3,}",
+            objective_text,
+        )
+        if item
+        not in {
+            "the",
+            "and",
+            "for",
+            "with",
+            "only",
+            "one",
+            "current",
+            "existing",
+            "small",
+            "tiny",
+            "change",
+            "improvement",
+            "source",
+        }
+    }
+
+    tokens.update(
+        {
+            "mode3",
+            "mode4",
+            "rsi",
+            "recursive",
+            "evolution",
+            "nifdu",
+        }
+    )
+
+    try:
+        listed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "src/sophyane",
+                "tests",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.splitlines()
+
+    except Exception:
+        listed = []
+
+    candidates = []
+
+    for relative in listed:
+        relative = str(
+            relative
+        ).strip()
+
+        if not relative.endswith(
+            ".py"
+        ):
+            continue
+
+        candidate = (
+            root
+            / relative
+        )
+
+        if not candidate.is_file():
+            continue
+
+        try:
+            text = candidate.read_text(
+                encoding="utf-8",
+                errors="replace",
+            )
+
+        except OSError:
+            continue
+
+        lower_path = (
+            relative.casefold()
+        )
+
+        lower_text = (
+            text.casefold()
+        )
+
+        score = 0
+
+        for token in tokens:
+            if token in lower_path:
+                score += 20
+
+            occurrences = lower_text.count(
+                token
+            )
+
+            score += min(
+                occurrences,
+                20,
+            )
+
+        if score <= 0:
+            continue
+
+        evidence_lines = []
+
+        for number, line in enumerate(
+            text.splitlines(),
+            start=1,
+        ):
+            lower_line = line.casefold()
+
+            if any(
+                token in lower_line
+                for token in tokens
+            ):
+                evidence_lines.append(
+                    f"{number}: {line[:260]}"
+                )
+
+            if len(
+                evidence_lines
+            ) >= 14:
+                break
+
+        candidates.append(
+            (
+                score,
+                relative,
+                evidence_lines,
+            )
+        )
+
+    candidates.sort(
+        key=lambda item: (
+            -item[0],
+            item[1],
+        )
+    )
+
+    lines = [
+        "MODE4_BOUNDED_REPOSITORY_EVIDENCE",
+        (
+            "repository="
+            + str(root)
+        ),
+    ]
+
+    for score, relative, evidence_lines in candidates[
+        : max(
+            1,
+            int(maximum_files),
+        )
+    ]:
+        lines.append(
+            (
+                "FILE="
+                + relative
+                + " SCORE="
+                + str(score)
+            )
+        )
+
+        lines.extend(
+            evidence_lines
+        )
+
+    if len(lines) == 2:
+        lines.append(
+            "No relevant tracked Python source evidence was discovered."
+        )
+
+    lines.append(
+        "END_MODE4_BOUNDED_REPOSITORY_EVIDENCE"
+    )
+
+    result = "\n".join(
+        lines
+    )
+
+    return result[
+        : max(
+            1000,
+            int(maximum_chars),
+        )
+    ]
 
 
 def _existing_evolution_context(
@@ -2414,27 +3131,61 @@ def run_supervised_mode3_nifdu_rsi(
         )
     )
 
-    provider = (
-        local_provider
-        if local_provider is not None
-        else create_mode3_local_provider()
+    # SOPHYANE_RSI_CANDIDATE_PROVIDER_SELECTION_V1
+    #
+    # Mode 3 remains the operational apply/verify authority. In an explicit
+    # Mode-4.3 session, Codex may produce the strict candidate text while
+    # remaining read-only. Sophyane alone applies and verifies that text in
+    # the isolated worktree.
+    import os
+
+    session_mode = str(
+        os.environ.get(
+            "SOPHYANE_SESSION_MODE"
+        )
+        or ""
+    ).strip().lower()
+
+    use_codex_candidate_worker = (
+        local_provider is None
+        and session_mode in {
+            "codex",
+            "codex_cli",
+        }
     )
 
-    assert_mode3_local_provider(
-        provider
-    )
+    if use_codex_candidate_worker:
+        provider = create_mode4_codex_candidate_provider(
+            root
+        )
+        candidate_provider_id = "codex_cli"
+
+    else:
+        provider = (
+            local_provider
+            if local_provider is not None
+            else create_mode3_local_provider()
+        )
+
+        assert_mode3_local_provider(
+            provider
+        )
+
+        candidate_provider_id = "local_gguf"
 
     reviewer = (
         nifdu_reviewer
         if nifdu_reviewer is not None
-        else load_nifdu_supervisory_reviewer()
+        else load_mode4_supervisory_reviewer(
+            repository=root,
+        )
     )
 
     if not callable(
         reviewer
     ):
         raise RecursiveEvolutionError(
-            "NIFDU reviewer is not callable"
+            "Mode-4 reviewer is not callable"
         )
 
     baseline_head = (
@@ -2445,9 +3196,246 @@ def run_supervised_mode3_nifdu_rsi(
         else ""
     )
 
-    instruction = str(
-        objective
+    # SOPHYANE_MODE4_RSI_FIRST_INSTRUCTION_GATE_V1
+    #
+    # Mode 3 must never originate the first source-code improvement.
+    # Before any local candidate generation, Mode 4 receives the original
+    # goal plus Sophyane's existing evolution evidence and chooses exactly
+    # one bounded operation for the Mode-3 worker.
+    initial_evolution_context = (
+        _existing_evolution_context(
+            root
+        )
+    )
+
+    # SOPHYANE_MODE4_RSI_INITIAL_GROUNDED_SELECTION_V1
+    #
+    # Mode 4 is the source-change selection authority. When its caller does
+    # not provide an explicit repository summary, supply bounded real source
+    # evidence automatically before asking it to choose the first operation.
+    # Mode 3 remains only the worker that executes the resulting instruction.
+    effective_repository_summary = str(
+        repository_summary
+        or ""
     ).strip()
+
+    if not effective_repository_summary:
+        effective_repository_summary = (
+            _bounded_mode4_repository_summary(
+                root,
+                objective,
+            )
+        )
+
+    # SOPHYANE_GLOBAL_TXQ_MODE4_INITIAL_V1
+    #
+    # Global TXQ governs resource/latency/context policy only.
+    # Mode 4 retains first source-change selection authority.
+    from sophyane.global_txq import (
+        mode4_txq_context,
+    )
+
+    (
+        mode4_initial_txq_policy,
+        mode4_initial_txq_context,
+    ) = mode4_txq_context(
+        objective
+    )
+
+    # SOPHYANE_MODE4_MODE3_LATENCY_OVERLAP_V2
+    #
+    # While the external Mode-4 reviewer is waiting on browser/API latency,
+    # Mode 3 may spend otherwise-idle local inference time collecting
+    # READ-ONLY repository evidence.
+    #
+    # This worker cannot select or materialize a change.
+    # Mode 4 remains the first source-change selection authority.
+    #
+    from sophyane.global_txq import (
+        readonly_speculation_contract,
+    )
+
+    from sophyane.global_txq_speculation import (
+        matching_speculative_context,
+        start_readonly_speculation,
+    )
+
+    # SOPHYANE_MODE3_SPECULATION_SINGLE_FLIGHT_ADMISSION_V1
+    #
+    # Read-only speculation is optional latency overlap. It may borrow the
+    # local llama lane only when that lane is already idle.
+    #
+    # Never queue a short speculative request behind an authorized local
+    # generation. On a one-slot mobile llama-server that produces timeout /
+    # cancellation churn without useful overlap.
+    #
+    # Reuse local_server's existing /slots interpretation. A zero-duration
+    # wait performs one admission probe; it does not wait for a busy lane to
+    # become idle. Failure to prove idleness fails closed by skipping optional
+    # speculation while Mode 4 continues normally.
+    from sophyane.local_server import (
+        wait_until_idle as _mode3_speculation_slot_idle,
+    )
+
+    speculative_slot_available = False
+
+    if (
+        candidate_provider_id == "local_gguf"
+        and mode4_initial_txq_policy.allow_speculative_readonly
+        and mode4_initial_txq_policy.max_speculative_loops > 0
+    ):
+        try:
+            speculative_slot_available = (
+                _mode3_speculation_slot_idle(
+                    timeout=0.0,
+                    poll_interval=0.05,
+                )
+            )
+        except Exception:
+            speculative_slot_available = False
+
+    speculative_worker = (
+        start_readonly_speculation(
+            provider=provider,
+            prompt=(
+                readonly_speculation_contract(
+                    objective,
+                    maximum_items=8,
+                )
+                + "\n\n"
+                + effective_repository_summary[
+                    :mode4_initial_txq_policy.context_budget_chars
+                ]
+            ),
+            max_loops=(
+                mode4_initial_txq_policy.max_speculative_loops
+            ),
+            context_budget_chars=(
+                mode4_initial_txq_policy.context_budget_chars
+            ),
+            speculative_timeout_sec=(
+                mode4_initial_txq_policy.speculative_timeout_sec
+            ),
+            speculative_max_tokens=(
+                mode4_initial_txq_policy.speculative_max_tokens
+            ),
+        )
+        if speculative_slot_available
+        else None
+    )
+
+    try:
+        initial_review_response = str(
+            reviewer(
+                build_initial_nifdu_instruction_prompt(
+                    original_goal=objective,
+                    evolution_context=(
+                        initial_evolution_context
+                        + "\n\n"
+                        + mode4_initial_txq_context
+                    ),
+                    repository_summary=(
+                        effective_repository_summary[
+                            :mode4_initial_txq_policy.context_budget_chars
+                        ]
+                    ),
+                )
+            )
+        )
+
+    finally:
+        #
+        # Mode 4 has returned (or failed). Stop future speculative loops.
+        #
+        if speculative_worker is not None:
+            speculative_worker.cancel()
+
+    initial_review = (
+        parse_supervised_nifdu_review(
+            initial_review_response
+        )
+    )
+
+    if initial_review.status == "SUCCESS":
+        raise RecursiveEvolutionError(
+            "Mode-4 initial RSI review cannot declare SUCCESS "
+            "before deterministic candidate verification"
+        )
+
+    if initial_review.status == "FAIL":
+        return SupervisedRsiResult(
+            success=False,
+            stop_reason=(
+                "mode4_initial_fail: "
+                + initial_review.reason
+            ),
+            iterations=(),
+        )
+
+    if initial_review.status != "CONTINUE":
+        raise RecursiveEvolutionError(
+            "Mode-4 initial RSI review did not provide "
+            "a bounded Mode-3 instruction"
+        )
+
+    instruction = str(
+        initial_review.next_instruction
+    ).strip()
+
+    if not instruction:
+        raise RecursiveEvolutionError(
+            "Mode-4 initial RSI instruction is empty"
+        )
+
+    # SOPHYANE_MODE3_SPECULATION_DRAIN_BEFORE_MUTATION_V2
+    #
+    # The local llama server is commonly single-flight. An in-flight
+    # speculative call must leave that lane before authoritative Mode-3
+    # candidate generation begins.
+    #
+    speculative_evidence = ()
+
+    if speculative_worker is not None:
+        drained = speculative_worker.drain(
+            timeout_sec=(
+                max(
+                    5.0,
+                    min(
+                        60.0,
+                        float(
+                            mode4_initial_txq_policy.wall_time_budget_sec
+                        )
+                        * 0.5,
+                    ),
+                )
+            )
+        )
+
+        if not drained:
+            raise RecursiveEvolutionError(
+                "Mode-3 speculative read-only worker did not drain "
+                "before authorized candidate generation"
+            )
+
+        speculative_evidence = (
+            speculative_worker.evidence()
+        )
+
+    matched_speculative_context = (
+        matching_speculative_context(
+            evidence=speculative_evidence,
+            instruction=instruction,
+            maximum_chars=(
+                max(
+                    1000,
+                    int(
+                        mode4_initial_txq_policy.context_budget_chars
+                        * 0.35
+                    ),
+                )
+            ),
+        )
+    )
 
     history: list[
         SupervisedRsiIteration
@@ -2512,7 +3500,7 @@ def run_supervised_mode3_nifdu_rsi(
                 )
 
                 (
-                    grounded_instruction,
+                    txq_augmented_instruction,
                     txq_policy,
                 ) = apply_txq_to_instruction(
                     grounded_instruction,
@@ -2521,6 +3509,20 @@ def run_supervised_mode3_nifdu_rsi(
                         evolution_context
                     ),
                 )
+
+                # SOPHYANE_MODE3_CANDIDATE_CONTRACT_ISOLATION_V1
+                #
+                # TXQ is controller-side policy/evidence. The local candidate
+                # worker must receive the bounded implementation instruction,
+                # not the rendered MODE3_TXQ_POLICY grammar, because its output
+                # has exactly one authoritative format:
+                #
+                #     CANDIDATE ... END_CANDIDATE
+                #
+                # Keep the rendered TXQ instruction available for controller
+                # accounting without feeding that competing format into the
+                # candidate materialization prompt.
+                candidate_instruction = grounded_instruction
 
                 # SOPHYANE_MODE3_AGENTIC_MEMORY_RETRIEVAL_V1
                 #
@@ -2533,10 +3535,10 @@ def run_supervised_mode3_nifdu_rsi(
                 )
 
                 (
-                    grounded_instruction,
+                    memory_augmented_instruction,
                     mode3_retrieved_memories,
                 ) = augment_instruction_with_memory(
-                    grounded_instruction,
+                    candidate_instruction,
                     objective=objective,
                     difficulty=(
                         txq_policy.difficulty
@@ -2549,40 +3551,64 @@ def run_supervised_mode3_nifdu_rsi(
                     ),
                 )
 
+                # Verified historical memory remains available to the
+                # controller, but candidate generation stays grammar-pure.
+                # A small local worker must not choose between repository
+                # memory prose and the strict CANDIDATE materialization form.
+
                 txq_iteration_started = (
                     _mode3_txq_time.monotonic()
                 )
 
                 candidate_prompt = (
                     build_real_local_llm_candidate_prompt(
-                        objective=grounded_instruction,
+                        objective=candidate_instruction,
                         repository_summary=(
-                            str(
-                                repository_summary
-                            ).strip()
-                            or (
-                                "Sophyane bounded recursive improvement. "
-                                "Operate only inside the supplied detached "
-                                "candidate worktree."
-                            )
+                            (
+    (
+        effective_repository_summary
+    )
+    + (
+        (
+            "\n\n"
+            + matched_speculative_context
+        )
+        if matched_speculative_context
+        else ""
+    )
+)
                         ),
                     )
                 )
 
+                worker_identity = (
+                    "You are Sophyane's read-only Codex candidate worker. "
+                    if candidate_provider_id == "codex_cli"
+                    else
+                    "You are Sophyane Mode-3 local operations worker. "
+                )
+
                 system_prompt = (
-                    "You are Sophyane Mode-3 local candidate worker. "
-                    "Perform only the ONE bounded instruction supplied. "
-                    "Return only the existing strict candidate contract. "
+                    worker_identity
+                    + "Mode 4 is the code-change instruction authority. "
+                    "You may implement only the ONE bounded instruction supplied. "
+                    "Do not select a different improvement or broaden scope. "
+                    "Return only the strict bounded FILE/UPDATE contract. "
+                    "Your first line must be CANDIDATE and your final line "
+                    "must be END_CANDIDATE. "
+                    "The second line must start with reason:. "
+                    "Use UPDATE with path, old, new, and END_UPDATE for "
+                    "existing files. Use FILE with path, content, and "
+                    "END_FILE only for genuinely new files. "
+                    "Do not emit files:, verification:, commands, or JSON. "
+                    "Never use triple-backtick code fences, including inside "
+                    "the candidate contract. "
+                    "Do not emit JSON, markdown commentary, policy metadata, "
+                    "memory actions, or text outside that contract. "
                     "Do not claim execution. "
                     "Do not stage, commit, merge, push, rebase, "
                     "cherry-pick, reset, restore, install packages, "
-                    "or transfer files externally. "
-                    "SOPHYANE_MODE3_MEMORY_ACTION_CONTRACT_V1 "
-                    "If durable memory behavior is materially useful, you MAY "
-                    "append exactly one MEMORY_ACTION_JSON object. "
-                    "Allowed actions are STORE, RETRIEVE, UPDATE, SUMMARIZE, "
-                    "DISCARD, CONSOLIDATE, PROMOTE, DEMOTE. "
-                    "A memory proposal is not truth and Sophyane may reject it."
+                    "or transfer files externally."
                 )
 
                 try:
@@ -2599,16 +3625,28 @@ def run_supervised_mode3_nifdu_rsi(
                         )
                     )
 
-                    if str(
+                    observed_candidate_provider = str(
                         getattr(
                             provider,
                             "last_provider",
                             "",
                         )
+                        or getattr(
+                            provider,
+                            "provider_id",
+                            "",
+                        )
                         or ""
-                    ).strip().lower() != "local_gguf":
+                    ).strip().lower()
+
+                    if (
+                        observed_candidate_provider
+                        != candidate_provider_id
+                    ):
                         raise RecursiveEvolutionError(
-                            "candidate was not generated by local_gguf"
+                            "candidate provider authority mismatch: "
+                            f"expected {candidate_provider_id}, "
+                            f"observed {observed_candidate_provider or 'unknown'}"
                         )
 
                     proposal, contents = (
@@ -2782,6 +3820,28 @@ def run_supervised_mode3_nifdu_rsi(
                     "\n\n"
                     + txq_meta_context
                 )
+                # SOPHYANE_GLOBAL_TXQ_MODE4_FINAL_V1
+                (
+                    mode4_final_txq_policy,
+                    mode4_final_txq_context,
+                ) = mode4_txq_context(
+                    objective,
+                    observed_latency_sec=(
+                        txq_elapsed_sec
+                    ),
+                )
+
+                review_verification_evidence += (
+                    "\n\n"
+                    + mode4_final_txq_context
+                )
+
+                review_verification_evidence = (
+                    review_verification_evidence[
+                        -mode4_final_txq_policy.context_budget_chars:
+                    ]
+                )
+
                 review_prompt = (
                     build_supervised_nifdu_review_prompt(
                         original_goal=objective,
@@ -2805,11 +3865,45 @@ def run_supervised_mode3_nifdu_rsi(
                     )
                 )
 
-                review = (
-                    parse_supervised_nifdu_review(
-                        review_response
+                # SOPHYANE_MODE4_RAW_REVIEW_EVIDENCE_V1
+                #
+                # Preserve the exact external reviewer response before strict
+                # parsing. A malformed or prematurely captured NIFDU response
+                # must remain observable rather than disappearing behind the
+                # parser exception.
+                raw_review_path = (
+                    Path(
+                        workspace
                     )
+                    / ".sophyane-mode4-review-response.txt"
                 )
+
+                raw_review_path.write_text(
+                    review_response,
+                    encoding="utf-8",
+                )
+
+                try:
+                    review = (
+                        parse_supervised_nifdu_review(
+                            review_response
+                        )
+                    )
+
+                except Exception as review_error:
+                    raise RecursiveEvolutionError(
+                        "Mode-4 supervisory response failed strict parsing. "
+                        "RAW_RESPONSE_BEGIN\n"
+                        + review_response
+                        + "\nRAW_RESPONSE_END\n"
+                        + type(
+                            review_error
+                        ).__name__
+                        + ": "
+                        + str(
+                            review_error
+                        )
+                    ) from review_error
                 # SOPHYANE_MODE3_TXQ_OBSERVATION_V3
                 #
                 # Learn from the actual candidate identity.

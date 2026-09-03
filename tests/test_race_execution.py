@@ -684,3 +684,225 @@ def test_usable_textual_winner_with_browser_presentation_does_not_rerace(tmp_pat
     )
     assert result.ok
     assert len(calls) == 1
+
+
+def test_verified_success_emits_provenance_rich_learning_event(tmp_path, monkeypatch):
+    import hashlib
+    import sophyane.race_execution as execution
+    import sophyane.sli_learner as learner
+
+    captured = []
+    monkeypatch.setattr(learner, "learn_execution", lambda **kwargs: captured.append(kwargs) or {"quality_reward": 1.0})
+
+    result = run_race_apply_verify(
+        "Create a verified artifact",
+        workspace=tmp_path,
+        config={},
+        race_runner=lambda *args, **kwargs: race_with_action(
+            {"type": "write_file", "path": "artifact.html", "content": "<h1>ok</h1>"},
+            worker="api:gemini",
+        ),
+        verifier=lambda workspace: [
+            VerificationResult(True, ("pytest",), 0, "passed structural verification")
+        ],
+    )
+
+    assert result.ok
+    assert len(captured) == 1
+    event = captured[0]["provenance"]
+    assert event["original_objective"] == "Create a verified artifact"
+    assert event["objective_hash"] == hashlib.sha256(
+        b"Create a verified artifact"
+    ).hexdigest()
+    assert event["accepted"] is True
+    assert event["verification_state"] == "verified"
+    assert event["changed_paths"] == ["artifact.html"]
+    assert event["artifact_paths"] == ["artifact.html"]
+    assert event["provider_identity"] == "api:gemini"
+    assert event["capability_class"] == "external_api"
+    assert event["verification_evidence"][0]["output"] == "passed structural verification"
+    assert result.learning_event["objective_hash"] == event["objective_hash"]
+
+
+def test_verification_failure_emits_no_positive_learning_event(tmp_path, monkeypatch):
+    import sophyane.sli_learner as learner
+
+    calls = []
+    monkeypatch.setattr(learner, "learn_execution", lambda **kwargs: calls.append(kwargs))
+    result = run_race_apply_verify(
+        "Create an invalid artifact",
+        workspace=tmp_path,
+        config={},
+        max_rounds=1,
+        race_runner=lambda *args, **kwargs: race_with_action(
+            {"type": "write_file", "path": "bad.html", "content": "bad"}
+        ),
+        verifier=lambda workspace: [
+            VerificationResult(False, ("pytest",), 1, "validation failed")
+        ],
+    )
+    assert not result.ok
+    assert calls == []
+    assert result.learning_event is None
+
+
+def test_verified_learning_event_is_idempotent(tmp_path, monkeypatch):
+    import sqlite3
+    from contextlib import contextmanager
+    import sophyane.sli as sqlite_sli
+    import sophyane.sli_learner as learner
+
+    database = tmp_path / "sli.db"
+
+    @contextmanager
+    def connect():
+        db = sqlite3.connect(database)
+        db.row_factory = sqlite3.Row
+        sqlite_sli.initialize(db)
+        try:
+            yield db
+        finally:
+            db.close()
+
+    monkeypatch.setattr(learner.sli, "connect", connect)
+    monkeypatch.setattr(learner.sli, "selected_backend", lambda: "sqlite")
+    monkeypatch.setattr(learner.sli, "atomic_learning_enabled", lambda: False)
+    monkeypatch.setattr(learner.sli, "synchronize_rollback_mirror", lambda: None)
+
+    provenance = {
+        "objective_hash": "h" * 64,
+        "original_objective": "same objective",
+        "status": "succeeded",
+        "verification_state": "verified",
+        "verification_evidence": [{"ok": True}],
+        "accepted": True,
+        "workspace": str(tmp_path),
+        "changed_paths": ["artifact.html"],
+        "artifact_paths": ["artifact.html"],
+        "provider_identity": "api:test",
+        "capability_class": "external_api",
+        "result": "verified",
+    }
+    kwargs = dict(
+        request="same objective", workspace_before={}, workspace_after={"artifact.html": "x"},
+        status="succeeded", reward=1.0, result="verified", elapsed_seconds=0.0, provenance=provenance,
+    )
+    first = learner.learn_execution(trace_id="first", **kwargs)
+    second = learner.learn_execution(trace_id="second", **kwargs)
+    assert first.get("deduplicated") is not True
+    assert second["deduplicated"] is True
+    with sqlite3.connect(database) as db:
+        row = db.execute(
+            "SELECT provenance_json FROM learned_execution_traces"
+        ).fetchone()
+    assert row is not None
+    assert '"objective_hash":"' + ("h" * 64) in row[0]
+    assert '"verification_state":"verified"' in row[0]
+
+
+def test_terminal_apply_failure_emits_no_positive_learning_event(tmp_path, monkeypatch):
+    import sophyane.sli_learner as learner
+
+    calls = []
+    monkeypatch.setattr(learner, "learn_execution", lambda **kwargs: calls.append(kwargs))
+    result = run_race_apply_verify(
+        "Write safely",
+        workspace=tmp_path,
+        config={},
+        max_rounds=1,
+        race_runner=lambda *args, **kwargs: race_with_action(
+            {"type": "write_file", "path": "../forbidden.txt", "content": "x"}
+        ),
+    )
+    assert not result.ok
+    assert calls == []
+    assert result.learning_event is None
+
+
+def test_verified_learning_triggers_explicit_promotion_without_rerouting(tmp_path, monkeypatch):
+    import sqlite3
+    from contextlib import contextmanager
+    import sophyane.sli as sqlite_sli
+    import sophyane.sli_learner as learner
+
+    database = tmp_path / "sli.db"
+    artifact = tmp_path / "artifact.html"
+    artifact.write_text("<h1>verified</h1>", encoding="utf-8")
+
+    @contextmanager
+    def connect():
+        db = sqlite3.connect(database)
+        db.row_factory = sqlite3.Row
+        sqlite_sli.initialize(db)
+        try:
+            yield db
+        finally:
+            db.close()
+
+    monkeypatch.setattr(learner.sli, "connect", connect)
+    monkeypatch.setattr(learner.sli, "selected_backend", lambda: "sqlite")
+    monkeypatch.setattr(learner.sli, "atomic_learning_enabled", lambda: False)
+    monkeypatch.setattr(learner.sli, "synchronize_rollback_mirror", lambda: None)
+    promotions = []
+    monkeypatch.setattr(
+        "sophyane.code_memory.promote_success.promote_workspace",
+        lambda *args, **kwargs: promotions.append((args, kwargs)) or {"ok": True, "chunks_added": 1},
+    )
+
+    provenance = {
+        "objective_hash": "a" * 64,
+        "original_objective": "create verified artifact",
+        "status": "succeeded",
+        "verification_state": "verified",
+        "verification_evidence": [{"ok": True, "command": ["pytest"]}],
+        "accepted": True,
+        "workspace": str(tmp_path),
+        "changed_paths": ["artifact.html"],
+        "artifact_paths": ["artifact.html"],
+        "repository_identity": "repo-a",
+        "provider_identity": "api:test",
+        "capability_class": "external_api",
+    }
+    result = learner.learn_execution(
+        trace_id="verified-promotion", request="create verified artifact",
+        workspace_before={}, workspace_after={"artifact.html": "hash"},
+        status="succeeded", reward=1.0, result="verified", elapsed_seconds=0.0,
+        provenance=provenance,
+    )
+    assert result["promotion"]["ok"] is True
+    assert len(promotions) == 1
+    assert promotions[0][1]["paths"] == ["artifact.html"]
+    assert promotions[0][1]["provenance"]["repository_identity"] == "repo-a"
+
+
+def test_verified_promotion_writes_retrievable_chunk_with_provenance(tmp_path, monkeypatch):
+    from sophyane.code_memory.promote_success import promote_workspace
+    from sophyane.code_memory.store import ChunkStore
+
+    memory_root = tmp_path / "memory"
+    monkeypatch.setenv("SOPHYANE_HOME", str(memory_root))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    source = workspace / "artifact.py"
+    source.write_text(
+        "def verified_artifact(value):\n    return value * 2\n\n"
+        "# deterministic verified output\n",
+        encoding="utf-8",
+    )
+    provenance = {
+        "accepted": True,
+        "verification_state": "verified",
+        "objective_hash": "b" * 64,
+        "repository_identity": "repo-b",
+    }
+    report = promote_workspace(
+        workspace, request="create artifact",
+        report="success: true validation: passed",
+        paths=["artifact.py"], provenance=provenance,
+    )
+    assert report["ok"] is True
+    store = ChunkStore()
+    chunks = [chunk for chunk in store.chunks.values() if Path(chunk.path).name == "artifact.py"]
+    assert chunks
+    assert chunks[0].meta["verified_provenance"]["repository_identity"] == "repo-b"
+    assert chunks[0].meta["verified_provenance"]["objective_hash"] == "b" * 64

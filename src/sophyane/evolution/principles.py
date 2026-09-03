@@ -332,6 +332,73 @@ class PrincipleStore:
 
         self._save(data)
 
+    def record_verified_success_principle(
+        self,
+        records: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Synthesize deterministic scoped principles from trusted events.
+
+        This is analysis-only.  Callers must already have applied the
+        canonical verified-history admission gate.  A principle requires two
+        distinct event identities in one compatible capability/repository
+        scope; it never grants candidate or mutation authority.
+        """
+        groups: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
+        for record in records or []:
+            capability = str(record.get("capability_class") or "").strip().casefold()
+            repository = str(record.get("repository_identity") or "").strip().casefold()
+            identity = str(record.get("event_key") or record.get("trace_id") or "").strip()
+            if not capability or not identity:
+                continue
+            groups.setdefault((capability, repository), {})[identity] = record
+
+        data = self._load()
+        synthesized: list[dict[str, Any]] = []
+        for (capability, repository), events in sorted(groups.items()):
+            if len(events) < 2:
+                continue
+            scope = repository or "repository-independent"
+            principle = (
+                f"Verified execution pattern for capability {capability} "
+                f"within {scope}: deterministic verification succeeded "
+                "across distinct objectives."
+            )
+            principle = self._safe_principle(principle)
+            if not principle:
+                continue
+            pid = principle_id(capability, principle)
+            item = data["principles"].setdefault(pid, {
+                "id": pid, "component": capability, "capabilities": [capability],
+                "principle": principle, "observations": 0, "distinct_tasks": [],
+                "maximum_confidence": 0.80, "evidence_samples": [],
+                "first_seen": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "last_seen": "", "status": "candidate",
+                "origin": "verified_execution",
+                "repository_identity": repository or None,
+                "supporting_event_keys": [],
+            })
+            item["origin"] = "verified_execution"
+            item["repository_identity"] = repository or None
+            item.setdefault("supporting_event_keys", [])
+            for identity, event in sorted(events.items()):
+                if identity in item["supporting_event_keys"]:
+                    continue
+                item["supporting_event_keys"].append(identity)
+                objective = str(event.get("objective_hash") or identity).strip()
+                if objective and objective not in item["distinct_tasks"]:
+                    item["distinct_tasks"].append(objective)
+                item["observations"] = int(item.get("observations", 0)) + 1
+            item["supporting_event_keys"] = item["supporting_event_keys"][-100:]
+            item["distinct_tasks"] = item["distinct_tasks"][-100:]
+            item["last_seen"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            if len(item["distinct_tasks"]) >= 2 and float(item.get("maximum_confidence", 0.0)) >= 0.65:
+                item["status"] = "recurrent"
+            synthesized.append(dict(item))
+
+        if synthesized:
+            self._save(data)
+        return synthesized
+
     def patch_eligible(
         self,
         *,
@@ -377,6 +444,29 @@ class PrincipleStore:
             )
             >= 0.65
         )
+
+    @classmethod
+    def read_recurrent_principles(
+        cls,
+        repo: Path,
+        *,
+        limit: int = 32,
+    ) -> list[dict[str, Any]]:
+        """Read recurrent principles without initializing or mutating a store."""
+        path = Path(repo).expanduser().resolve() / ".sophyane-evolution" / "principles.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return []
+        rows = data.get("principles", {}) if isinstance(data, dict) else {}
+        if not isinstance(rows, dict):
+            return []
+        result = [
+            dict(item)
+            for item in rows.values()
+            if isinstance(item, dict) and item.get("status") == "recurrent"
+        ]
+        return result[: max(1, min(int(limit), 32))]
 
     def recurrent_principles(
         self,

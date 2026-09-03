@@ -928,6 +928,22 @@ def _project_continuation(message: str, has_project: bool) -> bool:
     return any(marker in text for marker in markers)
 
 
+def _is_browser_result_followup(message: str, has_result: bool) -> bool:
+    """Recognize presentation of an immediately prior successful result."""
+    if not has_result:
+        return False
+    text = " ".join(str(message or "").casefold().split())
+    if not re.match(r"^(?:open|reopen|preview|show)\b", text):
+        return False
+    return any(
+        marker in f" {text} "
+        for marker in (
+            " browser ", " it ", " this ", " output ",
+            " demo ", " project ", " site ", " page ",
+        )
+    )
+
+
 def _render_nonexecuting_response(text: str) -> str:
     plan = extract_plan(text)
     if not plan:
@@ -2266,6 +2282,28 @@ def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
 
                     from sophyane.runtime_orchestration_patch import _snapshot
 
+                    prior = getattr(
+                        tui_holder["app"],
+                        "_last_successful_result_context",
+                        None,
+                    )
+                    if _is_browser_result_followup(
+                        message,
+                        bool(prior),
+                    ):
+                        from sophyane.execution_runtime import execute_action
+
+                        ok, output = execute_action(
+                            {"type": "open_browser"},
+                            Path(str(prior["workspace"])),
+                            tui_holder["app"].progress,
+                        )
+                        if ok:
+                            return AgentResponse(output)
+                        return AgentResponse(
+                            f"Browser delivery failed safely: {output}"
+                        )
+
                     before = _snapshot(workspace)
                     started = time.monotonic()
 
@@ -2277,6 +2315,20 @@ def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
                     )
 
                     if result.get("ok"):
+                        applied = tuple(result.get("applied") or ())
+                        changed_paths = tuple(
+                            path
+                            for action in applied
+                            for path in tuple(
+                                getattr(action, "changed_paths", ())
+                            )
+                        )
+                        if changed_paths:
+                            tui_holder["app"]._last_successful_result_context = {
+                                "workspace": workspace,
+                                "changed_paths": changed_paths,
+                                "result": result,
+                            }
                         try:
                             from sophyane.sli_learner import learn_execution
                             from sophyane.sli_schema import ensure_current_schema

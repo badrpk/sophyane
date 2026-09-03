@@ -99,6 +99,47 @@ def _atomic_numpy(path: Path, value) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _repository_identity_for_query(query: str) -> str | None:
+    """Resolve a canonical repository target for ranked retrieval only."""
+    try:
+        from sophyane.sli_graph import _repository_memory_target
+
+        return _repository_memory_target(query)
+    except Exception:
+        return None
+
+
+def verified_provenance_bonus(
+    chunk,
+    repository_identity: str | None = None,
+) -> float:
+    """Return a bounded preference for canonical verified-success evidence."""
+    metadata = getattr(chunk, "meta", None)
+    provenance = (
+        metadata.get("verified_provenance")
+        if isinstance(metadata, dict)
+        else None
+    )
+    if not isinstance(provenance, dict):
+        return 0.0
+    if provenance.get("accepted") is not True:
+        return 0.0
+    if str(provenance.get("verification_state") or "").casefold() != "verified":
+        return 0.0
+
+    bonus = 0.08
+    candidate_repository = str(
+        provenance.get("repository_identity") or ""
+    ).casefold()
+    if (
+        repository_identity
+        and candidate_repository
+        and candidate_repository == str(repository_identity).casefold()
+    ):
+        bonus += 0.04
+    return bonus
+
+
 class ChunkStore:
     def __init__(self) -> None:
         self.dir = memory_dir()
@@ -488,6 +529,8 @@ class ChunkStore:
         self,
         query: str,
         top_k: int = 5,
+        *,
+        repository_identity: str | None = None,
     ):
         if (
             not self.ids
@@ -517,6 +560,16 @@ class ChunkStore:
             0.05,
             10.0,
         )
+
+        if repository_identity is None:
+            repository_identity = _repository_identity_for_query(query)
+        for index, chunk_id in enumerate(self.ids):
+            chunk = self.chunks.get(chunk_id)
+            if chunk is not None:
+                scores[index] += verified_provenance_bonus(
+                    chunk,
+                    repository_identity,
+                )
 
         count = min(
             max(1, int(top_k)),

@@ -3,6 +3,7 @@ from __future__ import annotations
 # SOPHYANE_REAL_THREE_WORKER_RACE_V1
 
 import json
+import hashlib
 import os
 import queue
 import shutil
@@ -21,6 +22,38 @@ from sophyane.race_adapters import (
     ProgressProposal,
     proposal_worker,
 )
+
+_MODE1_RECOVERABLE_MARKERS = ("quota", "rate limit", "429", "timeout", "timed out", "temporar", "unavailable", "transport", "connection", "network", "credentials unavailable", "token exhausted", "authentication exhausted")
+_MODE1_NON_RECOVERABLE_MARKERS = ("approval", "safety", "permission denied", "forbidden", "unauthorized", "invalid_api_key", "incorrect api key", "authentication_error", "billing")
+
+def _mode1_recoverable_provider_error(error: BaseException) -> bool:
+    text = str(error).strip().lower()
+    return bool(text) and not any(marker in text for marker in _MODE1_NON_RECOVERABLE_MARKERS) and any(marker in text for marker in _MODE1_RECOVERABLE_MARKERS)
+
+def _mode1_penalize_route(scores: dict[str, float], route: str, error: BaseException) -> None:
+    """Record a request-local TXQ capability penalty for a failed route."""
+    scores[route] = scores.get(route, 1.0) - 1.0
+
+
+def _mode1_provider_order(primary: str, config: dict[str, Any]) -> tuple[str, ...]:
+    """Resolve eligible intelligence routes without reading mutable global state."""
+    primary = str(primary or "").strip().lower()
+    order: list[str] = []
+    def add(value: Any) -> None:
+        name = str(value or "").strip().lower()
+        if name and name not in order and name != "fallback":
+            order.append(name)
+    add(primary)
+    explicit_present = "provider_fallback_order" in config or "fallback_order" in config
+    explicit = config.get("provider_fallback_order", config.get("fallback_order", ()))
+    for value in explicit or ():
+        add(value)
+    # An explicitly supplied lane is authoritative: independent workers must
+    # not collapse into a cross-class fallback chain.
+    if not explicit_present and (primary not in {"local", "local_gguf"} or bool(config.get("allow_local_fallbacks"))):
+        for value in ("gemini", "xai", "openai", "anthropic", "groq", "openrouter", "deepseek", "nifdu_browser", "codex_cli", "agy", "local_gguf"):
+            add(value)
+    return tuple(order)
 
 
 Progress = Callable[[str], None]
@@ -709,6 +742,401 @@ def _state_value(
     )
 
 
+# SOPHYANE_SLI_STATE_ACCESS_V1
+def _state_value(
+    state: Any,
+    key: str,
+    default: Any = None,
+) -> Any:
+    """Read SLI results whether represented as mappings or objects."""
+    if isinstance(
+        state,
+        dict,
+    ):
+        return state.get(
+            key,
+            default,
+        )
+
+    return getattr(
+        state,
+        key,
+        default,
+    )
+
+
+def make_sli_producer(
+    *,
+    request: str,
+    workspace: Path,
+    progress: Progress | None = None,
+    shadow_registry: dict[str, Path] | None = None,
+    authority_context=None,
+):
+    """Build the real SLI worker against an isolated workspace."""
+
+    def produce():
+        from sophyane.sli_graph import (
+            run_sli_graph,
+        )
+
+        shadow = (
+            _copy_shadow_workspace(
+                workspace,
+                engine="sli",
+            )
+        )
+
+        if (
+            shadow_registry
+            is not None
+        ):
+            shadow_registry[
+                "sli"
+            ] = shadow
+
+        before = (
+            _file_manifest(
+                shadow
+            )
+        )
+
+        _emit(
+            progress,
+            (
+                "Race SLI worker: "
+                "starting isolated SLI Graph"
+            ),
+        )
+
+        # SOPHYANE_RACE_SLI_HARNESS_FAST_PATH_V1
+        #
+        # A coding/test-repair race must not fall through from a failed
+        # local harness attempt into slow internet/browser acquisition.
+        # In race mode SLI is a speculative peer: return its harness
+        # evidence promptly and let another worker win if it cannot repair.
+        from sophyane.sli_harness_orchestrator import (
+            is_harness_execution_request,
+            run_harness_execution,
+        )
+
+        if is_harness_execution_request(
+            request
+        ):
+            _emit(
+                progress,
+                (
+                    "Race SLI worker: "
+                    "direct harness fast path"
+                ),
+            )
+
+            harness_result = run_harness_execution(
+                request,
+                workspace=shadow,
+                progress=progress,
+            )
+
+            harness_ok = bool(
+                _state_value(
+                    harness_result,
+                    "ok",
+                    _state_value(
+                        harness_result,
+                        "success",
+                        False,
+                    ),
+                )
+            )
+
+            harness_report = (
+                _state_value(
+                    harness_result,
+                    "report",
+                    None,
+                )
+                or _state_value(
+                    harness_result,
+                    "summary",
+                    None,
+                )
+                or _state_value(
+                    harness_result,
+                    "error",
+                    None,
+                )
+                or str(
+                    harness_result
+                    or ""
+                )
+            )
+
+            state = {
+                "route": "harness_execution",
+                "success": harness_ok,
+                "promoted": False,
+                "report": str(
+                    harness_report
+                    or ""
+                ),
+            }
+
+        else:
+            # SOPHYANE_RACE_SLI_DETERMINISTIC_CAPABILITY_FAST_PATH_V1
+            #
+            # Give the unified deterministic execution kernel first refusal
+            # inside the isolated SLI shadow.  The authoritative workspace
+            # remains untouched until normal race winner application.
+            from sophyane.unified_execution_kernel import (
+                execute_request as execute_unified_request,
+            )
+
+            deterministic_result = execute_unified_request(
+                request,
+                workspace=shadow,
+            )
+
+            deterministic_handled = bool(
+                getattr(
+                    deterministic_result,
+                    "handled",
+                    False,
+                )
+            )
+
+            if deterministic_handled:
+                deterministic_ok = bool(
+                    getattr(
+                        deterministic_result,
+                        "ok",
+                        False,
+                    )
+                )
+
+                capability = str(
+                    getattr(
+                        deterministic_result,
+                        "capability",
+                        "",
+                    )
+                    or getattr(
+                        deterministic_result,
+                        "capability_id",
+                        "",
+                    )
+                    or "deterministic_capability"
+                ).strip()
+
+                report_value = (
+                    getattr(
+                        deterministic_result,
+                        "message",
+                        None,
+                    )
+                    or getattr(
+                        deterministic_result,
+                        "text",
+                        None,
+                    )
+                    or getattr(
+                        deterministic_result,
+                        "detail",
+                        None,
+                    )
+                    or str(
+                        deterministic_result
+                        or ""
+                    )
+                )
+
+                _emit(
+                    progress,
+                    (
+                        "Race SLI worker: "
+                        "deterministic capability fast path "
+                        f"capability={capability} "
+                        f"ok={deterministic_ok}"
+                    ),
+                )
+
+                state = {
+                    "route":
+                        "deterministic_capability",
+
+                    "success":
+                        deterministic_ok,
+
+                    "promoted":
+                        False,
+
+                    "report":
+                        str(
+                            report_value
+                            or capability
+                        ),
+
+                    "capability":
+                        capability,
+                }
+
+            else:
+                state = run_sli_graph(
+                    request,
+                    workspace=shadow,
+                    progress=progress,
+                    max_retries=1,
+                    context=authority_context,
+                )
+
+        report = str(
+            _state_value(
+                state,
+                "report",
+                "",
+            )
+            or ""
+        ).strip()
+
+        route = str(
+            _state_value(
+                state,
+                "route",
+                "",
+            )
+            or ""
+        ).strip()
+
+        success = bool(
+            _state_value(
+                state,
+                "success",
+                False,
+            )
+        )
+
+        promoted = bool(
+            _state_value(
+                state,
+                "promoted",
+                False,
+            )
+        )
+
+        changed = (
+            _shadow_changes(
+                before,
+                shadow,
+            )
+        )
+
+        evidence = []
+
+        if route:
+            evidence.append(
+                f"SLI route={route}"
+            )
+
+        if success:
+            evidence.append(
+                "SLI state success"
+            )
+
+        if promoted:
+            evidence.append(
+                "SLI candidate promoted"
+            )
+
+        if report:
+            evidence.append(
+                "SLI report produced"
+            )
+
+        if changed:
+            evidence.append(
+                (
+                    "isolated shadow changed "
+                    f"{len(changed)} file(s)"
+                )
+            )
+
+        # A failed SLI attempt may still return useful diagnostics,
+        # but diagnostics alone must never become a valid race winner.
+        #
+        # Previously:
+        #   base 0.45 + route 0.08 + report 0.07 == 0.60
+        #
+        # That exceeded the adaptive race minimum score of 0.55 even
+        # when success=False and promoted=False, allowing a failed SLI
+        # artifact to cancel a still-running local provider.
+        if not success:
+            confidence = 0.0
+        else:
+            confidence = 0.45
+
+            if route:
+                confidence += 0.08
+
+            if report:
+                confidence += 0.07
+
+            confidence += 0.18
+
+            if promoted:
+                confidence += 0.12
+
+            confidence = min(
+                confidence,
+                0.95,
+            )
+
+        return ProgressProposal(
+            engine="sli",
+            payload={
+                "route": route,
+                "report": report,
+                "success": success,
+                "promoted": promoted,
+                # SOPHYANE_RACE_DETERMINISTIC_CAPABILITY_PROVENANCE_V1
+                #
+                # Preserve trusted deterministic capability identity across
+                # the isolated SLI proposal boundary.  race_execution can
+                # then distinguish a runtime-verified exact write from an
+                # ordinary provider-generated write_file proposal.
+                "capability": (
+                    str(
+                        _state_value(
+                            state,
+                            "capability",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+                ),
+                "shadow_workspace": (
+                    str(shadow)
+                ),
+                "changed_files": (
+                    changed
+                ),
+            },
+            kind=(
+                "patch"
+                if changed
+                else "acquisition"
+            ),
+            confidence=confidence,
+            evidence=tuple(
+                evidence
+            ),
+            # Shadow mutations do not imply permission to mutate real repo.
+            requires_write=False,
+        )
+
+    return produce
+
+
+
+
 # SOPHYANE_RACE_SEMANTIC_PROPOSAL_RELEVANCE_V1
 def _semantic_proposal_relevance(
     *,
@@ -1048,41 +1476,7 @@ def make_provider_producer(
 ):
     """Build one local/cloud speculative provider worker."""
 
-    def produce():
-        _emit(
-            progress,
-            (
-                f"Race {engine} worker: "
-                "creating isolated provider"
-            ),
-        )
-
-        provider = _single_provider(
-            provider_id=provider_id,
-            config=config,
-        )
-
-        _emit(
-            progress,
-            (
-                f"Race {engine} worker: "
-                "requesting proposal"
-            ),
-        )
-
-        raw = _generate_provider_for_race(
-            provider=provider,
-            provider_id=provider_id,
-            prompt=_race_user_prompt(
-                request,
-                workspace,
-                mode=mode,
-            ),
-            system_prompt=_race_system_prompt(
-                mode=mode,
-            ),
-        )
-
+    def prepare_proposal(raw: object) -> ProgressProposal[Any]:
         proposal = _llm_proposal(
             engine=engine,
             text=str(
@@ -1114,7 +1508,6 @@ def make_provider_producer(
             evidence = list(
                 proposal.evidence
             )
-
             evidence.extend(
                 judgement["evidence"]
             )
@@ -1170,7 +1563,6 @@ def make_provider_producer(
                 evidence = list(
                     proposal.evidence
                 )
-
                 evidence.append(
                     "semantic proposal relevance="
                     + (
@@ -1197,7 +1589,312 @@ def make_provider_producer(
 
         return proposal
 
+    def usable_for_mode(
+        proposal: ProgressProposal[Any],
+    ) -> bool:
+        normalized_mode = str(mode).strip().lower()
+
+        if normalized_mode == "answer":
+            # Answer workers may fall through to another intelligence
+            # source when deterministic completion evidence leaves the
+            # proposal below the race acceptance threshold. The proposal
+            # is still retained as best_proposal so exhausting all routes
+            # returns evidence to the race instead of converting a
+            # semantic shortfall into a provider failure.
+            return (
+                proposal.kind == "answer"
+                and isinstance(proposal.payload, dict)
+                and bool(
+                    str(
+                        proposal.payload.get("answer")
+                        or ""
+                    ).strip()
+                )
+                and float(proposal.confidence) >= 0.55
+            )
+
+        # Execution-mode semantic confidence belongs to the race layer.
+        # Any structurally valid normalized action remains a legitimate
+        # proposal even when semantic relevance scores it below 0.55.
+        return (
+            proposal.kind == "action"
+            and isinstance(proposal.payload, dict)
+            and isinstance(
+                proposal.payload.get("action"),
+                dict,
+            )
+        )
+
+    def produce():
+        _emit(
+            progress,
+            (
+                f"Race {engine} worker: "
+                "creating isolated provider"
+            ),
+        )
+
+        prompt = _race_user_prompt(
+            request,
+            workspace,
+            mode=mode,
+        )
+        system_prompt = _race_system_prompt(
+            mode=mode,
+        )
+
+        last_error: Exception | None = None
+        best_proposal: ProgressProposal[Any] | None = None
+        route_scores: dict[str, float] = {}
+
+        for route in _mode1_provider_order(
+            provider_id,
+            config,
+        ):
+            try:
+                provider = _single_provider(
+                    provider_id=route,
+                    config=config,
+                )
+
+                _emit(
+                    progress,
+                    (
+                        f"Race {engine} worker: "
+                        f"requesting proposal via {route}"
+                    ),
+                )
+
+                raw = _generate_provider_for_race(
+                    provider=provider,
+                    provider_id=route,
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                )
+
+                usage_getter = getattr(
+                    provider,
+                    "get_token_usage",
+                    None,
+                )
+                usage = (
+                    usage_getter()
+                    if callable(usage_getter)
+                    else {}
+                )
+
+                if isinstance(usage, dict) and usage:
+                    compact = ", ".join(
+                        f"{key}={value}"
+                        for key, value
+                        in sorted(usage.items())
+                    )
+                    _emit(
+                        progress,
+                        (
+                            f"Race {engine}: route "
+                            f"{route} complete · "
+                            f"tokens {compact}"
+                        ),
+                    )
+                else:
+                    _emit(
+                        progress,
+                        (
+                            f"Race {engine}: route "
+                            f"{route} complete · tokens n/a"
+                        ),
+                    )
+
+                proposal = prepare_proposal(raw)
+
+                if (
+                    best_proposal is None
+                    or float(proposal.confidence)
+                    > float(best_proposal.confidence)
+                ):
+                    best_proposal = proposal
+
+                if usable_for_mode(proposal):
+                    return proposal
+
+                # A provider call may succeed transport-wise while still
+                # producing something unusable for this race mode. Treat that
+                # as a request-local capability miss, not as terminal success.
+                # The original request/prompt and authority remain unchanged.
+                _mode1_penalize_route(
+                    route_scores,
+                    route,
+                    RuntimeError(
+                        "provider proposal unusable "
+                        f"for {str(mode).strip().lower()} mode"
+                    ),
+                )
+
+                _emit(
+                    progress,
+                    (
+                        f"Race {engine} provider {route} "
+                        "proposal unusable for this request; "
+                        "trying next eligible intelligence route"
+                    ),
+                )
+
+            except Exception as error:
+                last_error = error
+
+                if not _mode1_recoverable_provider_error(
+                    error
+                ):
+                    raise
+
+                # Feed transport/availability failure into request-local TXQ
+                # capability scoring. The objective is retained byte-for-byte.
+                _mode1_penalize_route(
+                    route_scores,
+                    route,
+                    error,
+                )
+
+                _emit(
+                    progress,
+                    (
+                        f"Race {engine} provider {route} "
+                        "penalised for this request"
+                    ),
+                )
+
+        if best_proposal is not None:
+            return best_proposal
+
+        if last_error is not None:
+            raise last_error
+
+        raise RuntimeError(
+            "no eligible intelligence provider produced "
+            "any proposal"
+        )
+
     return produce
+
+
+def _mode1_sli_applies(request: str) -> bool:
+    text = " ".join(str(request or "").lower().split())
+    return any(token in text for token in ("memory", "internet", "research", "ground", "source", "index", "graph", "latest"))
+
+
+def _mode1_capability_class(provider_id: str) -> str:
+    provider = str(provider_id or "").strip().lower()
+    if provider in {"nifdu_browser", "browser", "chatgpt_browser"}:
+        return "external_browser"
+    if provider in {"codex_cli", "agy", "claude_code", "harness"}:
+        return "external_harness"
+    if provider in {"local_gguf", "local"}:
+        return "local_gguf"
+    return "external_api"
+
+
+def _mode1_provider_available(provider_id: str, config: dict[str, Any]) -> bool:
+    """Use startup's readiness inventory; explicit test inventories remain supported."""
+    provider = str(provider_id).strip().lower()
+    advertised = config.get("available_providers")
+    if isinstance(advertised, (list, tuple, set)):
+        return provider in {str(item).strip().lower() for item in advertised}
+    try:
+        from sophyane.startup_policy import intelligence_provider_inventory
+        return provider in intelligence_provider_inventory(config)
+    except Exception:
+        return provider in {"local", "local_gguf"}
+
+
+# Eligibility is decided before this point; history only breaks ties between
+# proposals that already clear the normal race threshold.
+_MODE1_HISTORY_BONUS_CAP = 0.10
+_MODE1_HISTORY_MIN_SCORE = 0.55
+
+
+def _mode1_history_capability(worker_id: str, provider_id: str) -> str:
+    if str(worker_id).strip().lower() == "sli":
+        return "sli_graph"
+    return _mode1_capability_class(provider_id)
+
+
+def _mode1_verified_history_bonus(*, request: str, worker_id: str, provider_id: str, repository_identity: str | None = None) -> float:
+    """Return a bounded advisory bonus from canonical trusted history."""
+    try:
+        from sophyane.sli_learner import read_verified_history
+        records = read_verified_history(request=request, capability_class=_mode1_history_capability(worker_id, provider_id), limit=16)
+    except Exception:
+        return 0.0
+    unique: dict[str, dict[str, Any]] = {}
+    for record in records or ():
+        if not isinstance(record, dict):
+            continue
+        identity = (str(record.get("event_key") or "").strip() or str(record.get("trace_id") or "").strip() or "|".join(str(record.get(key) or "").strip() for key in ("objective_hash", "provider_identity", "created_at")))
+        if identity and identity not in unique:
+            unique[identity] = record
+    if not unique:
+        return 0.0
+    provider = str(provider_id or "").strip().casefold()
+    repository = str(repository_identity or "").strip().casefold()
+    provider_hits = sum(str(record.get("provider_identity") or "").strip().casefold() == provider for record in unique.values() if provider)
+    repository_hits = sum(str(record.get("repository_identity") or "").strip().casefold() == repository for record in unique.values() if repository)
+    bonus = min(0.06, 0.02 * len(unique))
+    if provider_hits:
+        bonus += 0.02
+    if repository_hits:
+        bonus += 0.02
+    return min(_MODE1_HISTORY_BONUS_CAP, bonus)
+
+
+def _mode1_recurrent_principle_bonus(*, worker_id: str, provider_id: str, repository_identity: str | None, principles_root: str | Path | None) -> float:
+    """Return a small scope-checked bonus from canonical recurrent principles."""
+    if principles_root is None:
+        return 0.0
+    try:
+        from sophyane.evolution.principles import PrincipleStore
+        principles = PrincipleStore.read_recurrent_principles(principles_root, limit=32)
+    except Exception:
+        return 0.0
+    capability = _mode1_history_capability(worker_id, provider_id).casefold()
+    repository = str(repository_identity or "").strip().casefold()
+    matched: set[str] = set()
+    for principle in principles:
+        if str(principle.get("origin") or "").casefold() != "verified_execution":
+            continue
+        scoped = {str(principle.get("component") or "").strip().casefold()}
+        scoped.update(str(value).strip().casefold() for value in (principle.get("capabilities") or ()))
+        if capability not in scoped:
+            continue
+        principle_repository = str(principle.get("repository_identity") or "").strip().casefold()
+        if principle_repository and principle_repository != repository:
+            continue
+        identity = str(principle.get("id") or principle.get("principle") or "").strip()
+        if identity:
+            matched.add(identity)
+    return min(0.04, 0.02 * len(matched))
+
+
+def _mode1_apply_history_preference(proposal: ProgressProposal[Any], *, request: str, worker_id: str, provider_id: str, repository_identity: str | None = None, principles_root: str | Path | None = None) -> ProgressProposal[Any]:
+    """Apply history only after the normal proposal has cleared the gate."""
+    base = float(proposal.confidence)
+    if base < _MODE1_HISTORY_MIN_SCORE:
+        return proposal
+    history_bonus = _mode1_verified_history_bonus(request=request, worker_id=worker_id, provider_id=provider_id, repository_identity=repository_identity)
+    principle_bonus = _mode1_recurrent_principle_bonus(worker_id=worker_id, provider_id=provider_id, repository_identity=repository_identity, principles_root=principles_root)
+    bonus = min(_MODE1_HISTORY_BONUS_CAP, history_bonus + principle_bonus)
+    if bonus <= 0.0:
+        return proposal
+    return ProgressProposal(engine=proposal.engine, payload=proposal.payload, kind=proposal.kind, confidence=min(1.0, base + bonus), evidence=tuple(proposal.evidence) + (f"verified history advisory bonus={bonus:.3f}",), requires_write=proposal.requires_write)
+
+
+def _mode1_history_worker(worker_id: str, producer: Callable[[], ProgressProposal[Any]], *, request: str, provider_id: str, repository_identity: str | None = None, principles_root: str | Path | None = None):
+    """Adapt one already-eligible worker with the shared advisory signal."""
+    base_worker = proposal_worker(worker_id, producer)
+    def worker(stop, report):
+        proposal = base_worker(stop, report)
+        return _mode1_apply_history_preference(proposal, request=request, worker_id=worker_id, provider_id=provider_id, repository_identity=repository_identity, principles_root=principles_root)
+    return worker
 
 
 def build_real_workers(
@@ -1208,57 +1905,62 @@ def build_real_workers(
     progress: Progress | None = None,
     shadow_registry: dict[str, Path] | None = None,
     mode: str = "execution",
+    authority_context=None,
 ):
-    """Return independent non-SLI adaptive race workers.
-
-    Mode 1 deliberately constructs only its local/cloud adaptive workers.
-    SLI Graph and semantic planning belong exclusively to Mode 2.
-    """
-    workspace = (
-        Path(workspace)
-        .expanduser()
-        .resolve()
-    )
-
-
-    # SOPHYANE_MODE1_NON_SLI_WORKER_REGISTRY_V1
-    #
-    # Mode 1 retains adaptive local/cloud workers but deliberately
-    # has no SLI Graph worker and no semantic-planning authority.
+    """Return independently raced, capability-classed intelligence workers."""
+    workspace = Path(workspace).expanduser().resolve()
     workers = {}
-
-    # Local GGUF is available when its runtime can be constructed.
-    workers[
-        "local"
-    ] = proposal_worker(
+    repository_identity = getattr(authority_context, "target_identity", None)
+    if repository_identity is None:
+        try:
+            from sophyane.sli_graph import _repository_memory_target
+            repository_identity = _repository_memory_target(request)
+        except Exception:
+            repository_identity = None
+    if _mode1_sli_applies(request):
+        workers["sli"] = _mode1_history_worker(
+            "sli",
+            make_sli_producer(request=request, workspace=workspace,
+                              progress=progress, shadow_registry=shadow_registry,
+                              authority_context=authority_context),
+            request=request, provider_id="sli_graph", repository_identity=repository_identity, principles_root=workspace,
+        )
+    workers["local"] = _mode1_history_worker(
         "local",
-        make_provider_producer(
-            engine="local",
-            provider_id="local_gguf",
-            request=request,
-            workspace=workspace,
-            config=config,
-            progress=progress,
-            mode=mode,
-        ),
+        make_provider_producer(engine="local", provider_id="local_gguf",
+                               request=request, workspace=workspace, config=config,
+                               progress=progress, mode=mode),
+        request=request, provider_id="local_gguf", repository_identity=repository_identity, principles_root=workspace,
     )
 
-    # Cloud failure/quota is intentionally isolated to this worker.
-    workers[
-        "cloud"
-    ] = proposal_worker(
-        "cloud",
-        make_provider_producer(
-            engine="cloud",
-            provider_id="gemini",
-            request=request,
-            workspace=workspace,
-            config=config,
-            progress=progress,
-            mode=mode,
-        ),
-    )
-
+    primary = str(config.get("provider") or "gemini").strip().lower()
+    candidates = [primary]
+    explicit = config.get("provider_workers") or config.get("available_providers") or ()
+    candidates.extend(str(item).strip().lower() for item in explicit)
+    try:
+        from sophyane.startup_policy import intelligence_provider_inventory
+        candidates.extend(intelligence_provider_inventory(config).keys())
+    except Exception:
+        pass
+    seen = set()
+    for provider in candidates:
+        if provider in seen or provider in {"", "local", "local_gguf"}:
+            continue
+        seen.add(provider)
+        if not _mode1_provider_available(provider, config):
+            continue
+        capability = _mode1_capability_class(provider)
+        prefix = {"external_api": "api", "external_browser": "browser", "external_harness": "harness"}[capability]
+        worker_id = f"{prefix}:{provider}"
+        lane_config = dict(config)
+        lane_config["provider_fallback_order"] = ()
+        workers[worker_id] = _mode1_history_worker(
+            worker_id,
+            make_provider_producer(engine=worker_id, provider_id=provider,
+                                   request=request, workspace=workspace,
+                                   config=lane_config, progress=progress, mode=mode),
+            request=request, provider_id=provider, repository_identity=repository_identity, principles_root=workspace,
+        )
     return workers
 
 
@@ -1273,6 +1975,7 @@ def run_adaptive_race(
     winner_grace_seconds: float = 0.25,
     workers=None,
     mode: str = "execution",
+    authority_context=None,
 ) -> RealRaceResult:
     """Run SLI/local/cloud concurrently and return the best valid proposal.
 
@@ -1284,6 +1987,18 @@ def run_adaptive_race(
         .expanduser()
         .resolve()
     )
+    if authority_context is None:
+        try:
+            from sophyane.sli_graph import RequestAuthorityContext, _txq_capability, _repository_memory_target
+            original = str(request or "")
+            authority_context = RequestAuthorityContext(
+                original_objective=original,
+                original_objective_hash=hashlib.sha256(original.encode("utf-8")).hexdigest(),
+                target_identity=_repository_memory_target(original),
+                txq_capability=_txq_capability(original),
+            )
+        except Exception:
+            authority_context = None
 
     shadows: dict[
         str,
@@ -1315,6 +2030,7 @@ def run_adaptive_race(
                     shadows
                 ),
                 mode=mode,
+                authority_context=authority_context,
             )
         )
 
@@ -1326,6 +2042,22 @@ def run_adaptive_race(
         ),
     )
 
+    source_classes = {}
+    for name in workers:
+        if name == "sli":
+            source_classes[name] = "sli_graph"
+        elif name == "local":
+            source_classes[name] = "local_gguf"
+        elif ":" in name:
+            source_classes[name] = name.split(":", 1)[0].replace("api", "external_api").replace("browser", "external_browser").replace("harness", "external_harness")
+        else:
+            source_classes[name] = "external_api"
+    objective = (getattr(authority_context, "original_objective", None) or str(request))
+    objective_hash = hashlib.sha256(objective.encode("utf-8")).hexdigest()
+    _emit(progress, "ORIGINAL_OBJECTIVE_HASH=" + objective_hash)
+    _emit(progress, "ELIGIBLE_SOURCES=" + ",".join(f"{name}:{source_classes[name]}" for name in sorted(source_classes)))
+    _emit(progress, "STARTED_SOURCES=" + ",".join(f"{name}:{source_classes[name]}" for name in sorted(workers)))
+
     race_result = (
         coordinator.run(
             workers,
@@ -1333,11 +2065,18 @@ def run_adaptive_race(
         )
     )
 
+    completed = sorted({candidate.worker for candidate in race_result.candidates})
+    rejected = sorted(set(race_result.errors) - set(completed))
+    _emit(progress, "COMPLETED_SOURCES=" + ",".join(f"{name}:{source_classes.get(name, 'unknown')}" for name in completed))
+    _emit(progress, "REJECTED_UNUSABLE_SOURCES=" + ",".join(rejected))
+
     winner = (
         race_result.winner
     )
 
     if winner is not None:
+        _emit(progress, "WINNER=" + str(winner.worker))
+        _emit(progress, "WINNER_CAPABILITY_CLASS=" + source_classes.get(winner.worker, "unknown"))
         _emit(
             progress,
             (
@@ -1366,5 +2105,6 @@ __all__ = [
     "RealRaceResult",
     "build_real_workers",
     "make_provider_producer",
+    "make_sli_producer",
     "run_adaptive_race",
 ]

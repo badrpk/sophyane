@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
+import time
 
 from typing import Any
 
@@ -194,6 +196,140 @@ def _learner_event_digest(
     ).hexdigest()
 
 
+def _canonical_provenance(
+    *,
+    request: str,
+    workspace_after: dict[str, Any],
+    status: str,
+    provenance: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Normalize one execution event without inventing evidence."""
+    if not isinstance(provenance, dict):
+        return None
+    event = dict(provenance)
+    event.setdefault("original_objective", request)
+    event.setdefault(
+        "objective_hash",
+        hashlib.sha256(str(event["original_objective"]).encode("utf-8")).hexdigest(),
+    )
+    event.setdefault("status", status)
+    event.setdefault("workspace", "")
+    event.setdefault("changed_paths", [])
+    event.setdefault("artifact_paths", [])
+    event.setdefault("repository_identity", None)
+    event.setdefault("provider_identity", None)
+    event.setdefault("capability_class", None)
+    event.setdefault("verification_evidence", [])
+    event.setdefault("verification_state", "unverified")
+    event["accepted"] = bool(
+        event.get("accepted")
+        and str(event.get("status") or status).lower() in {"success", "succeeded", "completed"}
+        and str(event.get("verification_state") or "").lower() == "verified"
+    )
+    event.setdefault("result", "")
+    event.setdefault("reward", 1.0 if event["accepted"] else 0.0)
+    event.setdefault("trace_id", "")
+    event.setdefault("created_at", time.time())
+    event["event_key"] = _learner_event_digest({
+        "objective_hash": event.get("objective_hash"),
+        "status": event.get("status"),
+        "workspace_after": workspace_after,
+    })
+    return event
+
+
+def _ensure_provenance_columns(db: object) -> bool:
+    """Add backward-compatible SQLite columns when the legacy schema exists."""
+    if not isinstance(db, sqlite3.Connection):
+        return False
+    columns = {str(row[1]) for row in db.execute("PRAGMA table_info(learned_execution_traces)").fetchall()}
+    if "provenance_json" not in columns:
+        db.execute("ALTER TABLE learned_execution_traces ADD COLUMN provenance_json TEXT NOT NULL DEFAULT '{}'")
+    if "event_key" not in columns:
+        db.execute("ALTER TABLE learned_execution_traces ADD COLUMN event_key TEXT NOT NULL DEFAULT ''")
+    db.commit()
+    return True
+
+
+def read_verified_history(
+    *,
+    request: str = "",
+    objective_hash: str | None = None,
+    repository_identity: str | None = None,
+    capability_class: str | None = None,
+    provider_identity: str | None = None,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    """Read bounded, canonical trusted-success provenance without side effects."""
+    from sophyane import sli as sqlite_sli
+
+    path = sqlite_sli.DB_PATH
+    if not path.exists():
+        return []
+    bounded_limit = max(1, min(int(limit), 16))
+    try:
+        with sqlite3.connect(path) as db:
+            columns = {
+                str(row[1])
+                for row in db.execute(
+                    "PRAGMA table_info(learned_execution_traces)"
+                ).fetchall()
+            }
+            if "provenance_json" not in columns:
+                return []
+            rows = db.execute(
+                "SELECT provenance_json FROM learned_execution_traces "
+                "WHERE provenance_json LIKE ? AND provenance_json LIKE ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                ('%"accepted":true%', '%"verification_state":"verified"%', bounded_limit * 8),
+            ).fetchall()
+    except (OSError, sqlite3.Error):
+        return []
+
+    requested = {
+        "repository_identity": str(repository_identity or "").casefold(),
+        "capability_class": str(capability_class or "").casefold(),
+        "provider_identity": str(provider_identity or "").casefold(),
+        "objective_hash": str(objective_hash or "").strip(),
+    }
+    records: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            record = json.loads(str(row[0] or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        if record.get("accepted") is not True:
+            continue
+        if str(record.get("verification_state") or "").casefold() != "verified":
+            continue
+        if str(record.get("status") or "").casefold() not in {"success", "succeeded", "completed"}:
+            continue
+        if requested["objective_hash"] and record.get("objective_hash") != requested["objective_hash"]:
+            continue
+        if (
+            str(request or "").strip()
+            and not requested["objective_hash"]
+            and not any(
+                requested[key]
+                for key in ("repository_identity", "capability_class", "provider_identity")
+            )
+            and _similarity(request, record.get("original_objective", "")) <= 0.0
+        ):
+            continue
+        identity_match = any(
+            requested[key] and str(record.get(key) or "").casefold() == requested[key]
+            for key in ("repository_identity", "capability_class", "provider_identity")
+        )
+        if any(requested[key] for key in ("repository_identity", "capability_class", "provider_identity")) and not identity_match:
+            continue
+        records.append(record)
+        if len(records) >= bounded_limit:
+            break
+    return records
+
+
 def learn_execution(
     *,
     trace_id: str,
@@ -205,8 +341,25 @@ def learn_execution(
     result: str,
     elapsed_seconds: float,
     error: str = "",
+    provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     del reward  # quality is derived from validator evidence, not caller claims.
+
+    canonical_provenance = _canonical_provenance(
+        request=request,
+        workspace_after=workspace_after,
+        status=status,
+        provenance=provenance,
+    )
+    event_key = _learner_event_digest({
+        "objective_hash": (
+            canonical_provenance.get("objective_hash")
+            if canonical_provenance is not None
+            else hashlib.sha256(request.encode("utf-8")).hexdigest()
+        ),
+        "status": status,
+        "workspace_after": workspace_after,
+    })
 
     action = classify_action(
         request
@@ -277,6 +430,28 @@ def learn_execution(
     atomic_result = None
 
     with sli.connect() as db:
+        sqlite_provenance = _ensure_provenance_columns(db)
+
+        # The race producer and compatibility callers may observe one execution.
+        if sqlite_provenance:
+            existing = db.execute(
+                "SELECT trace_id FROM learned_execution_traces "
+                "WHERE event_key = ? AND provenance_json LIKE ? "
+                "ORDER BY created_at LIMIT 1",
+                (event_key, '%"accepted":true%'),
+            ).fetchone()
+            if existing is not None:
+                return {
+                    "memory_id": 0,
+                    "trace_id": str(existing[0]),
+                    "action": action,
+                    "quality_reward": quality_reward,
+                    "quality_signals": quality_signals,
+                    "failure_category": failure_category,
+                    "provenance": canonical_provenance,
+                    "deduplicated": True,
+                }
+
         use_atomic_postgres = (
             sli.selected_backend()
             == "postgres"
@@ -360,7 +535,7 @@ def learn_execution(
                             "execution",
                     },
 
-                    trace=trace_payload,
+                    trace={**trace_payload, "provenance": canonical_provenance},
                 )
             )
 
@@ -387,6 +562,47 @@ def learn_execution(
                 db,
                 trace_payload,
             )
+
+        if sqlite_provenance and canonical_provenance is not None:
+            db.execute(
+                "UPDATE learned_execution_traces SET provenance_json = ?, event_key = ? WHERE trace_id = ?",
+                (
+                    json.dumps(canonical_provenance, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+                    canonical_provenance["event_key"],
+                    trace_id,
+                ),
+            )
+            db.commit()
+
+    promotion_result = None
+    if (
+        canonical_provenance is not None
+        and canonical_provenance.get("accepted") is True
+        and (
+            canonical_provenance.get("artifact_paths")
+            or canonical_provenance.get("changed_paths")
+        )
+    ):
+        try:
+            from sophyane.code_memory.promote_success import promote_workspace
+
+            promotion_result = promote_workspace(
+                canonical_provenance.get("workspace") or "",
+                request=request,
+                source="promote:verified-execution",
+                report="success: true\nvalidation: passed",
+                paths=(
+                    canonical_provenance.get("artifact_paths")
+                    or canonical_provenance.get("changed_paths")
+                ),
+                provenance=canonical_provenance,
+            )
+        except Exception as exc:
+            promotion_result = {
+                "ok": False,
+                "reason": f"promotion unavailable: {type(exc).__name__}: {exc}",
+                "chunks_added": 0,
+            }
 
     # PostgreSQL writes are not fully durable for rollback purposes until
     # SQLite catches up. This is intentionally retried even when the atomic
@@ -418,6 +634,11 @@ def learn_execution(
         "rollback_mirror":
             mirror_result,
     }
+
+    if canonical_provenance is not None:
+        response["provenance"] = canonical_provenance
+    if promotion_result is not None:
+        response["promotion"] = promotion_result
 
     if atomic_result is not None:
         response[

@@ -196,11 +196,65 @@ def remember_event(
     )
 
 
+
+def remember_verified_execution(event: dict[str, Any]) -> dict[str, Any]:
+    """Store a compact episodic projection of one trusted execution event."""
+    if not isinstance(event, dict):
+        return {"ok": False, "reason": "invalid event"}
+    status = str(event.get("status") or "").casefold()
+    evidence = event.get("verification_evidence")
+    if (
+        event.get("accepted") is not True
+        or status not in {"success", "succeeded", "completed"}
+        or str(event.get("verification_state") or "").casefold() != "verified"
+        or not isinstance(evidence, (list, dict))
+        or not evidence
+    ):
+        return {"ok": False, "reason": "event is not trusted verified success"}
+    event_key = str(event.get("event_key") or "").strip()
+    if not event_key:
+        return {"ok": False, "reason": "missing event identity"}
+    memory_key = "verified-execution:" + event_key
+    journal = _journal()
+    try:
+        if journal.exists():
+            for line in journal.read_text(encoding="utf-8", errors="replace").splitlines()[-5000:]:
+                try:
+                    prior = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(prior, dict) and prior.get("memory_key") == memory_key:
+                    return {"ok": True, "memory_key": memory_key, "deduplicated": True}
+    except Exception:
+        pass
+    objective = str(event.get("original_objective") or "").strip()
+    summary = "Verified execution: " + objective[:1200]
+    metadata = {
+        "verified_provenance": {
+            key: event.get(key)
+            for key in (
+                "event_key", "objective_hash", "original_objective", "repository_identity",
+                "provider_identity", "capability_class", "status", "verification_state",
+                "verification_evidence", "accepted", "artifact_paths", "changed_paths",
+                "result", "reward", "trace_id", "created_at",
+            )
+            if key in event
+        },
+    }
+    return remember(
+        summary,
+        namespace="verified-execution",
+        memory_key=memory_key,
+        metadata=metadata,
+    )
+
 def _postgres_recall(
     query: str,
     *,
     namespace: str | None,
     limit: int,
+    repository_identity: str | None = None,
+    capability_class: str | None = None,
 ) -> list[dict[str, Any]]:
     from sophyane.postgres_memory import (
         get_postgres_memory,
@@ -212,7 +266,7 @@ def _postgres_recall(
         limit=limit,
     )
 
-    return [
+    records = [
         {
             "memory_key": hit.memory_key,
             "namespace": hit.namespace,
@@ -223,6 +277,48 @@ def _postgres_recall(
         }
         for hit in hits
     ]
+    records.sort(
+        key=lambda item: (
+            float(item.get("distance", 0.0) or 0.0)
+            - _episodic_provenance_bonus(
+                item,
+                repository_identity=repository_identity,
+                capability_class=capability_class,
+            ),
+            str(item.get("memory_key") or ""),
+        )
+    )
+    return records
+
+
+def _episodic_provenance_bonus(
+    item: dict[str, Any],
+    *,
+    repository_identity: str | None = None,
+    capability_class: str | None = None,
+) -> float:
+    """Return one small bonus for canonical verified execution evidence."""
+    metadata = item.get("metadata")
+    if not isinstance(metadata, dict):
+        return 0.0
+    provenance = metadata.get("verified_provenance")
+    if not isinstance(provenance, dict):
+        return 0.0
+    if provenance.get("accepted") is not True:
+        return 0.0
+    if str(provenance.get("verification_state") or "").casefold() != "verified":
+        return 0.0
+    scoped_repo = str(provenance.get("repository_identity") or "").strip().casefold()
+    requested_repo = str(repository_identity or "").strip().casefold()
+    if scoped_repo and (not requested_repo or scoped_repo != requested_repo):
+        return 0.0
+    scoped_capability = str(provenance.get("capability_class") or "").strip().casefold()
+    requested_capability = str(capability_class or "").strip().casefold()
+    if scoped_capability and requested_capability and scoped_capability != requested_capability:
+        return 0.0
+    if scoped_capability and not requested_capability:
+        return 0.0
+    return 0.25
 
 
 def _filesystem_recall(
@@ -230,6 +326,8 @@ def _filesystem_recall(
     *,
     namespace: str | None,
     limit: int,
+    repository_identity: str | None = None,
+    capability_class: str | None = None,
 ) -> list[dict[str, Any]]:
     journal = _journal()
 
@@ -324,6 +422,15 @@ def _filesystem_recall(
         if not score:
             continue
 
+        item = {
+            **item,
+            "source": "filesystem-journal",
+        }
+        score = score + _episodic_provenance_bonus(
+            item,
+            repository_identity=repository_identity,
+            capability_class=capability_class,
+        )
         scored.append(
             (
                 score,
@@ -334,10 +441,7 @@ def _filesystem_recall(
                     )
                     or 0.0
                 ),
-                {
-                    **item,
-                    "source": "filesystem-journal",
-                },
+                item,
             )
         )
 
@@ -345,6 +449,7 @@ def _filesystem_recall(
         key=lambda item: (
             item[0],
             item[1],
+            str(item[2].get("memory_key") or ""),
         ),
         reverse=True,
     )
@@ -360,6 +465,8 @@ def recall(
     *,
     namespace: str | None = None,
     limit: int = 8,
+    repository_identity: str | None = None,
+    capability_class: str | None = None,
 ) -> list[dict[str, Any]]:
     limit = max(
         1,
@@ -374,6 +481,8 @@ def recall(
             query,
             namespace=namespace,
             limit=limit,
+            repository_identity=repository_identity,
+            capability_class=capability_class,
         )
 
         if hits:
@@ -386,6 +495,8 @@ def recall(
         query,
         namespace=namespace,
         limit=limit,
+        repository_identity=repository_identity,
+        capability_class=capability_class,
     )
 
 

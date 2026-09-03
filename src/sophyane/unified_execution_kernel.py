@@ -9,6 +9,7 @@ except Exception:
 # --- end fast-path import ---
 
 
+import hashlib
 import json
 import threading
 import time
@@ -94,11 +95,43 @@ class CapabilityRegistry:
         ]
 
     def execute(self, request: ExecutionRequest) -> ExecutionResult | None:
+        first_nonterminal_failure: ExecutionResult | None = None
+
         for spec in self.ordered():
             result = spec.handler(request)
-            if result is not None and result.handled:
+
+            if result is None or not result.handled:
+                continue
+
+            if result.ok:
                 return result
-        return None
+
+            # SOPHYANE_KERNEL_FAILED_EXECUTION_FALLTHROUGH_V1
+            #
+            # `handled` means that a capability recognized/owned the
+            # request. It does not mean that the user's objective succeeded.
+            #
+            # Coding and task-compilation failures are therefore evidence,
+            # not terminal completion. Preserve the first such failure while
+            # allowing a later execution authority to satisfy the request.
+            #
+            # Other failed capabilities retain their existing fail-closed
+            # terminal behavior.
+            capability = str(result.capability or "")
+
+            nonterminal_failure = (
+                capability
+                == "development.python_existing_pytest_repair"
+                or capability == "reasoning.task_compiler"
+            )
+
+            if not nonterminal_failure:
+                return result
+
+            if first_nonterminal_failure is None:
+                first_nonterminal_failure = result
+
+        return first_nonterminal_failure
 
 
 _REGISTRY = CapabilityRegistry()
@@ -384,6 +417,57 @@ def _direct_local_reasoning_handler(
         )
     )
 
+    # SOPHYANE_DIRECT_LOCAL_EXPLANATION_GATE_V1
+    #
+    # The unified execution kernel owns execution and explicitly bounded
+    # deterministic engineering contracts. It must not consume ordinary
+    # conversational/explanatory questions merely because a local GGUF can
+    # produce prose for them.
+    #
+    # Preserve Sophyane-owned deterministic contracts first. If none matches,
+    # a pure explanatory question falls through to normal conversational
+    # routing rather than becoming a successful execution-kernel result.
+    explanation_only = bool(
+        re.match(
+            r"^\s*(?:what|who|why|when|where|which)\b",
+            lower_request,
+        )
+        or re.match(
+            r"^\s*how\s+(?:is|are|does|do|did|can|could|would|should)\b",
+            lower_request,
+        )
+        or re.match(
+            r"^\s*(?:explain|describe|tell\s+me\s+about)\b",
+            lower_request,
+        )
+    )
+
+    if (
+        explanation_only
+        and not bounded_engineering
+    ):
+        fallback = _bounded_deterministic_reasoning(
+            request.text
+        )
+
+        if fallback is None:
+            return None
+
+        finished = time.time()
+
+        return ExecutionResult(
+            handled=True,
+            ok=True,
+            capability="reasoning.direct_local",
+            output=fallback,
+            evidence={
+                "difficulty": difficulty,
+                "source": "BOUNDED_DETERMINISTIC_EXPLANATION",
+            },
+            started_at=started,
+            finished_at=finished,
+        )
+
     deadline = (
         3.0
         if (
@@ -498,6 +582,79 @@ def _task_compiler_handler(
     )
 
 
+def _record_verified_deterministic_learning(
+    request: ExecutionRequest,
+    result: ExecutionResult,
+    workspace_before: dict[str, str],
+) -> None:
+    """Fan out only structured, deterministically verified capability success."""
+    data = result.evidence.get("data") if isinstance(result.evidence, dict) else None
+    if not isinstance(data, dict) or not result.ok:
+        return
+    verified = (
+        data.get("byte_for_byte_verified") is True
+        or (
+            str(data.get("verification_state") or "").casefold() == "verified"
+            and bool(data.get("verification_evidence"))
+        )
+    )
+    if not verified:
+        return
+    try:
+        from sophyane.runtime_orchestration_patch import _snapshot
+        after = _snapshot(Path(request.workspace))
+    except Exception:
+        after = {}
+    changed = []
+    relative = str(data.get("relative_path") or "").strip()
+    if relative:
+        changed.append(relative)
+    repository_identity = None
+    try:
+        from sophyane.sli_graph import _repository_memory_target
+        repository_identity = _repository_memory_target(request.text)
+    except Exception:
+        pass
+    event = {
+        "objective_hash": hashlib.sha256(request.text.encode("utf-8")).hexdigest(),
+        "original_objective": request.text,
+        "status": "succeeded",
+        "verification_state": "verified",
+        "verification_evidence": [dict(data)],
+        "accepted": True,
+        "workspace": request.workspace,
+        "changed_paths": changed,
+        "artifact_paths": changed,
+        "repository_identity": repository_identity,
+        "provider_identity": "deterministic_capability",
+        "capability_class": result.capability,
+        "result": result.output[:2000],
+        "reward": 1.0,
+        "trace_id": "deterministic-" + hashlib.sha256(
+            (request.text + "\0" + request.workspace).encode("utf-8")
+        ).hexdigest()[:32],
+        "created_at": time.time(),
+    }
+    try:
+        from sophyane.sli_learner import learn_execution
+        learned = learn_execution(
+            trace_id=event["trace_id"],
+            request=request.text,
+            workspace_before=workspace_before,
+            workspace_after=after,
+            status="succeeded",
+            reward=1.0,
+            result=result.output,
+            elapsed_seconds=max(0.0, result.finished_at - result.started_at),
+            provenance=event,
+        )
+        from sophyane.durable_memory import remember_verified_execution
+        remember_verified_execution(learned.get("provenance") or event)
+    except Exception:
+        # Learning is secondary to the already accepted capability result.
+        return
+
+
 def _existing_deterministic_handler(
     request: ExecutionRequest,
 ) -> ExecutionResult | None:
@@ -509,6 +666,11 @@ def _existing_deterministic_handler(
         return None
 
     started = time.time()
+    try:
+        from sophyane.runtime_orchestration_patch import _snapshot
+        workspace_before = _snapshot(Path(request.workspace))
+    except Exception:
+        workspace_before = {}
     result = execute_deterministic_capability(
         request.text,
         workspace=request.workspace,
@@ -519,7 +681,7 @@ def _existing_deterministic_handler(
 
     finished = time.time()
 
-    return ExecutionResult(
+    execution_result = ExecutionResult(
         handled=True,
         ok=bool(result.ok),
         capability=str(result.capability_id),
@@ -532,6 +694,12 @@ def _existing_deterministic_handler(
         started_at=started,
         finished_at=finished,
     )
+    _record_verified_deterministic_learning(
+        request,
+        execution_result,
+        workspace_before,
+    )
+    return execution_result
 
 
 def initialize_registry() -> CapabilityRegistry:
@@ -575,13 +743,18 @@ def initialize_registry() -> CapabilityRegistry:
             priority=15,
         )
 
+        # SOPHYANE_DETERMINISTIC_CAPABILITY_PRECEDENCE_V1
+        #
+        # Explicit deterministic operations such as exact verified writes
+        # must be admitted before generic bounded reasoning. The handler
+        # returns None for unsupported requests, preserving normal fallthrough.
         _REGISTRY.register(
             "legacy.deterministic_capabilities",
             _existing_deterministic_handler,
             description=(
                 "Existing grounded deterministic Sophyane capabilities."
             ),
-            priority=20,
+            priority=11,
         )
 
         _INITIALIZED = True
@@ -616,8 +789,38 @@ def execute_text(
     *,
     workspace: str | Path | None = None,
 ) -> str | None:
-    result = execute_request(text, workspace=workspace)
-    return result.output if result is not None else None
+    result = execute_request(
+        text,
+        workspace=workspace,
+    )
+
+    if result is None:
+        return None
+
+    if result.ok:
+        return result.output
+
+    # SOPHYANE_KERNEL_FAILED_EXECUTION_FALLTHROUGH_V1
+    #
+    # A failed coding/compiler result must remain structured execution
+    # evidence and must not be converted into ordinary successful-looking
+    # text at Agent/TUI interception boundaries. Returning None here lets
+    # the existing canonical coding runtime continue and establish the
+    # request's final success/failure status objectively.
+    capability = str(
+        result.capability
+        or ""
+    )
+
+    if (
+        capability
+        == "development.python_existing_pytest_repair"
+        or capability == "reasoning.task_compiler"
+    ):
+        return None
+
+    # Preserve fail-closed terminal behavior for other capability families.
+    return result.output
 
 
 def capability_catalog() -> list[dict[str, Any]]:

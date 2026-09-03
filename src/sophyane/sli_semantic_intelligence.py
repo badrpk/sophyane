@@ -26,6 +26,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from sophyane.code_memory.store import (
+    _repository_identity_for_query,
+    verified_provenance_bonus,
+)
+
 
 # ------------------------------------------------------------------
 # Generic capability ontology
@@ -1745,6 +1750,69 @@ def _chunk_semantic_score(
     return score
 
 
+_PRINCIPLE_BONUS_CAP = 0.04
+_HISTORICAL_SIGNAL_CAP = 0.12
+
+
+def _recurrent_principle_bonus(
+    *,
+    chunk: object,
+    plan: SemanticPlan,
+    requirement: CapabilityRequirement,
+    principles_root: str | Path | None = None,
+) -> float:
+    """Return a bounded advisory bonus for scoped verified principles."""
+    root = principles_root or Path.cwd()
+    try:
+        from sophyane.evolution.principles import PrincipleStore
+        principles = PrincipleStore.read_recurrent_principles(root, limit=32)
+    except Exception:
+        return 0.0
+    target = _repository_identity_for_query(plan.request)
+    capability = str(requirement.name or "").strip().casefold()
+    metadata = getattr(chunk, "meta", {})
+    if not isinstance(metadata, dict):
+        return 0.0
+    provenance = metadata.get("verified_provenance")
+    if not isinstance(provenance, dict):
+        provenance = {}
+    candidate_capabilities = {
+        str(value).strip().casefold()
+        for value in (
+            metadata.get("capability_class"),
+            metadata.get("capability"),
+            provenance.get("capability_class"),
+        )
+        if value
+    }
+    if not candidate_capabilities or capability not in candidate_capabilities:
+        return 0.0
+    candidate_target = str(
+        metadata.get("repository_identity")
+        or provenance.get("repository_identity")
+        or ""
+    ).strip().casefold()
+    matched: set[str] = set()
+    for principle in principles:
+        if str(principle.get("origin") or "").casefold() != "verified_execution":
+            continue
+        scoped = {str(principle.get("component") or "").strip().casefold()}
+        scoped.update(str(value).strip().casefold() for value in (principle.get("capabilities") or ()))
+        if not capability or capability not in scoped:
+            continue
+        scoped_target = str(principle.get("repository_identity") or "").strip().casefold()
+        if scoped_target and scoped_target != str(target or "").strip().casefold():
+            continue
+        if scoped_target and not target:
+            continue
+        if scoped_target and scoped_target != candidate_target:
+            continue
+        identity = str(principle.get("id") or principle.get("principle") or "").strip()
+        if identity:
+            matched.add(identity)
+    return min(_PRINCIPLE_BONUS_CAP, 0.02 * len(matched))
+
+
 def retrieve_for_capability(
     store: Any,
     plan: SemanticPlan,
@@ -1753,6 +1821,7 @@ def retrieve_for_capability(
     limit: int = 6,
     minimum_score: float = 0.75,
     deadline: float | None = None,
+    principles_root: str | Path | None = None,
 ) -> list[ChunkMatch]:
     """Retrieve final-policy compatible evidence for one capability.
 
@@ -1762,6 +1831,7 @@ def retrieve_for_capability(
     are preserved exactly.
     """
     ranked: list[tuple[object, float]] = []
+    repository_identity = _repository_identity_for_query(plan.request)
 
     for chunk in store.chunks.values():
         if (
@@ -1788,6 +1858,21 @@ def retrieve_for_capability(
 
         if score < minimum_score:
             continue
+
+        # Provenance is a bounded tie-break after semantic admission. It can
+        # prefer trusted evidence among relevant candidates, but cannot make
+        # weak evidence pass the semantic threshold or filter other repos.
+        # Provenance and recurrent-principle signals share one historical cap.
+        score += min(
+            _HISTORICAL_SIGNAL_CAP,
+            verified_provenance_bonus(chunk, repository_identity)
+            + _recurrent_principle_bonus(
+                chunk=chunk,
+                plan=plan,
+                requirement=requirement,
+                principles_root=principles_root,
+            ),
+        )
 
         ranked.append(
             (
@@ -1903,6 +1988,7 @@ def retrieve_semantic_plan(
     request: str,
     *,
     per_capability: int = 6,
+    principles_root: str | Path | None = None,
 ) -> tuple[SemanticPlan, dict[str, list[ChunkMatch]]]:
     """Retrieve compatible evidence for every requirement in a semantic plan."""
     started = time.monotonic()
@@ -1936,6 +2022,7 @@ def retrieve_semantic_plan(
             limit=per_capability,
             minimum_score=0.75,
             deadline=deadline,
+            principles_root=principles_root,
         )
 
     return plan, output

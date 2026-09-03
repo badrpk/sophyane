@@ -28,7 +28,7 @@ def _run_function():
 def _branches():
     text, function = _run_function()
 
-    for node in function.body:
+    for node in ast.walk(function):
         if not isinstance(
             node,
             ast.If,
@@ -86,20 +86,22 @@ def _branches():
                     ast.If,
                 )
             ):
-                current = (
-                    current.orelse[0]
-                )
+                current = current.orelse[0]
                 continue
 
-            return (
-                text,
-                mode2,
-                current.orelse,
-            )
+            if mode2 is not None:
+                return (
+                    text,
+                    mode2,
+                    current.orelse,
+                )
+
+            break
 
     raise AssertionError(
-        "session_mode branch missing"
+        "session_mode branch containing sli_graph missing"
     )
+
 
 
 def _calls(nodes):
