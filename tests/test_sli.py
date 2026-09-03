@@ -45,6 +45,43 @@ def test_verified_browser_success_receives_full_reward() -> None:
     assert "validation_passed:+0.20" in signals
 
 
+def test_read_verified_history_uses_deterministic_similarity(tmp_path, monkeypatch):
+    import json
+    import sqlite3
+
+    import sophyane.sli as sqlite_sli
+    from sophyane.sli_learner import read_verified_history
+
+    database = tmp_path / "sli.db"
+    monkeypatch.setattr(sqlite_sli, "DB_PATH", database)
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "CREATE TABLE learned_execution_traces ("
+            "trace_id TEXT, created_at REAL, provenance_json TEXT)"
+        )
+        trusted = {
+            "accepted": True, "verification_state": "verified",
+            "status": "succeeded", "objective_hash": "objective-match",
+            "original_objective": "build a verified artifact",
+            "event_key": "event-match",
+        }
+        irrelevant = {
+            "accepted": True, "verification_state": "verified",
+            "status": "succeeded", "objective_hash": "objective-other",
+            "original_objective": "unrelated task", "event_key": "event-other",
+        }
+        db.executemany(
+            "INSERT INTO learned_execution_traces VALUES (?, ?, ?)",
+            [("trace-match", 2, json.dumps(trusted, separators=(",", ":"))),
+             ("trace-other", 1, json.dumps(irrelevant, separators=(",", ":")))],
+        )
+        db.commit()
+
+    records = read_verified_history(request="build a verified artifact", limit=8)
+
+    assert [record["event_key"] for record in records] == ["event-match"]
+
+
 def test_unusable_response_is_categorized() -> None:
     reward, signals, category = calculate_quality_reward(
         status="failed",

@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from sophyane import sli_backend as sli
+from sophyane.sli import _similarity
 
 
 BROWSER_TERMS = (
