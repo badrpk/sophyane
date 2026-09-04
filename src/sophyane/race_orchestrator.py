@@ -1779,8 +1779,43 @@ def make_provider_producer(
 
 
 def _mode1_sli_applies(request: str) -> bool:
+    """Admit SLI when grounding or the bounded repair harness can contribute."""
     text = " ".join(str(request or "").lower().split())
-    return any(token in text for token in ("memory", "internet", "research", "ground", "source", "index", "graph", "latest"))
+
+    if any(
+        token in text
+        for token in (
+            "memory",
+            "internet",
+            "research",
+            "ground",
+            "source",
+            "index",
+            "graph",
+            "latest",
+        )
+    ):
+        return True
+
+    # SOPHYANE_MODE1_SLI_HARNESS_ADMISSION_V1
+    # make_sli_producer already owns a bounded coding/test-repair fast path.
+    # Keep admission aligned with that classifier so repair objectives such
+    # as "fix the pytest failure" can actually race through SLI instead of
+    # making the fast path unreachable behind grounding-only keywords.
+    try:
+        from sophyane.sli_harness_orchestrator import (
+            is_harness_execution_request,
+        )
+
+        return bool(
+            is_harness_execution_request(
+                request
+            )
+        )
+    except Exception:
+        # Admission failure must not make Mode 1 unavailable. Other independent
+        # intelligence lanes remain eligible and may still complete the task.
+        return False
 
 
 def _mode1_capability_class(provider_id: str) -> str:
