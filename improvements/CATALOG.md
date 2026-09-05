@@ -50,3 +50,4 @@ executable patches into `main`.
 - 2026-09-02: 1 proposals · merkle `a33c8aa61faa259a…` · device `runnervmgx7h7-1ee447e9`
 - 2026-09-03: 1 proposals · merkle `0cc7857ad32b3fdf…` · device `runnervmgx7h7-1ee447e9`
 - 2026-09-04: 1 proposals · merkle `76eab7659d041607…` · device `runnervmejwal-b13c28a1`
+- 2026-09-05: 1 proposals · merkle `fd81ef5054c0fc1f…` · device `runnervmejwal-b13c28a1`
