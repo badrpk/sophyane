@@ -31,13 +31,31 @@ from sophyane.config import (
 )
 
 LOGGER = logging.getLogger("sophyane")
-STATE_DIR = Path.home() / ".local" / "state" / "sophyane"
+STATE_DIR = Path(
+    os.environ.get(
+        "SOPHYANE_STATE_DIR",
+        Path.home() / ".local" / "state" / "sophyane",
+    )
+).expanduser()
 LOCAL_STATE_FILE = STATE_DIR / "local_runtime.json"
 GGUF_STATE_FILE = STATE_DIR / "gguf_runtime.json"
 # 8766 avoids clash with sophyane-web which often binds 8765.
-LLAMA_SERVER_HOST = os.environ.get("SOPHYANE_LLAMA_SERVER", "http://127.0.0.1:8766").rstrip("/")
-BIN_DIR = Path.home() / ".local" / "bin"
-MODELS_DIR = Path.home() / ".local" / "share" / "sophyane" / "models"
+LLAMA_SERVER_HOST = os.environ.get(
+    "SOPHYANE_LLAMA_SERVER",
+    "http://127.0.0.1:8766",
+).rstrip("/")
+BIN_DIR = Path(
+    os.environ.get(
+        "SOPHYANE_NATIVE_BIN",
+        Path.home() / ".local" / "bin",
+    )
+).expanduser()
+MODELS_DIR = Path(
+    os.environ.get(
+        "SOPHYANE_MODELS_DIR",
+        Path.home() / ".local" / "share" / "sophyane" / "models",
+    )
+).expanduser()
 GGUF_DIR = MODELS_DIR / "gguf"
 LLAMA_DIR = MODELS_DIR / "llama.cpp"
 LLAMA_RUNTIME_DIR = LLAMA_DIR / "runtime"

@@ -15,7 +15,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from sophyane.native_backends import probe_nifdu, probe_neuron, status as backend_status
+from sophyane.native_backends import (
+    invalidate_discovery,
+    probe_nifdu,
+    probe_neuron,
+    status as backend_status,
+)
 
 STATE = Path(
     os.environ.get(
@@ -176,6 +181,7 @@ def ensure_nifdu() -> dict[str, Any]:
         dest = BIN_DIR / "nifdu"
         shutil.copy2(binary, dest)
         dest.chmod(0o755)
+        invalidate_discovery()
         return {
             "available": True,
             "path": str(dest),
@@ -208,12 +214,20 @@ def ensure_neuron() -> dict[str, Any]:
             return {"available": True, "path": str(target), "fetched": False, "linked": str(c)}
     src = CACHE / "neuron-src"
     step = ensure_source_checkout(GITHUB_NEURON, src)
-    # Neuron may not ship a standalone binary target; fall back to nifdu test binary after nifdu ensure
-    nifdu_try = ensure_nifdu()
-    p2 = probe_neuron()
-    if p2.available:
-        return {"available": True, "path": p2.path, "fetched": True, "via": "nifdu", "steps": [step, nifdu_try]}
-    return {"available": False, "fetched": True, "steps": [step, nifdu_try]}
+
+    # Canonical Neuron v2.1.0 does not currently provide the legacy
+    # test_neuron_capabilities executable Sophyane knows how to invoke.
+    # Its declared `neuron` CMake target is not a runnable backend in that
+    # release, so do not manufacture Neuron availability through NIFDU.
+    return {
+        "available": False,
+        "fetched": True,
+        "reason": (
+            "canonical Neuron source does not provide a runnable "
+            "test_neuron_capabilities backend"
+        ),
+        "steps": [step],
+    }
 
 
 def run_combined(request: str, auto_install: bool = True) -> WorkerResult:

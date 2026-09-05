@@ -66,3 +66,72 @@ def test_download_page_documents_supported_upgrade_contract() -> None:
         "do not need to uninstall Sophyane manually first"
         in normalized
     )
+
+
+def test_posix_installer_commits_core_before_optional_bootstrap() -> None:
+    text = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+    benchmark = text.index('BENCH_LOG="$TMP/install-benchmark.log"')
+    publication = text.index(
+        "# Publication phase.  Candidate validation above intentionally leaves the"
+    )
+    commit = text.index('SWAPPED=0', publication)
+    local = text.index(
+        'Checking hardware-fit local GGUF/runtime...',
+        commit,
+    )
+    native = text.index(
+        'Checking NIFDU/Neuron native backends...',
+        commit,
+    )
+
+    assert benchmark < publication < commit < local < native
+
+    candidate_region = text[benchmark:publication]
+    assert "ensure_local_open_model" not in candidate_region
+    assert "download_hf_gguf" not in candidate_region
+    assert "install_llama_cpp" not in candidate_region
+    assert "ensure_nifdu" not in candidate_region
+    assert "ensure_neuron" not in candidate_region
+
+
+def test_posix_installer_never_relocates_candidate_venv() -> None:
+    text = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+    publication = text.index(
+        "# Publication phase.  Candidate validation above intentionally leaves the"
+    )
+    commit = text.index('SWAPPED=0', publication)
+
+    transaction = text[publication:commit]
+
+    assert 'mv "$CAND_VENV" "$VENV"' not in transaction
+    assert 'python3 -m venv "$VENV"' in transaction
+    assert '"$OLD_VENV/bin/$name"' in transaction
+
+
+def test_posix_optional_bootstrap_is_nonfatal_and_uses_permanent_paths() -> None:
+    text = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+    commit = text.index('SWAPPED=0')
+    tail = text[commit:]
+
+    assert 'SOPHYANE_NATIVE_BIN="$BIN"' in tail
+    assert '"$VENV/bin/python"' in tail
+    assert "ensure_local_open_model" in tail
+    assert "ensure_nifdu" in tail
+    assert "ensure_neuron" in tail
+
+    assert 'SOPHYANE_MODELS_DIR="$TMP/models"' not in tail
+    assert 'SOPHYANE_NATIVE_BIN="$TMP/native-bin"' not in tail
+    assert 'SOPHYANE_STATE_DIR="$TMP/local-state"' not in tail
+    assert 'SOPHYANE_STATE_DIR="$TMP/native-state"' not in tail
+
+    assert (
+        "Sophyane core remains installed and startup can retry later."
+        in tail
+    )
+    assert (
+        "Sophyane core installation remains usable."
+        in tail
+    )
