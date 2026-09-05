@@ -982,7 +982,7 @@ def test_non_termux_environment_does_not_force_single_process(
     assert "--no-zygote" not in argv
 
 # SOPHYANE_NIFDU_TERMUX_X11_SOCKET_AUTHORITY_TESTS_V1
-def test_termux_live_x0_socket_prefers_visible_chromium_when_display_unset(
+def test_termux_live_x0_socket_without_exported_display_stays_headless(
     monkeypatch,
     tmp_path,
 ):
@@ -1047,16 +1047,15 @@ def test_termux_live_x0_socket_prefers_visible_chromium_when_display_unset(
     )
 
     argv = captured["argv"]
-    child_env = captured["kwargs"].get("env")
 
     assert result["ok"] is True
     assert result["launched"] is True
     assert result["reused"] is False
-    assert result["headless"] is False
+    assert result["headless"] is True
 
-    assert "--headless=new" not in argv
-    assert "--disable-gpu" not in argv
-    assert "--new-window" in argv
+    assert "--headless=new" in argv
+    assert "--disable-gpu" in argv
+    assert "--new-window" not in argv
 
     assert (
         "--enable-features=NetworkServiceInProcess2"
@@ -1064,10 +1063,8 @@ def test_termux_live_x0_socket_prefers_visible_chromium_when_display_unset(
     )
     assert "--no-sandbox" in argv
 
-    assert child_env is not None
-    assert child_env["DISPLAY"] == ":0"
-
-    # Parent environment must remain untouched.
+    # A stale/live-looking X0 socket alone is not display authority.
+    assert "env" not in captured["kwargs"]
     assert "DISPLAY" not in launcher.os.environ
 
 

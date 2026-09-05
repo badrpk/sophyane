@@ -1,8 +1,8 @@
-"""Seamless Auto-Update & Upgrade Engine for Sophyane v21.3.0.
+"""Legacy local maintenance helper.
 
-Ensures users are always running the latest version from GitHub (badrpk/sophyane),
-automatically resolves missing system & python dependencies, cleans up legacy version caches,
-and GUARANTEES 100% PRESERVATION of user data, projects, databases, and configs.
+The authoritative startup update mechanism is ``sophyane.startup_update``.
+This module performs only its historical dependency/cache maintenance and does
+not independently declare or discover a newer Sophyane release.
 """
 import os
 import sys
@@ -13,7 +13,7 @@ from typing import Any
 
 from sophyane.version import __version__
 
-LATEST_VERSION = "21.4.2"
+LATEST_VERSION = __version__
 REPO_URL = "https://github.com/badrpk/sophyane.git"
 
 USER_DATA_PATHS = [
@@ -67,7 +67,7 @@ def cleanup_legacy_caches() -> list[str]:
     return cleaned
 
 def check_and_perform_upgrade(force: bool = False) -> dict[str, Any]:
-    """Perform atomic version upgrade to v21.3.0 while preserving 100% of user data."""
+    """Run legacy local maintenance without acting as a release updater."""
     # 1. Verify user data paths exist and are protected
     protected_user_paths = [str(p) for p in USER_DATA_PATHS if p.exists()]
     

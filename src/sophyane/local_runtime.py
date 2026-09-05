@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import subprocess
 import time
@@ -651,20 +652,284 @@ def download_hf_gguf(
     )
 
 
-def _latest_llama_cpp_tag() -> str:
-    try:
-        with _urlopen(
-            "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest",
-            timeout=30,
-        ) as response:
-            data = json.loads(response.read().decode("utf-8"))
-        tag = str(data.get("tag_name") or "").strip()
-        if tag:
-            return tag
-    except Exception as error:  # noqa: BLE001
-        LOGGER.warning("Could not resolve latest llama.cpp release: %s", error)
-    return "b10017"
+LLAMA_CPP_FALLBACK_BUILD = "b10809"
+LLAMA_CPP_RELEASES_API = (
+    "https://api.github.com/repos/ggml-org/llama.cpp/releases"
+)
 
+
+def _llama_cpp_asset_name(
+    profile: HardwareProfile,
+    tag: str,
+) -> str:
+    """Return the upstream binary asset matching this platform."""
+
+    arch = profile.arch.lower()
+    os_name = profile.os_name.lower()
+
+    if arch in {"aarch64", "arm64"}:
+        platform_name = (
+            "android-arm64"
+            if os_name == "android"
+            else "ubuntu-arm64"
+        )
+    elif arch in {
+        "x86_64",
+        "amd64",
+        "x64",
+    }:
+        platform_name = "ubuntu-x64"
+    else:
+        raise RuntimeError(
+            "Unsupported llama.cpp binary platform: "
+            f"os={profile.os_name}, arch={profile.arch}"
+        )
+
+    return (
+        f"llama-{tag}-bin-"
+        f"{platform_name}.tar.gz"
+    )
+
+
+def _llama_cpp_release_json(
+    url: str,
+) -> dict[str, Any]:
+    with _urlopen(
+        url,
+        timeout=30,
+    ) as response:
+        raw = response.read().decode(
+            "utf-8"
+        )
+
+    data = json.loads(raw)
+
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            "Invalid llama.cpp release metadata"
+        )
+
+    return data
+
+
+def _llama_cpp_asset_url(
+    release: dict[str, Any],
+    asset_name: str,
+) -> str | None:
+    for item in release.get(
+        "assets",
+        [],
+    ):
+        if not isinstance(item, dict):
+            continue
+
+        if str(
+            item.get(
+                "name",
+                "",
+            )
+        ) != asset_name:
+            continue
+
+        url = str(
+            item.get(
+                "browser_download_url",
+                "",
+            )
+        ).strip()
+
+        return url or None
+
+    return None
+
+
+def _llama_cpp_advertised_build(
+    release: dict[str, Any],
+) -> str | None:
+    """Resolve an upstream bNNNN binary build from stable metadata."""
+
+    # Current stable releases publish a tiny nightly-tag.txt asset.
+    for item in release.get(
+        "assets",
+        [],
+    ):
+        if not isinstance(item, dict):
+            continue
+
+        if str(
+            item.get(
+                "name",
+                "",
+            )
+        ) != "nightly-tag.txt":
+            continue
+
+        url = str(
+            item.get(
+                "browser_download_url",
+                "",
+            )
+        ).strip()
+
+        if not url:
+            continue
+
+        try:
+            with _urlopen(
+                url,
+                timeout=30,
+            ) as response:
+                tag = (
+                    response.read()
+                    .decode(
+                        "utf-8"
+                    )
+                    .strip()
+                )
+
+            if re.fullmatch(
+                r"b\d+",
+                tag,
+            ):
+                return tag
+        except Exception as error:  # noqa: BLE001
+            LOGGER.warning(
+                "Could not read llama.cpp nightly tag asset: %s",
+                error,
+            )
+
+    # Also accept the build link advertised in the release body.
+    body = str(
+        release.get(
+            "body",
+            "",
+        )
+    )
+
+    match = re.search(
+        r"/releases/tag/(b\d+)",
+        body,
+    )
+
+    if match:
+        return match.group(1)
+
+    return None
+
+
+def _resolve_llama_cpp_binary_release(
+    profile: HardwareProfile,
+) -> tuple[str, str, str]:
+    """Resolve a release that actually owns the required binary asset."""
+
+    try:
+        latest = _llama_cpp_release_json(
+            f"{LLAMA_CPP_RELEASES_API}/latest"
+        )
+
+        latest_tag = str(
+            latest.get(
+                "tag_name",
+                "",
+            )
+        ).strip()
+
+        # Some upstream releases may directly own platform binaries.
+        if latest_tag:
+            latest_asset = (
+                _llama_cpp_asset_name(
+                    profile,
+                    latest_tag,
+                )
+            )
+
+            latest_url = (
+                _llama_cpp_asset_url(
+                    latest,
+                    latest_asset,
+                )
+            )
+
+            if latest_url:
+                return (
+                    latest_tag,
+                    latest_asset,
+                    latest_url,
+                )
+
+        build_tag = (
+            _llama_cpp_advertised_build(
+                latest
+            )
+        )
+
+        if not build_tag:
+            raise RuntimeError(
+                "latest llama.cpp release does not advertise "
+                "a binary build tag"
+            )
+
+        build = _llama_cpp_release_json(
+            f"{LLAMA_CPP_RELEASES_API}"
+            f"/tags/{build_tag}"
+        )
+
+        asset = _llama_cpp_asset_name(
+            profile,
+            build_tag,
+        )
+
+        url = _llama_cpp_asset_url(
+            build,
+            asset,
+        )
+
+        if not url:
+            raise RuntimeError(
+                f"llama.cpp build {build_tag} "
+                f"does not contain required asset {asset}"
+            )
+
+        return (
+            build_tag,
+            asset,
+            url,
+        )
+
+    except Exception as error:  # noqa: BLE001
+        LOGGER.warning(
+            "Could not resolve current llama.cpp binary release: %s; "
+            "using pinned fallback %s",
+            error,
+            LLAMA_CPP_FALLBACK_BUILD,
+        )
+
+        tag = LLAMA_CPP_FALLBACK_BUILD
+        asset = _llama_cpp_asset_name(
+            profile,
+            tag,
+        )
+
+        return (
+            tag,
+            asset,
+            (
+                "https://github.com/ggml-org/llama.cpp/"
+                f"releases/download/{tag}/{asset}"
+            ),
+        )
+
+
+def _latest_llama_cpp_tag() -> str:
+    """Backward-compatible binary-build tag resolver."""
+
+    tag, _, _ = (
+        _resolve_llama_cpp_binary_release(
+            profile_hardware()
+        )
+    )
+
+    return tag
 
 def _llama_libs_ok(runtime_dir: Path) -> bool:
     """True when runtime has shared libs llama-server needs."""
@@ -859,162 +1124,459 @@ def _discover_native_llama_cpp() -> dict[str, str] | None:
 
     return None
 
+
+def _verify_llama_runtime_paths(
+    binaries: dict[str, str],
+) -> None:
+    """Require every returned llama.cpp executable to pass --version."""
+
+    found = False
+
+    for key in (
+        "server",
+        "cli",
+    ):
+        raw = str(
+            binaries.get(
+                key,
+                "",
+            )
+        ).strip()
+
+        if not raw:
+            continue
+
+        found = True
+        path = Path(
+            raw
+        ).expanduser()
+
+        if not (
+            path.is_file()
+            and os.access(
+                path,
+                os.X_OK,
+            )
+        ):
+            raise RuntimeError(
+                f"llama.cpp {key} is not executable: {path}"
+            )
+
+        probe = _run(
+            [
+                str(path),
+                "--version",
+            ],
+            timeout=10,
+        )
+
+        if probe.returncode != 0:
+            detail = (
+                probe.stderr
+                or probe.stdout
+                or f"exit {probe.returncode}"
+            ).strip()
+
+            raise RuntimeError(
+                f"llama.cpp {key} failed --version: {detail}"
+            )
+
+    if not found:
+        raise RuntimeError(
+            "llama.cpp runtime contains no usable server or CLI"
+        )
+
 def install_llama_cpp(
     progress: ProgressFn | None = None,
     *,
     force: bool = False,
 ) -> dict[str, str]:
-    """Resolve an existing native llama.cpp runtime before downloading."""
-    LLAMA_DIR.mkdir(parents=True, exist_ok=True)
-    BIN_DIR.mkdir(parents=True, exist_ok=True)
+    """Reuse a verified native runtime or acquire a verified binary build."""
+
+    LLAMA_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    BIN_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     if not force:
-        native = _discover_native_llama_cpp()
+        native = (
+            _discover_native_llama_cpp()
+        )
 
         if native is not None:
+            result = {
+                **native,
+                "acquisition": "reused",
+            }
+
             _progress(
                 progress,
                 "Using existing native llama.cpp runtime: "
-                + native["server"],
+                + result["server"],
             )
-            return native
 
-    if not force and _llama_libs_ok(LLAMA_RUNTIME_DIR):
-        server_real = next(LLAMA_RUNTIME_DIR.rglob("llama-server"), None)
-        cli_real = next(
-            (
-                p
-                for p in LLAMA_RUNTIME_DIR.rglob("*")
-                if p.is_file() and p.name in {"llama-cli", "llama-completion", "main"}
+            return result
+
+    if (
+        not force
+        and _llama_libs_ok(
+            LLAMA_RUNTIME_DIR
+        )
+    ):
+        server_real = next(
+            LLAMA_RUNTIME_DIR.rglob(
+                "llama-server"
             ),
             None,
         )
-        lib_dirs = sorted({p.parent for p in LLAMA_RUNTIME_DIR.rglob("*.so*")})
+
+        cli_real = next(
+            (
+                p
+                for p in LLAMA_RUNTIME_DIR.rglob(
+                    "*"
+                )
+                if (
+                    p.is_file()
+                    and p.name
+                    in {
+                        "llama-cli",
+                        "llama-completion",
+                        "main",
+                    }
+                )
+            ),
+            None,
+        )
+
+        lib_dirs = sorted(
+            {
+                p.parent
+                for p in LLAMA_RUNTIME_DIR.rglob(
+                    "*.so*"
+                )
+            }
+        )
+
         if not lib_dirs:
-            lib_dirs = [LLAMA_RUNTIME_DIR]
+            lib_dirs = [
+                LLAMA_RUNTIME_DIR
+            ]
+
         server_wrap = (
-            _write_llama_wrapper("llama-server", server_real, lib_dirs)
+            _write_llama_wrapper(
+                "llama-server",
+                server_real,
+                lib_dirs,
+            )
             if server_real
-            else BIN_DIR / "llama-server"
+            else None
         )
+
         cli_wrap = (
-            _write_llama_wrapper("llama-cli", cli_real, lib_dirs)
+            _write_llama_wrapper(
+                "llama-cli",
+                cli_real,
+                lib_dirs,
+            )
             if cli_real
-            else BIN_DIR / "llama-cli"
+            else None
         )
-        return {
-            "server": str(server_wrap) if server_wrap.exists() else "",
-            "cli": str(cli_wrap) if cli_wrap.exists() else "",
-            "runtime": str(LLAMA_RUNTIME_DIR),
+
+        cached = {
+            "server": (
+                str(server_wrap)
+                if server_wrap
+                else ""
+            ),
+            "cli": (
+                str(cli_wrap)
+                if cli_wrap
+                else ""
+            ),
+            "runtime": str(
+                LLAMA_RUNTIME_DIR
+            ),
+            "acquisition": "reused",
         }
 
-    profile = profile_hardware()
-    tag = _latest_llama_cpp_tag()
-    if profile.arch in {"aarch64", "arm64"}:
-        asset = f"llama-{tag}-bin-ubuntu-arm64.tar.gz"
-    else:
-        asset = f"llama-{tag}-bin-ubuntu-x64.tar.gz"
+        try:
+            _verify_llama_runtime_paths(
+                cached
+            )
+        except RuntimeError as error:
+            _progress(
+                progress,
+                "Cached llama.cpp runtime is unusable; "
+                f"acquiring a fresh build ({error})",
+            )
+        else:
+            return cached
 
-    urls = [
-        f"https://github.com/ggml-org/llama.cpp/releases/download/{tag}/{asset}",
-        f"https://github.com/ggerganov/llama.cpp/releases/download/{tag}/{asset}",
-    ]
-    archive = MODELS_DIR / asset
-    if not archive.exists() or archive.stat().st_size < 1024 * 100:
-        download_file(urls, archive, progress=progress, min_bytes=1024 * 100)
+    profile = profile_hardware()
+
+    (
+        tag,
+        asset,
+        asset_url,
+    ) = _resolve_llama_cpp_binary_release(
+        profile
+    )
+
+    archive = (
+        MODELS_DIR
+        / asset
+    )
+
+    if (
+        not archive.exists()
+        or archive.stat().st_size
+        < 1024 * 100
+    ):
+        download_file(
+            [
+                asset_url,
+            ],
+            archive,
+            progress=progress,
+            min_bytes=1024 * 100,
+        )
     else:
-        _progress(progress, f"Using cached {archive.name}")
+        _progress(
+            progress,
+            f"Using cached {archive.name}",
+        )
 
     if LLAMA_RUNTIME_DIR.exists():
-        shutil.rmtree(LLAMA_RUNTIME_DIR, ignore_errors=True)
-    LLAMA_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    result = _run(
-        ["tar", "-xzf", str(archive), "-C", str(LLAMA_RUNTIME_DIR)],
+        shutil.rmtree(
+            LLAMA_RUNTIME_DIR,
+            ignore_errors=True,
+        )
+
+    LLAMA_RUNTIME_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    extraction = _run(
+        [
+            "tar",
+            "-xzf",
+            str(archive),
+            "-C",
+            str(LLAMA_RUNTIME_DIR),
+        ],
         timeout=300,
     )
-    if result.returncode != 0:
+
+    if extraction.returncode != 0:
         raise RuntimeError(
-            f"Failed to extract llama.cpp: {result.stderr or result.stdout}"
+            "Failed to extract llama.cpp: "
+            f"{extraction.stderr or extraction.stdout}"
         )
 
-    # Flatten single top-level directory if present.
-    children = [p for p in LLAMA_RUNTIME_DIR.iterdir()]
-    if len(children) == 1 and children[0].is_dir():
+    children = [
+        p
+        for p in LLAMA_RUNTIME_DIR.iterdir()
+    ]
+
+    if (
+        len(children) == 1
+        and children[0].is_dir()
+    ):
         nested = children[0]
+
         for item in nested.iterdir():
-            target = LLAMA_RUNTIME_DIR / item.name
+            target = (
+                LLAMA_RUNTIME_DIR
+                / item.name
+            )
+
             if target.exists():
                 if target.is_dir():
-                    shutil.rmtree(target)
+                    shutil.rmtree(
+                        target
+                    )
                 else:
                     target.unlink()
-            shutil.move(str(item), str(target))
+
+            shutil.move(
+                str(item),
+                str(target),
+            )
+
         nested.rmdir()
 
-    found_server = next(LLAMA_RUNTIME_DIR.rglob("llama-server"), None)
+    found_server = next(
+        LLAMA_RUNTIME_DIR.rglob(
+            "llama-server"
+        ),
+        None,
+    )
+
     found_cli = None
-    for path in LLAMA_RUNTIME_DIR.rglob("*"):
-        if path.is_file() and path.name in {"llama-cli", "llama-completion", "main"}:
+
+    for path in LLAMA_RUNTIME_DIR.rglob(
+        "*"
+    ):
+        if (
+            path.is_file()
+            and path.name
+            in {
+                "llama-cli",
+                "llama-completion",
+                "main",
+            }
+        ):
             found_cli = path
             break
-    if found_server is None and found_cli is None:
+
+    if (
+        found_server is None
+        and found_cli is None
+    ):
         raise RuntimeError(
-            "llama.cpp archive did not contain llama-server or llama-cli"
+            "llama.cpp archive did not contain "
+            "llama-server or llama-cli"
         )
 
-    for path in LLAMA_RUNTIME_DIR.rglob("*"):
-        if path.is_file() and (
-            path.name.startswith("llama")
-            or path.name.startswith("lib")
-            or path.suffix in {".so"}
-            or ".so." in path.name
+    for path in LLAMA_RUNTIME_DIR.rglob(
+        "*"
+    ):
+        if (
+            path.is_file()
+            and (
+                path.name.startswith(
+                    "llama"
+                )
+                or path.name.startswith(
+                    "lib"
+                )
+                or path.suffix == ".so"
+                or ".so." in path.name
+            )
         ):
             try:
-                path.chmod(path.stat().st_mode | 0o111)
+                path.chmod(
+                    path.stat().st_mode
+                    | 0o111
+                )
             except OSError:
                 pass
 
-    lib_dirs = sorted({p.parent for p in LLAMA_RUNTIME_DIR.rglob("*.so*")})
+    lib_dirs = sorted(
+        {
+            p.parent
+            for p in LLAMA_RUNTIME_DIR.rglob(
+                "*.so*"
+            )
+        }
+    )
+
     if not lib_dirs:
-        lib_dirs = [LLAMA_RUNTIME_DIR]
-    # Also include runtime root for rpath-less builds.
-    if LLAMA_RUNTIME_DIR not in lib_dirs:
-        lib_dirs.insert(0, LLAMA_RUNTIME_DIR)
+        lib_dirs = [
+            LLAMA_RUNTIME_DIR
+        ]
+
+    if (
+        LLAMA_RUNTIME_DIR
+        not in lib_dirs
+    ):
+        lib_dirs.insert(
+            0,
+            LLAMA_RUNTIME_DIR,
+        )
 
     server_wrap = (
-        _write_llama_wrapper("llama-server", found_server, lib_dirs)
+        _write_llama_wrapper(
+            "llama-server",
+            found_server,
+            lib_dirs,
+        )
         if found_server
         else None
     )
+
     cli_wrap = (
-        _write_llama_wrapper("llama-cli", found_cli, lib_dirs) if found_cli else None
+        _write_llama_wrapper(
+            "llama-cli",
+            found_cli,
+            lib_dirs,
+        )
+        if found_cli
+        else None
+    )
+
+    binaries = {
+        "server": (
+            str(server_wrap)
+            if server_wrap
+            else ""
+        ),
+        "cli": (
+            str(cli_wrap)
+            if cli_wrap
+            else ""
+        ),
+        "runtime": str(
+            LLAMA_RUNTIME_DIR
+        ),
+        "acquisition": "installed",
+    }
+
+    # Do not claim readiness until the actual returned wrappers execute.
+    _verify_llama_runtime_paths(
+        binaries
     )
 
     try:
-        archive.unlink(missing_ok=True)
+        archive.unlink(
+            missing_ok=True
+        )
     except OSError:
         pass
 
-    path = os.environ.get("PATH", "")
-    if str(BIN_DIR) not in path.split(":"):
-        os.environ["PATH"] = f"{BIN_DIR}:{path}"
-    os.environ["LD_LIBRARY_PATH"] = (
-        ":".join(str(p) for p in lib_dirs)
+    path = os.environ.get(
+        "PATH",
+        "",
+    )
+
+    if (
+        str(BIN_DIR)
+        not in path.split(":")
+    ):
+        os.environ["PATH"] = (
+            f"{BIN_DIR}:{path}"
+        )
+
+    os.environ[
+        "LD_LIBRARY_PATH"
+    ] = (
+        ":".join(
+            str(p)
+            for p in lib_dirs
+        )
         + ":"
-        + os.environ.get("LD_LIBRARY_PATH", "")
+        + os.environ.get(
+            "LD_LIBRARY_PATH",
+            "",
+        )
     )
 
     _progress(
         progress,
-        f"llama.cpp runtime installed at {LLAMA_RUNTIME_DIR} "
-        f"(libs={len(list(LLAMA_RUNTIME_DIR.rglob('*.so*')))})",
+        "llama.cpp runtime installed "
+        f"from {tag} at {LLAMA_RUNTIME_DIR} "
+        "(libs="
+        f"{len(list(LLAMA_RUNTIME_DIR.rglob('*.so*')))}"
+        ")",
     )
-    return {
-        "server": str(server_wrap) if server_wrap else "",
-        "cli": str(cli_wrap) if cli_wrap else "",
-        "runtime": str(LLAMA_RUNTIME_DIR),
-    }
 
+    return binaries
 
 def llama_server_reachable(timeout: float = 2.0) -> bool:
     """True only for a real llama-server OpenAI models endpoint (not sophyane-web)."""
@@ -1268,7 +1830,15 @@ def ensure_hf_gguf_runtime(
         actions.append(f"downloaded:{gguf_path.name}")
 
         binaries = install_llama_cpp(progress)
-        actions.append("llama_cpp_installed")
+        acquisition = binaries.get(
+            "acquisition",
+            "installed",
+        )
+        actions.append(
+            "llama_cpp_reused"
+            if acquisition == "reused"
+            else "llama_cpp_installed"
+        )
 
         try:
             start_llama_server(gguf_path, progress=progress, binaries=binaries)

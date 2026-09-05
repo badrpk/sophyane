@@ -503,7 +503,7 @@ def test_managed_current_release_is_noop(
         update,
         "_latest_stable_release",
         lambda timeout: (
-            "v27.0.0",
+            "v27.0.1",
             (27, 0, 0),
         ),
     )

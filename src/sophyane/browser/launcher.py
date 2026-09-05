@@ -356,10 +356,15 @@ def launch_nifdu_browser(
     # On Termux/Android there is commonly no X11/Wayland display.
     # In that environment GUI Chromium exits before CDP starts, so
     # use Chromium's native headless mode automatically.
-    detected_termux_display = (
-        _detect_termux_x11_display()
-    )
-
+    # SOPHYANE_NIFDU_EXPLICIT_DISPLAY_AUTHORITY_V1
+    #
+    # A Termux:X11 X0 socket can remain present even when the parent
+    # process has no usable GUI display. Real Android evidence showed
+    # that treating that socket alone as display authority can make
+    # Chromium take the GUI path and exit before CDP becomes ready.
+    #
+    # Only an explicitly exported DISPLAY/WAYLAND_DISPLAY selects GUI
+    # mode. Otherwise NIFDU uses the proven headless Chromium/CDP path.
     has_display = bool(
         os.environ.get(
             "DISPLAY"
@@ -367,7 +372,6 @@ def launch_nifdu_browser(
         or os.environ.get(
             "WAYLAND_DISPLAY"
         )
-        or detected_termux_display
     )
 
     if has_display:
@@ -469,19 +473,6 @@ def launch_nifdu_browser(
             "stderr": subprocess.DEVNULL,
             "start_new_session": True,
         }
-
-        # When Termux:X11 is concretely available but DISPLAY was not
-        # exported by the parent shell, give only this Chromium subprocess
-        # the display authority. Do not mutate global os.environ.
-        if (
-            detected_termux_display
-            and not os.environ.get("DISPLAY")
-        ):
-            child_env = os.environ.copy()
-            child_env["DISPLAY"] = (
-                detected_termux_display
-            )
-            popen_kwargs["env"] = child_env
 
         process = subprocess.Popen(
             args,
