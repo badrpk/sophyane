@@ -16,6 +16,7 @@ import hashlib
 import threading
 import time
 from pathlib import Path
+from urllib.parse import quote
 from typing import Any
 
 from sophyane.runtime_semantic_instruction import reset_semantic_request
@@ -35,6 +36,19 @@ _sophyane_install_input_capture()
 _sophyane_print_startup_ontology_once()
 
 _PENDING_TERMINAL_SUBMISSIONS: list[str] = []
+
+def _file_uri(path: Path) -> str:
+    return "file://" + quote(str(path), safe="/:@-._~")
+
+def _terminal_file_link(path: Path) -> str:
+    """Return a tappable OSC-8 file hyperlink when output is interactive."""
+    value = str(path)
+    if not sys.stdout.isatty():
+        return value
+    # OSC-8 is supported by modern Termux terminals and degrades to the
+    # visible label in terminals that ignore escape sequences.
+    uri = _file_uri(path)
+    return f"\x1b]8;;{uri}\x1b\\{value}\x1b]8;;\x1b\\"
 
 def _read_atomic_submission(prompt: str, read_first=None, editor_owned: bool = False) -> str:
     """Collect one submission; settle only after multiline paste evidence."""
@@ -57,8 +71,21 @@ def _read_atomic_submission(prompt: str, read_first=None, editor_owned: bool = F
             if line == "":
                 break
             for physical in line.rstrip("\n").split("\n"):
-                if physical.strip().casefold() in {"exit", "/exit", "quit", "/quit"}:
+                stripped = physical.strip().casefold()
+                if stripped in {"exit", "/exit", "quit", "/quit", "goodbye"}:
                     _PENDING_TERMINAL_SUBMISSIONS.append(physical.strip())
+                    return changed
+                # A delayed multiline paste can concatenate the next command
+                # onto its final bullet (e.g. "... apps" + "exit"). Split
+                # terminal commands from bullet text before dispatch.
+                if physical.lstrip().startswith(("-", "•")) and stripped.endswith(("exit", "quit", "goodbye")):
+                    suffix = next(word for word in ("goodbye", "exit", "quit") if stripped.endswith(word))
+                    prefix = physical[:-len(suffix)].rstrip()
+                    if prefix:
+                        lines.append(prefix)
+                        changed = True
+                        multiline = True
+                    _PENDING_TERMINAL_SUBMISSIONS.append(suffix)
                     return changed
                 lines.append(physical)
                 changed = True
@@ -82,10 +109,20 @@ def _read_atomic_submission(prompt: str, read_first=None, editor_owned: bool = F
     except (OSError, ValueError):
         pass
     objective = "\n".join(lines)
-    print(f"INPUT_PHYSICAL_LINES={len(lines)}", flush=True)
-    print("LOGICAL_OBJECTIVES=1", flush=True)
-    print(f"OBJECTIVE_BYTES={len(objective.encode('utf-8'))}", flush=True)
-    print("ORIGINAL_OBJECTIVE_HASH=" + hashlib.sha256(objective.encode("utf-8")).hexdigest(), flush=True)
+    objective_bytes = len(objective.encode("utf-8"))
+    objective_hash = hashlib.sha256(objective.encode("utf-8")).hexdigest()
+    # Preserve machine-readable capture output for redirected runs while
+    # presenting one calm acknowledgement to a person at a real terminal.
+    if sys.stdout.isatty():
+        print(
+            f"  ◇ Request · {objective_bytes} B",
+            flush=True,
+        )
+    else:
+        print(f"INPUT_PHYSICAL_LINES={len(lines)}", flush=True)
+        print("LOGICAL_OBJECTIVES=1", flush=True)
+        print(f"OBJECTIVE_BYTES={objective_bytes}", flush=True)
+        print("ORIGINAL_OBJECTIVE_HASH=" + objective_hash, flush=True)
     return objective
 
 
@@ -95,6 +132,182 @@ def _clean_message(message: str) -> str:
     while value.startswith(("❯", ">")):
         value = value[1:].lstrip()
     return value
+
+
+_SOURCE_LABELS = {
+    "api:gemini": "Gemini",
+    "browser:nifdu_browser": "ChatGPT Browser",
+    "harness:agy": "Antigravity",
+    "harness:codex_cli": "Codex CLI",
+    "api:nifdu": "NIFDU",
+    "api:neuron": "Neuron",
+    "local": "Local GGUF",
+    "sli": "SLI Graph",
+}
+
+
+def _source_label(value: str) -> str:
+    """Turn an internal race worker identifier into a compact UI label."""
+    source = str(value or "").strip()
+    if source in _SOURCE_LABELS:
+        return _SOURCE_LABELS[source]
+    for known, label in sorted(
+        _SOURCE_LABELS.items(), key=lambda item: len(item[0]), reverse=True
+    ):
+        if source == known or source.startswith(known + ":"):
+            return label
+    return source.replace("_", " ").strip().title() or "Unknown"
+
+
+def _source_list(payload: str) -> str:
+    values = [_source_label(item) for item in str(payload or "").split(",") if item]
+    return " · ".join(values) or "none"
+
+
+def _friendly_progress_event(text: str) -> str | None:
+    """Translate internal race telemetry into stable, human-facing status."""
+    event = str(text or "").strip()
+    if not event:
+        return None
+    if event.startswith(("ORIGINAL_OBJECTIVE_HASH=", "ELIGIBLE_SOURCES=")):
+        return None
+    if event.startswith("STARTED_SOURCES="):
+        return "◌ Racing  " + _source_list(event.partition("=")[2])
+    if event.startswith("COMPLETED_SOURCES="):
+        return "✓ Finished  " + _source_list(event.partition("=")[2])
+    if event.startswith("REJECTED_UNUSABLE_SOURCES="):
+        return "○ Unavailable  " + _source_list(event.partition("=")[2])
+    if event.startswith("RACE_ROUTE_REASON="):
+        payload = event.partition("=")[2]
+        worker, _, reason = payload.partition(";")
+        return f"○ {_source_label(worker)} · reason: {reason or 'route unavailable'}"
+    if event.startswith("WINNER="):
+        return "★ Selected  " + _source_label(event.partition("=")[2])
+    if event.startswith("WINNER_CAPABILITY_CLASS="):
+        return None
+    match = re.fullmatch(r"Adaptive race round\s+(\d+)/(\d+)", event)
+    if match:
+        return f"── Round {match.group(1)} of {match.group(2)} · finding the best route"
+    match = re.fullmatch(r"Sophyane adaptive race: starting\s+(\d+)\s+workers", event)
+    if match:
+        return f"◇ Starting {match.group(1)} capabilities in parallel"
+    match = re.match(r"Race\s+(.+?)\s+worker:\s+(.*)", event)
+    if match:
+        detail = match.group(2)
+        if detail == "creating isolated provider":
+            return None
+        elif detail.startswith("requesting proposal via "):
+            detail = "working"
+        return f"◌ {_source_label(match.group(1))} · {detail}"
+    match = re.match(r"Race\s+(.+?):\s+route\s+.+?\s+complete(?:\s+·.*)?$", event)
+    if match:
+        return f"✓ {_source_label(match.group(1))} · response received"
+    match = re.match(r"Race\s+(.+?)\s+provider\s+.+?\s+penalised for this request$", event)
+    if match:
+        return f"○ {_source_label(match.group(1))} · response not usable"
+    reason_match = re.match(
+        r"Race\s+(.+?)\s+provider\s+.+?reason:\s*(.+)$",
+        event,
+    )
+    if reason_match:
+        return (
+            f"○ {_source_label(reason_match.group(1))} · "
+            f"reason: {reason_match.group(2)}"
+        )
+    proposal_match = re.match(
+        r"Race\s+(.+?)\s+provider\s+.+?proposal unusable for this request;.*$",
+        event,
+    )
+    if proposal_match:
+        return f"○ {_source_label(proposal_match.group(1))} · proposal rejected"
+    if event == "Sophyane adaptive race: no valid winner":
+        return "○ No verified result · all routes were rejected"
+
+    heartbeat_match = re.fullmatch(
+        r"RACE_WAITING_SECONDS=(\d+);REMAINING_SECONDS=(\d+)", event
+    )
+    if heartbeat_match:
+        return (
+            f"◌ Still working · {heartbeat_match.group(1)}s elapsed · "
+            f"timeout in {heartbeat_match.group(2)}s"
+        )
+
+    match = re.match(
+        r"Sophyane adaptive race:\s+winner=(\S+)\s+score=([\d.]+)\s+elapsed=([\d.]+)s",
+        event,
+    )
+    if match:
+        return (
+            f"★ {_source_label(match.group(1))} won · "
+            f"score {match.group(2)} · {match.group(3)}s"
+        )
+    return event
+
+
+def _file_content_followup(message: str) -> bool:
+    text = " ".join(str(message or "").casefold().split())
+    return any(
+        phrase in text
+        for phrase in (
+            "content of this file",
+            "contents of this file",
+            "read this file",
+            "what is in this file",
+            "show this file",
+        )
+    )
+
+
+def _written_file_from_reply(reply: str) -> Path | None:
+    try:
+        payload = json.loads(str(reply))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    evidence = payload.get("evidence") if isinstance(payload, dict) else None
+    data = evidence.get("data") if isinstance(evidence, dict) else None
+    path = data.get("path") if isinstance(data, dict) else None
+    if not path and isinstance(payload, dict):
+        data = payload.get("data")
+        path = data.get("path") if isinstance(data, dict) else None
+    candidate = Path(str(path)).expanduser() if path else None
+    return candidate if candidate and candidate.is_file() else None
+
+
+def _read_followup_file(message: str, path: Path | None) -> str | None:
+    if path is None or not _file_content_followup(message):
+        return None
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    return f"Contents of {path}:\n{content}"
+
+
+def _try_local_sli_llm_fallback(
+    message: str,
+    config: dict[str, Any],
+    logger: Any,
+) -> str | None:
+    """Use the on-device model only when SLI cannot answer a request."""
+    import os
+
+    previous_mode = os.environ.get("SOPHYANE_SESSION_MODE")
+    os.environ["SOPHYANE_SESSION_MODE"] = "local_llm"
+    try:
+        provider = _create_provider_for_observable_tui(config)
+        if provider is None:
+            return None
+        from sophyane.agent import SophyaneAgent
+        from sophyane.memory import MemoryStore
+
+        return SophyaneAgent(provider, MemoryStore(), logger).ask(message).text
+    except Exception:
+        return None
+    finally:
+        if previous_mode is None:
+            os.environ.pop("SOPHYANE_SESSION_MODE", None)
+        else:
+            os.environ["SOPHYANE_SESSION_MODE"] = previous_mode
 
 
 def _simple_chat_reply(message: str) -> str | None:
@@ -713,6 +926,21 @@ def _email_option_digit_reply(message: str) -> str | None:
     return None
 
 
+def _rsi_artifact_review_requested(message: str) -> bool:
+    """Identify answer-mode artifacts that still benefit from Codex RSI review."""
+    text = " ".join(str(message or "").casefold().split())
+    if text.startswith(("what is ", "what are ", "how does ", "how do ", "why ", "can i ")) and not any(
+        marker in text for marker in ("draft", "write", "create", "generate", "implement")
+    ):
+        return False
+    artifact_terms = (
+        "draft", "snippet", "makefile", "make target", "shell script",
+        "configuration", "config", "yaml", "json", "dockerfile",
+        "docker buildx", "pre-receive hook", "code example", "template",
+    )
+    return any(term in text for term in artifact_terms)
+
+
 def _execution_requested(message: str) -> bool:
     # SOPHYANE_MAKE_USE_OF_CHAT_GUARD_V1
     _guard_text = " ".join(
@@ -1245,10 +1473,13 @@ class ObservableTUI:
         self.project_requirements: list[str] = []
         self.history: list[tuple[str, str]] = []
         self.last_raw = ""
+        self._last_deterministic_file: Path | None = None
         self.last_prompt = ""
         self.last_elapsed = 0.0
         self.last_mode = "none"
         self.trace = False
+        self.last_user_message = ""
+        self._quit_requested = False
 
         # SOPHYANE_NATIVE_CHOICE_STATE_INIT
         # Preserve interactive selections from deterministic native replies.
@@ -1260,10 +1491,28 @@ class ObservableTUI:
         return str(self.config.get("provider") or "").lower() in {"local_gguf"}
 
     def emit(self, role: str, text: str) -> None:
-        print(f"\n{role}\n  " + text.replace("\n", "\n  ") + "\n", flush=True)
+        labels = {
+            "You": "You",
+            "Sophyane": "◆ Sophyane",
+            "system": "◇ System",
+            "inspection": "◇ Inspection",
+            "raw model response": "◇ Raw model response",
+        }
+        label = labels.get(role, role)
+        body = str(text or "").replace("\n", "\n  ")
+        print(f"\n{label}\n  {body}\n", flush=True)
 
     def progress(self, text: str) -> None:
-        print(f"[{time.strftime('%H:%M:%S')}] {text}", file=sys.stderr, flush=True)
+        if self.trace or not sys.stderr.isatty():
+            rendered = str(text)
+        else:
+            rendered = _friendly_progress_event(text)
+        if rendered:
+            print(
+                f"[{time.strftime('%H:%M:%S')}] {rendered}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def call_provider(self, message: str, *, timeout: int = 60) -> Any:
         results: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
@@ -1431,11 +1680,71 @@ class ObservableTUI:
         except KeyboardInterrupt:
             raise
 
+    def _handle_command(self, message: str) -> str | None:
+        """Handle slash commands before semantic or provider dispatch."""
+        normalized = " ".join(str(message or "").lower().split())
+        if normalized in {"exit", "quit", "/quit", "/exit", "ecit"}:
+            self._quit_requested = True
+            print("Goodbye.")
+            return None
+        if normalized == "/retry":
+            if not self.last_user_message:
+                self.emit("system", "Nothing to retry yet.")
+                return None
+            self.progress("Retrying the previous request")
+            return self.last_user_message
+        if normalized == "/new":
+            self.active_workspace = None
+            self.active_request = ""
+            self.project_requirements.clear()
+            self._last_deterministic_file = None
+            self.history.clear()
+            self.emit(
+                "system",
+                "Project session cleared. The next build request will use a new workspace.",
+            )
+            return None
+        if normalized == "/help":
+            self.emit(
+                "system",
+                "Commands\n"
+                "  /retry      run the previous request again\n"
+                "  /new        clear project context\n"
+                "  /status     show runtime status\n"
+                "  /providers  show available providers\n"
+                "  /doctor     diagnose provider setup\n"
+                "  /inspect    inspect the last run\n"
+                "  /trace      toggle raw internal events\n"
+                "  /quit       leave Sophyane",
+            )
+            return None
+        if normalized == "/inspect":
+            self.emit("inspection", self._inspect())
+            return None
+        if normalized == "/trace":
+            self.trace = not self.trace
+            state = "enabled" if self.trace else "disabled"
+            self.emit("system", f"Raw response trace {state}.")
+            return None
+        if message.startswith("/"):
+            command = message[1:].split()[0]
+            if command in {"setup", "status", "providers", "doctor"}:
+                text, self.config = self.handle_internal(command, self.config)
+                self.emit("system", text)
+                return None
+        return message
+
     def run(self) -> int:
         while True:
             try:
                 message = _clean_message(self.read_prompt("❯ "))
                 reset_semantic_request(self)
+                command_message = self._handle_command(message)
+                if command_message is None:
+                    if self._quit_requested:
+                        return 0
+                    continue
+                message = command_message
             except (EOFError, KeyboardInterrupt):
                 print()
                 return 0
@@ -1496,12 +1805,34 @@ class ObservableTUI:
             if normalized in {"exit", "quit", "/quit", "/exit", "ecit"}:
                 print("Goodbye.")
                 return 0
+            if normalized == "/retry":
+                if not self.last_user_message:
+                    self.emit("system", "Nothing to retry yet.")
+                    continue
+                message = self.last_user_message
+                normalized = " ".join(message.lower().split())
+                self.progress("Retrying the previous request")
             if normalized == "/new":
                 self.active_workspace = None
                 self.active_request = ""
                 self.project_requirements.clear()
+                self._last_deterministic_file = None
                 self.history.clear()
                 self.emit("system", "Project session cleared. The next build request will use a new workspace.")
+                continue
+            if normalized == "/help":
+                self.emit(
+                    "system",
+                    "Commands\n"
+                    "  /retry      run the previous request again\n"
+                    "  /new        clear project context\n"
+                    "  /status     show runtime status\n"
+                    "  /providers  show available providers\n"
+                    "  /doctor     diagnose provider setup\n"
+                    "  /inspect    inspect the last run\n"
+                    "  /trace      toggle raw internal events\n"
+                    "  /quit       leave Sophyane",
+                )
                 continue
             if normalized == "/inspect":
                 self.emit("inspection", self._inspect())
@@ -1518,6 +1849,7 @@ class ObservableTUI:
                     continue
 
             self.emit("You", message)
+            self.last_user_message = message
 
             # SOPHYANE_PRE_DISPATCH_OBJECTIVE_GATE
             from sophyane.objective_preflight import (
@@ -1915,14 +2247,25 @@ class ObservableTUI:
 
             # SOPHYANE_CAPABILITY_DESIGN_BEFORE_QUICK_REPLY_V8_1
             quick = (
-                None
-                if _sophyane_early_design_prompt
-                is not None
-                else _simple_chat_reply(
-                    message
+                _read_followup_file(
+                    message,
+                    self._last_deterministic_file,
+                )
+                if _sophyane_early_design_prompt is None
+                and _file_content_followup(message)
+                else (
+                    None
+                    if _sophyane_early_design_prompt
+                    is not None
+                    else _simple_chat_reply(
+                        message
+                    )
                 )
             )
             if quick is not None:
+                written_file = _written_file_from_reply(quick)
+                if written_file is not None:
+                    self._last_deterministic_file = written_file
                 # SOPHYANE_NATIVE_CHOICE_STATE_STORE
                 if (
                     "Recommended Sophyane architecture for SaaS services:"
@@ -2124,6 +2467,24 @@ validate the returned filesystem evidence.
                     text = f"Execution loop failed safely: {error}"
             else:
                 text = _render_nonexecuting_response(text)
+                # SOPHYANE_RSI_ARTIFACT_REVIEW_V1: answer-mode code/config
+                # drafts still receive bounded Mode-4-3 correction. No files
+                # are mutated; the reviewer only returns a corrected answer.
+                if _rsi_artifact_review_requested(message) and text.strip():
+                    review_prompt = (
+                        "RSI REVIEW PASS 1/2. Review the following proposed artifact answer "
+                        "against the original request. Correct syntax, portability, security, "
+                        "and missing requirements. Return only the improved final answer; "
+                        "do not claim execution and do not edit files.\n\n"
+                        f"ORIGINAL REQUEST:\n{message}\n\nDRAFT ANSWER:\n{text}"
+                    )
+                    try:
+                        reviewed = self.call_provider(review_prompt)
+                        reviewed_text = getattr(reviewed, "text", str(reviewed)).strip()
+                        if reviewed_text:
+                            text = reviewed_text
+                    except Exception as error:  # noqa: BLE001
+                        self.progress(f"RSI review unavailable; retaining original draft ({error})")
 
             self.history.extend([("user", message[:300]), ("assistant", text[:500])])
             self.history = self.history[-4:]
@@ -2293,11 +2654,33 @@ def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
                     ):
                         from sophyane.execution_runtime import execute_action
 
-                        ok, output = execute_action(
-                            {"type": "open_browser"},
-                            Path(str(prior["workspace"])),
-                            tui_holder["app"].progress,
-                        )
+                        # An explicit follow-up is user-authorized even when
+                        # background learning/race guards temporarily suppress
+                        # automatic previews. Scope the override to this call.
+                        import os as _browser_os
+                        _browser_flags = {
+                            key: _browser_os.environ.get(key)
+                            for key in (
+                                "SOPHYANE_DISABLE_BROWSER_OPEN",
+                                "SOPHYANE_NO_AUTO_OPEN",
+                                "SOPHYANE_NO_BROWSER",
+                                "SOPHYANE_BROWSER_PREVIEW",
+                            )
+                        }
+                        for key in _browser_flags:
+                            _browser_os.environ.pop(key, None)
+                        try:
+                            ok, output = execute_action(
+                                {"type": "open_browser"},
+                                Path(str(prior["workspace"])),
+                                tui_holder["app"].progress,
+                            )
+                        finally:
+                            for key, value in _browser_flags.items():
+                                if value is None:
+                                    _browser_os.environ.pop(key, None)
+                                else:
+                                    _browser_os.environ[key] = value
                         if ok:
                             return AgentResponse(output)
                         return AgentResponse(
@@ -2306,13 +2689,23 @@ def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
 
                     before = _snapshot(workspace)
                     started = time.monotonic()
+                    race_state = {"active": True}
 
-                    result = _run_adaptive_race_request(
-                        message,
-                        workspace=workspace,
-                        config=config,
-                        progress=tui_holder["app"].progress,
-                    )
+                    def race_progress(event: str) -> None:
+                        if race_state["active"]:
+                            tui_holder["app"].progress(event)
+
+                    try:
+                        result = _run_adaptive_race_request(
+                            message,
+                            workspace=workspace,
+                            config=config,
+                            progress=race_progress,
+                        )
+                    finally:
+                        # Late workers may finish after a winner. Never let
+                        # their callbacks write into the next user prompt.
+                        race_state["active"] = False
 
                     if result.get("ok"):
                         applied = tuple(result.get("applied") or ())
@@ -2323,6 +2716,19 @@ def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
                                 getattr(action, "changed_paths", ())
                             )
                         )
+                        if not changed_paths:
+                            # Some providers return a normalized action without
+                            # populating AppliedAction.changed_paths. Recover
+                            # the artifact path so immediate browser follow-ups
+                            # remain direct and do not re-enter the race.
+                            recovered = []
+                            for item in applied:
+                                payload = getattr(item, "action", item)
+                                if isinstance(payload, dict):
+                                    action_path = payload.get("path")
+                                    if action_path:
+                                        recovered.append(str(action_path))
+                            changed_paths = tuple(dict.fromkeys(recovered))
                         if changed_paths:
                             tui_holder["app"]._last_successful_result_context = {
                                 "workspace": workspace,
@@ -2390,6 +2796,11 @@ def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
                         winner = result.get("winner")
                         worker = getattr(winner, "worker", None)
 
+                        changed = tuple(
+                            str(path)
+                            for path in changed_paths
+                            if str(path).strip()
+                        )
                         summary = (
                             "Adaptive race completed successfully"
                             + (
@@ -2400,6 +2811,29 @@ def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
                             + f" Attempts: {result.get('attempts', 0)}."
                             + f" Applied: {len(result.get('applied') or [])}."
                         )
+                        if changed:
+                            summary += (
+                                "\n\nProduct workspace: " + str(Path(workspace).resolve())
+                                + "\nCreated/updated:\n"
+                                + "\n".join(
+                                    f"  ✓ {path}\n    Path: {_terminal_file_link(Path(workspace).resolve() / path)}"
+                                    f"\n    File URI: {_file_uri(Path(workspace).resolve() / path)}"
+                                    for path in changed[:12]
+                                )
+                            )
+                            if any(
+                                path.casefold().endswith((".html", ".htm"))
+                                for path in changed
+                            ):
+                                summary += (
+                                    "\n\nNext steps (same project context):"
+                                    "\n  1. `add shopping cart`"
+                                    "\n  2. `add login and dashboard`"
+                                    "\n  3. `add payments and subscriptions`"
+                                    "\n  4. `add email and WhatsApp links`"
+                                    "\n  5. `open the website`"
+                                    "\n  6. `publish website` (TLS/deployment checks included)"
+                                )
                         return AgentResponse(summary)
 
                     error = str(
@@ -2407,8 +2841,36 @@ def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
                         or "adaptive race produced no verified result"
                     )
                     return AgentResponse(
-                        f"Adaptive race failed safely: {error}"
+                        f"Adaptive race failed safely.\n"
+                        f"No capability produced a verified result.\n"
+                        f"Reason: {error}\n\n"
+                        "Next actions:\n"
+                        "  /retry      try the same request again\n"
+                        "  /providers  inspect available capabilities\n"
+                        "  /doctor     diagnose unavailable providers\n"
+                        "Or restart Sophyane and choose mode 4 to target an "
+                        "external provider directly."
                     )
+
+            elif session_mode == "sli_local_hybrid":
+                # Mode 2.5: SLI grounding followed by the local TXQ graph.
+                workspace = Path.cwd().resolve() / ".sophyane-workspace"
+
+                def ask(message: str) -> AgentResponse:
+                    raise RuntimeError("Mode 2.5 low-level callback was invoked")
+
+                def dispatch_user_request(message: str) -> AgentResponse:
+                    from sophyane.sli_graph import run_sli_graph
+
+                    state = run_sli_graph(
+                        message, workspace=workspace, progress=lambda event: app.progress(event)
+                    )
+                    grounded = state.report if state.success else "No grounded SLI evidence was found."
+                    local_answer = _try_local_sli_llm_fallback(
+                        f"Answer this request using the grounded SLI evidence below.\n\nREQUEST: {message}\n\nSLI EVIDENCE:\n{grounded}",
+                        config, logger,
+                    )
+                    return AgentResponse(local_answer or state.report)
 
             elif session_mode == "sli_graph":
                 # SOPHYANE_MODE2_SLI_TOP_LEVEL_AUTHORITY_V1
@@ -2439,6 +2901,15 @@ def run_observable_tui(*, config: dict[str, Any], verbose: bool = False) -> int:
                         workspace=workspace,
                         progress=lambda event: app.progress(event),
                     )
+
+                    if not state.success:
+                        local_fallback = _try_local_sli_llm_fallback(
+                            message,
+                            config,
+                            logger,
+                        )
+                        if local_fallback:
+                            return AgentResponse(local_fallback)
 
                     return AgentResponse(
                         state.report

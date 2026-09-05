@@ -169,6 +169,10 @@
           <button type="button" class="voice-btn" id="btnStopSpeak" title="Stop speaking">
             ⏹ Mute
           </button>
+          <button type="button" class="voice-btn" id="btnCamera" title="Request camera access only when you choose">
+            📷 Camera
+          </button>
+          <video id="cameraPreview" autoplay playsinline muted hidden style="max-width:180px;border-radius:12px"></video>
           <span class="voice-status" id="voiceStatus">Voice ready — mic puts words in the box</span>
         </div>
         <form class="composer" id="composer">

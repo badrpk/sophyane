@@ -70,3 +70,41 @@ def is_approved(request_id: str) -> bool:
         if item.get("id") == request_id:
             return item.get("status") == "approved"
     return False
+
+def get_request(
+    request_id: str,
+) -> dict[str, Any]:
+    """Return one exact approval request without modifying the queue."""
+
+    if not isinstance(request_id, str) or not request_id.strip():
+        return {
+            "ok": False,
+            "error": "request id must be non-empty",
+        }
+
+    identifier = request_id.strip()
+    matches = [
+        item
+        for item in _load()
+        if (
+            isinstance(item, dict)
+            and item.get("id") == identifier
+        )
+    ]
+
+    if not matches:
+        return {
+            "ok": False,
+            "error": "request not found",
+        }
+
+    if len(matches) != 1:
+        return {
+            "ok": False,
+            "error": "duplicate request id",
+        }
+
+    return {
+        "ok": True,
+        "request": dict(matches[0]),
+    }

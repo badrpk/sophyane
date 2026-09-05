@@ -28,6 +28,7 @@ def _is_software_project(message: str) -> bool:
         "verify it over http",
         "serve over http",
     )
+
     project_terms = (
         "make",
         "build",
@@ -40,8 +41,15 @@ def _is_software_project(message: str) -> bool:
         "generate",
     )
 
-    return any(term in text for term in software_terms) and any(
-        term in text for term in project_terms
+    return (
+        any(
+            term in text
+            for term in software_terms
+        )
+        and any(
+            term in text
+            for term in project_terms
+        )
     )
 
 
@@ -50,13 +58,24 @@ def install_software_routing_guard() -> None:
     from sophyane import runtime_capability_acquisition_patch as capability
 
     current = capability._is_editable_session_request
-    if getattr(current, "_sophyane_software_routing_guard", False):
+
+    if getattr(
+        current,
+        "_sophyane_software_routing_guard",
+        False,
+    ):
         return
 
     def guarded(message: str) -> bool:
         if _is_software_project(message):
             return False
+
         return current(message)
 
-    setattr(guarded, "_sophyane_software_routing_guard", True)
+    setattr(
+        guarded,
+        "_sophyane_software_routing_guard",
+        True,
+    )
+
     capability._is_editable_session_request = guarded

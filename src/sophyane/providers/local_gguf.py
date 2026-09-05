@@ -165,9 +165,32 @@ class LocalGgufProvider(Provider):
         # budget. Do not silently clamp real on-device generation to
         # 90 seconds: 7B GGUF coding turns can legitimately require
         # several minutes on mobile hardware.
+        # SOPHYANE_LOCAL_GGUF_PRIVATE_SHORT_TIMEOUT_V4
+        #
+        # Normal/authorized local generations retain the historical
+        # >=20-second minimum so real coding turns are never accidentally
+        # downgraded.
+        #
+        # Only a private speculation clone created by
+        # global_txq_speculation may explicitly opt into the short 3-8
+        # second Global-TXQ budget.
+        short_speculation = bool(
+            getattr(
+                self,
+                "_sophyane_allow_short_speculative_timeout",
+                False,
+            )
+        )
+
         total_budget = max(
-            20.0,
-            float(self.timeout),
+            (
+                2.0
+                if short_speculation
+                else 20.0
+            ),
+            float(
+                self.timeout
+            ),
         )
         system_prompt = (system_prompt or "")[:800]
         prompt = (prompt or "")[:4000]
@@ -210,22 +233,15 @@ class LocalGgufProvider(Provider):
                     ensure_server_background()
                 )
 
-                normalized = (
-                    startup_message.lower()
-                )
-
-                server_loading = (
+                # SOPHYANE_LOCAL_GGUF_STARTUP_WAIT_AUTHORITY_V1
+                #
+                # ensure_server_background() already owns lifecycle
+                # classification.  True means the configured server is ready,
+                # loading, or a verified startup is in progress.  Do not
+                # downgrade that authoritative state to the short failure
+                # window by parsing human-readable message wording.
+                server_loading = bool(
                     server_started
-                    and any(
-                        marker
-                        in normalized
-                        for marker in (
-                            "loading",
-                            "starting",
-                            "startup already",
-                            "still starting",
-                        )
-                    )
                 )
 
                 remaining = (
@@ -315,15 +331,38 @@ class LocalGgufProvider(Provider):
         # This is the one and only model generation owned by this
         # LocalGgufProvider.generate() call.
         try:
-            return self._generate_via_server(
-                prompt,
-                system_prompt,
-                request_timeout=max(
+            # SOPHYANE_LOCAL_GGUF_SPECULATIVE_HTTP_BUDGET_V5
+            #
+            # int(remaining) rounds a nominal 3-second speculative budget
+            # down to 2 seconds as soon as any setup time has elapsed.
+            #
+            # Only the explicitly marked private speculative clone rounds the
+            # residual window upward. Normal/authorized Mode-3 keeps the
+            # historical timeout conversion unchanged.
+            if short_speculation:
+                import math as _speculation_math
+
+                request_timeout = max(
+                    2,
+                    int(
+                        _speculation_math.ceil(
+                            remaining
+                        )
+                    ),
+                )
+
+            else:
+                request_timeout = max(
                     2,
                     int(
                         remaining
                     ),
-                ),
+                )
+
+            return self._generate_via_server(
+                prompt,
+                system_prompt,
+                request_timeout=request_timeout,
             )
 
         except Exception:
@@ -338,8 +377,26 @@ class LocalGgufProvider(Provider):
                     wait_until_idle,
                 )
 
+                # SOPHYANE_LOCAL_GGUF_SHORT_BUDGET_QUIESCENCE_V3
+                #
+                # Normal authorized Mode-3 generations retain the historical
+                # 20-second post-error quiescence gate.
+                #
+                # A deliberately short <=20-second speculative provider clone
+                # must not add another unconditional 20 seconds after its
+                # inference deadline. Five seconds is enough to give the local
+                # server a bounded slot-release window before the caller's
+                # drain gate decides whether authorized generation may proceed.
+                cleanup_timeout = (
+                    5.0
+                    if float(
+                        self.timeout
+                    ) <= 20.0
+                    else 20.0
+                )
+
                 wait_until_idle(
-                    timeout=20.0,
+                    timeout=cleanup_timeout,
                 )
 
             except Exception:
@@ -365,10 +422,32 @@ class LocalGgufProvider(Provider):
             )
         )
 
-        # A tiny remaining output window means the requested implementation
-        # no longer belongs in one local generation turn. Do not start llama
-        # only to hit the context boundary with a predictably truncated file.
-        if completion_budget < 256:
+        # SOPHYANE_LOCAL_GGUF_SPECULATIVE_EVIDENCE_FLOOR_V5
+        #
+        # The historical 256-token floor protects candidate/file
+        # materialization from predictably truncated implementation output.
+        #
+        # A private Global-TXQ speculative clone has no implementation or
+        # mutation authority and returns only a compact repository observation.
+        # It may therefore use a much smaller evidence-only completion window.
+        #
+        # Authorized/local coding providers retain the original 256-token
+        # decomposition threshold unchanged.
+        minimum_completion_tokens = (
+            64
+            if bool(
+                getattr(
+                    self,
+                    "_sophyane_allow_short_speculative_timeout",
+                    False,
+                )
+            )
+            else 256
+        )
+
+        # A tiny remaining output window means the requested operation no
+        # longer belongs in one local generation turn.
+        if completion_budget < minimum_completion_tokens:
             raise ProviderError(
                 "Local generation requires decomposition: "
                 f"context={_configured_context_size()}, "

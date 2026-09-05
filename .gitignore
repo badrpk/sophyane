@@ -115,3 +115,5 @@ evals/runs/
 *.partial-*
 # Sophyane transient tmp workspaces
 /tmp-*/
+.vercel
+.env*

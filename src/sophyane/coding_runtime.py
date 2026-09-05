@@ -84,7 +84,15 @@ class RepositoryIndex:
 
     def _iter_files(self) -> Iterable[Path]:
         for path in sorted(self.root.rglob("*")):
-            if not path.is_file() or self._ignored(path.relative_to(self.root)):
+            # Do not follow symlinked files/directories that resolve outside
+            # the workspace; verification must remain bounded to root.
+            if path.is_symlink():
+                continue
+            try:
+                relative = path.relative_to(self.root)
+            except ValueError:
+                continue
+            if not path.is_file() or self._ignored(relative):
                 continue
             if path.suffix.lower() not in TEXT_SUFFIXES and path.name not in self.MANIFEST_NAMES:
                 continue

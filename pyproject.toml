@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sophyane"
-version = "21.5.0"
+version = "26.0.0"
 description = "Local-first AI software engineering platform with durable execution, repository intelligence, validator-driven recovery, browser verification, multi-provider orchestration, MCP interoperability, and native COI sub-agents"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,9 +31,13 @@ dependencies = [
   "numpy>=1.26",
   "pexpect>=4.9",
     "psycopg>=3.3,<4",
+  "websocket-client>=1.8,<2",
 ]
 
 [project.optional-dependencies]
+arc = [
+  "arc-agi>=0.9.9,<1",
+]
 test = [
   "pytest>=8",
   "psycopg[binary]>=3.2",
@@ -69,6 +73,8 @@ sophyane-audit = "sophyane.audit_cli:main"
 sophyane-benchmark = "sophyane.benchmark_cli:main"
 sophyane-mcp = "sophyane.mcp_server:main"
 sophyane-mission = "sophyane.mission_cli:main"
+sophyane-arc = "sophyane.arc_agi3:main"
+sophyane-arc-suite = "sophyane.arc_suite:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

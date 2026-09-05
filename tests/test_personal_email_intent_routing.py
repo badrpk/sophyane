@@ -84,3 +84,22 @@ def test_generic_latest_message_is_private_but_ambiguous() -> None:
         )
         is True
     )
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "what is the first email i received?",
+        "show my earliest inbox message",
+        "what was the oldest email?",
+    ],
+)
+def test_first_received_email_maps_to_first_inbox(
+    query: str,
+) -> None:
+    assert is_personal_connector_request(query) is True
+
+    operation, args = _operation(query)
+
+    assert operation == "first"
+    assert args == {}

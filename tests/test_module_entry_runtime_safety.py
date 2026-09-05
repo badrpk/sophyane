@@ -12,7 +12,7 @@ class ModuleEntryRuntimeSafetyTests(unittest.TestCase):
         if hasattr(execution_runtime, "_safety_installed"):
             delattr(execution_runtime, "_safety_installed")
 
-        with patch("sophyane.main.main", return_value=0):
+        with patch("sophyane.cli_entry.main", return_value=0):
             with self.assertRaises(SystemExit) as exit_context:
                 runpy.run_module("sophyane.__main__", run_name="__main__")
 

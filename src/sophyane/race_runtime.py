@@ -540,8 +540,14 @@ class AdaptiveRace(Generic[T]):
         finally:
             stop.set()
 
-            for future in pending:
-                future.cancel()
+            # Make speculative cancellation observable: a fast, strong
+            # winner should terminate slower routes with an explicit reason.
+            if winner is not None:
+                for future in pending:
+                    worker = futures.get(future)
+                    if worker:
+                        errors.setdefault(worker, "canceled after stronger winner")
+                    future.cancel()
 
             executor.shutdown(
                 wait=False,

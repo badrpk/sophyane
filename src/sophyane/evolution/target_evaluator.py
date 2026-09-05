@@ -14,6 +14,8 @@ No commit or promotion occurs.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
+
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -35,6 +37,11 @@ from .target_worktree import (
     abandon_target_worktree,
     create_target_worktree,
     target_head,
+)
+from .red_queen_policy import ChallengeRequest
+from .trusted_supplemental_executor import (
+    TrustedSupplementalResult,
+    run_trusted_supplemental_challenges,
 )
 
 
@@ -60,6 +67,20 @@ class CandidateEvaluation:
     @property
     def passed(self) -> bool:
         return self.status == STATUS_PASS
+
+
+@dataclass(frozen=True)
+class TrustedCandidateEvaluation:
+    candidate: CandidateEvaluation
+    supplemental: TrustedSupplementalResult | None
+
+    @property
+    def passed(self) -> bool:
+        return (
+            self.candidate.passed
+            and self.supplemental is not None
+            and self.supplemental.passed
+        )
 
 
 def _git(
@@ -206,11 +227,12 @@ def _actual_changed_paths(
     return tuple(paths)
 
 
-def evaluate_candidate_patch(
+def _evaluate_candidate_patch(
     target: TargetSpec,
     patch: str | bytes,
     *,
     timeout: int = DEFAULT_VALIDATION_TIMEOUT,
+    _on_validated_worktree: Callable[[Path], None] | None = None,
 ) -> CandidateEvaluation:
     """Evaluate a unified git patch without mutating target HEAD."""
 
@@ -467,6 +489,9 @@ def evaluate_candidate_patch(
                 message=detail,
             )
 
+        if _on_validated_worktree is not None:
+            _on_validated_worktree(worktree.path)
+
         return CandidateEvaluation(
             status=STATUS_PASS,
             target_name=target.name,
@@ -512,3 +537,509 @@ def evaluate_candidate_patch(
                 "CRITICAL: target HEAD changed "
                 "during V2C evaluation"
             )
+
+def _evaluate_candidate_patch_from_snapshot(
+    target: TargetSpec,
+    baseline_patch: str | bytes,
+    candidate_patch: str | bytes,
+    *,
+    timeout: int = DEFAULT_VALIDATION_TIMEOUT,
+    _on_validated_worktree: Callable[[Path], None] | None = None,
+) -> CandidateEvaluation:
+    """Evaluate a candidate relative to an explicit dirty-state overlay.
+
+    Both overlays are applied only inside one detached disposable
+    worktree. The target worktree, index, files and HEAD are never
+    mutated.
+    """
+
+    source_head = target_head(target)
+    source_status = _git(
+        target.repo,
+        "status",
+        "--porcelain=v1",
+        "-z",
+    ).stdout
+
+    policy = build_target_policy(target)
+
+    try:
+        baseline_payload = (
+            baseline_patch.encode("utf-8")
+            if isinstance(baseline_patch, str)
+            else bytes(baseline_patch)
+        )
+        candidate_payload = (
+            candidate_patch.encode("utf-8")
+            if isinstance(candidate_patch, str)
+            else bytes(candidate_patch)
+        )
+    except Exception as error:
+        return CandidateEvaluation(
+            status=STATUS_PATCH_INVALID,
+            target_name=target.name,
+            source_head=source_head,
+            changed_paths=(),
+            validator_checks=(),
+            validator_runs=(),
+            message=f"Invalid patch payload: {error}",
+        )
+
+    baseline_file: Path | None = None
+    candidate_file: Path | None = None
+    worktree = None
+    candidate_paths: tuple[str, ...] = ()
+
+    def result(
+        status: str,
+        message: str,
+        *,
+        checks: tuple[ValidatorCheck, ...] = (),
+        runs: tuple[ValidatorRun, ...] = (),
+    ) -> CandidateEvaluation:
+        return CandidateEvaluation(
+            status=status,
+            target_name=target.name,
+            source_head=source_head,
+            changed_paths=candidate_paths,
+            validator_checks=checks,
+            validator_runs=runs,
+            message=message,
+        )
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix="sophyane-baseline-",
+            suffix=".patch",
+            delete=False,
+        ) as handle:
+            handle.write(baseline_payload)
+            baseline_file = Path(handle.name)
+
+        with tempfile.NamedTemporaryFile(
+            prefix="sophyane-candidate-",
+            suffix=".patch",
+            delete=False,
+        ) as handle:
+            handle.write(candidate_payload)
+            candidate_file = Path(handle.name)
+
+        try:
+            baseline_paths = _patch_paths(
+                target.repo,
+                baseline_file,
+            )
+        except (UnicodeDecodeError, ValueError) as error:
+            return result(
+                STATUS_PATCH_INVALID,
+                f"Baseline patch rejected: {error}",
+            )
+
+        try:
+            candidate_paths = _patch_paths(
+                target.repo,
+                candidate_file,
+            )
+        except (UnicodeDecodeError, ValueError) as error:
+            return result(
+                STATUS_PATCH_INVALID,
+                f"Candidate patch rejected: {error}",
+            )
+
+        rejected = _policy_rejections(
+            policy,
+            candidate_paths,
+        )
+
+        if rejected:
+            return result(
+                STATUS_POLICY_REJECTED,
+                "Candidate patch touches non-mutable paths: "
+                + ", ".join(rejected),
+            )
+
+        worktree = create_target_worktree(target)
+
+        if target_head(target) != source_head:
+            raise RuntimeError(
+                "Target HEAD changed while snapshot "
+                "evaluation was starting"
+            )
+
+        baseline_check = _git(
+            worktree.path,
+            "apply",
+            "--check",
+            str(baseline_file),
+            check=False,
+        )
+
+        if baseline_check.returncode != 0:
+            message = baseline_check.stderr.decode(
+                "utf-8",
+                errors="replace",
+            ).strip()
+            return result(
+                STATUS_PATCH_INVALID,
+                "Baseline patch does not apply: " + message,
+            )
+
+        baseline_apply = _git(
+            worktree.path,
+            "apply",
+            str(baseline_file),
+            check=False,
+        )
+
+        if baseline_apply.returncode != 0:
+            message = baseline_apply.stderr.decode(
+                "utf-8",
+                errors="replace",
+            ).strip()
+            return result(
+                STATUS_PATCH_INVALID,
+                "Baseline patch application failed: "
+                + message,
+            )
+
+        baseline_actual = _actual_changed_paths(
+            worktree.path
+        )
+
+        if set(baseline_actual) != set(baseline_paths):
+            return result(
+                STATUS_PATCH_INVALID,
+                "Baseline changed-path set does not "
+                "match preflight",
+            )
+
+        candidate_check = _git(
+            worktree.path,
+            "apply",
+            "--check",
+            str(candidate_file),
+            check=False,
+        )
+
+        if candidate_check.returncode != 0:
+            message = candidate_check.stderr.decode(
+                "utf-8",
+                errors="replace",
+            ).strip()
+            return result(
+                STATUS_PATCH_INVALID,
+                "Candidate patch does not apply to "
+                "baseline: " + message,
+            )
+
+        candidate_apply = _git(
+            worktree.path,
+            "apply",
+            str(candidate_file),
+            check=False,
+        )
+
+        if candidate_apply.returncode != 0:
+            message = candidate_apply.stderr.decode(
+                "utf-8",
+                errors="replace",
+            ).strip()
+            return result(
+                STATUS_PATCH_INVALID,
+                "Candidate patch application failed: "
+                + message,
+            )
+
+        final_actual = _actual_changed_paths(
+            worktree.path
+        )
+        expected = set(baseline_paths) | set(
+            candidate_paths
+        )
+
+        if set(final_actual) != expected:
+            return result(
+                STATUS_POLICY_REJECTED,
+                "Final changed-path set does not match "
+                "baseline and candidate preflight",
+            )
+
+        post_rejected = _policy_rejections(
+            policy,
+            candidate_paths,
+        )
+
+        if post_rejected:
+            return result(
+                STATUS_POLICY_REJECTED,
+                "Post-apply candidate policy rejection: "
+                + ", ".join(post_rejected),
+            )
+
+        checks = verify_validators(
+            worktree.path,
+            policy.validators,
+        )
+
+        if not checks:
+            return result(
+                STATUS_VALIDATION_UNAVAILABLE,
+                "No validators discovered for target",
+            )
+
+        unavailable = tuple(
+            check
+            for check in checks
+            if not check.runnable
+        )
+
+        if unavailable:
+            detail = "; ".join(
+                f"{check.spec.name}: {check.reason}"
+                for check in unavailable
+            )
+            return result(
+                STATUS_VALIDATION_UNAVAILABLE,
+                "Not all discovered validators are "
+                "runnable: " + detail,
+                checks=checks,
+            )
+
+        runs = run_validators(
+            worktree.path,
+            checks,
+            timeout=timeout,
+        )
+
+        failed = tuple(
+            run
+            for run in runs
+            if not run.passed
+        )
+
+        if failed:
+            detail = "; ".join(
+                (
+                    f"{run.name}: timeout"
+                    if run.timed_out
+                    else f"{run.name}: exit={run.returncode}"
+                )
+                for run in failed
+            )
+            return result(
+                STATUS_VALIDATION_FAILED,
+                detail,
+                checks=checks,
+                runs=runs,
+            )
+
+        if _on_validated_worktree is not None:
+            _on_validated_worktree(worktree.path)
+
+        return result(
+            STATUS_PASS,
+            "Candidate passed snapshot policy and "
+            "all verified validators",
+            checks=checks,
+            runs=runs,
+        )
+
+    except Exception as error:
+        return result(
+            STATUS_INTERNAL_ERROR,
+            f"{type(error).__name__}: {error}",
+        )
+
+    finally:
+        if worktree is not None:
+            abandon_target_worktree(worktree)
+
+        for patch_file in (
+            baseline_file,
+            candidate_file,
+        ):
+            if (
+                patch_file is not None
+                and patch_file.exists()
+            ):
+                patch_file.unlink()
+
+        final_head = target_head(target)
+        final_status = _git(
+            target.repo,
+            "status",
+            "--porcelain=v1",
+            "-z",
+        ).stdout
+
+        if final_head != source_head:
+            raise RuntimeError(
+                "CRITICAL: target HEAD changed during "
+                "snapshot evaluation"
+            )
+
+        if final_status != source_status:
+            raise RuntimeError(
+                "CRITICAL: target status changed during "
+                "snapshot evaluation"
+            )
+
+def evaluate_candidate_patch_from_snapshot(
+    target: TargetSpec,
+    baseline_patch: str | bytes,
+    candidate_patch: str | bytes,
+    *,
+    timeout: int = DEFAULT_VALIDATION_TIMEOUT,
+) -> CandidateEvaluation:
+    """Evaluate a candidate relative to an explicit baseline overlay."""
+
+    return _evaluate_candidate_patch_from_snapshot(
+        target,
+        baseline_patch,
+        candidate_patch,
+        timeout=timeout,
+    )
+
+
+def _validated_challenge_requests(
+    requests: Iterable[ChallengeRequest],
+) -> tuple[ChallengeRequest, ...]:
+    if isinstance(requests, (str, bytes)):
+        raise ValueError(
+            "requests must be an iterable of ChallengeRequest"
+        )
+
+    try:
+        items = tuple(requests)
+    except (TypeError, RuntimeError) as error:
+        raise ValueError(
+            "requests must be iterable"
+        ) from error
+
+    if any(
+        not isinstance(item, ChallengeRequest)
+        for item in items
+    ):
+        raise ValueError(
+            "every request must be a ChallengeRequest"
+        )
+
+    identifiers = tuple(
+        item.challenge_id
+        for item in items
+    )
+
+    if len(set(identifiers)) != len(identifiers):
+        raise ValueError(
+            "duplicate challenge_id values are not allowed"
+        )
+
+    return items
+
+
+def evaluate_candidate_patch_from_snapshot_with_trusted_challenges(
+    target: TargetSpec,
+    baseline_patch: str | bytes,
+    candidate_patch: str | bytes,
+    requests: Iterable[ChallengeRequest],
+    *,
+    timeout: int = DEFAULT_VALIDATION_TIMEOUT,
+) -> TrustedCandidateEvaluation:
+    """Evaluate ordinary and trusted gates in one disposable worktree."""
+
+    items = _validated_challenge_requests(
+        requests
+    )
+    supplemental: list[
+        TrustedSupplementalResult
+    ] = []
+
+    def execute_trusted(
+        worktree: Path,
+    ) -> None:
+        supplemental.append(
+            run_trusted_supplemental_challenges(
+                worktree,
+                items,
+                timeout=timeout,
+            )
+        )
+
+    candidate = _evaluate_candidate_patch_from_snapshot(
+        target,
+        baseline_patch,
+        candidate_patch,
+        timeout=timeout,
+        _on_validated_worktree=execute_trusted,
+    )
+
+    trusted = (
+        supplemental[0]
+        if candidate.passed and supplemental
+        else None
+    )
+
+    return TrustedCandidateEvaluation(
+        candidate=candidate,
+        supplemental=trusted,
+    )
+
+def evaluate_candidate_patch(
+    target: TargetSpec,
+    patch: str | bytes,
+    *,
+    timeout: int = DEFAULT_VALIDATION_TIMEOUT,
+) -> CandidateEvaluation:
+    """Evaluate a unified Git patch without mutating target HEAD."""
+
+    return _evaluate_candidate_patch(
+        target,
+        patch,
+        timeout=timeout,
+    )
+
+
+def evaluate_candidate_patch_with_trusted_challenges(
+    target: TargetSpec,
+    patch: str | bytes,
+    requests: Iterable[ChallengeRequest],
+    *,
+    timeout: int = DEFAULT_VALIDATION_TIMEOUT,
+) -> TrustedCandidateEvaluation:
+    """Evaluate ordinary and trusted gates in one clean worktree."""
+
+    items = _validated_challenge_requests(
+        requests
+    )
+    supplemental: list[
+        TrustedSupplementalResult
+    ] = []
+
+    def execute_trusted(
+        worktree: Path,
+    ) -> None:
+        supplemental.append(
+            run_trusted_supplemental_challenges(
+                worktree,
+                items,
+                timeout=timeout,
+            )
+        )
+
+    candidate = _evaluate_candidate_patch(
+        target,
+        patch,
+        timeout=timeout,
+        _on_validated_worktree=execute_trusted,
+    )
+
+    trusted = (
+        supplemental[0]
+        if candidate.passed and supplemental
+        else None
+    )
+
+    return TrustedCandidateEvaluation(
+        candidate=candidate,
+        supplemental=trusted,
+    )

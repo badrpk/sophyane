@@ -8,6 +8,10 @@ def test_local_gguf_generation_has_no_hidden_85_90_second_cap() -> None:
         encoding="utf-8",
     )
 
+    compact = "".join(
+        source.split()
+    )
+
     assert (
         "SOPHYANE_LOCAL_GGUF_GENERATION_BUDGET_V2"
         in source
@@ -19,24 +23,25 @@ def test_local_gguf_generation_has_no_hidden_85_90_second_cap() -> None:
     )
 
     assert (
-        "min(float(self.timeout), 90.0)"
-        not in source
+        "min(float(self.timeout),90.0)"
+        not in compact
     )
 
     assert (
-        "min(self.timeout, 85)"
-        not in source
+        "min(self.timeout,85)"
+        not in compact
     )
 
     assert (
         "float(self.timeout)"
-        in source
+        in compact
     )
 
     assert (
-        "else self.timeout"
-        in source
+        "elseself.timeout"
+        in compact
     )
+
 
 
 def test_local_gguf_configured_timeout_is_long_enough_for_coding() -> None:

@@ -13,7 +13,7 @@ from sophyane.post_build_menu import (
 
 def test_menu_rendering_contains_all_choices() -> None:
     menu = render_menu()
-    for number in range(10):
+    for number in range(11):
         assert f"{number}." in menu
     assert "Press Enter to open in browser" in menu
 
@@ -24,8 +24,10 @@ def test_input_routing_accepts_numbers_commands_and_default() -> None:
     assert normalize_choice("bash") == "2"
     assert normalize_choice("status") == "7"
     assert normalize_choice("new") == "9"
+    assert normalize_choice("vercel") == "10"
+    assert normalize_choice("publish") == "10"
     assert normalize_choice("exit") == "0"
-    assert normalize_choice("10") is None
+    assert normalize_choice("10") == "10"
     assert normalize_choice("unknown") is None
 
 
@@ -65,7 +67,7 @@ def test_invalid_input_is_handled_then_exit(tmp_path: Path, monkeypatch) -> None
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     menu = PostBuildMenu(tmp_path, input_fn=lambda _: next(choices), output_fn=outputs.append)
     assert menu.run() == "exit"
-    assert "Please choose a number from 0 to 9." in outputs
+    assert "Please choose a menu option from 0 to 10." in outputs
 
 
 def test_export_verifies_zip(tmp_path: Path) -> None:

@@ -123,8 +123,47 @@ def _contains_phrase(text: str, phrase: str) -> bool:
     return phrase in text
 
 
+# SOPHYANE_EXPLICIT_NON_MUTATION_ROUTE_AUTHORITY_V1
+_EXPLICIT_NON_MUTATION = re.compile(
+    r"\b(?:"
+    r"do not|don't|without"
+    r")\s+(?:"
+    r"edit(?:ing)?|modif(?:y|ying)|chang(?:e|ing)|"
+    r"write(?:\s+to)?|alter(?:ing)?"
+    r")\s+(?:any\s+)?(?:"
+    r"files?|code|repository|repo|project"
+    r")\b"
+    r"(?!\s+(?:outside|except|other\s+than)\b)",
+    re.I,
+)
+
+
+def is_explicit_non_mutation_request(message: str) -> bool:
+    """Return whether the user explicitly forbids project mutation."""
+
+    text = normalize(message)
+
+    return bool(
+        _EXPLICIT_NON_MUTATION.search(text)
+        or any(
+            phrase in text
+            for phrase in (
+                "read-only analysis",
+                "readonly analysis",
+                "analysis only",
+                "plan only",
+                "planning only",
+            )
+        )
+    )
+
+
 def is_execution_request(message: str) -> bool:
     text = normalize(message)
+
+    if is_explicit_non_mutation_request(text):
+        return False
+
     words = set(re.findall(r"[a-z0-9_+.-]+", text))
 
     verb_hit = bool(words.intersection(EXECUTION_VERBS))
@@ -341,6 +380,7 @@ __all__ = [
     "execution_prefix",
     "filesystem_only_request",
     "is_compound_request",
+    "is_explicit_non_mutation_request",
     "is_execution_request",
     "normalize",
     "protected_context",

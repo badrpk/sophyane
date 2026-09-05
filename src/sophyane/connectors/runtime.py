@@ -132,6 +132,10 @@ def resolve_connector_op(message: str, profile: str | None = None) -> ConnectorO
                     w in text for w in ("last", "latest", "what was")
                 ):
                     score = 1
+                elif op_name == "first" and any(
+                    w in text for w in ("first", "earliest", "oldest")
+                ):
+                    score = 1
                 elif op_name == "search" and any(
                     w in text
                     for w in (

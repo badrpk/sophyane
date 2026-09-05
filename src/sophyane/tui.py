@@ -185,7 +185,22 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
                 workspace,
             )
         ):
-            PostBuildMenu(workspace).run()
+            # Keep the execution/RSI pipeline non-blocking. HITL actions are
+            # opt-in: only requests that explicitly ask to publish/package
+            # open the interactive action menu. Normal builds return to the
+            # Sophyane prompt so the user can inject follow-ups at any time.
+            request_text = original_request.casefold()
+            explicit_handoff = any(
+                marker in request_text
+                for marker in ("publish", "deploy", "package", "export", "app icon")
+            )
+            if explicit_handoff or os.environ.get("SOPHYANE_AUTO_POST_BUILD_MENU") == "1":
+                PostBuildMenu(workspace).run()
+            else:
+                print(
+                    "\nProject verified. Continue with another instruction, or ask \"publish website\", \"open the website\", or \"show project files\".",
+                    flush=True,
+                )
         elif (
             show_project_menu
             and workspace.is_dir()

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from sophyane.agent import SophyaneAgent
 from sophyane.autonomy import AUTONOMOUS_WORKER_POLICY
-from sophyane.config import ensure_directories
+from sophyane.config import ensure_directories, load_config
 from sophyane.diagnostics import run_diagnostics
 from sophyane.live_coding_doer import LiveProgressReporter
 from sophyane.logging_config import configure_logging
@@ -466,20 +466,29 @@ def _execution_session_mode() -> str:
     ).strip().lower()
 
     aliases = {
-        "1": "sli_graph",
+        "1": "race",
         "sli": "sli_graph",
         "sli_chunks": "sli_graph",
+        "mode2.5": "sli_local_hybrid",
+        "mode2_5": "sli_local_hybrid",
+        "sli_local_hybrid": "sli_local_hybrid",
 
-        "2": "local_llm",
+        "2": "sli_graph",
         "local": "local_llm",
 
-        "3": "cloud_llm",
+        "3": "local_llm",
+        "4": "cloud_llm",
         "cloud": "cloud_llm",
         "gemini": "cloud_llm",
 
         "nifdu": "nifdu_llm",
         "nifdu_browser": "nifdu_llm",
         "browser_llm": "nifdu_llm",
+
+        "codex": "codex_cli",
+        "codex_cli": "codex_cli",
+
+        "agy": "agy",
 
         "0": "race",
         "adaptive": "race",
@@ -497,6 +506,8 @@ def _execution_session_mode() -> str:
         "local_llm",
         "cloud_llm",
         "nifdu_llm",
+        "codex_cli",
+        "agy",
         "race",
     }:
         return mode
@@ -601,6 +612,7 @@ def _run_adaptive_race_request(
     if _auto_request_requires_execution(request):
         from sophyane.race_execution import (
             _semantic_completion_judgement,
+            race_strategy_for,
             run_race_apply_verify,
         )
 
@@ -609,7 +621,9 @@ def _run_adaptive_race_request(
             workspace=workspace,
             config=config,
             progress=progress,
-            max_rounds=3,
+            # Preserve request-specific limits (for example, static websites
+            # use at most two rounds) while keeping the bridge explicit.
+            max_rounds=race_strategy_for(request).max_rounds,
             race_timeout=timeout,
             semantic_judge=(
                 _semantic_completion_judgement
@@ -674,6 +688,12 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     logger = configure_logging(args.verbose)
+
+    # One-shot/non-progress invocations must not inherit a stale persistent
+    # Codex thread. A dead thread can block the planner indefinitely; forcing
+    # a fresh CLI context keeps automated runs bounded and reproducible.
+    if args.no_progress and os.environ.get("SOPHYANE_SESSION_MODE") == "codex_cli":
+        os.environ["SOPHYANE_CODEX_FRESH"] = "1"
 
     if args.single_agent and args.multi_agent:
         parser.error("--single-agent and --multi-agent cannot be used together")
@@ -985,6 +1005,41 @@ def main() -> int:
         return 0
 
     if args.ask:
+        # Explicit Mode-2 requests must enter the SLI graph front door. The
+        # generic expert answer path is LLM-backed and bypasses SLI retrieval.
+        if os.environ.get("SOPHYANE_SESSION_MODE") == "sli_local_hybrid":
+            # Mode 2.5 is SLI + the on-device model; never construct a
+            # cloud-capable fallback chain for this session.
+            os.environ["SOPHYANE_SESSION_PROVIDER"] = "local_gguf"
+            os.environ["SOPHYANE_DISABLE_CLOUD_FALLBACK"] = "1"
+            os.environ["SOPHYANE_DISABLE_LOCAL_FALLBACK"] = "1"
+            from sophyane.sli_graph import run_sli_graph
+            import logging
+
+            previous_sli_local_only = os.environ.get("SOPHYANE_SLI_LOCAL_ONLY")
+            os.environ["SOPHYANE_SLI_LOCAL_ONLY"] = "1"
+            try:
+                state = run_sli_graph(str(args.ask))
+            finally:
+                if previous_sli_local_only is None:
+                    os.environ.pop("SOPHYANE_SLI_LOCAL_ONLY", None)
+                else:
+                    os.environ["SOPHYANE_SLI_LOCAL_ONLY"] = previous_sli_local_only
+            evidence = state.report if state.success else "No grounded SLI evidence was found."
+            provider = create_provider({**load_config(), "provider": "local_gguf"})
+            answer = SophyaneAgent(provider, MemoryStore(), logging.getLogger("sophyane")).ask(
+                f"Answer the user request using this grounded SLI evidence.\n\nREQUEST: {args.ask}\n\nSLI EVIDENCE:\n{evidence}"
+            )
+            print(answer.text)
+            return 0
+
+        if os.environ.get("SOPHYANE_SLI_GRAPH") == "1":
+            from sophyane.sli_graph import run_sli_graph
+
+            state = run_sli_graph(str(args.ask))
+            print(state.report)
+            return 0 if state.success else 1
+
         from collections.abc import Callable
 
         from sophyane.expert.answer import answer_tough_question
@@ -1007,13 +1062,18 @@ def main() -> int:
         except Exception:  # noqa: BLE001
             generate_callback = None
 
+        session_mode = str(os.environ.get("SOPHYANE_SESSION_MODE") or "").strip().lower()
+        direct_model_session = session_mode in {"local_llm", "cloud_llm", "codex_cli", "agy", "nifdu_llm"}
         result = answer_tough_question(
             str(args.ask),
             generate=generate_callback,
+            # External providers receive the user request directly. Injecting
+            # the generic expert notes can steer harnesses toward policy text
+            # instead of answering the actual question.
             mode=(
-                "hybrid"
-                if generate_callback is not None
-                else "expert"
+                "llm"
+                if generate_callback is not None and direct_model_session
+                else ("hybrid" if generate_callback is not None else "expert")
             ),
         )
         print(result["answer"])

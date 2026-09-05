@@ -280,6 +280,56 @@ def _structural_stub_targets(
     return targets
 
 
+def _protected_python_path_references(
+    request: str,
+    explicit_paths: list[str],
+) -> set[str]:
+    """Return explicit Python paths referenced only as immutable/test authority."""
+
+    import re
+
+    raw = str(
+        request
+        or ""
+    )
+
+    protected: set[str] = set()
+
+    for path in explicit_paths:
+        escaped = re.escape(
+            path
+        )
+
+        negative_patterns = (
+            rf"\bdo\s+not\s+(?:modify|edit|change|write|replace|patch)\s+{escaped}\b",
+            rf"\bnever\s+(?:modify|edit|change|write|replace|patch)\s+{escaped}\b",
+            rf"\b{escaped}\s+is\s+immutable\b",
+            rf"\bimmutable(?:\s+(?:test|pytest|file|authority))*\s+{escaped}\b",
+        )
+
+        test_authority_patterns = (
+            rf"\bpytest\s+{escaped}\b",
+            rf"\brun\s+(?:the\s+)?(?:existing\s+)?pytest(?:\s+(?:suite|tests?))?\s+{escaped}\b",
+        )
+
+        if any(
+            re.search(
+                pattern,
+                raw,
+                flags=re.IGNORECASE,
+            )
+            for pattern in (
+                *negative_patterns,
+                *test_authority_patterns,
+            )
+        ):
+            protected.add(
+                path
+            )
+
+    return protected
+
+
 def _resolve_fast_python_target(
     *,
     root: Path,
@@ -306,6 +356,41 @@ def _resolve_fast_python_target(
                 relative_path
             )
 
+    protected_references = (
+        _protected_python_path_references(
+            request,
+            explicit_paths,
+        )
+    )
+
+    # SOPHYANE_FASTPATH_REFERENCE_AUTHORITY_V1
+    #
+    # Ambiguity is determined from the user's positive path references,
+    # not from which referenced files happen to exist right now.
+    #
+    # Example:
+    #   "Update sample.py and other.py"
+    #
+    # remains a two-target request even when only sample.py currently
+    # exists. Otherwise filesystem state could silently collapse a
+    # multi-file request into authority to mutate one file.
+    #
+    # Protected/test-only references are excluded first:
+    #   "Repair clamp_task.py. Do not modify test_clamp_task.py."
+    #
+    # therefore has exactly one writable reference: clamp_task.py.
+    writable_references = [
+        path
+        for path in explicit_paths
+        if path not in protected_references
+    ]
+
+    writable_explicit = [
+        path
+        for path in existing_explicit
+        if path in writable_references
+    ]
+
     structural = (
         _structural_stub_targets(
             root
@@ -319,7 +404,7 @@ def _resolve_fast_python_target(
 
     explicit_incomplete = [
         path
-        for path in existing_explicit
+        for path in writable_explicit
         if path in structural_by_path
     ]
 
@@ -341,11 +426,11 @@ def _resolve_fast_python_target(
     # request itself names exactly one incomplete implementation
     # symbol.  Structural incompleteness alone must not turn a
     # generic multi-file update into an implicit edit.
-    if len(explicit_paths) > 1:
+    if len(writable_references) > 1:
         explicit_symbol_matches = [
             path
             for path in symbol_matches
-            if path in existing_explicit
+            if path in writable_references
         ]
 
         if len(explicit_symbol_matches) == 1:
@@ -357,6 +442,39 @@ def _resolve_fast_python_target(
         return (
             None,
             "fast path requires exactly one explicit Python target",
+        )
+
+    if len(writable_references) == 1:
+        writable_path = (
+            writable_references[0]
+        )
+
+        explicit_symbol_matches = [
+            path
+            for path in symbol_matches
+            if path == writable_path
+        ]
+
+        if len(explicit_symbol_matches) == 1:
+            return (
+                writable_path,
+                "unique requested-symbol structural stub",
+            )
+
+        if writable_path in structural_by_path:
+            return (
+                writable_path,
+                "unique explicitly mentioned structural stub",
+            )
+
+        return (
+            writable_path,
+            (
+                "single writable explicit Python target; "
+                "protected/test references excluded"
+                if protected_references
+                else "single explicit Python target"
+            ),
         )
 
     # With zero or one explicit path, a uniquely requested symbol
@@ -374,11 +492,14 @@ def _resolve_fast_python_target(
             "unique explicitly mentioned structural stub",
         )
 
-    # Preserve historical behavior for the normal one-path case.
-    if len(explicit_paths) == 1:
+    # A sole explicit path that is protected/test authority is not writable.
+    if (
+        len(explicit_paths) == 1
+        and protected_references
+    ):
         return (
-            explicit_paths[0],
-            "single explicit Python target",
+            None,
+            "explicit Python reference is protected/test authority",
         )
 
     # Structural-only resolution is allowed only when the request

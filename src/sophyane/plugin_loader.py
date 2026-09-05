@@ -48,9 +48,10 @@ class PluginLoader:
                 module = importlib.import_module(qualified_name)
             except Exception as error:
                 self.errors[module_name] = str(error)
-                LOGGER.exception(
+                LOGGER.debug(
                     "Provider plugin import failed: %s",
                     qualified_name,
+                    exc_info=True,
                 )
                 continue
 

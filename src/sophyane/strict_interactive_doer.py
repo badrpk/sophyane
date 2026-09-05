@@ -11,6 +11,7 @@ from sophyane.decision_visibility import is_fatal_provider_error, normalize_cand
 from sophyane.doer import ProtocolError, StepRecord, _extract_json
 from sophyane.interactive_coding_doer import InteractiveCodingDoerRuntime
 from sophyane.strict_protocol import parse_and_validate_plan, strict_repair_request
+from sophyane.local_chunking import decompose_request, merge_chunk_artifacts, parse_chunk_artifact
 
 
 class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
@@ -98,10 +99,20 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
                 ],
                 "summary": "short implementation summary",
             },
+            "local_chunks": [
+                {
+                    "id": chunk.id,
+                    "title": chunk.title,
+                    "instruction": chunk.instruction,
+                    "depends_on": list(chunk.depends_on),
+                }
+                for chunk in decompose_request(prompt)
+            ],
             "instruction": (
-                "Generate the implementation requested by the user. Return one JSON object only. Put complete "
-                "source code in files[].content. Use safe relative paths, no absolute paths, no markdown fences, "
-                "and no shell commands. Include every file needed for a runnable minimal implementation."
+                "Generate the implementation requested by the user in the listed bounded chunks. Return one JSON "
+                "object only. Put complete source code in files[].content. Use safe relative paths, no absolute "
+                "paths, no markdown fences, and no shell commands. Keep each chunk small and independently valid. "
+                "Do not emit conflicting writes to the same path; use operation=append only when necessary."
             ),
         }
         return json.dumps(payload, ensure_ascii=False)
@@ -111,6 +122,12 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
         files = data.get("files") if isinstance(data, dict) else None
         if not isinstance(files, list) or not files:
             raise ProtocolError("artifact fallback returned no files")
+
+        try:
+            data = {**data, **merge_chunk_artifacts([parse_chunk_artifact(json.dumps(data))])}
+            files = data["files"]
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise ProtocolError(f"invalid chunk artifact: {error}") from error
 
         actions: list[dict[str, Any]] = []
         checks: list[dict[str, Any]] = []

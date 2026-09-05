@@ -32,6 +32,13 @@ _EMAIL_PATTERNS = (
     r"(?:sent|outgoing\s+)?"
     r"(?:email|mail|message)\b",
 
+    # Earliest incoming message requests.
+    r"\b(?:what\s+(?:was|is)\s+)?(?:the\s+)?"
+    r"(?:first|earliest|oldest)\s+"
+    r"(?:email|mail|message)(?:\s+i\s+received)?\b",
+    r"\b(?:first|earliest|oldest)\s+(?:inbox\s+)?"
+    r"(?:email|mail|message)\b",
+
     # Natural-language sent-mail variants.
     r"\b(?:what\s+(?:was|is)\s+)?"
     r"(?:my\s+)?"
@@ -225,6 +232,23 @@ def _unsupported_source_report(
 
 def _operation(message: str) -> tuple[str, dict[str, Any]]:
     text = " ".join(str(message or "").casefold().split())
+
+    first_request = any(
+        term in text
+        for term in (
+            "first email", "first mail", "first message",
+            "earliest email", "earliest mail", "earliest message",
+            "oldest email", "oldest mail", "oldest message",
+            "first inbox email", "first inbox mail", "first inbox message",
+            "earliest inbox email", "earliest inbox mail", "earliest inbox message",
+            "oldest inbox email", "oldest inbox mail", "oldest inbox message",
+        )
+    )
+
+    if first_request and not any(
+        term in text for term in ("sent", "outgoing", "i sent")
+    ):
+        return "first", {}
 
     sent_request = any(
         term in text

@@ -86,6 +86,22 @@ def _common(monkeypatch):
         lambda: False,
     )
 
+    # Ordinary startup tests must not inherit intelligence tools installed
+    # on the machine running pytest. Individual Mode-4 tests opt them in.
+    import shutil
+    import sophyane.providers.codex_cli as codex_provider
+
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: None,
+    )
+    monkeypatch.setattr(
+        codex_provider,
+        "agy_available",
+        lambda: False,
+    )
+
     _interactive(monkeypatch)
 
 
@@ -126,11 +142,11 @@ def test_local_only_shows_all_five_modes(
     assert "1. Sophyane" in output
     assert "2. SLI Graph" in output
     assert "3. Local LLM" in output
-    assert "4. Cloud LLM" in output
+    assert "4. External LLM" in output
     assert "5. Sophyane Learning" in output
 
     assert (
-        "unavailable; no cloud API configured"
+        "4. External LLM — unavailable"
         in output
     )
 
@@ -176,7 +192,7 @@ def test_cloud_only_shows_all_five_modes(
     assert "1. Sophyane" in output
     assert "2. SLI Graph" in output
     assert "3. Local LLM" in output
-    assert "4. Cloud LLM" in output
+    assert "4. External LLM" in output
     assert "5. Sophyane Learning" in output
 
     assert (
@@ -184,7 +200,7 @@ def test_cloud_only_shows_all_five_modes(
         in output
     )
 
-    assert "Gemini" in output
+    assert "4. External LLM — unavailable" not in output
 
 
 def test_unavailable_cloud_selection_reprompts(
@@ -226,7 +242,7 @@ def test_unavailable_cloud_selection_reprompts(
     assert result == {}
 
     assert (
-        "Cloud LLM unavailable"
+        "External LLM unavailable"
         in stdout.getvalue()
     )
 
@@ -420,4 +436,56 @@ def test_no_provider_behavior_preserved(
     assert (
         "No usable provider is configured"
         in stderr.getvalue()
+    )
+
+
+def test_unavailable_cloud_api_reprompts_external_provider_choice(
+    monkeypatch,
+):
+    _common(monkeypatch)
+
+    monkeypatch.setattr(
+        policy,
+        "_local_candidate",
+        lambda config, llm: ("local_gguf", "local"),
+    )
+    monkeypatch.setattr(
+        policy,
+        "_configured_clouds",
+        lambda: [],
+    )
+
+    # Keep External LLM legitimately available through Codex while
+    # Cloud API itself is unavailable.
+    import shutil
+    import sophyane.providers.codex_cli as codex_provider
+
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: "/fake/codex" if name == "codex" else None,
+    )
+    monkeypatch.setattr(
+        codex_provider,
+        "agy_available",
+        lambda: False,
+    )
+
+    # 4 = External LLM
+    # 1 = unavailable Cloud API
+    # 3 = recover by choosing available Codex CLI
+    answers = iter(["4", "1", "3"])
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda prompt="": next(answers),
+    )
+
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+        result = policy.choose_startup_provider()
+
+    assert result["provider"] == "codex_cli"
+    assert (
+        "Cloud API unavailable"
+        in stdout.getvalue()
     )

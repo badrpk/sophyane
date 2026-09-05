@@ -65,3 +65,19 @@ def test_tui_mission_list_is_local(
     assert payload["ok"] is True
     assert payload["count"] == 0
     assert payload["missions"] == []
+
+
+def test_tui_reads_previous_deterministic_file_followup(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "red.py"
+    target.write_text("print('red')\n", encoding="utf-8")
+    reply = json.dumps({"evidence": {"data": {"path": str(target)}}})
+
+    remembered = tui_v2._written_file_from_reply(reply)
+    result = tui_v2._read_followup_file(
+        "show me content of this file",
+        remembered,
+    )
+
+    assert result == "Contents of " + str(target) + ":\nprint('red')\n"

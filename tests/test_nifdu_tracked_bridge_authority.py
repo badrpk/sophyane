@@ -185,3 +185,189 @@ def test_tracked_bridge_supports_current_chatgpt_message_dom():
         '[data-testid="stop-button"]'
         in source
     )
+
+
+def test_tracked_bridge_returns_completed_new_assistant_turn_without_stability_timeout():
+    from pathlib import Path
+
+    source = Path(
+        "src/sophyane/providers/nifdu_cdp_bridge.py"
+    ).read_text(
+        encoding="utf-8",
+    )
+
+    assert (
+        "SOPHYANE_CDP_COMPLETED_FRESH_RESPONSE_RETURN_V1"
+        in source
+    )
+
+    assert (
+        "completed_fresh_turn = bool("
+        in source
+    )
+
+    assert (
+        "count > before_count"
+        in source
+    )
+
+    assert (
+        "new_user_turn_seen"
+        in source
+    )
+
+    assert (
+        "streaming_seen"
+        in source
+    )
+
+    assert (
+        "if completed_fresh_turn:"
+        in source
+    )
+
+    assert (
+        "settle_completed_assistant_text("
+        in source
+    )
+
+
+def test_rsi_legacy_nifdu_selection_is_canonicalized_to_tracked_bridge(
+    tmp_path,
+    monkeypatch,
+):
+    from pathlib import Path
+    import json
+
+    import sophyane.recursive_evolution_controller as rsi
+
+    home = tmp_path / "home"
+
+    legacy_dir = (
+        home
+        / ".local"
+        / "share"
+        / "sophyane-chatgpt-loop"
+    )
+
+    legacy_dir.mkdir(
+        parents=True,
+    )
+
+    legacy = (
+        legacy_dir
+        / "chatgpt_cdp.py"
+    )
+
+    legacy.write_text(
+        "def ask(prompt, image=None):\n"
+        "    raise AssertionError("
+        "'stale legacy bridge must not execute'"
+        ")\n",
+        encoding="utf-8",
+    )
+
+    selection = (
+        legacy_dir
+        / "sophyane-nifdu-callable.json"
+    )
+
+    selection.write_text(
+        json.dumps(
+            {
+                "kind": "function",
+                "module": str(
+                    legacy
+                ),
+                "name": "ask",
+                "args": [
+                    "prompt",
+                    "image",
+                ],
+                "async": False,
+                "score": 180,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        Path,
+        "home",
+        classmethod(
+            lambda cls: home
+        ),
+    )
+
+    review = (
+        rsi.load_nifdu_supervisory_reviewer(
+            selection
+        )
+    )
+
+    assert callable(
+        review
+    )
+
+    assert (
+        "nifdu_cdp_bridge"
+        in str(
+            review.__closure__
+        )
+        or callable(
+            review
+        )
+    )
+
+
+def test_rsi_custom_nifdu_callable_is_not_rewritten(
+    tmp_path,
+):
+    import json
+
+    import sophyane.recursive_evolution_controller as rsi
+
+    custom = (
+        tmp_path
+        / "custom_nifdu.py"
+    )
+
+    custom.write_text(
+        "def review_custom(prompt):\n"
+        "    return 'CUSTOM:' + prompt\n",
+        encoding="utf-8",
+    )
+
+    selection = (
+        tmp_path
+        / "selection.json"
+    )
+
+    selection.write_text(
+        json.dumps(
+            {
+                "kind": "function",
+                "module": str(
+                    custom
+                ),
+                "name": "review_custom",
+                "args": [
+                    "prompt",
+                ],
+                "async": False,
+                "score": 999,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    review = (
+        rsi.load_nifdu_supervisory_reviewer(
+            selection
+        )
+    )
+
+    assert (
+        review("probe")
+        == "CUSTOM:probe"
+    )

@@ -134,6 +134,32 @@ def _configured_clouds() -> list[tuple[str, str]]:
     return result
 
 
+def intelligence_provider_inventory(config: dict[str, Any] | None = None) -> dict[str, tuple[str, str, str]]:
+    """Authoritative provider readiness inventory shared by banner and Mode 1."""
+    cfg = config if isinstance(config, dict) else load_config()
+    result: dict[str, tuple[str, str, str]] = {}
+    for provider_id, label in _configured_clouds():
+        result[provider_id] = (label, "external_api", "ready")
+    try:
+        import shutil
+        from sophyane.providers.codex_cli import agy_available
+        if (os.environ.get("SOPHYANE_CODEX_CLI") or shutil.which("codex")):
+            result["codex_cli"] = ("Codex CLI", "external_harness", "ready")
+        if agy_available():
+            result["agy"] = ("Antigravity (AGY)", "external_harness", "ready")
+    except Exception:
+        pass
+    try:
+        from sophyane.providers.nifdu_browser import _selection_path, _tracked_bridge_path
+        if _selection_path().is_file() and _tracked_bridge_path().is_file():
+            result["nifdu_browser"] = ("ChatGPT Browser", "external_browser", "ready")
+    except Exception:
+        pass
+    if _local_candidate(cfg, _load_llm()):
+        result["local_gguf"] = ("Local GGUF", "local_gguf", "ready")
+    return result
+
+
 def _cloud_model(provider_id: str, config: dict[str, Any], llm: dict[str, Any]) -> str:
     if str(config.get("provider") or "").lower() == provider_id and config.get("model"):
         return str(config["model"])
@@ -161,11 +187,110 @@ def _install_topic_learning_mode() -> None:
     continuous_sli_loop.run_continuous_sli_loop = run_topic_learning_loop
 
 
+def resolve_local_session_config() -> dict[str, Any]:
+    """Resolve explicit Mode-3 local authority without interactive selection."""
+
+    config = load_config()
+    llm = _load_llm()
+    local = _local_candidate(
+        config,
+        llm,
+    )
+
+    if not local:
+        raise RuntimeError(
+            "Mode 3 requires a configured local GGUF runtime"
+        )
+
+    local_id, local_model = local
+
+    # SOPHYANE_MODE3_NONINTERACTIVE_RESOLUTION_V1
+    #
+    # This helper deliberately contains no interactive prompt or terminal
+    # selection logic, cloud discovery, or persisted cloud-provider routing.
+    # An already-selected
+    # Mode-3 session has exactly one provider authority: local_gguf.
+    os.environ[
+        "SOPHYANE_SESSION_MODE"
+    ] = "local_llm"
+
+    os.environ[
+        "SOPHYANE_SESSION_PROVIDER"
+    ] = "local_gguf"
+
+    os.environ[
+        "SOPHYANE_SESSION_MODEL"
+    ] = local_model
+
+    os.environ[
+        "SOPHYANE_SESSION_TIMEOUT"
+    ] = "300"
+
+    os.environ[
+        "SOPHYANE_LOCAL_ONLY"
+    ] = "1"
+
+    os.environ[
+        "SOPHYANE_DISABLE_CLOUD_FALLBACK"
+    ] = "1"
+
+    os.environ[
+        "SOPHYANE_DISABLE_LOCAL_FALLBACK"
+    ] = "0"
+
+    os.environ[
+        "SOPHYANE_ALLOW_CLOUD_LOCAL_RESCUE"
+    ] = "0"
+
+    llm[
+        "active_provider"
+    ] = "local_gguf"
+
+    llm[
+        "fallback_order"
+    ] = [
+        "local_gguf"
+    ]
+
+    llm[
+        "allow_quality_escalation"
+    ] = False
+
+    llm[
+        "quality_rescue_provider"
+    ] = ""
+
+    llm[
+        "allow_local_fallbacks"
+    ] = False
+
+    llm[
+        "allow_cloud_local_rescue"
+    ] = False
+
+    return {
+        **config,
+        "provider": "local_gguf",
+        "model": local_model,
+        "company": "Local",
+        "timeout": 300,
+    }
+
+
 def choose_startup_provider() -> dict[str, Any]:
     config = load_config()
     llm = _load_llm()
     local = _local_candidate(config, llm)
     clouds = _configured_clouds()
+
+    # SOPHYANE_MODE4_CODEX_CLI_AVAILABILITY_V1
+    # Codex CLI uses the current ChatGPT-authenticated local CLI session.
+    codex_cli_available = (
+        __import__("shutil").which("codex")
+        is not None
+    )
+    from sophyane.providers.codex_cli import agy_available
+    antigravity_available = agy_available()
 
     verbose_startup = _verbose_startup_enabled()
 
@@ -221,32 +346,35 @@ def choose_startup_provider() -> dict[str, Any]:
             return updated
 
         if requested_mode == "local_llm":
-            if not local:
-                return config
+            return resolve_local_session_config()
+
+        if requested_mode == "codex_cli":
+            if not codex_cli_available:
+                raise RuntimeError(
+                    "Codex CLI session requested but "
+                    "`codex` is unavailable."
+                )
+
+            os.environ["SOPHYANE_SESSION_MODE"] = "codex_cli"
+            os.environ["SOPHYANE_MODE4_EXTERNAL_FAILOVER"] = "1"
+            os.environ["SOPHYANE_SESSION_PROVIDER"] = "codex_cli"
+            os.environ["SOPHYANE_SESSION_MODEL"] = "codex-default"
+            os.environ["SOPHYANE_SESSION_TIMEOUT"] = "300"
 
             os.environ.pop("SOPHYANE_SLI_GRAPH", None)
             os.environ.pop("SOPHYANE_SLI_ONLY", None)
             os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
             os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
-            os.environ["SOPHYANE_LOCAL_ONLY"] = "1"
-            os.environ["SOPHYANE_DISABLE_CLOUD_FALLBACK"] = "1"
-
-            local_id, local_model = local
+            os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
+            os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
 
             updated = dict(config)
             updated.update({
-                "provider": local_id,
-                "model": local_model,
-                "company": "Local",
+                "provider": "codex_cli",
+                "model": "codex-default",
+                "company": "Codex CLI",
                 "timeout": 300,
             })
-
-            llm["active_provider"] = local_id
-            llm["fallback_order"] = [local_id]
-            llm["allow_quality_escalation"] = False
-            llm["quality_rescue_provider"] = ""
-            llm["allow_local_fallbacks"] = False
-            llm["allow_cloud_local_rescue"] = False
 
             return updated
 
@@ -287,7 +415,7 @@ def choose_startup_provider() -> dict[str, Any]:
 
         return config
 
-    if local or clouds:
+    if local or clouds or codex_cli_available or antigravity_available:
         # SOPHYANE_FIVE_MODE_STARTUP_MENU_V1
         #
         # Session-mode visibility is independent from provider
@@ -319,14 +447,14 @@ def choose_startup_provider() -> dict[str, Any]:
                 file=sys.stderr,
             )
 
-        if clouds:
+        if clouds or codex_cli_available or antigravity_available:
             print(
-                f"  4. Cloud LLM — use {clouds[0][1]}",
+                "  4. External LLM — API / Browser / Codex CLI",
                 file=sys.stderr,
             )
         else:
             print(
-                "  4. Cloud LLM — unavailable; no cloud API configured",
+                "  4. External LLM — unavailable",
                 file=sys.stderr,
             )
 
@@ -354,13 +482,12 @@ def choose_startup_provider() -> dict[str, Any]:
                 continue
 
             if answer == "4":
-                if clouds:
+                if clouds or codex_cli_available or antigravity_available:
                     break
 
                 print(
-                    "Cloud LLM unavailable. "
-                    "Configure a cloud provider with "
-                    "`sophyane --setup`."
+                    "External LLM unavailable. Configure a cloud "
+                    "provider or install/login to Codex CLI."
                 )
                 continue
 
@@ -506,13 +633,32 @@ def choose_startup_provider() -> dict[str, Any]:
                 "  2. NIFDU Browser — ChatGPT via Chromium/screenshots",
                 file=sys.stderr,
             )
+            print(
+                "  3. Codex CLI — persistent read-only project session",
+                file=sys.stderr,
+            )
+            print(
+                "  4. Antigravity (AGY)",
+                file=sys.stderr,
+            )
 
-            intelligence = input(
-                "Select [1-2, default 1]: "
-            ).strip() or "1"
+            while True:
+                intelligence = input(
+                    "Select [1-4, default 1]: "
+                ).strip() or "1"
+
+                if intelligence == "1" and not clouds:
+                    print(
+                        "Cloud API unavailable. "
+                        "Choose another external LLM."
+                    )
+                    continue
+
+                break
 
             if intelligence == "2":
                 os.environ["SOPHYANE_SESSION_MODE"] = "nifdu_llm"
+                os.environ["SOPHYANE_MODE4_EXTERNAL_FAILOVER"] = "1"
                 os.environ["SOPHYANE_SESSION_PROVIDER"] = "nifdu_browser"
                 os.environ["SOPHYANE_SESSION_MODEL"] = "chatgpt-browser"
                 os.environ["SOPHYANE_SESSION_TIMEOUT"] = "180"
@@ -540,13 +686,92 @@ def choose_startup_provider() -> dict[str, Any]:
 
                 return updated
 
+            if intelligence == "3":
+                if not codex_cli_available:
+                    print(
+                        "Codex CLI unavailable; using Cloud API.",
+                        file=sys.stderr,
+                    )
+                else:
+                    os.environ["SOPHYANE_SESSION_MODE"] = "codex_cli"
+                    os.environ["SOPHYANE_MODE4_EXTERNAL_FAILOVER"] = "1"
+                    os.environ["SOPHYANE_SESSION_PROVIDER"] = "codex_cli"
+                    os.environ["SOPHYANE_SESSION_MODEL"] = "codex-default"
+                    os.environ["SOPHYANE_SESSION_TIMEOUT"] = "300"
+
+                    os.environ.pop("SOPHYANE_SLI_GRAPH", None)
+                    os.environ.pop("SOPHYANE_SLI_ONLY", None)
+                    os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
+                    os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
+                    os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
+                    os.environ.pop(
+                        "SOPHYANE_DISABLE_CLOUD_FALLBACK",
+                        None,
+                    )
+
+                    updated = dict(config)
+                    updated.update({
+                        "provider": "codex_cli",
+                        "model": "codex-default",
+                        "company": "Codex CLI",
+                        "timeout": 300,
+                    })
+
+                    print(
+                        "Mode: Codex CLI "
+                        "(persistent read-only project session)",
+                        file=sys.stderr,
+                    )
+
+                    return updated
+
+            if intelligence == "4":
+                if not antigravity_available:
+                    print(
+                        "Antigravity (AGY) unavailable; using Cloud API.",
+                        file=sys.stderr,
+                    )
+                else:
+                    os.environ["SOPHYANE_SESSION_MODE"] = "agy"
+                    os.environ["SOPHYANE_MODE4_EXTERNAL_FAILOVER"] = "1"
+                    os.environ["SOPHYANE_SESSION_PROVIDER"] = "agy"
+                    os.environ["SOPHYANE_SESSION_MODEL"] = "agy-default"
+                    os.environ["SOPHYANE_SESSION_TIMEOUT"] = "300"
+
+                    os.environ.pop("SOPHYANE_SLI_GRAPH", None)
+                    os.environ.pop("SOPHYANE_SLI_ONLY", None)
+                    os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
+                    os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
+                    os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
+                    os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
+
+                    updated = dict(config)
+                    updated.update({
+                        "provider": "agy",
+                        "model": "agy-default",
+                        "company": "Antigravity (AGY)",
+                        "timeout": 300,
+                    })
+                    print(
+                        "Mode: Antigravity (AGY) (read-only plan/sandbox session)",
+                        file=sys.stderr,
+                    )
+                    return updated
+
             if intelligence != "1":
                 print(
                     "Invalid external LLM choice; using Cloud API.",
                     file=sys.stderr,
                 )
 
+            if not clouds:
+                raise RuntimeError(
+                    "Cloud API selected but no cloud provider "
+                    "is configured."
+                )
+
             os.environ["SOPHYANE_SESSION_MODE"] = "cloud_llm"
+            os.environ["SOPHYANE_MODE4_EXTERNAL_FAILOVER"] = "1"
             os.environ.pop("SOPHYANE_SLI_GRAPH", None)
             os.environ.pop("SOPHYANE_SLI_ONLY", None)
             os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)

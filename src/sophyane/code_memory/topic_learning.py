@@ -225,6 +225,21 @@ def run_topic_learning_loop() -> int:
             (_print_status if topic.lower() == "/status" else _print_history)()
             continue
 
+        if topic.lower().startswith("/ask "):
+            # Mode 5 remains an acquisition loop, while learned episodic
+            # context is available through an explicit read-only harness query.
+            question = topic[5:].strip()
+            if not question:
+                print("Usage: /ask <question>")
+                continue
+            from sophyane.durable_memory import recall
+            hits = recall(question, limit=3)
+            if hits:
+                print("\n".join(str(item.get("content") or "") for item in hits))
+            else:
+                print("No learned context matched this question.")
+            continue
+
         result = learn_topic(topic)
         print("\nTopic learning summary")
         print("──────────────────────")

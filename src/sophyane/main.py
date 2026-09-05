@@ -86,6 +86,47 @@ def build_parser() -> argparse.ArgumentParser:
 
 def load_runtime_config() -> dict[str, Any]:
     config = load_config()
+
+    # SOPHYANE_MODE3_PURE_LOCAL_CONFIG_V1
+    #
+    # Mode 3 does not inherit cloud provider identity from persistent config.
+    # Resolve the validated local GGUF runtime directly through startup policy
+    # and return only the local session configuration.
+    session_mode = str(
+        os.environ.get("SOPHYANE_SESSION_MODE")
+        or ""
+    ).strip().lower()
+
+    if session_mode == "local_llm":
+        from sophyane.startup_policy import (
+            resolve_local_session_config,
+        )
+
+        resolved = (
+            resolve_local_session_config()
+        )
+
+        provider_id = str(
+            resolved.get(
+                "provider"
+            )
+            or ""
+        ).strip().lower()
+
+        if provider_id != "local_gguf":
+            raise RuntimeError(
+                "Mode 3 resolved a non-local provider: "
+                + repr(
+                    provider_id
+                )
+            )
+
+        return {
+            **resolved,
+            "provider": "local_gguf",
+            "company": "Local",
+        }
+
     loader = PluginLoader()
     providers = loader.discover()
 
@@ -108,6 +149,43 @@ def load_runtime_config() -> dict[str, Any]:
             return run_setup_wizard()
 
     return config
+
+
+
+from sophyane.providers.codex_cli import AntigravityProvider as _AntigravityProvider
+
+
+class _AgyFailoverProvider(_AntigravityProvider):
+    """Read-only Mode-4 failover from AGY to available harnesses."""
+
+    def __init__(self, primary, *, timeout: int = 300):
+        self._primary = primary
+        self._timeout = timeout
+        self.model = primary.model
+        self.timeout = primary.timeout
+        self.provider_id = "agy"
+
+    def generate(self, prompt: str, system_prompt: str | None = None) -> str:
+        try:
+            return self._primary.generate(prompt, system_prompt)
+        except Exception as primary_error:
+            from sophyane.providers.codex_cli import CodexCliProvider
+            fallbacks = []
+            try:
+                fallbacks.append(CodexCliProvider(timeout=self._timeout))
+            except Exception:
+                pass
+            try:
+                from sophyane.providers.nifdu_browser import NifduBrowserProvider
+                fallbacks.append(NifduBrowserProvider(timeout=self._timeout))
+            except Exception:
+                pass
+            for provider in fallbacks:
+                try:
+                    return provider.generate(prompt, system_prompt)
+                except Exception:
+                    continue
+            raise primary_error
 
 
 def create_provider(config: dict[str, Any]):
@@ -176,6 +254,31 @@ def create_provider(config: dict[str, Any]):
                 or "180"
             ),
         )
+
+    if session_mode == "codex_cli":
+        from sophyane.providers.codex_cli import (
+            CodexCliProvider,
+        )
+
+        return CodexCliProvider(
+            model=(
+                session_model
+                or "codex-default"
+            ),
+            timeout=int(
+                session_timeout
+                or "300"
+            ),
+        )
+
+    if session_mode == "agy":
+        from sophyane.providers.codex_cli import AntigravityProvider
+
+        primary = AntigravityProvider(
+            model=(session_model or "agy-default"),
+            timeout=int(session_timeout or "300"),
+        )
+        return _AgyFailoverProvider(primary, timeout=int(session_timeout or "300"))
 
     if session_mode == "cloud_llm":
         config = dict(config)

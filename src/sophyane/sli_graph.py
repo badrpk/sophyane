@@ -397,6 +397,56 @@ def try_grounded_knowledge(
         "SLI-graph: grounded textual knowledge retrieval"
     )
 
+    # Keep trivial, fully deterministic questions local. This avoids sending
+    # a simple arithmetic request through network acquisition while preserving
+    # SLI as the Mode-2 front door.
+    import re
+    arithmetic = re.fullmatch(
+        r"\s*(?:what is|calculate)\s*(-?\d+)\s*([+\-*/])\s*(-?\d+)\s*[?!.]?\s*",
+        state.request or "",
+        flags=re.IGNORECASE,
+    )
+    if arithmetic:
+        left, operator, right = int(arithmetic.group(1)), arithmetic.group(2), int(arithmetic.group(3))
+        if operator == "+":
+            value = left + right
+        elif operator == "-":
+            value = left - right
+        elif operator == "*":
+            value = left * right
+        elif right != 0:
+            value = left / right
+        else:
+            value = None
+        if value is not None:
+            state.report = (
+                f"{value}\n\nSuccess: True\n"
+                "Artifact construction used: False\n"
+                "LLM used: False\n"
+            )
+            state.success = True
+            state.meta["terminal"] = True
+            state.meta["grounded_text_answer"] = True
+            state.log("deterministic-arithmetic success=True")
+            return state
+
+    # Prefer the local transformer/vector index.  Network retrieval remains
+    # the existing fallback when no relevant local evidence is available.
+    # Action/artifact routes must retain their executor; vector evidence is
+    # advisory retrieval only and must not short-circuit a requested action.
+    retrieval_routes = {"general_knowledge", "repository_engineering", "sli_graph"}
+    if state.route in retrieval_routes and _try_local_chunk_memory(state, progress):
+        return state
+    if os.environ.get("SOPHYANE_SLI_LOCAL_ONLY") == "1":
+        state.report = (
+            "Local SLI vector memory has no matching evidence.\n"
+            "Success: False\nArtifact construction used: False\n"
+            "Internet acquisition used: False\nLLM used: False\n"
+        )
+        state.meta["terminal"] = True
+        progress("SLI-graph: local-only grounded miss")
+        return state
+
     try:
         from sophyane.web_intel import (
             grounded_answer_from_search,
@@ -840,11 +890,64 @@ def _try_repository_memory(state: SLIState, progress: Progress) -> bool:
     return True
 
 
+def _try_local_chunk_memory(state: SLIState, progress: Progress) -> bool:
+    """Answer from the local vector index before any network acquisition."""
+    try:
+        from sophyane.code_memory.store import ChunkStore
+        hits = ChunkStore().retrieve(state.request, top_k=5)
+    except Exception as error:
+        state.errors.append(f"local-chunks:{type(error).__name__}: {error}")
+        return False
+    if not hits:
+        return False
+    lines = ["Local SLI code-memory evidence:"]
+    for chunk, score in hits:
+        text = str(getattr(chunk, "text", "") or "").strip()
+        if not text:
+            continue
+        path = str(getattr(chunk, "path", "") or "")
+        label = f" ({path})" if path else ""
+        lines.append(f"- score={float(score):.3f}{label}\n{text[:2000]}")
+    if len(lines) == 1:
+        return False
+    state.report = (
+        "\n\n".join(lines)
+        + "\n\nSuccess: True\n"
+        "Artifact construction used: False\n"
+        "Internet acquisition used: False\n"
+        "LLM used: False\n"
+    )
+    state.success = True
+    state.meta["terminal"] = True
+    state.meta["grounded_text_answer"] = True
+    state.meta["local_chunk_memory"] = True
+    progress("SLI-graph: local vector evidence hit")
+    return True
+
+
 def try_memory_router(state: SLIState, progress: Progress) -> SLIState:
     if state.success or state.meta.get("terminal"):
         return state
 
     if _try_repository_memory(state, progress):
+        return state
+    if _try_local_chunk_memory(state, progress):
+        return state
+    retrieval_routes = {
+        "general_knowledge",
+        "repository_engineering",
+        "sli_graph",
+    }
+    if (
+        state.route in retrieval_routes
+        and os.environ.get("SOPHYANE_SLI_LOCAL_ONLY") == "1"
+    ):
+        state.report = (
+            "Local SLI vector memory has no matching evidence.\n"
+            "Success: False\nInternet acquisition used: False\nLLM used: False\n"
+        )
+        state.meta["terminal"] = True
+        progress("SLI-graph: local-only memory miss")
         return state
     progress("SLI-graph: memory/router (no re-entry)")
     previous = os.environ.get("SOPHYANE_SLI_GRAPH")

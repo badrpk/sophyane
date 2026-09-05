@@ -50,7 +50,7 @@ def test_gate_precedes_dispatch_user_request() -> None:
         )
         <
         text.find(
-            "self.dispatch_user_request(message)"
+            "self.dispatch_user_request("
         )
     )
 
@@ -77,7 +77,7 @@ def test_handled_preflight_terminates_iteration() -> None:
     )
 
     end = text.index(
-        "self.dispatch_user_request(message)"
+        "self.dispatch_user_request("
     )
 
     section = text[

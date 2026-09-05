@@ -1,6 +1,7 @@
 """Interactive, evidence-based actions shown after a successful project build."""
 from __future__ import annotations
 
+import getpass
 import http.server
 import json
 import os
@@ -30,6 +31,7 @@ MENU = """╭──────────────────────�
 │ 7. Show URL, path, port, and status    │
 │ 8. Package or export the project       │
 │ 9. Start a new project                 │
+│ 10. Publish to Vercel                   │
 │ 0. Exit and return to Sophyane         │
 ╰────────────────────────────────────────╯"""
 
@@ -37,7 +39,7 @@ ALIASES = {
     "browser": "1", "open": "1", "shell": "2", "bash": "2",
     "icon": "3", "run": "4", "restart": "4", "edit": "5",
     "improve": "5", "files": "6", "status": "7", "export": "8",
-    "package": "8", "new": "9", "exit": "0", "quit": "0",
+    "package": "8", "new": "9", "publish": "10", "vercel": "10", "exit": "0", "quit": "0",
 }
 
 
@@ -46,11 +48,11 @@ def normalize_choice(value: str) -> str | None:
     if cleaned == "":
         return "1"
     cleaned = ALIASES.get(cleaned, cleaned)
-    return cleaned if cleaned in set("0123456789") else None
+    return cleaned if cleaned in set("0123456789") or cleaned == "10" else None
 
 
 def render_menu() -> str:
-    return MENU + "\nPress Enter to open in browser, or choose [0-9]:"
+    return MENU + "\nPress Enter to open in browser, or choose [0-10]:"
 
 
 def detect_entry_file(workspace: Path) -> Path | None:
@@ -189,10 +191,17 @@ class ProjectServer:
         if entry is None or entry.suffix.lower() != ".html":
             raise RuntimeError("No HTML entry file was found.")
         self.port = _free_port()
-        handler = lambda *args, **kwargs: http.server.SimpleHTTPRequestHandler(  # noqa: E731
-            *args, directory=str(self.workspace), **kwargs
-        )
-        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), handler)
+        workspace = self.workspace
+
+        class QuietHandler(http.server.SimpleHTTPRequestHandler):
+            # Keep asynchronous browser requests from corrupting the menu prompt.
+            def log_message(self, format: str, *args: object) -> None:
+                return
+
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                super().__init__(*args, directory=str(workspace), **kwargs)
+
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), QuietHandler)
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
         deadline = time.monotonic() + 3
@@ -253,7 +262,7 @@ class PostBuildMenu:
                 self.output("")
                 return "exit"
             if choice is None:
-                self.output("Please choose a number from 0 to 9.")
+                self.output("Please choose a menu option from 0 to 10.")
                 continue
             if choice == "0":
                 return "exit"
@@ -266,7 +275,7 @@ class PostBuildMenu:
         actions = {
             "1": self.open_browser, "2": self.open_shell, "3": self.create_icon,
             "4": self.run_project, "5": self.edit_project, "6": self.show_files,
-            "7": self.show_status, "8": self.export_project,
+            "7": self.show_status, "8": self.export_project, "10": self.publish_project,
         }
         try:
             actions[choice]()
@@ -365,6 +374,71 @@ class PostBuildMenu:
         self.output(f"URL: {self.server.url or 'not running'}")
         self.output(f"HTTP status: {'200 OK' if self.server.healthy() else 'not verified'}")
         self.output(f"Last modified: {time.ctime(newest) if newest else 'unknown'}")
+
+    def publish_project(self) -> None:
+        """Deploy the verified workspace through the Vercel CLI.
+
+        Authentication stays outside the UI: use ``vercel login`` or set
+        ``VERCEL_TOKEN`` in the environment. Never request email passwords.
+        """
+        if shutil.which("vercel") is None:
+            npm = shutil.which("npm")
+            if npm is None:
+                raise RuntimeError(
+                    "Vercel CLI and npm are not installed. Install Node.js/npm first."
+                )
+            install = self.input(
+                "Vercel CLI is missing. Install it automatically with `npm install -g vercel`? [y/N]: "
+            ).strip().lower()
+            if install not in {"y", "yes"}:
+                self.output("Vercel installation cancelled; local project preserved.")
+                return
+            self.output("Installing Vercel CLI…")
+            installed = subprocess.run([npm, "install", "--global", "vercel"], check=False)
+            if installed.returncode != 0 or shutil.which("vercel") is None:
+                raise RuntimeError(
+                    "Vercel CLI installation failed. Install it manually with `npm install -g vercel`."
+                )
+            self.output("Vercel CLI installed successfully.")
+        deploy_env = os.environ.copy()
+        if not deploy_env.get("VERCEL_TOKEN"):
+            # The workspace is already linked; complete the normal Vercel login
+            # flow automatically instead of making the user repeat shell commands.
+            self.output("No Vercel credentials found. Starting `vercel login`…")
+            login_result = subprocess.run(["vercel", "login"], check=False)
+            if login_result.returncode != 0:
+                use_token = self.input("Login did not complete. Use a Vercel token privately instead? [y/N]: ").strip().lower()
+                if use_token not in {"y", "yes"}:
+                    self.output("Vercel authentication cancelled; local project preserved.")
+                    return
+                token = getpass.getpass("Vercel token (hidden, not saved): ").strip()
+                if not token:
+                    raise RuntimeError("No Vercel token entered.")
+                deploy_env["VERCEL_TOKEN"] = token
+        linked_project = None
+        link_file = self.workspace / ".vercel" / "project.json"
+        try:
+            linked_project = json.loads(link_file.read_text(encoding="utf-8")).get("projectName")
+        except (OSError, ValueError, TypeError):
+            pass
+        default_project = str(linked_project or self.workspace.name)
+        if linked_project:
+            self.output(f"Using linked Vercel project: {linked_project}")
+        project = self.input(f"Vercel project name [{default_project}]: ").strip() or default_project
+        confirm = self.input(f"Deploy {self.workspace} to Vercel production as {project}? [y/N]: ").strip().lower()
+        if confirm not in {"y", "yes"}:
+            self.output("Vercel deployment cancelled; local project preserved.")
+            return
+        command = ["vercel", "deploy", str(self.workspace), "--yes", "--prod", "--project", project]
+        result = subprocess.run(command, check=False, capture_output=True, text=True, env=deploy_env)
+        if result.returncode != 0:
+            combined = (result.stderr or result.stdout or "unknown Vercel error").strip()
+            lines = [line for line in combined.splitlines() if "MaxListenersExceededWarning" not in line]
+            detail = "\n".join(lines[-6:]) or "unknown Vercel error"
+            raise RuntimeError(f"Vercel deployment failed:\n{detail}")
+        output = (result.stdout or "").strip()
+        url = next((line.strip() for line in output.splitlines() if line.strip().startswith("http")), None)
+        self.output(f"Published to Vercel: {url or 'deployment completed; URL not returned by CLI'}")
 
     def export_project(self) -> None:
         destination = self.workspace.parent / f"{self.workspace.name}.zip"

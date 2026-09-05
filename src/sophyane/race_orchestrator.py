@@ -35,6 +35,23 @@ def _mode1_penalize_route(scores: dict[str, float], route: str, error: BaseExcep
     scores[route] = scores.get(route, 1.0) - 1.0
 
 
+def _brief_route_reason(value: object) -> str:
+    """Collapse provider failures into a compact actionable explanation."""
+    text = " ".join(str(value or "").split())
+    lower = text.casefold()
+    if "429" in lower or "quota" in lower or "resource_exhausted" in lower:
+        return "rate limit/quota exceeded"
+    if "timeout" in lower or "timed out" in lower:
+        return "provider timed out"
+    if "unavailable" in lower or "not found" in lower:
+        return "provider unavailable"
+    if "authentication" in lower or "api key" in lower:
+        return "authentication/configuration error"
+    if "canceled after stronger winner" in lower:
+        return "canceled after stronger winner"
+    return text[:180] or "route unavailable"
+
+
 def _mode1_provider_order(primary: str, config: dict[str, Any]) -> tuple[str, ...]:
     """Resolve eligible intelligence routes without reading mutable global state."""
     primary = str(primary or "").strip().lower()
@@ -51,12 +68,30 @@ def _mode1_provider_order(primary: str, config: dict[str, Any]) -> tuple[str, ..
     # An explicitly supplied lane is authoritative: independent workers must
     # not collapse into a cross-class fallback chain.
     if not explicit_present and (primary not in {"local", "local_gguf"} or bool(config.get("allow_local_fallbacks"))):
-        for value in ("gemini", "xai", "openai", "anthropic", "groq", "openrouter", "deepseek", "nifdu_browser", "codex_cli", "agy", "local_gguf"):
+        for value in ("gemini", "xai", "openai", "anthropic", "groq", "openrouter", "deepseek", "nifdu_browser", "codex_cli", "agy", "nifdu", "neuron", "local_gguf"):
             add(value)
     return tuple(order)
 
 
 Progress = Callable[[str], None]
+
+
+class _NativeRaceProvider:
+    """Adapter exposing an installed NIFDU/Neuron binary to the race."""
+
+    def __init__(self, provider_id: str):
+        self.provider_id = provider_id
+
+    def generate(self, prompt: str, system_prompt: str = "") -> str:
+        from sophyane.native_worker_pool import run_worker
+        result = run_worker(
+            self.provider_id,
+            args=[],
+            timeout=40.0,
+        )
+        if not result.get("ok"):
+            raise RuntimeError(str(result.get("error") or f"{self.provider_id} failed"))
+        return str(result.get("stdout") or result.get("output") or "")
 
 
 @dataclass(frozen=True)
@@ -395,11 +430,13 @@ def _race_system_prompt(
         "that files were modified. Analyze the objective and return "
         "the single best NEXT ACTION as strict JSON. "
         "Preferred schema: "
-        '{"action":{"type":"run|write_file|append_file|mkdir|respond",'
+        '{"action":{"type":"run|write_file|append_file|mkdir|open_browser|respond",'
         '"path":"optional relative path",'
         '"command":"optional command",'
         '"content":"optional content",'
         '"message":"optional response"}}. '
+        "For objectives that both create an artifact and preview it, return the "
+        "write action first; a later repair step may return open_browser. "
         "Return one action only."
     )
 
@@ -427,6 +464,8 @@ def _race_user_prompt(
 
 # SOPHYANE_RACE_LOCAL_HARD_DEADLINE_V1
 _LOCAL_RACE_APPLICATION_DEADLINE_SECONDS = 6.0
+_RACE_PROVIDER_TIMEOUT_SECONDS = 45
+_RACE_COORDINATOR_TIMEOUT_SECONDS = 50.0
 
 
 def _generate_provider_for_race(
@@ -586,6 +625,9 @@ def _single_provider(
     config: dict[str, Any],
 ):
     """Create exactly one provider without a fallback chain."""
+    if str(provider_id).strip().lower() in {"nifdu", "neuron"}:
+        return _NativeRaceProvider(str(provider_id).strip().lower())
+
     # Import through main because the current production tree already
     # centralizes PluginLoader/get_secret there.
     from sophyane.main import (
@@ -691,6 +733,10 @@ def _single_provider(
             else 180
         )
     )
+
+    # Speculative workers must never inherit long interactive-provider
+    # timeouts. A race needs a quick proposal, not a full provider session.
+    timeout = min(timeout, _RACE_PROVIDER_TIMEOUT_SECONDS)
 
     max_tokens = int(
         config.get("max_tokens")
@@ -1555,6 +1601,24 @@ def make_provider_producer(
                     or 0.0
                 )
 
+                action = proposal.payload["action"]
+                action_type = str(action.get("type") or "").strip().lower()
+                action_path = str(action.get("path") or "").strip().lower()
+                request_text = " ".join(str(request or "").lower().split())
+                web_request = any(
+                    token in request_text
+                    for token in ("website", "web site", "webpage", "landing page")
+                )
+                web_artifact = action_type in {"write_file", "append_file"} and (
+                    action_path.endswith((".html", ".htm", ".css", ".js", ".jsx", ".tsx"))
+                    or action_path in {"index", "index.html"}
+                )
+                if web_request and web_artifact and semantic_score >= 0.40:
+                    semantic_score = max(semantic_score, 0.72)
+                    judgement["relevant"] = True
+                    evidence_note = "deterministic web-artifact relevance rescue"
+                else:
+                    evidence_note = ""
                 reason = str(
                     judgement["reason"]
                     or ""
@@ -1572,6 +1636,9 @@ def make_provider_producer(
                     )
                 )
 
+                if evidence_note:
+                    evidence.append(evidence_note)
+
                 if reason:
                     evidence.append(
                         "semantic relevance: "
@@ -1586,6 +1653,42 @@ def make_provider_producer(
                     evidence=tuple(evidence),
                     requires_write=proposal.requires_write,
                 )
+
+        # A valid local JSON response is not evidence of equal quality. When
+        # the semantic judge is unavailable, keep Local GGUF eligible but do
+        # not let its speed beat stronger external routes on a 0.820 tie.
+        # Semantic scores (including web-artifact rescue) and TXQ/history
+        # bonuses are left untouched.
+        if (
+            provider_id == "local_gguf"
+            and proposal.kind == "action"
+            and proposal.confidence >= 0.82
+            and not any("semantic proposal relevance=" in item for item in proposal.evidence)
+        ):
+            request_text = " ".join(str(request or "").casefold().split())
+            web_request = any(marker in request_text for marker in ("website", "web site", "webpage", "landing page"))
+            complex_storefront = any(
+                marker in request_text
+                for marker in ("ecommerce", "e-commerce", "online store", "shop", "shein", "checkout", "cart")
+            )
+            prior = 0.52 if complex_storefront else (0.54 if web_request else 0.68)
+            prior_note = (
+                "complex storefront quality floor applied; awaiting stronger route"
+                if complex_storefront
+                else (
+                    "website quality floor applied; external routes preferred"
+                    if web_request
+                    else "local quality prior applied; awaiting semantic validation"
+                )
+            )
+            proposal = ProgressProposal(
+                engine=proposal.engine,
+                payload=proposal.payload,
+                kind=proposal.kind,
+                confidence=prior,
+                evidence=tuple(proposal.evidence) + (prior_note,),
+                requires_write=proposal.requires_write,
+            )
 
         return proposal
 
@@ -1739,6 +1842,13 @@ def make_provider_producer(
                         "trying next eligible intelligence route"
                     ),
                 )
+                _emit(
+                    progress,
+                    (
+                        f"Race {engine} provider {route} reason: "
+                        "returned no executable action"
+                    ),
+                )
 
             except Exception as error:
                 last_error = error
@@ -1763,6 +1873,11 @@ def make_provider_producer(
                         "penalised for this request"
                     ),
                 )
+                reason = " ".join(str(error).split())[:180] or "provider unavailable"
+                _emit(
+                    progress,
+                    f"Race {engine} provider {route} reason: {reason}",
+                )
 
         if best_proposal is not None:
             return best_proposal
@@ -1780,7 +1895,12 @@ def make_provider_producer(
 
 def _mode1_sli_applies(request: str) -> bool:
     text = " ".join(str(request or "").lower().split())
-    return any(token in text for token in ("memory", "internet", "research", "ground", "source", "index", "graph", "latest"))
+    if any(token in text for token in ("memory", "internet", "research", "ground", "source", "index", "graph", "latest")):
+        return True
+    # Complex web apps benefit from graph-backed requirements/context.
+    if any(marker in text for marker in ("ecommerce", "e-commerce", "online store", "marketplace", "checkout", "cart", "shein", "alibaba", "amazon", "daraz", "ebay", "etsy", "temu", "walmart", "shopify")) and any(marker in text for marker in ("website", "web site", "store", "shop")):
+        return True
+    return any(marker in text for marker in ("email service", "authentication", "login", "dashboard", "payment", "api", "database", "messaging", "subscription", "multi page", "dynamic")) and any(marker in text for marker in ("website", "web site", "web app"))
 
 
 def _mode1_capability_class(provider_id: str) -> str:
@@ -1797,6 +1917,12 @@ def _mode1_capability_class(provider_id: str) -> str:
 def _mode1_provider_available(provider_id: str, config: dict[str, Any]) -> bool:
     """Use startup's readiness inventory; explicit test inventories remain supported."""
     provider = str(provider_id).strip().lower()
+    if provider in {"nifdu", "neuron"}:
+        try:
+            from sophyane.native_backends import probe_nifdu, probe_neuron
+            return (probe_nifdu() if provider == "nifdu" else probe_neuron()).available
+        except Exception:
+            return False
     advertised = config.get("available_providers")
     if isinstance(advertised, (list, tuple, set)):
         return provider in {str(item).strip().lower() for item in advertised}
@@ -1847,6 +1973,42 @@ def _mode1_verified_history_bonus(*, request: str, worker_id: str, provider_id: 
     return min(_MODE1_HISTORY_BONUS_CAP, bonus)
 
 
+def _mode1_verified_quality_adjustment(*, request: str, worker_id: str, provider_id: str, repository_identity: str | None = None) -> float:
+    """Translate verified reward magnitude into a bounded TXQ adjustment."""
+    try:
+        from sophyane.sli_learner import read_verified_history
+        records = read_verified_history(
+            request=request,
+            capability_class=_mode1_history_capability(worker_id, provider_id),
+            limit=16,
+        )
+    except Exception:
+        return 0.0
+    provider = str(provider_id or "").strip().casefold()
+    repository = str(repository_identity or "").strip().casefold()
+    scoped = [
+        record for record in records or ()
+        if isinstance(record, dict)
+        and (
+            (provider and str(record.get("provider_identity") or "").strip().casefold() == provider)
+            or (repository and str(record.get("repository_identity") or "").strip().casefold() == repository)
+        )
+    ]
+    if not scoped:
+        return 0.0
+    rewards = []
+    for record in scoped:
+        try:
+            rewards.append(float(record.get("quality_reward")))
+        except (TypeError, ValueError):
+            continue
+    if not rewards:
+        return 0.0
+    # Center at a neutral 0.65 and cap the influence to avoid TXQ domination.
+    average = sum(rewards) / len(rewards)
+    return max(-0.10, min(0.10, (average - 0.65) * 0.20))
+
+
 def _mode1_recurrent_principle_bonus(*, worker_id: str, provider_id: str, repository_identity: str | None, principles_root: str | Path | None) -> float:
     """Return a small scope-checked bonus from canonical recurrent principles."""
     if principles_root is None:
@@ -1883,9 +2045,21 @@ def _mode1_apply_history_preference(proposal: ProgressProposal[Any], *, request:
     history_bonus = _mode1_verified_history_bonus(request=request, worker_id=worker_id, provider_id=provider_id, repository_identity=repository_identity)
     principle_bonus = _mode1_recurrent_principle_bonus(worker_id=worker_id, provider_id=provider_id, repository_identity=repository_identity, principles_root=principles_root)
     bonus = min(_MODE1_HISTORY_BONUS_CAP, history_bonus + principle_bonus)
-    if bonus <= 0.0:
+    quality_adjustment = _mode1_verified_quality_adjustment(
+        request=request, worker_id=worker_id, provider_id=provider_id,
+        repository_identity=repository_identity,
+    )
+    total_adjustment = bonus + quality_adjustment
+    if total_adjustment == 0.0:
         return proposal
-    return ProgressProposal(engine=proposal.engine, payload=proposal.payload, kind=proposal.kind, confidence=min(1.0, base + bonus), evidence=tuple(proposal.evidence) + (f"verified history advisory bonus={bonus:.3f}",), requires_write=proposal.requires_write)
+    evidence = tuple(proposal.evidence) + (
+        f"verified history TXQ adjustment={total_adjustment:+.3f}",
+    )
+    return ProgressProposal(
+        engine=proposal.engine, payload=proposal.payload, kind=proposal.kind,
+        confidence=max(0.0, min(1.0, base + total_adjustment)),
+        evidence=evidence, requires_write=proposal.requires_write,
+    )
 
 
 def _mode1_history_worker(worker_id: str, producer: Callable[[], ProgressProposal[Any]], *, request: str, provider_id: str, repository_identity: str | None = None, principles_root: str | Path | None = None):
@@ -1917,14 +2091,6 @@ def build_real_workers(
             repository_identity = _repository_memory_target(request)
         except Exception:
             repository_identity = None
-    if _mode1_sli_applies(request):
-        workers["sli"] = _mode1_history_worker(
-            "sli",
-            make_sli_producer(request=request, workspace=workspace,
-                              progress=progress, shadow_registry=shadow_registry,
-                              authority_context=authority_context),
-            request=request, provider_id="sli_graph", repository_identity=repository_identity, principles_root=workspace,
-        )
     workers["local"] = _mode1_history_worker(
         "local",
         make_provider_producer(engine="local", provider_id="local_gguf",
@@ -1934,7 +2100,7 @@ def build_real_workers(
     )
 
     primary = str(config.get("provider") or "gemini").strip().lower()
-    candidates = [primary]
+    candidates = [primary, "nifdu", "neuron"]
     explicit = config.get("provider_workers") or config.get("available_providers") or ()
     candidates.extend(str(item).strip().lower() for item in explicit)
     try:
@@ -1982,6 +2148,21 @@ def run_adaptive_race(
     This function does NOT apply a winning action to the authoritative
     workspace. Application is deliberately a separate lease-controlled stage.
     """
+    # Each repair round owns its progress stream. Providers may finish late
+    # after the coordinator has returned; suppress those stale callbacks so
+    # a completed round cannot repaint the next round or final summary.
+    _raw_progress = progress
+    _progress_active = {"value": True}
+
+    def _guarded_progress(event):
+        if not _progress_active["value"] or not callable(_raw_progress):
+            return
+        try:
+            _raw_progress(event)
+        except Exception:
+            return
+
+    progress = _guarded_progress
     workspace_path = (
         Path(workspace)
         .expanduser()
@@ -2058,17 +2239,47 @@ def run_adaptive_race(
     _emit(progress, "ELIGIBLE_SOURCES=" + ",".join(f"{name}:{source_classes[name]}" for name in sorted(source_classes)))
     _emit(progress, "STARTED_SOURCES=" + ",".join(f"{name}:{source_classes[name]}" for name in sorted(workers)))
 
-    race_result = (
-        coordinator.run(
-            workers,
-            timeout=timeout,
-        )
+    requested_timeout = (
+        _RACE_COORDINATOR_TIMEOUT_SECONDS
+        if timeout is None
+        else max(0.0, float(timeout))
     )
+    effective_timeout = min(
+        requested_timeout,
+        _RACE_COORDINATOR_TIMEOUT_SECONDS,
+    )
+    heartbeat_stop = threading.Event()
+    heartbeat_started = time.monotonic()
+
+    def heartbeat() -> None:
+        while not heartbeat_stop.wait(10.0):
+            elapsed_seconds = int(time.monotonic() - heartbeat_started)
+            remaining_seconds = max(0, int(effective_timeout - elapsed_seconds))
+            _emit(
+                progress,
+                "RACE_WAITING_SECONDS="
+                f"{elapsed_seconds};REMAINING_SECONDS={remaining_seconds}",
+            )
+
+    threading.Thread(
+        target=heartbeat,
+        daemon=True,
+        name="sophyane-race-heartbeat",
+    ).start()
+    try:
+        race_result = coordinator.run(
+            workers,
+            timeout=effective_timeout,
+        )
+    finally:
+        heartbeat_stop.set()
 
     completed = sorted({candidate.worker for candidate in race_result.candidates})
     rejected = sorted(set(race_result.errors) - set(completed))
     _emit(progress, "COMPLETED_SOURCES=" + ",".join(f"{name}:{source_classes.get(name, 'unknown')}" for name in completed))
     _emit(progress, "REJECTED_UNUSABLE_SOURCES=" + ",".join(rejected))
+    for name in rejected:
+        _emit(progress, f"RACE_ROUTE_REASON={name};{_brief_route_reason(race_result.errors.get(name, 'route unavailable'))}")
 
     winner = (
         race_result.winner
@@ -2093,6 +2304,7 @@ def run_adaptive_race(
             "Sophyane adaptive race: no valid winner",
         )
 
+    _progress_active["value"] = False
     return RealRaceResult(
         race_result=race_result,
         workspace=workspace_path,

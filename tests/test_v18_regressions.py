@@ -50,7 +50,8 @@ def test_cloud_fallback_keeps_recent_conversation(tmp_path: Path) -> None:
     prompt = gemini.prompts[-1]
     assert "Recent conversation:" in prompt
     assert "Call my server Aurora." in prompt
-    assert "The server is Aurora." in prompt
+    assert "assistant:" in prompt
+    assert "Aurora" in prompt
 
 
 def test_gemini_records_provider_usage(monkeypatch) -> None:

@@ -168,3 +168,71 @@ def test_too_little_context_requests_decomposition(
             "y" * 700,
             request_timeout=30,
         )
+
+
+def test_v5_short_speculation_has_lower_evidence_admission_floor():
+    from pathlib import Path
+
+    source = Path(
+        "src/sophyane/providers/local_gguf.py"
+    ).read_text(
+        encoding="utf-8",
+    )
+
+    assert (
+        "SOPHYANE_LOCAL_GGUF_SPECULATIVE_EVIDENCE_FLOOR_V5"
+        in source
+    )
+
+    assert (
+        "minimum_completion_tokens"
+        in source
+    )
+
+    assert (
+        "_sophyane_allow_short_speculative_timeout"
+        in source
+    )
+
+    #
+    # Authorized/candidate generation must retain the 256-token floor.
+    #
+    assert (
+        "else 256"
+        in source
+    )
+
+
+def test_v5_short_speculation_rounds_http_budget_up_only_for_private_clone():
+    from pathlib import Path
+
+    source = Path(
+        "src/sophyane/providers/local_gguf.py"
+    ).read_text(
+        encoding="utf-8",
+    )
+
+    assert (
+        "SOPHYANE_LOCAL_GGUF_SPECULATIVE_HTTP_BUDGET_V5"
+        in source
+    )
+
+    assert (
+        "if short_speculation:"
+        in source
+    )
+
+    assert (
+        "_speculation_math.ceil("
+        in source
+    )
+
+    assert (
+        "else:"
+        in source
+    )
+
+    assert (
+        "int(\n                        remaining"
+        in source
+    )

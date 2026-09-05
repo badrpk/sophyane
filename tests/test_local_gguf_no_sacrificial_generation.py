@@ -61,14 +61,18 @@ def test_real_generation_receives_remaining_provider_budget():
         in region
     )
 
+    compact = "".join(
+        region.split()
+    )
+
     assert (
         "request_timeout=max("
-        in region
+        in compact
     )
 
     assert (
         "int("
-        in region
+        in compact
     )
 
 

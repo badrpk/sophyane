@@ -5,6 +5,71 @@ model output into safe workspace artifacts, execution and mechanical verificatio
 """
 from __future__ import annotations
 
+
+# SOPHYANE_VISUALIZATION_INTENT_FAST_PATH_V1
+def try_visualization_intent(
+    request: str,
+    workspace,
+):
+    """Handle grounded visualization intent without provider dependence.
+
+    This helper is intentionally separate from provider/mode routing.
+    A caller may invoke it before LLM selection when the user's request
+    already contains enough grounded numeric data to render deterministically.
+
+    If semantic extraction from a PDF/file/retrieval result is required,
+    ordinary Sophyane capability routing may first ground that data and then
+    call the same renderer.
+    """
+
+    from pathlib import Path
+
+    from sophyane.visualization_capability import (
+        detect_visualization_intent,
+        render_visualization,
+        visualization_response_text,
+    )
+
+    intent = detect_visualization_intent(
+        request
+    )
+
+    if not intent.requested:
+        return None
+
+    result = render_visualization(
+        request=request,
+        workspace=Path(
+            workspace
+        ),
+    )
+
+    if not bool(
+        result.get(
+            "handled"
+        )
+    ):
+        #
+        # Visualization intent exists, but deterministic grounding is not
+        # sufficient yet. Return None so the normal Sophyane pipeline can
+        # acquire/extract data instead of fabricating it.
+        #
+        return None
+
+    return {
+        "capability":
+            "visualization",
+        "handled":
+            True,
+        "result":
+            result,
+        "response":
+            visualization_response_text(
+                result
+            ),
+    }
+
+
 from sophyane.environment_constraints import verification_result_is_meaningful
 
 import re
@@ -19,10 +84,71 @@ def _files(workspace: Path) -> list[str]:
     return [str(p.relative_to(workspace)) for p in sorted(workspace.rglob("*")) if p.is_file()]
 
 
+def _explicit_no_edit_request(request: str) -> bool:
+    text = " ".join(
+        str(request or "").casefold().split()
+    )
+    return any(
+        marker in text
+        for marker in (
+            "do not create",
+            "do not edit",
+            "do not modify",
+            "do not write",
+            "no edits",
+            "no writes",
+            "read-only",
+            "read only",
+        )
+    )
+
+
 def _browser_request(request: str) -> bool:
     text = " ".join(
         str(request or "").casefold().split()
     )
+
+    # Explicit no-edit authority outranks incidental browser vocabulary.
+    if _explicit_no_edit_request(request):
+        return False
+
+    # SOPHYANE_CURRENT_TURN_REPOSITORY_AUTHORITY_V12
+    #
+    # Explicit repository/codebase implementation intent belongs to the
+    # general software execution loop even when the same request contains
+    # architecture/design language.
+    #
+    # Generic words such as "design" must never be sufficient by themselves
+    # to convert a repository implementation request into a browser artifact.
+    repository_authority = (
+        any(
+            marker in text
+            for marker in (
+                "repository",
+                "codebase",
+                "source code",
+                "existing architecture",
+                "existing project",
+                "existing code",
+            )
+        )
+        and any(
+            marker in text
+            for marker in (
+                "implement",
+                "modify",
+                "repair",
+                "fix",
+                "update",
+                "inspect",
+                "change",
+                "develop",
+            )
+        )
+    )
+
+    if repository_authority:
+        return False
 
     # SOPHYANE_FULL_STACK_BROWSER_BOUNDARY_V1
     #
@@ -67,17 +193,24 @@ def _browser_request(request: str) -> bool:
     ):
         return False
 
-    return any(
-        word in text
-        for word in (
+    explicit_browser_intent = any(
+        marker in text
+        for marker in (
             "browser",
             "website",
             "web app",
             "html",
-            "game",
-            "design",
             "touch controls",
         )
+    )
+
+    # "game" is retained as historical browser intent because Sophyane's
+    # browser-game path is an existing concrete capability.
+    game_intent = "game" in text
+
+    return (
+        explicit_browser_intent
+        or game_intent
     )
 
 
@@ -768,6 +901,96 @@ def _is_read_only_inspection_command(
     }
 
 
+def _no_edit_command_allowed(command: str) -> bool:
+    """Allow bounded inspection plus explicit test-suite verification."""
+    if _is_read_only_inspection_command(command):
+        return True
+
+    try:
+        tokens = shlex.split(
+            str(command or "").strip()
+        )
+    except ValueError:
+        return False
+
+    if not tokens:
+        return False
+
+    first = Path(tokens[0]).name.casefold()
+
+    if first in {"pytest", "py.test"}:
+        return True
+
+    if (
+        first.startswith("python")
+        and len(tokens) >= 3
+        and tokens[1] == "-m"
+        and tokens[2] == "pytest"
+    ):
+        return True
+
+    return False
+
+
+def _no_edit_action_problem(
+    action: dict[str, Any],
+) -> str:
+    kind = str(
+        action.get("type")
+        or ""
+    ).casefold()
+
+    if kind == "batch":
+        children = action.get("actions")
+
+        if not isinstance(children, list) or not children:
+            return "no-edit request rejected invalid batch"
+
+        for index, child in enumerate(children, 1):
+            if not isinstance(child, dict):
+                return (
+                    "no-edit request rejected invalid "
+                    f"batch item {index}"
+                )
+
+            problem = _no_edit_action_problem(child)
+
+            if problem:
+                return f"batch item {index}: {problem}"
+
+        return ""
+
+    if kind in {
+        "write_file",
+        "append_file",
+        "mkdir",
+    }:
+        return (
+            "explicit no-edit request rejected "
+            f"{kind}"
+        )
+
+    if kind in {
+        "command",
+        "run",
+        "shell",
+        "run_command",
+        "bash",
+        "run_interactive",
+        "interactive",
+        "play_demo",
+    }:
+        command = _command_text(action)
+
+        if not _no_edit_command_allowed(command):
+            return (
+                "explicit no-edit request rejected "
+                f"command: {command}"
+            )
+
+    return ""
+
+
 def _command_problem(action: dict[str, Any], workspace: Path) -> str:
     kind = str(action.get("type") or "").lower()
     if kind not in {
@@ -1387,9 +1610,10 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     workspace.mkdir(parents=True, exist_ok=True)
     progress = progress or (lambda _message: None)
 
-    # Software projects commonly require several file chunks, build commands,
-    # tests and repairs. Do not inherit an undersized caller budget.
-    max_steps = max(max_steps, 32)
+    # The caller owns the execution budget. Higher-level planners may choose
+    # a larger budget for complex software tasks, but an explicit max_steps
+    # value must remain a hard upper bound inside this loop.
+    max_steps = max(1, int(max_steps))
 
     if _browser_request(original_request):
         try:
@@ -1846,6 +2070,27 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             )
 
             continue
+
+        if _explicit_no_edit_request(original_request):
+            no_edit_problem = _no_edit_action_problem(
+                action
+            )
+
+            if no_edit_problem:
+                result = (
+                    "Execution stopped safely: "
+                    + no_edit_problem
+                    + "."
+                )
+                evidence.append(
+                    f"Step {step}: {result}"
+                )
+                progress(result)
+                return (
+                    result
+                    + "\n\nExecution evidence:\n"
+                    + "\n".join(evidence)
+                )
 
         ok, result = _execute(runtime, action, workspace, progress)
 

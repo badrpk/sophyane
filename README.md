@@ -220,6 +220,37 @@ The suite covers responsive frontend artifacts, Python/Node/C++ execution where 
 
 Sophyane should be compared with orchestration frameworks such as LangGraph using the same model, prompts, timeouts, isolated workspaces and acceptance tests. Raw graph latency and complete software-delivery capability are separate measurements; Sophyane's benchmark claims apply only to the tasks actually executed.
 
+### ARC-AGI-3 adapter
+
+Install the optional official toolkit and run a public environment:
+
+```bash
+python -m pip install -e '.[arc]'
+sophyane-arc --game ls20 --max-steps 200
+# Or use Sophyane Mode 4's configured Codex CLI model:
+sophyane-arc --provider codex_cli --game ls20 --max-steps 200
+```
+
+The adapter passes real frame data and available actions to the configured
+provider, records a JSONL trajectory, and maintains an evidence-based per-game
+manual under `~/.local/share/sophyane/arc_agi3/`. This is benchmark-time RSI
+(experience and hypothesis refinement), not model-weight training. Report the
+official scorecard RHAE only; adapter readiness is not a benchmark score.
+
+For the BADRPK ecosystem-enhanced path, point Sophyane at reviewed checkouts:
+
+```bash
+export SOPHYANE_NIFDU_REPO_PATH="$HOME/nifdu"
+export SOPHYANE_NEURON_REPO_PATH="$HOME/neuron"
+export SOPHYANE_XERUS_REPO_PATH="$HOME/xerus"
+sophyane-arc --provider codex_cli --game ls20 --max-steps 200
+```
+
+NIFDU supplies frame-evidence provenance, Neuron supplies deterministic
+temporal-change comparison, and Xerus supplies provider/game-namespaced
+disk-first transition recall. None of these backends can bypass the ARC action
+space validator or claim a win; Mode 4 Codex CLI remains the decision model.
+
 See [Benchmarking](docs/BENCHMARKS.md) and [Evaluation](docs/EVALUATION.md).
 
 ## Common commands

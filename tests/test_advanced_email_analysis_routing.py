@@ -129,3 +129,10 @@ def test_classify_last_200_routes_to_analyze(
     assert calls == [
         ("email.imap", "analyze")
     ]
+
+
+def test_first_received_email_uses_first_connector_operation() -> None:
+    match = resolve_connector_op("what is the first email i received?")
+
+    assert match is not None
+    assert (match.connector_id, match.op) == ("email.imap", "first")

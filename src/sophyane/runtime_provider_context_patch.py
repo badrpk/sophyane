@@ -345,7 +345,32 @@ def install_provider_context_patch() -> None:
                             )
                         )
 
-                        if _nifdu_leaf_authoritative:
+                        # SOPHYANE_CODEX_LEAF_PROVIDER_CALL_AUTHORITY_V1
+                        #
+                        # An explicitly selected Mode-4.3 Codex session is a
+                        # dedicated read-only project provider. Routing its
+                        # response through self.ask() re-enters Sophyane's task
+                        # compiler and can replace the real Codex answer with a
+                        # compiled work packet.
+                        _codex_leaf_authoritative = (
+                            _session_mode == "codex_cli"
+                            and _resolved_provider_id
+                            == "codex_cli"
+                            and callable(
+                                getattr(
+                                    provider,
+                                    "generate",
+                                    None,
+                                )
+                            )
+                        )
+
+                        _direct_leaf_authoritative = (
+                            _nifdu_leaf_authoritative
+                            or _codex_leaf_authoritative
+                        )
+
+                        if _direct_leaf_authoritative:
                             value = provider.generate(
                                 active_message
                             )

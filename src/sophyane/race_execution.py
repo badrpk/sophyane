@@ -754,8 +754,42 @@ def _browser_delivery_completed(applied: list[AppliedAction]) -> bool:
     )
 
 
+def _is_complex_storefront(request: str) -> bool:
+    text = " ".join(str(request or "").casefold().split())
+    return any(marker in text for marker in (
+        "ecommerce", "e-commerce", "online store", "shop", "shein",
+        "checkout", "cart", "marketplace", "alibaba", "amazon", "daraz",
+        "ebay", "e-bay", "etsy", "temu", "walmart", "shopify",
+    )) and any(marker in text for marker in ("website", "web site", "webpage", "store", "shop"))
+
+
+def _is_complex_web_app(request: str) -> bool:
+    text = " ".join(str(request or "").casefold().split())
+    web_or_product = any(marker in text for marker in ("website", "web site", "webpage", "web app", "email service", "online service", "dashboard", "api service"))
+    if not web_or_product:
+        return False
+    return _is_complex_storefront(request) or any(
+        marker in text for marker in (
+            "email service", "authentication", "login", "dashboard",
+            "payment", "api", "database", "messaging", "subscription",
+            "multi page", "dynamic",
+        )
+    )
+
+
 def race_strategy_for(request: str) -> RaceStrategy:
     """Derive race strategy from request class."""
+    text = " ".join(str(request or "").lower().split())
+    if _is_complex_web_app(request) and not any(marker in text for marker in ("website", "web site", "webpage", "landing page")):
+        return RaceStrategy(max_rounds=4, require_executable_action=True, success_mode="pytest")
+    if any(marker in text for marker in ("website", "web site", "webpage", "landing page")):
+        # Static web artifacts are verified by material output, not the
+        # parent repository's unrelated full test suite.
+        return RaceStrategy(
+            max_rounds=4 if _is_complex_web_app(request) else 2,
+            require_executable_action=True,
+            success_mode="applied",
+        )
     if _is_indexing_or_daemon_request(request):
         return RaceStrategy(
             max_rounds=2,
@@ -1038,8 +1072,10 @@ def run_race_apply_verify(
     # When production uses verify_workspace as its verifier, baseline and
     # post-action results are directly comparable. Custom verifiers retain
     # their original post-action-only contract.
-    baseline_verification = verify_workspace(
-        workspace_path
+    baseline_verification = (
+        []
+        if strategy.success_mode == "applied"
+        else verify_workspace(workspace_path)
     )
 
     def _verification_failure_signature(item):
@@ -1421,20 +1457,40 @@ def run_race_apply_verify(
             # complete until their explicit browser-open action succeeds.
             if (
                 _requires_browser_delivery(request)
+                and race_runner is run_adaptive_race
                 and applied.changed_paths
                 and not _browser_delivery_completed(result.applied)
             ):
-                current_request = (
-                    request
-                    + "\n\n"
-                    + "The artifact write completed, but browser delivery has not. "
-                    + "Open the produced artifact in the browser and return one "
-                    + "explicit open_browser action."
-                )
-                _emit(
-                    progress,
-                    "Browser delivery pending; continuing to browser-open step",
-                )
+                # Browser delivery is a deterministic post-write operation;
+                # do not spend another LLM round asking a provider to invent
+                # an open_browser action.
+                try:
+                    if lease.acquire(winner.worker):
+                        opened = _apply_action(
+                            engine=winner.worker,
+                            action={"type": "open_browser"},
+                            workspace=workspace_path,
+                            lease=lease,
+                        )
+                        result.applied.append(opened)
+                        result.ok = True
+                        result.error = ""
+                        return result
+                except Exception as browser_error:
+                    _emit(progress, f"Browser delivery failed: {_brief_route_reason(browser_error)}")
+                finally:
+                    if lease.owner == winner.worker:
+                        lease.release(winner.worker)
+                if race_runner is not run_adaptive_race:
+                    current_request = request + "\n\nThe artifact write completed, but browser delivery has not. Open the produced artifact in the browser."
+                    continue
+            if (
+                _requires_browser_delivery(request)
+                and race_runner is not run_adaptive_race
+                and applied.changed_paths
+                and not _browser_delivery_completed(result.applied)
+            ):
+                current_request = request + "\n\nThe artifact write completed, but browser delivery has not. Open the produced artifact in the browser."
                 continue
 
             _record_verified_learning(
@@ -1448,8 +1504,10 @@ def run_race_apply_verify(
             result.error = ""
             return result
 
-        verification = verifier(
-            workspace_path
+        verification = (
+            []
+            if strategy.success_mode == "applied"
+            else verifier(workspace_path)
         )
         result.verifications.extend(
             verification
@@ -1462,6 +1520,10 @@ def run_race_apply_verify(
         # only for complex construction requests.
         if (
             semantic_judge is not None
+            and (
+                strategy.success_mode not in {"applied", "plan_ok"}
+                or _is_complex_web_app(request)
+            )
             and _requires_semantic_completion_judge(
                 request
             )
@@ -1531,17 +1593,37 @@ def run_race_apply_verify(
         # not overall success until an explicit browser-open action succeeds.
         if (
             _requires_browser_delivery(request)
+            and race_runner is run_adaptive_race
             and applied.changed_paths
             and not _browser_delivery_completed(result.applied)
         ):
-            current_request = (
-                request
-                + "\n\n"
-                + "The artifact write completed, but browser delivery has not. "
-                + "Open the produced artifact in the browser and return one "
-                + "explicit open_browser action."
-            )
-            _emit(progress, "Browser delivery pending; continuing to browser-open step")
+            try:
+                if lease.acquire(winner.worker):
+                    opened = _apply_action(
+                        engine=winner.worker,
+                        action={"type": "open_browser"},
+                        workspace=workspace_path,
+                        lease=lease,
+                    )
+                    result.applied.append(opened)
+                    result.ok = True
+                    result.error = ""
+                    return result
+            except Exception as browser_error:
+                _emit(progress, f"Browser delivery failed: {_brief_route_reason(browser_error)}")
+            finally:
+                if lease.owner == winner.worker:
+                    lease.release(winner.worker)
+            if race_runner is not run_adaptive_race:
+                current_request = request + "\n\nThe artifact write completed, but browser delivery has not. Open the produced artifact in the browser."
+                continue
+        if (
+            _requires_browser_delivery(request)
+            and race_runner is not run_adaptive_race
+            and applied.changed_paths
+            and not _browser_delivery_completed(result.applied)
+        ):
+            current_request = request + "\n\nThe artifact write completed, but browser delivery has not. Open the produced artifact in the browser."
             continue
 
         # applied / plan_ok strategies: a successfully applied action

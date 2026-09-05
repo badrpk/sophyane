@@ -574,6 +574,13 @@ def test_nifdu_launcher_auto_headless_without_display(
         raising=False,
     )
 
+    # Isolate this headless test from a real Termux:X11 socket in
+    # the parent process environment.
+    monkeypatch.setenv(
+        "TMPDIR",
+        str(tmp_path),
+    )
+
     monkeypatch.setattr(
         launcher,
         "NIFDU_BROWSER_PROFILE",
@@ -809,6 +816,13 @@ def test_termux_exec_environment_uses_single_process_containment(
         raising=False,
     )
 
+    # Isolate this headless test from a real Termux:X11 socket in
+    # the parent process environment.
+    monkeypatch.setenv(
+        "TMPDIR",
+        str(tmp_path),
+    )
+
     monkeypatch.setenv(
         "PREFIX",
         "/data/data/com.termux/files/usr",
@@ -873,8 +887,9 @@ def test_termux_exec_environment_uses_single_process_containment(
     argv = captured["argv"]
 
     assert "--headless=new" in argv
-    assert "--single-process" in argv
-    assert "--no-zygote" in argv
+    assert "--single-process" not in argv
+    assert "--enable-features=NetworkServiceInProcess2" in argv
+    assert "--no-zygote" not in argv
     assert "--no-sandbox" in argv
 
 
@@ -965,3 +980,171 @@ def test_non_termux_environment_does_not_force_single_process(
 
     assert "--single-process" not in argv
     assert "--no-zygote" not in argv
+
+# SOPHYANE_NIFDU_TERMUX_X11_SOCKET_AUTHORITY_TESTS_V1
+def test_termux_live_x0_socket_prefers_visible_chromium_when_display_unset(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setenv(
+        "PREFIX",
+        "/data/data/com.termux/files/usr",
+    )
+    monkeypatch.setenv(
+        "LD_PRELOAD",
+        (
+            "/data/data/com.termux/files/usr/lib/"
+            "libtermux-exec.so"
+        ),
+    )
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+
+    x11_dir = tmp_path / ".X11-unix"
+    x11_dir.mkdir()
+    (x11_dir / "X0").touch()
+
+    monkeypatch.setattr(
+        launcher,
+        "NIFDU_BROWSER_PROFILE",
+        tmp_path / "profile",
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_nifdu_cdp_ready",
+        lambda *args, **kwargs: False,
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_wait_for_nifdu_cdp",
+        lambda *args, **kwargs: (True, ""),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "find_chromium",
+        lambda: "/usr/bin/chromium",
+    )
+
+    captured = {}
+
+    class Process:
+        pid = 4242
+
+    def fake_popen(argv, **kwargs):
+        captured["argv"] = list(argv)
+        captured["kwargs"] = kwargs
+        return Process()
+
+    monkeypatch.setattr(
+        launcher.subprocess,
+        "Popen",
+        fake_popen,
+    )
+
+    result = launcher.launch_nifdu_browser(
+        open_chatgpt=False,
+    )
+
+    argv = captured["argv"]
+    child_env = captured["kwargs"].get("env")
+
+    assert result["ok"] is True
+    assert result["launched"] is True
+    assert result["reused"] is False
+    assert result["headless"] is False
+
+    assert "--headless=new" not in argv
+    assert "--disable-gpu" not in argv
+    assert "--new-window" in argv
+
+    assert (
+        "--enable-features=NetworkServiceInProcess2"
+        in argv
+    )
+    assert "--no-sandbox" in argv
+
+    assert child_env is not None
+    assert child_env["DISPLAY"] == ":0"
+
+    # Parent environment must remain untouched.
+    assert "DISPLAY" not in launcher.os.environ
+
+
+def test_termux_x11_executable_without_live_x0_socket_stays_headless(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setenv(
+        "PREFIX",
+        "/data/data/com.termux/files/usr",
+    )
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    termux_x11 = bin_dir / "termux-x11"
+    termux_x11.write_text("#!/bin/sh\n", encoding="utf-8")
+    termux_x11.chmod(0o700)
+
+    monkeypatch.setenv(
+        "PATH",
+        str(bin_dir)
+        + launcher.os.pathsep
+        + launcher.os.environ.get("PATH", ""),
+    )
+
+    monkeypatch.setattr(
+        launcher,
+        "NIFDU_BROWSER_PROFILE",
+        tmp_path / "profile",
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_nifdu_cdp_ready",
+        lambda *args, **kwargs: False,
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_wait_for_nifdu_cdp",
+        lambda *args, **kwargs: (True, ""),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "find_chromium",
+        lambda: "/usr/bin/chromium",
+    )
+
+    captured = {}
+
+    class Process:
+        pid = 4243
+
+    def fake_popen(argv, **kwargs):
+        captured["argv"] = list(argv)
+        captured["kwargs"] = kwargs
+        return Process()
+
+    monkeypatch.setattr(
+        launcher.subprocess,
+        "Popen",
+        fake_popen,
+    )
+
+    result = launcher.launch_nifdu_browser(
+        open_chatgpt=False,
+    )
+
+    argv = captured["argv"]
+
+    assert result["ok"] is True
+    assert result["headless"] is True
+    assert "--headless=new" in argv
+    assert "--disable-gpu" in argv
+
+    # Presence of the executable alone is not display authority.
+    assert "--new-window" not in argv
+    assert "env" not in captured["kwargs"]
+

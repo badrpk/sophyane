@@ -236,6 +236,38 @@ def _wait_for_nifdu_cdp(
     )
 
 
+# SOPHYANE_NIFDU_TERMUX_X11_SOCKET_AUTHORITY_V1
+def _detect_termux_x11_display() -> str | None:
+    """Return :0 only when a concrete Termux:X11 X0 endpoint exists."""
+
+    if (
+        os.environ.get("DISPLAY")
+        or os.environ.get("WAYLAND_DISPLAY")
+    ):
+        return None
+
+    prefix = os.environ.get("PREFIX", "")
+    if not prefix.startswith(
+        "/data/data/com.termux/files/"
+    ):
+        return None
+
+    tmpdir = os.environ.get("TMPDIR", "").strip()
+    if not tmpdir:
+        return None
+
+    x0 = os.path.join(
+        tmpdir,
+        ".X11-unix",
+        "X0",
+    )
+
+    if os.path.exists(x0):
+        return ":0"
+
+    return None
+
+
 def launch_nifdu_browser(
     *,
     open_chatgpt: bool = True,
@@ -324,6 +356,10 @@ def launch_nifdu_browser(
     # On Termux/Android there is commonly no X11/Wayland display.
     # In that environment GUI Chromium exits before CDP starts, so
     # use Chromium's native headless mode automatically.
+    detected_termux_display = (
+        _detect_termux_x11_display()
+    )
+
     has_display = bool(
         os.environ.get(
             "DISPLAY"
@@ -331,6 +367,7 @@ def launch_nifdu_browser(
         or os.environ.get(
             "WAYLAND_DISPLAY"
         )
+        or detected_termux_display
     )
 
     if has_display:
@@ -345,13 +382,20 @@ def launch_nifdu_browser(
             ]
         )
 
-    # SOPHYANE_NIFDU_TERMUX_SINGLE_PROCESS_AUTHORITY_V1
+    # SOPHYANE_NIFDU_TERMUX_NETWORK_SERVICE_IN_PROCESS_V2
     #
     # Play-store Termux injects libtermux-exec through LD_PRELOAD.
-    # Chromium child processes using /proc/self/exe can then fail in
-    # Android's linker namespace, repeatedly crashing the network service.
-    # The bounded live probe proved that containing Chromium in one process
-    # removes both the child linker failure and the network-service loop.
+    # A Chromium network-service child launched through /proc/self/exe
+    # cannot load that library inside Android's restricted linker namespace.
+    #
+    # Historical mitigation used --single-process / --no-zygote. Live
+    # Android evidence proved that configuration can make CDP briefly ready
+    # and then terminate Chromium with SIGSEGV.
+    #
+    # Preserve normal Chromium renderer/zygote process isolation. Only keep
+    # the network service inside the browser process. This eliminates the
+    # failing /proc/self/exe network-service child while retaining a stable
+    # multiprocess Chromium/CDP runtime.
     termux_exec_preload = (
         "libtermux-exec.so"
         in os.environ.get(
@@ -363,25 +407,32 @@ def launch_nifdu_browser(
     termux_prefix = (
         os.environ.get(
             "PREFIX",
-            ""
+            "",
         ).startswith(
             "/data/data/com.termux/files/"
         )
     )
 
-    termux_single_process = (
+    termux_network_service_in_process = (
         termux_exec_preload
         and termux_prefix
     )
 
-    if termux_single_process:
-        for flag in (
-            "--no-sandbox",
-            "--no-zygote",
-            "--single-process",
-        ):
-            if flag not in args:
-                args.append(flag)
+    if termux_network_service_in_process:
+        feature_flag = (
+            "--enable-features="
+            "NetworkServiceInProcess2"
+        )
+
+        if feature_flag not in args:
+            args.append(
+                feature_flag
+            )
+
+        if "--no-sandbox" not in args:
+            args.append(
+                "--no-sandbox"
+            )
 
     if (
         os.environ.get(
@@ -412,12 +463,29 @@ def launch_nifdu_browser(
         )
 
     try:
+        popen_kwargs: dict[str, Any] = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "start_new_session": True,
+        }
+
+        # When Termux:X11 is concretely available but DISPLAY was not
+        # exported by the parent shell, give only this Chromium subprocess
+        # the display authority. Do not mutate global os.environ.
+        if (
+            detected_termux_display
+            and not os.environ.get("DISPLAY")
+        ):
+            child_env = os.environ.copy()
+            child_env["DISPLAY"] = (
+                detected_termux_display
+            )
+            popen_kwargs["env"] = child_env
+
         process = subprocess.Popen(
             args,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
+            **popen_kwargs,
         )
     except Exception as error:  # noqa: BLE001
         return {

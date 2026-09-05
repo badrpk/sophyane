@@ -5,6 +5,7 @@ browser generation can be diagnosed instead of silently discarded.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import time
 from pathlib import Path
@@ -95,6 +96,39 @@ def _acceptable_rewrite(previous: str, candidate: str | None) -> bool:
     return len(candidate) >= minimum
 
 
+# SOPHYANE_BROWSER_SEMANTIC_PROGRESS_KEY_V1
+def _semantic_repair_state(
+    candidate: str,
+    problem: str,
+) -> tuple[str, str]:
+    """Return a stable state key for semantic repair progress."""
+
+    normalized_document = re.sub(
+        r"\s+",
+        " ",
+        str(candidate or ""),
+    ).strip()
+
+    # Formatting-only whitespace between tags is not semantic progress.
+    normalized_document = re.sub(
+        r">\s+<",
+        "><",
+        normalized_document,
+    )
+
+    normalized_problem = " ".join(
+        str(problem or "")
+        .casefold()
+        .split()
+    )
+
+    digest = hashlib.sha256(
+        normalized_document.encode("utf-8")
+    ).hexdigest()
+
+    return normalized_problem, digest
+
+
 def install_browser_partial_recovery() -> None:
     """Replace the one-shot browser path with progress-aware partial recovery."""
     from sophyane import adaptive_execution as adaptive
@@ -170,6 +204,8 @@ def install_browser_partial_recovery() -> None:
         attempts = 0
         stagnant = 0
         response_sequence = 1
+        seen_repair_states: set[tuple[str, str]] = set()
+
         while attempts < MAX_CONTINUATIONS:
             problem = recovery_problem(html)
             if html is not None and not problem:
@@ -187,6 +223,28 @@ def install_browser_partial_recovery() -> None:
 
             if repair_base is None or len(repair_base) >= MAX_TOTAL_CHARS:
                 break
+
+            # SOPHYANE_BROWSER_SEMANTIC_NO_PROGRESS_STOP_V1
+            #
+            # Detect repeated semantic state before spending another provider
+            # call. Character growth alone cannot detect a provider returning
+            # the same complete HTML with the same validation failure.
+            repair_state = _semantic_repair_state(
+                repair_base,
+                problem,
+            )
+
+            if repair_state in seen_repair_states:
+                progress(
+                    "Stopping semantic repair before another provider call: "
+                    f"repeated validation problem after {attempts} "
+                    f"completed attempt(s): {problem}"
+                )
+                break
+
+            seen_repair_states.add(
+                repair_state
+            )
 
             attempts += 1
             before = len(repair_base)

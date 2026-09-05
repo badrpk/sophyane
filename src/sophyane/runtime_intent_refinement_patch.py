@@ -1,6 +1,7 @@
 """LLM-assisted intent refinement with explicit user approval before execution."""
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from sophyane.runtime_semantic_instruction import apply_live_instruction
@@ -94,6 +95,14 @@ def _confirm_refinement(self: Any, original: str, *, has_project: bool, tui_v2: 
         if route == "chat":
             return route, refined
 
+        # SOPHYANE_AUTONOMOUS_REFINEMENT_V1: safe execution requests are
+        # advised by the LLM and continue without a mandatory HITL pause.
+        # Set SOPHYANE_CONFIRM_REFINEMENT=1 when interactive approval is
+        # explicitly desired for debugging or high-touch workflows.
+        if os.environ.get("SOPHYANE_CONFIRM_REFINEMENT") != "1":
+            self.progress("Intent refined; continuing autonomously")
+            return route, refined
+
         print("\nI understood your request as:\n", flush=True)
         print(refined, flush=True)
         if assumptions:
@@ -147,6 +156,54 @@ def _confirm_refinement(self: Any, original: str, *, has_project: bool, tui_v2: 
         )
 
 
+# SOPHYANE_EXPLICIT_MULTILINE_REQUEST_V1
+def _collect_multiline_request(
+    owner: Any,
+) -> str | None:
+    """Collect one authoritative request until /end or /cancel."""
+
+    owner.emit(
+        "system",
+        "Collecting request; finish with /end or cancel with /cancel.",
+    )
+
+    lines: list[str] = []
+
+    while True:
+        try:
+            line = owner.read_prompt("… ")
+        except (EOFError, KeyboardInterrupt):
+            owner.emit(
+                "system",
+                "Multiline request cancelled.",
+            )
+            return None
+
+        control = str(line or "").strip().casefold()
+
+        if control == "/cancel":
+            owner.emit(
+                "system",
+                "Multiline request cancelled.",
+            )
+            return None
+
+        if control == "/end":
+            request = "\n".join(lines)
+
+            if not request.strip():
+                owner.emit(
+                    "system",
+                    "Usage: enter /paste, provide the request, "
+                    "then finish with /end.",
+                )
+                return None
+
+            return request
+
+        lines.append(str(line or ""))
+
+
 def install_intent_refinement() -> None:
     from sophyane import tui_v2
 
@@ -162,6 +219,172 @@ def install_intent_refinement() -> None:
                 return 0
             if not message:
                 continue
+
+            if message.strip().casefold() == "/paste":
+                message = _collect_multiline_request(
+                    self
+                )
+
+                if message is None:
+                    continue
+
+            command_handler = getattr(
+                self,
+                "_handle_command",
+                None,
+            )
+            if callable(command_handler):
+                command_message = command_handler(message)
+            else:
+                command_message = (
+                    tui_v2.ObservableTUI._handle_command(
+                        self,
+                        message,
+                    )
+                )
+            if command_message is None:
+                if getattr(self, "_quit_requested", False):
+                    return 0
+                continue
+            message = command_message
+
+            # SOPHYANE_EFFECTIVE_CONVERSATIONAL_AUTHORITY_V9
+            #
+            # install_intent_refinement() replaces ObservableTUI.run,
+            # therefore conversational continuity must be resolved here,
+            # at the effective original-user-message boundary.
+            #
+            # Authority order:
+            #
+            #   1. retained grounded graph follow-up
+            #   2. systematic capability-design request
+            #   3. existing refinement / execution / chat routing
+            #
+            # This is domain-, mode- and provider-independent.
+
+            from sophyane.conversational_graph_session import (
+                try_conversational_graph_followup,
+            )
+
+            _sophyane_effective_graph = (
+                try_conversational_graph_followup(
+                    self,
+                    message,
+                )
+            )
+
+            if _sophyane_effective_graph is not None:
+                self.last_mode = "chat"
+                self.last_raw = (
+                    _sophyane_effective_graph
+                )
+
+                self.history.extend(
+                    [
+                        (
+                            "user",
+                            message[:300],
+                        ),
+                        (
+                            "assistant",
+                            _sophyane_effective_graph[:500],
+                        ),
+                    ]
+                )
+
+                self.history = self.history[-4:]
+
+                self.emit(
+                    "Sophyane",
+                    _sophyane_effective_graph,
+                )
+
+                continue
+
+            from sophyane.capability_design import (
+                prepare_capability_design_request,
+            )
+
+            _sophyane_effective_design_prompt = (
+                prepare_capability_design_request(
+                    request=message,
+                    conversational_context=message,
+                )
+            )
+
+            if (
+                _sophyane_effective_design_prompt
+                is not None
+            ):
+                self.last_mode = "chat"
+
+                self.progress(
+                    "Getting systematic capability design"
+                )
+
+                try:
+                    _sophyane_effective_response = (
+                        self.call_provider(
+                            _sophyane_effective_design_prompt
+                        )
+                    )
+
+                    _sophyane_effective_text = getattr(
+                        _sophyane_effective_response,
+                        "text",
+                        str(
+                            _sophyane_effective_response
+                        ),
+                    )
+
+                    self.last_raw = (
+                        _sophyane_effective_text
+                    )
+
+                    from sophyane.conversational_graph_session import (
+                        remember_grounded_process_context,
+                    )
+
+                    remember_grounded_process_context(
+                        self,
+                        self.last_raw,
+                    )
+
+                except Exception as error:  # noqa: BLE001
+                    self.emit(
+                        "system",
+                        (
+                            "Error: "
+                            + str(
+                                error
+                            )
+                        ),
+                    )
+
+                    continue
+
+                self.history.extend(
+                    [
+                        (
+                            "user",
+                            message[:300],
+                        ),
+                        (
+                            "assistant",
+                            _sophyane_effective_text[:500],
+                        ),
+                    ]
+                )
+
+                self.history = self.history[-4:]
+
+                self.emit(
+                    "Sophyane",
+                    _sophyane_effective_text,
+                )
+
+                continue
+
             normalized = " ".join(message.lower().split())
             if normalized in {"exit", "quit", "/quit", "/exit", "ecit"}:
                 print("Goodbye.")
@@ -888,6 +1111,7 @@ def install_intent_refinement() -> None:
                     continue
 
 # SOPHYANE_NIFDU_DETERMINISTIC_EMPTY_CREATE_V1
+# SOPHYANE_NATIVE_EMPTY_CREATE_CROSS_PROVIDER_V1
             #
             # A bare request such as "create a file yaqeen.py"
             # needs no LLM intelligence. Sophyane can safely create
@@ -900,7 +1124,13 @@ def install_intent_refinement() -> None:
                     "SOPHYANE_SESSION_MODE",
                     "",
                 ).strip().lower()
-                == "nifdu_llm"
+                in {
+                    "nifdu_llm",
+                    "codex_cli",
+                    "cloud_llm",
+                    "local_llm",
+                    "race",
+                }
             ):
                 from pathlib import Path as _NifduEmptyPath
 
@@ -1447,6 +1677,83 @@ def install_intent_refinement() -> None:
                 continue
 
             has_project = bool(self.active_request and self.active_workspace)
+
+            # SOPHYANE_EXPLICIT_BROWSER_GAME_DIRECT_CAPABILITY_V1
+            #
+            # A clear standalone browser-game request already maps to an
+            # installed concrete capability. It needs neither an intent
+            # refinement call nor a generic JSON-action planning call.
+            from sophyane.adaptive_execution import (
+                _browser_request as _direct_browser_request,
+            )
+
+            _direct_browser_game_text = (
+                " "
+                + " ".join(
+                    message.casefold().split()
+                )
+                + " "
+            )
+
+            _direct_browser_game = (
+                _direct_browser_request(message)
+                and "game" in message.casefold()
+                and not any(
+                    marker in _direct_browser_game_text
+                    for marker in (
+                        " full-stack ",
+                        " full stack ",
+                        " fastapi ",
+                        " backend ",
+                        " database ",
+                        " sqlite ",
+                        " api ",
+                    )
+                )
+            )
+
+            if _direct_browser_game:
+                self.last_mode = "execution"
+                self.active_request = message
+                self.project_requirements = [message]
+
+                self.progress(
+                    "Capability selected: browser.game | "
+                    "refinement calls: 0 | planning calls: 0"
+                )
+
+                try:
+                    workspace = self._workspace_for(False)
+                    self.active_workspace = workspace
+
+                    text = tui_v2.run_structured_loop(
+                        initial_text="",
+                        original_request=message,
+                        ask=lambda prompt: self.call_provider(prompt),
+                        workspace=workspace,
+                        max_steps=(
+                            8
+                            if self.small_local
+                            else 16
+                        ),
+                        progress=self.progress,
+                    )
+                except Exception as error:  # noqa: BLE001
+                    text = (
+                        "Browser-game capability failed safely: "
+                        f"{type(error).__name__}: {error}"
+                    )
+
+                self.last_raw = text
+                self.history.extend(
+                    [
+                        ("user", message[:300]),
+                        ("assistant", text[:500]),
+                    ]
+                )
+                self.history = self.history[-4:]
+                self.emit("Sophyane", text)
+                continue
 
             # SOPHYANE_DIRECT_CHAT_REFINEMENT_BYPASS_V1
             #

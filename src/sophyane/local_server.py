@@ -503,8 +503,15 @@ def _acquire_start_lock() -> int | None:
 
     return None
 
-def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
+# SOPHYANE_LOCAL_SERVER_NONE_PID_CONTRACT_V1
+def _pid_alive(pid: int | None) -> bool:
+    """Return whether a concrete positive PID currently exists.
+
+    PID reconciliation intentionally returns None when no unique verified
+    llama-server owner can be established. Treat that absence as not alive
+    rather than comparing None numerically.
+    """
+    if pid is None or pid <= 0:
         return False
     try:
         os.kill(pid, 0)

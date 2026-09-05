@@ -18,6 +18,19 @@
         "what was my last email"
       ]
     },
+    "first": {
+      "match_hints": [
+        "first email",
+        "first mail",
+        "first message",
+        "earliest email",
+        "earliest mail",
+        "oldest email",
+        "oldest inbox message",
+        "first email i received",
+        "earliest email i received"
+      ]
+    },
     "search": {
       "match_hints": [
         "in my email",

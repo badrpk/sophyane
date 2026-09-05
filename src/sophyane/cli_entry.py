@@ -34,6 +34,7 @@ def _session_ready_model(
         "local_llm",
         "cloud_llm",
         "nifdu_llm",
+        "codex_cli",
     }:
         return configured
 
@@ -47,13 +48,60 @@ def _session_ready_model(
 
 
 
+def _available_intelligence_options() -> str:
+    """Render the same readiness inventory used by Mode 1 admission."""
+    try:
+        from sophyane.startup_policy import intelligence_provider_inventory
+        inventory = intelligence_provider_inventory()
+        return ", ".join(item[0] for _, item in sorted(inventory.items())) or "none ready"
+    except Exception:
+        return "discovery unavailable"
+
+
 def _runtime_identity() -> str:
     try:
         config = load_config()
     except Exception:
         config = {}
 
-    model = str(_session_ready_model(config.get("model")) or "not configured")
+    session_mode = str(
+        os.environ.get("SOPHYANE_SESSION_MODE")
+        or ""
+    ).strip().lower()
+
+    if session_mode == "local_llm":
+        # SOPHYANE_MODE3_NONINTERACTIVE_BANNER_AUTHORITY_V1
+        #
+        # Runtime identity is observational. It must never invoke the
+        # interactive startup selector for an already-selected Mode-3
+        # session. Resolve only the dedicated pure-local session contract.
+        try:
+            from sophyane.startup_policy import (
+                resolve_local_session_config,
+            )
+
+            resolved = (
+                resolve_local_session_config()
+            )
+
+            model = str(
+                resolved.get("model")
+                or os.environ.get("SOPHYANE_SESSION_MODEL")
+                or "local_gguf"
+            ).strip()
+
+        except Exception:
+            model = str(
+                os.environ.get("SOPHYANE_SESSION_MODEL")
+                or "local_gguf"
+            ).strip()
+    else:
+        model = str(
+            _session_ready_model(
+                config.get("model")
+            )
+            or "not configured"
+        )
 
     try:
         from sophyane.connectors.runtime import list_connectors
@@ -66,7 +114,12 @@ def _runtime_identity() -> str:
     except Exception:
         email_ready = False
 
-    status = [model]
+    # Mode 1 is autonomous: the banner must describe its available
+    # intelligence routes, not a single persisted model name.
+    if session_mode == "race":
+        status = ["Intelligence: " + _available_intelligence_options()]
+    else:
+        status = [model]
 
     if email_ready:
         status.append("Email connected")
@@ -122,8 +175,21 @@ def _start_local_server_if_needed() -> None:
         return
 
     try:
-        config = load_config()
-        if str(config.get("provider") or "").strip().lower() != "local_gguf":
+        session_mode = str(
+            os.environ.get("SOPHYANE_SESSION_MODE")
+            or ""
+        ).strip().lower()
+
+        if session_mode == "local_llm":
+            provider_id = "local_gguf"
+        else:
+            config = load_config()
+            provider_id = str(
+                config.get("provider")
+                or ""
+            ).strip().lower()
+
+        if provider_id != "local_gguf":
             return
         from sophyane.local_server import ensure_server_background
 
@@ -271,15 +337,44 @@ def main() -> int:
     except Exception as error:  # noqa: BLE001
         print(f"◆ Platform filesystem warning: {error}", file=sys.stderr, flush=True)
 
-    if len(sys.argv) <= 1:
+    # SOPHYANE_EXPLICIT_SESSION_NO_MENU_V1
+    #
+    # The startup selector exists only to choose a session when none has
+    # already been selected. Explicit automation/session authority must
+    # never be replaced by an interactive menu merely because argv is empty.
+    explicit_session_mode = str(
+        os.environ.get(
+            "SOPHYANE_SESSION_MODE"
+        )
+        or ""
+    ).strip().lower()
+
+    if (
+        len(sys.argv) <= 1
+        and not explicit_session_mode
+    ):
         try:
-            from sophyane.startup_policy import choose_startup_provider
+            from sophyane.startup_policy import (
+                choose_startup_provider,
+            )
 
             choose_startup_provider()
-        except (EOFError, KeyboardInterrupt):
-            print("\nStartup selection cancelled; keeping current configuration.", file=sys.stderr)
+
+        except (
+            EOFError,
+            KeyboardInterrupt,
+        ):
+            print(
+                "\nStartup selection cancelled; "
+                "keeping current configuration.",
+                file=sys.stderr,
+            )
+
         except Exception as error:
-            print(f"◆ Startup provider selection warning: {error}", file=sys.stderr)
+            print(
+                f"◆ Startup provider selection warning: {error}",
+                file=sys.stderr,
+            )
 
     # SOPHYANE_MODE2_RUNTIME_ISOLATION_V1
     #

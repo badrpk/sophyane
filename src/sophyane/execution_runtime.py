@@ -39,19 +39,16 @@ _BROWSER_SERVERS: dict[Path, tuple[http.server.ThreadingHTTPServer, threading.Th
 def _recover_quasi_json_file_action(
     text: str,
 ) -> dict[str, Any] | None:
-    """Recover only an unambiguous triple-quoted file action.
+    """Recover narrowly defined malformed provider file actions.
 
-    SOPHYANE_QUASI_JSON_FILE_ACTION_RECOVERY_V3
+    SOPHYANE_QUASI_JSON_FILE_ACTION_RECOVERY_V4
 
-    Some local coding models emit a JSON-shaped write_file or append_file
-    envelope but place source content inside Python triple quotes. That is
-    invalid JSON even though the action boundary is explicit.
+    Preserve the V3 triple-quoted action recovery and additionally recover
+    the live NIFDU browser shape where a nested write_file/append_file
+    action contains source code whose interior quotes were not JSON escaped.
 
-    Recovery is deliberately narrow:
-    - write_file or append_file only
-    - explicit path
-    - triple-double-quoted or triple-single-quoted content
-    - complete outer object
+    Strict json.loads remains authoritative. This helper is used only after
+    normal JSON parsing has failed.
     """
     if not isinstance(text, str):
         return None
@@ -61,7 +58,8 @@ def _recover_quasi_json_file_action(
     if not value:
         return None
 
-    pattern = (
+    # Preserve SOPHYANE_QUASI_JSON_FILE_ACTION_RECOVERY_V3.
+    triple_pattern = (
         r'\s*\{\s*'
         r'["\']action["\']\s*:\s*["\']'
         r'(?P<action>write_file|append_file)'
@@ -77,29 +75,149 @@ def _recover_quasi_json_file_action(
     )
 
     match = re.fullmatch(
-        pattern,
+        triple_pattern,
         value,
         flags=re.S,
     )
 
-    if not match:
+    if match:
+        file_path = match.group(
+            "path"
+        ).strip()
+
+        if not file_path:
+            return None
+
+        return {
+            "action": match.group(
+                "action"
+            ),
+            "path": file_path,
+            "content": match.group(
+                "content"
+            ),
+        }
+
+    # SOPHYANE_NIFDU_NESTED_QUASI_JSON_WRITE_RECOVERY_V1
+    #
+    # Live NIFDU can emit:
+    #
+    # {"action":{"type":"write_file","path":"app.py",
+    #  "content":"data = {"status": "ok"}\\n"}}
+    #
+    # The interior source quotes make this invalid JSON. Because content is
+    # required to be the final field, recover only this tightly bounded
+    # envelope and treat everything between the content opener and final
+    # action/object terminator as source text.
+    nested_pattern = re.compile(
+        r'^\s*\{\s*'
+        r'"action"\s*:\s*\{\s*'
+        r'"type"\s*:\s*"(?P<kind>write_file|append_file)"\s*,\s*'
+        r'"(?:path|file)"\s*:\s*"(?P<path>(?:\\.|[^"\\])*)"\s*,\s*'
+        r'"content"\s*:\s*"(?P<content>.*)"\s*\}\s*\}\s*$',
+        flags=re.S,
+    )
+
+    nested = nested_pattern.fullmatch(
+        value
+    )
+
+    if nested is None:
         return None
 
-    file_path = match.group(
-        "path"
-    ).strip()
+    def decode_json_escapes(
+        encoded: str,
+    ) -> str | None:
+        output: list[str] = []
+        index = 0
 
-    if not file_path:
+        simple = {
+            '"': '"',
+            "\\": "\\",
+            "/": "/",
+            "b": "\b",
+            "f": "\f",
+            "n": "\n",
+            "r": "\r",
+            "t": "\t",
+        }
+
+        while index < len(encoded):
+            char = encoded[index]
+
+            if char != "\\":
+                output.append(char)
+                index += 1
+                continue
+
+            index += 1
+
+            if index >= len(encoded):
+                return None
+
+            escaped = encoded[index]
+
+            if escaped in simple:
+                output.append(
+                    simple[escaped]
+                )
+                index += 1
+                continue
+
+            if escaped == "u":
+                digits = encoded[
+                    index + 1:
+                    index + 5
+                ]
+
+                if (
+                    len(digits) != 4
+                    or any(
+                        item not in
+                        "0123456789abcdefABCDEF"
+                        for item in digits
+                    )
+                ):
+                    return None
+
+                output.append(
+                    chr(
+                        int(
+                            digits,
+                            16,
+                        )
+                    )
+                )
+
+                index += 5
+                continue
+
+            # Do not reinterpret unknown escapes.
+            return None
+
+        return "".join(output)
+
+    decoded_path = decode_json_escapes(
+        nested.group("path")
+    )
+
+    decoded_content = decode_json_escapes(
+        nested.group("content")
+    )
+
+    if (
+        decoded_path is None
+        or not decoded_path.strip()
+        or decoded_content is None
+    ):
         return None
 
     return {
-        "action": match.group(
-            "action"
-        ),
-        "path": file_path,
-        "content": match.group(
-            "content"
-        ),
+        "action": {
+            "type": nested.group("kind"),
+            "path": decoded_path.strip(),
+            "content": decoded_content,
+        }
     }
 
 
@@ -112,6 +230,147 @@ def coding_request_needs_language(message: str) -> bool:
         "python", "javascript", " js ", "typescript", " ts ", "html", "css", "react", "vue", "java", "kotlin", "swift", "rust", "golang", "c++", "cpp", "c#", "php", "bash", "shell"
     ))
     return coding and not explicit
+
+
+
+def _recover_quasi_json_run_command_action(
+    text: str,
+) -> dict[str, Any] | None:
+    """Recover one exact malformed nested run_command envelope.
+
+    SOPHYANE_QUASI_JSON_RUN_COMMAND_RECOVERY_V1
+
+    Some browser providers emit:
+
+        {"action":{"type":"run_command",
+                   "command":"python -c "print('ok')""}}
+
+    Strict JSON parsing remains authoritative. This function only recovers
+    the exact nested envelope after json.loads() has failed. It does NOT
+    authorize execution; the normal command guard remains authoritative.
+    """
+    if not isinstance(text, str):
+        return None
+
+    value = text.strip()
+
+    if not value:
+        return None
+
+    match = re.fullmatch(
+        r'\s*\{\s*'
+        r'"action"\s*:\s*\{\s*'
+        r'"type"\s*:\s*"run_command"\s*,\s*'
+        r'"command"\s*:\s*"(?P<command>.*)"'
+        r'\s*\}\s*\}\s*',
+        value,
+        flags=re.S,
+    )
+
+    if match is None:
+        return None
+
+    encoded = match.group(
+        "command"
+    )
+
+    output: list[str] = []
+    index = 0
+
+    simple = {
+        '"': '"',
+        "\\": "\\",
+        "/": "/",
+        "b": "\b",
+        "f": "\f",
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+    }
+
+    while index < len(encoded):
+        char = encoded[index]
+
+        if char != "\\":
+            output.append(char)
+            index += 1
+            continue
+
+        index += 1
+
+        if index >= len(encoded):
+            return None
+
+        escaped = encoded[index]
+
+        if escaped in simple:
+            output.append(
+                simple[escaped]
+            )
+            index += 1
+            continue
+
+        if escaped == "u":
+            digits = encoded[
+                index + 1:
+                index + 5
+            ]
+
+            if (
+                len(digits) != 4
+                or any(
+                    item not in
+                    "0123456789abcdefABCDEF"
+                    for item in digits
+                )
+            ):
+                return None
+
+            output.append(
+                chr(
+                    int(
+                        digits,
+                        16,
+                    )
+                )
+            )
+
+            index += 5
+            continue
+
+        #
+        # Unknown escaping stays rejected.
+        #
+        return None
+
+    command = "".join(
+        output
+    ).strip()
+
+    if not command:
+        return None
+
+    # SOPHYANE_QUASI_JSON_PYTHON_COMMAND_ONLY_V1
+    #
+    # This malformed-envelope recovery exists only for the exact NIFDU
+    # Python verification family observed live. Do not turn malformed
+    # arbitrary shell commands into executable actions.
+    #
+    # Absolute/custom interpreter paths remain unsupported here because a
+    # correctly serialized command can already express those explicitly.
+    if re.match(
+        r"^python(?:3(?:\.\d+)?)?(?:\s|$)",
+        command,
+    ) is None:
+        return None
+
+    return {
+        "action": {
+            "type": "run_command",
+            "command": command,
+        }
+    }
+
 
 
 def extract_plan(text: str) -> dict[str, Any] | None:
@@ -131,6 +390,15 @@ def extract_plan(text: str) -> dict[str, Any] | None:
 
             if recovered is not None:
                 return recovered
+
+            recovered_command = (
+                _recover_quasi_json_run_command_action(
+                    text
+                )
+            )
+
+            if recovered_command is not None:
+                return recovered_command
 
             return None
 
@@ -161,6 +429,55 @@ def _clip(value: str) -> str:
     return value[:MAX_CAPTURE] + f"\n… output truncated ({len(value) - MAX_CAPTURE} more characters)"
 
 
+
+def _canonicalize_python_command(
+    command: str,
+) -> str:
+    """Bind a leading generic Python command to Sophyane's interpreter.
+
+    SOPHYANE_PYTHON_COMMAND_AUTHORITY_V1
+
+    Provider plans commonly emit ``python`` or ``python3``. When Sophyane is
+    running from a virtual environment, shell PATH resolution can otherwise
+    execute a different interpreter lacking the validated dependencies.
+
+    Only the first command token is canonicalized. No other shell text,
+    operators, arguments, paths, or commands are modified.
+    """
+    value = str(
+        command or ""
+    ).strip()
+
+    if not value:
+        return value
+
+    match = re.match(
+        r'^(?P<python>python(?:3(?:\.\d+)?)?)'
+        r'(?P<rest>(?:\s+.*)?)$',
+        value,
+        flags=re.S,
+    )
+
+    if match is None:
+        return value
+
+    executable = __import__(
+        "sys"
+    ).executable
+
+    quoted = __import__(
+        "shlex"
+    ).quote(
+        executable
+    )
+
+    return (
+        quoted
+        + match.group("rest")
+    )
+
+
+
 def _run_with_heartbeat(
     command: str,
     workspace: Path,
@@ -168,6 +485,10 @@ def _run_with_heartbeat(
     *,
     timeout: int = 60,
 ) -> str:
+    command = _canonicalize_python_command(
+        command
+    )
+
     process = subprocess.Popen(
         command,
         shell=True,
@@ -202,6 +523,9 @@ def _run_with_heartbeat(
 
 
 def _run_interactive(command: str, workspace: Path, progress: Progress) -> str:
+    command = _canonicalize_python_command(
+        command
+    )
     progress(f"Interactive terminal demo: {command}")
     print("\n--- Interactive demo started; use its controls and quit key to return to Sophyane ---\n", flush=True)
     completed = subprocess.run(command, shell=True, cwd=workspace)
@@ -542,6 +866,26 @@ def run_structured_loop(
 
         kind = str(action.get("type") or "").lower()
         if kind in {"respond", "message", "open_browser", "browser"}:
+            refusal = (result or str(action.get("message") or "")).lower()
+            mutation_request = any(
+                marker in original_request.lower()
+                for marker in ("configure", "create", "write", "modify", "edit", "implement", "add", "patch", "update")
+            )
+            read_only_refusal = any(
+                marker in refusal
+                for marker in ("read-only authority", "read only authority", "no files were changed", "cannot configure", "would modify repository")
+            )
+            if mutation_request and read_only_refusal and recovery_attempts < 3:
+                recovery_attempts += 1
+                progress(f"Recovering read-only refusal ({recovery_attempts}/3)")
+                response = ask(
+                    _recovery_prompt(workspace, original_request, current)
+                    + "\nThe previous response incorrectly refused a permitted workspace mutation. "
+                    "Return the exact write_file action now; Sophyane, not the provider, performs the write."
+                )
+                current = getattr(response, "text", str(response))
+                step += 1
+                continue
             return (result or str(action.get("message") or "")) + "\n\nExecution evidence:\n" + "\n".join(evidence)
 
         followup = (

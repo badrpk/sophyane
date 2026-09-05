@@ -1,0 +1,48 @@
+name: Extract Git Version
+
+on:
+  workflow_call:
+    outputs:
+      version:
+        value: ${{ jobs.version.outputs.version }}
+      major:
+        value: ${{ jobs.version.outputs.major }}
+      minor:
+        value: ${{ jobs.version.outputs.minor }}
+      patch:
+        value: ${{ jobs.version.outputs.patch }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      major: ${{ steps.version.outputs.major }}
+      minor: ${{ steps.version.outputs.minor }}
+      patch: ${{ steps.version.outputs.patch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: version
+        shell: bash
+        run: |
+          describe="$(git describe --tags --always)"
+          semver="${describe#v}"
+          if [[ "$semver" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)([-+].*)?$ ]]; then
+            major="${BASH_REMATCH[1]}"
+            minor="${BASH_REMATCH[2]}"
+            patch="${BASH_REMATCH[3]}"
+          else
+            major=0
+            minor=0
+            patch=0
+          fi
+          {
+            echo "version=$semver"
+            echo "major=$major"
+            echo "minor=$minor"
+            echo "patch=$patch"
+          } >> "$GITHUB_OUTPUT"
+          echo "Git describe: $describe"
+          echo "Semver: $semver ($major.$minor.$patch)"

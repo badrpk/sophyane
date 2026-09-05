@@ -889,9 +889,9 @@ def test_mode1_unusable_proposal_does_not_relax_safety_on_next_route(
     ]
 
 
-def test_mode1_admits_sli_only_when_grounding_capability_applies(tmp_path):
+def test_mode1_does_not_register_sli_for_grounding_requests(tmp_path):
     import sophyane.race_orchestrator as orchestrator
-    assert "sli" in orchestrator.build_real_workers(
+    assert "sli" not in orchestrator.build_real_workers(
         request="research this topic using memory and internet",
         workspace=tmp_path, config={}, progress=lambda _: None,
     )
@@ -926,7 +926,8 @@ def test_mode1_builds_independent_capability_workers(monkeypatch, tmp_path):
         config={"provider": "gemini", "provider_workers": ["codex_cli", "agy", "nifdu_browser"]},
         progress=lambda _: None,
     )
-    assert {"sli", "local", "api:gemini", "harness:codex_cli", "harness:agy", "browser:nifdu_browser"}.issubset(workers)
+    assert {"local", "api:gemini", "harness:codex_cli", "harness:agy", "browser:nifdu_browser"}.issubset(workers)
+    assert "sli" not in workers
     assert "cloud" not in workers
 
 
@@ -946,7 +947,8 @@ def test_mode1_uses_startup_readiness_inventory(monkeypatch, tmp_path):
         config={"provider": "gemini"},
         progress=lambda _: None,
     )
-    assert {"sli", "local", "api:gemini", "harness:codex_cli", "harness:agy", "browser:nifdu_browser"} <= set(workers)
+    assert {"local", "api:gemini", "harness:codex_cli", "harness:agy", "browser:nifdu_browser"} <= set(workers)
+    assert "sli" not in workers
 
 
 def test_mode1_verified_history_prefers_eligible_provider(monkeypatch, tmp_path):

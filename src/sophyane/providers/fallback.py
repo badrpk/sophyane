@@ -20,9 +20,14 @@ LOCAL_PROVIDER_IDS = {"local_gguf"}
 
 # Canonical default order when llm.json is missing or incomplete.
 DEFAULT_FALLBACK_ORDER = (
+    # Mode-4 external intelligence preference: authenticated local Codex
+    # first, then browser/CDP harnesses, then API providers.
+    "codex_cli",
+    "nifdu_browser",
+    "agy",
     "gemini",
-    "xai",
     "openai",
+    "xai",
     "anthropic",
     "groq",
     "openrouter",
@@ -662,13 +667,21 @@ def build_fallback_provider(
         in {"1", "true", "yes", "on"}
     )
 
-    if (
-        session_mode == "cloud_llm"
-        or disable_local_fallback
-    ):
-        order = [
-            primary
-        ] if primary else []
+    if session_mode == "cloud_llm":
+        # Keep cloud mode free of local rescue, while allowing explicit
+        # external harness/browser failover when configured by Mode 4.
+        external_failover = str(
+            _provider_policy_os.environ.get("SOPHYANE_MODE4_EXTERNAL_FAILOVER") or ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if external_failover:
+            # Explicit Mode-4 uses one deterministic cross-backend order.
+            # Unavailable providers are skipped by the normal discovery/key
+            # gates below; no provider is revived by this preference.
+            order = list(DEFAULT_FALLBACK_ORDER)
+        else:
+            order = [primary] if primary else []
+    elif disable_local_fallback:
+        order = [primary] if primary else []
 
     providers_cfg = llm_config.get("providers") or {}
     timeout = int(config.get("timeout", 180))

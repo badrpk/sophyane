@@ -55,15 +55,21 @@ def test_gate_precedes_auto_dispatch() -> None:
 def test_gate_precedes_provider() -> None:
     source = _source()
 
-    assert (
-        source.index(
-            "SOPHYANE_AUTHORITATIVE_OBJECTIVE_PREFLIGHT"
-        )
-        <
-        source.index(
-            "self.call_provider("
-        )
+    echo = source.index(
+        'self.emit("You", message)'
     )
+
+    gate = source.index(
+        "SOPHYANE_AUTHORITATIVE_OBJECTIVE_PREFLIGHT"
+    )
+
+    assert echo < gate
+
+    assert (
+        "self.call_provider("
+        not in source[echo:gate]
+    )
+
 
 
 def test_dangerous_email_mutation_is_local() -> None:

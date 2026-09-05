@@ -123,6 +123,48 @@ def _op_latest(
     }
 
 
+def _op_first(
+    user: str,
+    pw: str,
+    host: str,
+    port: int,
+) -> dict[str, Any]:
+    """Earliest message currently available in the Gmail Inbox."""
+    M = imaplib.IMAP4_SSL(host, port)
+    M.login(user, pw)
+    M.select("INBOX")
+    typ, data = M.search(None, "ALL")
+    ids = data[0].split() if data and data[0] else []
+    if not ids:
+        M.logout()
+        return {"ok": True, "formatted": "Inbox is empty.", "empty": True}
+    typ, msg_data = M.fetch(ids[0], "(RFC822)")
+    msg = email_lib.message_from_bytes(msg_data[0][1])
+    body = _body(msg)
+    words = re.findall(r"\b\w+\b", body)
+    frm = _dec(msg.get("From"))
+    subj = _dec(msg.get("Subject"))
+    preview = body.strip()[:500] or "(no plain text body)"
+    formatted = (
+        "┌─ First email\n"
+        f"│ From     {frm}\n"
+        f"│ Subject  {subj}\n"
+        f"│ Words    {len(words)}\n"
+        "├─ Preview\n"
+        + "\n".join("│ " + ln for ln in preview.splitlines()[:12])
+        + "\n└─"
+    )
+    M.logout()
+    return {
+        "ok": True,
+        "from": frm,
+        "subject": subj,
+        "word_count": len(words),
+        "body": body.strip(),
+        "formatted": formatted,
+    }
+
+
 def _op_search(
     user: str,
     pw: str,
@@ -292,6 +334,8 @@ def execute(
     try:
         if op == "latest":
             return _op_latest(user, pw, host, port)
+        if op == "first":
+            return _op_first(user, pw, host, port)
         if op in ("sent", "latest_sent"):
             return _op_sent(user, pw, host, port)
         if op == "search":

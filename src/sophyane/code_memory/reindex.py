@@ -34,7 +34,14 @@ def reindex() -> dict:
         weights.append(float(rec.get("weight") or 1.0))
     if not ids:
         return {"ids": 0}
-    vecs = embedder.embed_many(texts)
+    # Keep GGUF embedding requests bounded; a single request containing the
+    # entire corpus can exceed llama.cpp request timeouts on mobile CPUs.
+    try:
+        batch_size = max(1, min(64, int(__import__("os").environ.get("SOPHYANE_REINDEX_BATCH", "16"))))
+    except (TypeError, ValueError):
+        batch_size = 16
+    batches = [embedder.embed_many(texts[i:i + batch_size]) for i in range(0, len(texts), batch_size)]
+    vecs = np.vstack(batches)
     np.save(mem / "vectors.npy", vecs)
     (mem / "ids.json").write_text(json.dumps(ids), encoding="utf-8")
     np.save(mem / "weights.npy", np.asarray(weights, dtype=np.float32))

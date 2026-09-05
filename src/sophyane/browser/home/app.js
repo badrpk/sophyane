@@ -463,13 +463,28 @@
     };
   });
 
+  async function fetchWithTimeout(url, options, timeoutMs = 30000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, {
+        ...(options || {}),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function jget(url, headers) {
-    const res = await fetch(url, { headers: headers || {} });
+    const res = await fetchWithTimeout(url, {
+      headers: headers || {},
+    });
     if (!res.ok) throw new Error("HTTP " + res.status);
     return res.json();
   }
   async function jpost(url, body, headers) {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(headers || {}) },
       body: JSON.stringify(body || {}),
@@ -523,7 +538,7 @@
   async function chatApi(message, edge, history) {
     if (!auth?.api_key) throw new Error("Not signed in");
     try {
-      const res = await fetch(CLOUD + "/api/v1/chat", {
+      const res = await fetchWithTimeout(CLOUD + "/api/v1/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -634,6 +649,39 @@
     };
     window.speechSynthesis.speak(u);
   }
+
+  // Camera is explicitly opt-in and ephemeral: frames never leave this page.
+  let cameraStream = null;
+  async function toggleCamera() {
+    const button = $("btnCamera");
+    const preview = $("cameraPreview");
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      cameraStream = null;
+      if (preview) { preview.srcObject = null; preview.hidden = true; }
+      if (button) button.textContent = "📷 Camera";
+      setVoiceStatus("Camera stopped; no frames were stored");
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setVoiceStatus("Camera is not supported by this browser");
+      return;
+    }
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      if (preview) { preview.srcObject = cameraStream; preview.hidden = false; }
+      if (button) button.textContent = "⏹ Stop camera";
+      setVoiceStatus("Camera active for this session only");
+    } catch (error) {
+      cameraStream = null;
+      setVoiceStatus("Camera permission not granted");
+    }
+  }
+  if ($("btnCamera")) $("btnCamera").onclick = toggleCamera;
+
+  window.addEventListener("beforeunload", () => {
+    if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop());
+  });
 
   function stopSpeaking() {
     try {
@@ -908,6 +956,7 @@
 
     busy = true;
     els.btnSend.disabled = true;
+    const requestEmail = auth.email;
     const edge = !!els.edgeMode.checked;
     const history = historyPayload(s, true);
     let replyText = "";
@@ -951,20 +1000,20 @@
     } catch (err) {
       replyText =
         "Could not complete request while signed in as " +
-        auth.email +
+        requestEmail +
         ".\n\n" +
         String(err);
       s.messages[typingIdx] = {
         role: "assistant",
         content: replyText,
       };
+    } finally {
+      busy = false;
+      saveSessions();
+      renderSidebar();
+      renderThread();
+      autoGrow();
     }
-
-    busy = false;
-    saveSessions();
-    renderSidebar();
-    renderThread();
-    autoGrow();
 
     // Speak reply then continue listening in talk mode (hands-free loop)
     speakText(replyText, () => {
