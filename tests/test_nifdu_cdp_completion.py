@@ -434,3 +434,81 @@ def test_post_stream_settlement_cannot_return_incomplete_structured_timeout():
         "Structured ChatGPT response did not finish"
         in source
     )
+
+
+def test_chatgpt_readiness_classifies_explicit_signed_out_state():
+    from sophyane.providers import nifdu_cdp_bridge
+
+    class FakeCdp:
+        def evaluate(
+            self,
+            expression,
+        ):
+            assert "loginControl" in expression
+            assert "signedOut" in expression
+
+            return {
+                "href": "https://chatgpt.com/",
+                "title": "ChatGPT",
+                "readyState": "complete",
+                "bodyChars": 120,
+                "promptTextarea": False,
+                "textarea": False,
+                "editable": False,
+                "challengeTitle": False,
+                "challengeBody": False,
+                "cloudflareFrame": False,
+                "challenged": False,
+                "loginControl": True,
+                "signedOut": True,
+                "composer": False,
+                "interactive": False,
+            }
+
+    result = (
+        nifdu_cdp_bridge.chatgpt_readiness(
+            FakeCdp()
+        )
+    )
+
+    assert result["interactive"] is False
+    assert result["challenged"] is False
+    assert result["signedOut"] is True
+    assert result["reason"] == "chatgpt_signed_out"
+
+
+def test_wait_prompt_fails_fast_on_signed_out_state(
+    monkeypatch,
+):
+    from sophyane.providers import nifdu_cdp_bridge
+
+    monkeypatch.setattr(
+        nifdu_cdp_bridge,
+        "chatgpt_readiness",
+        lambda cdp: {
+            "interactive": False,
+            "challenged": False,
+            "signedOut": True,
+            "composer": False,
+            "reason": "chatgpt_signed_out",
+        },
+    )
+
+    class FakeCdp:
+        pass
+
+    try:
+        nifdu_cdp_bridge.wait_prompt(
+            FakeCdp()
+        )
+    except RuntimeError as error:
+        message = str(error)
+
+        assert "signed out" in message
+        assert "sign in manually" in message
+        assert "persistent NIFDU Chromium profile" in message
+        assert "CDP transport is ready" in message
+    else:
+        raise AssertionError(
+            "wait_prompt should fail fast on signed-out state"
+        )

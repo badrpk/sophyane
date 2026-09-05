@@ -324,6 +324,38 @@ def chatgpt_readiness(cdp):
       );
     });
 
+  // SOPHYANE_CDP_CHATGPT_SIGNED_OUT_STATE_V1
+  //
+  // Detect an explicit ChatGPT authentication surface only when there is
+  // no usable composer. This is observational only: NIFDU never automates
+  // login, copies cookies, or attempts to bypass browser verification.
+  const authControls =
+    [
+      ...document.querySelectorAll(
+        'a, button'
+      )
+    ];
+
+  const loginControl =
+    authControls.some(node => {
+      const text = (
+        node.innerText
+        || node.textContent
+        || node.getAttribute('aria-label')
+        || ''
+      ).trim();
+
+      const href = (
+        node.getAttribute('href')
+        || ''
+      );
+
+      return (
+        /^(log\s*in|sign\s*in)$/i.test(text)
+        || /\/auth\/login(?:[/?#]|$)/i.test(href)
+      );
+    });
+
   const composer =
     promptTextarea
     || textarea
@@ -333,6 +365,11 @@ def chatgpt_readiness(cdp):
     challengeTitle
     || challengeBody
     || cloudflareFrame;
+
+  const signedOut =
+    !composer
+    && !challenged
+    && loginControl;
 
   return {
     href: location.href,
@@ -346,10 +383,13 @@ def chatgpt_readiness(cdp):
     challengeBody,
     cloudflareFrame,
     challenged,
+    loginControl,
+    signedOut,
     composer,
     interactive:
       composer
       && !challenged
+      && !signedOut
   };
 })()
 """
@@ -377,6 +417,13 @@ def chatgpt_readiness(cdp):
     ):
         reason = (
             "browser_verification_challenge"
+        )
+
+    elif result.get(
+        "signedOut"
+    ):
+        reason = (
+            "chatgpt_signed_out"
         )
 
     elif not result.get(
@@ -435,6 +482,15 @@ def wait_prompt(cdp):
             raise RuntimeError(
                 "ChatGPT is blocked by a browser verification challenge; "
                 "NIFDU CDP transport is ready but ChatGPT is not interactive."
+            )
+
+        if last.get(
+            "signedOut"
+        ):
+            raise RuntimeError(
+                "ChatGPT is signed out in the persistent NIFDU Chromium "
+                "profile; sign in manually in that browser profile and "
+                "retry. NIFDU CDP transport is ready."
             )
 
         time.sleep(
