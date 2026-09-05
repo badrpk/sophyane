@@ -136,9 +136,9 @@ HF_GGUF_CATALOG: dict[str, list[HfGgufSpec]] = {
     "nano": [
         HfGgufSpec(
             "smollm2-135m",
-            "HuggingFaceTB/SmolLM2-135M-Instruct-GGUF",
-            "smollm2-135m-instruct-q8_0.gguf",
-            140,
+            "bartowski/SmolLM2-135M-Instruct-GGUF",
+            "SmolLM2-135M-Instruct-Q8_0.gguf",
+            145,
             800,
             "SmolLM2 135M Instruct Q8 — last-resort tiny CPU model",
         ),
@@ -615,6 +615,23 @@ def download_hf_gguf(
     if dest.exists() and dest.stat().st_size > 1024 * 1024:
         _progress(progress, f"GGUF already present: {dest}")
         return dest
+
+    urls = [
+        *spec.hf_urls(),
+        *spec.github_urls(),
+    ]
+    min_bytes = max(
+        1024 * 1024,
+        int(spec.size_mb * 1024 * 1024 * 0.50),
+    )
+
+    return download_file(
+        urls,
+        dest,
+        progress=progress,
+        min_bytes=min_bytes,
+    )
+
 
 def _latest_llama_cpp_tag() -> str:
     try:

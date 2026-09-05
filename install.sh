@@ -226,6 +226,45 @@ if ! "$BIN/sophyane-benchmark" --output "$BASE/install-benchmark.json" >"$BENCH_
   fail "100-point offline product benchmark failed"
 fi
 
+if [ "${SOPHYANE_SKIP_LOCAL_BOOTSTRAP:-0}" != "1" ]; then
+  printf 'Checking hardware-fit local GGUF/runtime...\n'
+
+  if ! SOPHYANE_SKIP_UPDATE_CHECK=1 "$VENV/bin/python" - <<'PYLOCAL'
+from sophyane.local_runtime import (
+    choose_hf_gguf,
+    download_hf_gguf,
+    install_llama_cpp,
+    profile_hardware,
+)
+
+profile = profile_hardware()
+spec = choose_hf_gguf(profile)
+
+model = download_hf_gguf(
+    spec,
+    progress=print,
+)
+
+runtime = install_llama_cpp(
+    progress=print,
+)
+
+print("GGUF =", model)
+print(
+    "llama-server =",
+    runtime.get(
+        "server",
+        "",
+    ),
+)
+PYLOCAL
+  then
+    printf '%s\n'       'Warning: local GGUF/runtime bootstrap unavailable; cloud/SLI startup remains available and Sophyane can retry later.'       >&2
+  fi
+else
+  printf '%s\n'     'Skipping local GGUF/runtime bootstrap because SOPHYANE_SKIP_LOCAL_BOOTSTRAP=1.'
+fi
+
 printf '%s\n' "$COMMIT" > "$BASE/installed-commit"
 printf '%s\n' "$VERSION" > "$BASE/installed-version"
 cat > "$BASE/install-info" <<EOF

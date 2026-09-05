@@ -20,9 +20,13 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
+
+from sophyane.version import __version__
 
 
 _OFFICIAL_ORIGINS = {
@@ -34,6 +38,9 @@ _OFFICIAL_ORIGINS = {
 
 _REEXEC_GUARD = "SOPHYANE_UPDATE_REEXEC"
 _DISABLE_FLAG = "SOPHYANE_AUTO_UPDATE"
+_SKIP_FLAG = "SOPHYANE_SKIP_UPDATE_CHECK"
+_SKIP_LOCAL_BOOTSTRAP = "SOPHYANE_SKIP_LOCAL_BOOTSTRAP"
+_REPO_URL = "https://github.com/badrpk/sophyane.git"
 
 
 @dataclass(frozen=True)
@@ -331,6 +338,310 @@ def _sync_python_dependencies(
     )
 
 
+def _python_dependencies_ok() -> bool:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "check",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    return result.returncode == 0
+
+
+def _best_effort_local_runtime(
+    environment: Mapping[str, str],
+) -> str:
+    skip = str(
+        environment.get(
+            _SKIP_LOCAL_BOOTSTRAP,
+            "",
+        )
+    ).strip().lower()
+
+    if skip in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return "local_bootstrap_skipped"
+
+    try:
+        from sophyane.local_runtime import (
+            choose_hf_gguf,
+            download_hf_gguf,
+            install_llama_cpp,
+            profile_hardware,
+        )
+
+        profile = profile_hardware()
+        spec = choose_hf_gguf(profile)
+        download_hf_gguf(spec)
+        install_llama_cpp()
+
+        return "local_runtime_ready"
+
+    except KeyboardInterrupt:
+        raise
+
+    except Exception as error:
+        print(
+            "◆ Sophyane local runtime warning: "
+            + type(error).__name__
+            + ": "
+            + str(error),
+            file=sys.stderr,
+            flush=True,
+        )
+
+        return "local_runtime_unavailable"
+
+
+def _maintain_existing_install(
+    repo: Path,
+    environment: Mapping[str, str],
+) -> None:
+    _sync_termux_dependencies(
+        repo,
+        environment,
+    )
+
+    if not _python_dependencies_ok():
+        _sync_python_dependencies(
+            repo
+        )
+
+    _best_effort_local_runtime(
+        environment
+    )
+
+
+def _version_tuple(
+    value: str,
+) -> tuple[int, int, int]:
+    value = str(value).strip()
+
+    if value.startswith("v"):
+        value = value[1:]
+
+    parts = value.split(".")
+
+    if (
+        len(parts) != 3
+        or not all(
+            part.isdigit()
+            for part in parts
+        )
+    ):
+        raise ValueError(
+            "invalid stable semantic version: "
+            + value
+        )
+
+    return tuple(
+        int(part)
+        for part in parts
+    )
+
+
+def _latest_stable_release(
+    *,
+    timeout: float,
+) -> tuple[str, tuple[int, int, int]]:
+    result = subprocess.run(
+        [
+            "git",
+            "ls-remote",
+            "--tags",
+            "--refs",
+            _REPO_URL,
+            "refs/tags/v*",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+    releases = []
+
+    for line in result.stdout.splitlines():
+        fields = line.split()
+
+        if len(fields) < 2:
+            continue
+
+        ref = fields[1]
+        prefix = "refs/tags/"
+
+        if not ref.startswith(
+            prefix + "v"
+        ):
+            continue
+
+        tag = ref.removeprefix(prefix)
+
+        try:
+            version = _version_tuple(tag)
+        except ValueError:
+            continue
+
+        releases.append(
+            (version, tag)
+        )
+
+    if not releases:
+        raise RuntimeError(
+            "official repository returned no stable releases"
+        )
+
+    version, tag = max(releases)
+
+    return tag, version
+
+
+def _managed_installer_url(
+    tag: str,
+) -> str:
+    return (
+        "https://raw.githubusercontent.com/"
+        "badrpk/sophyane/"
+        + tag
+        + "/install.sh"
+    )
+
+
+def _run_managed_installer(
+    tag: str,
+    environment: Mapping[str, str],
+    *,
+    timeout: float,
+) -> None:
+    request = urllib.request.Request(
+        _managed_installer_url(tag),
+        headers={
+            "User-Agent": (
+                "SophyaneStartupUpdater/"
+                + __version__
+            ),
+        },
+    )
+
+    with urllib.request.urlopen(
+        request,
+        timeout=timeout,
+    ) as response:
+        installer = response.read()
+
+    if len(installer) < 1024:
+        raise RuntimeError(
+            "downloaded installer is unexpectedly small"
+        )
+
+    fd, filename = tempfile.mkstemp(
+        prefix="sophyane-install-",
+        suffix=".sh",
+    )
+
+    try:
+        with os.fdopen(
+            fd,
+            "wb",
+        ) as handle:
+            handle.write(installer)
+
+        next_env = dict(environment)
+        next_env["SOPHYANE_REF"] = tag
+        next_env[_SKIP_FLAG] = "1"
+        next_env[_REEXEC_GUARD] = "1"
+
+        subprocess.run(
+            [
+                "bash",
+                filename,
+            ],
+            check=True,
+            env=next_env,
+            timeout=3600,
+        )
+
+    finally:
+        try:
+            Path(filename).unlink(
+                missing_ok=True
+            )
+        except OSError:
+            pass
+
+
+def _check_managed_install(
+    root: Path,
+    environment: Mapping[str, str],
+    *,
+    reexec: bool,
+    network_timeout: float,
+    maintain: bool,
+) -> StartupUpdateResult:
+    tag, latest = _latest_stable_release(
+        timeout=network_timeout,
+    )
+
+    current = _version_tuple(
+        __version__
+    )
+
+    if latest <= current:
+        if maintain:
+            _maintain_existing_install(
+                root,
+                environment,
+            )
+
+        return StartupUpdateResult(
+            status="up_to_date",
+            local_head=__version__,
+            remote_head=tag,
+        )
+
+    print(
+        "◆ Sophyane update: "
+        + __version__
+        + " → "
+        + tag.removeprefix("v"),
+        file=sys.stderr,
+        flush=True,
+    )
+
+    _run_managed_installer(
+        tag,
+        environment,
+        timeout=max(
+            network_timeout,
+            30.0,
+        ),
+    )
+
+    result = StartupUpdateResult(
+        status="updated",
+        local_head=__version__,
+        remote_head=tag,
+        updated=True,
+        reexec_required=True,
+    )
+
+    if reexec:
+        _reexec(environment)
+
+    return result
+
+
 def _smoke_updated_install(
     repo: Path,
 ) -> None:
@@ -400,12 +711,28 @@ def check_and_apply_startup_update(
     env: Mapping[str, str] | None = None,
     reexec: bool = True,
     network_timeout: float = 5.0,
+    maintain: bool = True,
 ) -> StartupUpdateResult:
     environment = (
         os.environ
         if env is None
         else env
     )
+
+    if str(
+        environment.get(
+            _SKIP_FLAG,
+            "",
+        )
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return StartupUpdateResult(
+            status="skipped",
+        )
 
     if (
         environment.get(
@@ -440,13 +767,33 @@ def check_and_apply_startup_update(
         root
         / ".git"
     ).exists():
-        return StartupUpdateResult(
-            status="unmanaged_install",
-            message=(
-                "automatic Git update requires "
-                "a source checkout"
-            ),
-        )
+        try:
+            return _check_managed_install(
+                root,
+                environment,
+                reexec=reexec,
+                network_timeout=network_timeout,
+                maintain=maintain,
+            )
+
+        except KeyboardInterrupt:
+            raise
+
+        except (
+            OSError,
+            subprocess.TimeoutExpired,
+            subprocess.SubprocessError,
+            RuntimeError,
+            ValueError,
+        ) as error:
+            return StartupUpdateResult(
+                status="update_unavailable",
+                message=(
+                    type(error).__name__
+                    + ": "
+                    + str(error)
+                ),
+            )
 
     try:
         if not _official_origin(root):
@@ -484,6 +831,12 @@ def check_and_apply_startup_update(
         )
 
         if local_head == remote_head:
+            if maintain:
+                _maintain_existing_install(
+                    root,
+                    environment,
+                )
+
             return StartupUpdateResult(
                 status="up_to_date",
                 local_head=local_head,
@@ -568,6 +921,11 @@ def check_and_apply_startup_update(
                 ),
             )
 
+        if maintain:
+            _best_effort_local_runtime(
+                environment
+            )
+
         result = StartupUpdateResult(
             status="updated",
             local_head=local_head,
@@ -612,7 +970,20 @@ def check_and_apply_startup_update(
 def maybe_update_before_startup() -> StartupUpdateResult:
     """Run startup update without making availability fatal."""
 
-    result = check_and_apply_startup_update()
+    metadata_only = any(
+        arg in {
+            "-V",
+            "--version",
+            "--status",
+            "--providers",
+            "--doctor",
+        }
+        for arg in sys.argv[1:]
+    )
+
+    result = check_and_apply_startup_update(
+        maintain=not metadata_only,
+    )
 
     if result.status in {
         "rolled_back",

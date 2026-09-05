@@ -136,6 +136,18 @@ def _official_for_test(monkeypatch):
         lambda repo: None,
     )
 
+    monkeypatch.setattr(
+        update,
+        "_python_dependencies_ok",
+        lambda: True,
+    )
+
+    monkeypatch.setattr(
+        update,
+        "_best_effort_local_runtime",
+        lambda env: "local_runtime_ready",
+    )
+
 
 def test_up_to_date_checkout_is_noop(
     tmp_path,
@@ -399,3 +411,268 @@ def test_termux_manifest_declares_postgresql():
     )
 
     assert "postgresql" in manifest["termux"]
+
+
+
+def test_up_to_date_source_runs_readiness(
+    tmp_path,
+    monkeypatch,
+):
+    _, _, client, _ = _fixture(
+        tmp_path
+    )
+
+    _official_for_test(
+        monkeypatch
+    )
+
+    calls = []
+
+    monkeypatch.setattr(
+        update,
+        "_maintain_existing_install",
+        lambda repo, env: calls.append(
+            Path(repo)
+        ),
+    )
+
+    result = (
+        update.check_and_apply_startup_update(
+            repo=client,
+            env={},
+            reexec=False,
+        )
+    )
+
+    assert result.status == "up_to_date"
+    assert calls == [
+        client.resolve()
+    ]
+
+
+def test_managed_install_detects_newer_release(
+    tmp_path,
+    monkeypatch,
+):
+    managed = tmp_path / "system"
+    managed.mkdir()
+
+    monkeypatch.setattr(
+        update,
+        "_latest_stable_release",
+        lambda timeout: (
+            "v27.1.0",
+            (27, 1, 0),
+        ),
+    )
+
+    calls = []
+
+    monkeypatch.setattr(
+        update,
+        "_run_managed_installer",
+        lambda tag, env, timeout: (
+            calls.append(tag)
+        ),
+    )
+
+    result = (
+        update.check_and_apply_startup_update(
+            repo=managed,
+            env={},
+            reexec=False,
+            maintain=False,
+        )
+    )
+
+    assert result.status == "updated"
+    assert result.updated is True
+    assert calls == [
+        "v27.1.0"
+    ]
+
+
+def test_managed_current_release_is_noop(
+    tmp_path,
+    monkeypatch,
+):
+    managed = tmp_path / "system"
+    managed.mkdir()
+
+    monkeypatch.setattr(
+        update,
+        "_latest_stable_release",
+        lambda timeout: (
+            "v27.0.0",
+            (27, 0, 0),
+        ),
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError(
+            "installer must not run"
+        )
+
+    monkeypatch.setattr(
+        update,
+        "_run_managed_installer",
+        forbidden,
+    )
+
+    result = (
+        update.check_and_apply_startup_update(
+            repo=managed,
+            env={},
+            reexec=False,
+            maintain=False,
+        )
+    )
+
+    assert result.status == "up_to_date"
+    assert result.updated is False
+
+
+def test_managed_network_failure_is_nonfatal(
+    tmp_path,
+    monkeypatch,
+):
+    managed = tmp_path / "system"
+    managed.mkdir()
+
+    def offline(*, timeout):
+        raise RuntimeError(
+            "offline"
+        )
+
+    monkeypatch.setattr(
+        update,
+        "_latest_stable_release",
+        offline,
+    )
+
+    result = (
+        update.check_and_apply_startup_update(
+            repo=managed,
+            env={},
+            reexec=False,
+        )
+    )
+
+    assert (
+        result.status
+        == "update_unavailable"
+    )
+    assert "offline" in result.message
+
+
+def test_skip_guard_prevents_recursive_update(
+    tmp_path,
+    monkeypatch,
+):
+    managed = tmp_path / "system"
+    managed.mkdir()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError(
+            "network must not be touched"
+        )
+
+    monkeypatch.setattr(
+        update,
+        "_latest_stable_release",
+        forbidden,
+    )
+
+    result = (
+        update.check_and_apply_startup_update(
+            repo=managed,
+            env={
+                "SOPHYANE_SKIP_UPDATE_CHECK":
+                    "1",
+            },
+            reexec=False,
+        )
+    )
+
+    assert result.status == "skipped"
+
+
+def test_reexec_guard_prevents_recursive_update(
+    tmp_path,
+    monkeypatch,
+):
+    managed = tmp_path / "system"
+    managed.mkdir()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError(
+            "network must not be touched"
+        )
+
+    monkeypatch.setattr(
+        update,
+        "_latest_stable_release",
+        forbidden,
+    )
+
+    result = (
+        update.check_and_apply_startup_update(
+            repo=managed,
+            env={
+                "SOPHYANE_UPDATE_REEXEC":
+                    "1",
+            },
+            reexec=False,
+        )
+    )
+
+    assert (
+        result.status
+        == "reexec_guard"
+    )
+
+
+def test_local_runtime_failure_is_best_effort(
+    monkeypatch,
+):
+    import builtins
+
+    original_import = (
+        builtins.__import__
+    )
+
+    def failing_import(
+        name,
+        globals=None,
+        locals=None,
+        fromlist=(),
+        level=0,
+    ):
+        if (
+            name
+            == "sophyane.local_runtime"
+        ):
+            raise RuntimeError(
+                "model unavailable"
+            )
+
+        return original_import(
+            name,
+            globals,
+            locals,
+            fromlist,
+            level,
+        )
+
+    monkeypatch.setattr(
+        builtins,
+        "__import__",
+        failing_import,
+    )
+
+    assert (
+        update._best_effort_local_runtime(
+            {}
+        )
+        == "local_runtime_unavailable"
+    )
