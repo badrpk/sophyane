@@ -117,3 +117,4 @@ evals/runs/
 /tmp-*/
 .vercel
 .env*
+termux-x11/
