@@ -95,6 +95,14 @@ def _runtime_identity() -> str:
                 os.environ.get("SOPHYANE_SESSION_MODEL")
                 or "local_gguf"
             ).strip()
+    elif session_mode == "human_conversation":
+        model = str(
+            os.environ.get("SOPHYANE_SESSION_MODEL")
+            or _session_ready_model(
+                config.get("model")
+            )
+            or "not configured"
+        ).strip()
     else:
         model = str(
             _session_ready_model(
@@ -124,7 +132,11 @@ def _runtime_identity() -> str:
     if email_ready:
         status.append("Email connected")
 
-    status.append("Ready")
+    # SOPHYANE_NIFDU_SEMANTIC_CLI_STATUS_V1
+    # Provider configuration or CDP transport availability does not prove
+    # that the selected ChatGPT browser session is interactive.
+    from sophyane.session_banner import session_readiness_state
+    status.append(session_readiness_state())
     if os.environ.get("SOPHYANE_SLI_ONLY") == "1" or os.environ.get("SOPHYANE_SESSION_MODE") == "sli_chunks":
         status = [("SLI Graph" if os.environ.get("SOPHYANE_SLI_GRAPH") == "1" else "SLI chunks"), "Ready"]
 
@@ -191,9 +203,20 @@ def _start_local_server_if_needed() -> None:
 
         if provider_id != "local_gguf":
             return
-        from sophyane.local_server import ensure_server_background
 
-        ok, message = ensure_server_background()
+        # Mode-3 may select Qwen, Spark, or a sequential comparison.  The
+        # profile owner knows which physical llama-server(s) are required.
+        if session_mode == "local_llm":
+            from sophyane.local_model_profiles import (
+                ensure_profile_servers,
+            )
+
+            ok, message = ensure_profile_servers()
+
+        else:
+            from sophyane.local_server import ensure_server_background
+
+            ok, message = ensure_server_background()
         prefix = "◆ Local inference:" if ok else "◆ Local inference unavailable:"
         print(f"{prefix} {message}", file=sys.stderr, flush=True)
     except Exception as error:
@@ -258,6 +281,10 @@ def _canonicalize_launch_workspace() -> str | None:
 
 
 def main() -> int:
+    import os
+    from pathlib import Path
+
+    original_launch_dir = Path.cwd().resolve()
 
     # SOPHYANE_STARTUP_AUTO_UPDATE_V1
     # Update before runtime/provider initialization so a
@@ -283,7 +310,13 @@ def main() -> int:
         )
 
     # SOPHYANE_CANONICAL_WORKSPACE_CALL_V1
-    _canonicalize_launch_workspace()
+    canonical_workspace = _canonicalize_launch_workspace()
+    effective_launch_dir = (
+        Path(canonical_workspace).resolve()
+        if canonical_workspace
+        else original_launch_dir
+    )
+    os.environ["SOPHYANE_LAUNCH_DIR"] = str(effective_launch_dir)
     from sophyane.runtime_artifact_patch import install_artifact_patch
     from sophyane.runtime_browser_patch import install_browser_patch
     from sophyane.runtime_deep_agent_patch import install_deep_agent_runtime
@@ -301,7 +334,6 @@ def main() -> int:
     # SOPHYANE_FILESYSTEM_CAPABILITIES_V20
     from sophyane.runtime_filesystem_capabilities_v20 import install_filesystem_capabilities_v20
     from sophyane.runtime_software_routing_guard import install_software_routing_guard
-    from sophyane.runtime_snake_semantic_repair import install_snake_semantic_repair
     from sophyane.runtime_stagnation_patch import install_stagnation_patch
 
     install_quality_escalation()
@@ -328,7 +360,6 @@ def main() -> int:
     install_software_routing_guard()
     # Semantic browser-game repair must see the final wrapped validator and
     # continuation prompt, so it is installed after all other runtime patches.
-    install_snake_semantic_repair()
 
     try:
         from sophyane.platform_kernel import ensure_platform_filesystem
@@ -440,12 +471,33 @@ def main() -> int:
 
         return run_continuous_sli_loop()
 
-    from sophyane.v13_cli import main as run_cli
+    if (
+        os.environ.get("SOPHYANE_SESSION_MODE")
+        == "human_conversation"
+    ):
+        from sophyane.human_conversation_cli import (
+            main as run_cli,
+        )
+    else:
+        from sophyane.v13_cli import main as run_cli
+
     try:
         return run_cli()
     finally:
-        from sophyane.runtime_cancel import cancel_all
+        from sophyane.runtime_cancel import (
+            cancel_all,
+            reset_cancel,
+        )
+
+        # SOPHYANE_REENTRANT_CLI_CANCELLATION_HYGIENE_V1
+        #
+        # Top-level shutdown must still terminate outstanding provider work,
+        # but cli_entry.main() may also be invoked in-process by tests and
+        # embedding callers.  cancel_all() latches the current/legacy token;
+        # clear that token before returning so later independent generations
+        # do not inherit a stale cancellation state.
         cancel_all()
+        reset_cancel()
 
 
 if __name__ == "__main__":

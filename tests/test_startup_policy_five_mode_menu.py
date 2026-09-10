@@ -4,11 +4,20 @@ import os
 from pathlib import Path
 
 
-def test_five_mode_menu_contract_is_present():
+def test_six_mode_menu_contract_is_present():
     path = Path("src/sophyane/startup_policy.py")
     text = path.read_text(encoding="utf-8")
 
-    assert "Select [1-5, default 1]:" in text
+    assert "Select [1-6, default 1]:" in text
+    assert (
+        "6. Human Conversation — natural chat + voice/camera + repository execution"
+        in text
+    )
+    assert (
+        'if answer == "6":' in text
+        and 'os.environ["SOPHYANE_SESSION_MODE"] = "human_conversation"'
+        in text
+    )
 
     assert (
         'if answer in {"", "1"}:' in text

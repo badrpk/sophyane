@@ -204,6 +204,25 @@ def resolve_local_session_config() -> dict[str, Any]:
 
     local_id, local_model = local
 
+    # Preserve an explicitly selected transient Mode-3 profile when runtime
+    # identity/configuration is resolved later without another prompt.
+    from sophyane.local_model_profiles import (
+        configure_session_profile,
+    )
+
+    selected_local = configure_session_profile(
+        os.environ.get(
+            "SOPHYANE_LOCAL_PROFILE",
+            "qwen",
+        ),
+        qwen_model=local_model,
+    )
+
+    local_model = str(
+        selected_local.get("model")
+        or local_model
+    )
+
     # SOPHYANE_MODE3_NONINTERACTIVE_RESOLUTION_V1
     #
     # This helper deliberately contains no interactive prompt or terminal
@@ -378,6 +397,10 @@ def choose_startup_provider() -> dict[str, Any]:
 
             return updated
 
+        if requested_mode == "human_conversation":
+            os.environ["SOPHYANE_SESSION_MODE"] = "human_conversation"
+            return config
+
         if requested_mode == "cloud_llm":
             if not clouds:
                 return config
@@ -463,12 +486,17 @@ def choose_startup_provider() -> dict[str, Any]:
             file=sys.stderr,
         )
 
+        print(
+            "  6. Human Conversation — natural chat + voice/camera + repository execution",
+            file=sys.stderr,
+        )
+
         while True:
             answer = input(
-                "Select [1-5, default 1]: "
+                "Select [1-6, default 1]: "
             ).strip()
 
-            if answer in {"", "1", "2", "5"}:
+            if answer in {"", "1", "2", "5", "6"}:
                 break
 
             if answer == "3":
@@ -491,7 +519,7 @@ def choose_startup_provider() -> dict[str, Any]:
                 )
                 continue
 
-            print("Enter 1, 2, 3, 4, or 5.")
+            print("Enter 1, 2, 3, 4, 5, or 6.")
 
         if answer in {"", "1"}:
             # Sophyane owns execution policy in automatic mode.
@@ -535,6 +563,27 @@ def choose_startup_provider() -> dict[str, Any]:
                 file=sys.stderr,
             )
             return updated
+
+        if answer == "6":
+            os.environ["SOPHYANE_SESSION_MODE"] = "human_conversation"
+
+            for key in (
+                "SOPHYANE_SLI_GRAPH",
+                "SOPHYANE_SLI_ONLY",
+                "SOPHYANE_SLI_CONTINUOUS",
+                "SOPHYANE_TOPIC_LEARNING",
+                "SOPHYANE_LOCAL_ONLY",
+                "SOPHYANE_DISABLE_CLOUD_FALLBACK",
+            ):
+                os.environ.pop(key, None)
+
+            print(
+                "Mode: Human Conversation "
+                "(chat + voice/camera + repository execution)",
+                file=sys.stderr,
+            )
+
+            return config
 
         if answer == "5":
             # SOPHYANE_MODE5_DEDICATED_LEARNING_AUTHORITY_V1
@@ -580,10 +629,71 @@ def choose_startup_provider() -> dict[str, Any]:
 
             local_id, local_model = local
 
+            # SOPHYANE_MODE3_LOCAL_PROFILE_SELECTOR_V1
+            #
+            # Keep local_gguf as the one provider identity.  The selected
+            # physical model/runtime is transient Mode-3 process state.
+            from sophyane.local_model_profiles import (
+                configure_session_profile,
+                spark_profile_available,
+            )
+
+            local_profile = "qwen"
+
+            if spark_profile_available():
+                print(
+                    "",
+                    file=sys.stderr,
+                )
+                print(
+                    "Choose local LLM:",
+                    file=sys.stderr,
+                )
+                print(
+                    "  1. Qwen2.5-1.5B — fast/lightweight",
+                    file=sys.stderr,
+                )
+                print(
+                    "  2. Spark-X2.5-4B — stronger local model",
+                    file=sys.stderr,
+                )
+                print(
+                    "  3. Compare Qwen2.5-1.5B vs Spark-X2.5-4B",
+                    file=sys.stderr,
+                )
+
+                while True:
+                    local_answer = input(
+                        "Select [1-3, default 1]: "
+                    ).strip() or "1"
+
+                    if local_answer in {"1", "2", "3"}:
+                        break
+
+                    print(
+                        "Enter 1, 2, or 3."
+                    )
+
+                local_profile = {
+                    "1": "qwen",
+                    "2": "spark",
+                    "3": "compare",
+                }[local_answer]
+
+            selected_local = configure_session_profile(
+                local_profile,
+                qwen_model=local_model,
+            )
+
+            selected_model = str(
+                selected_local.get("model")
+                or local_model
+            )
+
             updated = dict(config)
             updated.update({
                 "provider": local_id,
-                "model": local_model,
+                "model": selected_model,
                 "company": "Local",
                 "timeout": 300,
             })
@@ -591,7 +701,7 @@ def choose_startup_provider() -> dict[str, Any]:
             # SOPHYANE_TRANSIENT_SESSION_PROVIDER_V1
             # Explicit startup provider selection is session-scoped.
             os.environ["SOPHYANE_SESSION_PROVIDER"] = local_id
-            os.environ["SOPHYANE_SESSION_MODEL"] = local_model
+            os.environ["SOPHYANE_SESSION_MODEL"] = selected_model
             os.environ["SOPHYANE_SESSION_TIMEOUT"] = "300"
 
             llm["active_provider"] = local_id
@@ -610,7 +720,7 @@ def choose_startup_provider() -> dict[str, Any]:
             save_json(LLM_FILE, llm, private=False)
 
             print(
-                f"Mode: Local LLM only ({local_model}); "
+                f"Mode: Local LLM only ({selected_model}); "
                 "cloud fallback disabled",
                 file=sys.stderr,
             )

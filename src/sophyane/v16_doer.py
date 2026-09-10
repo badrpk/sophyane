@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Callable
 
 from sophyane.coding_runtime import (
     DependencyAdvisor,
@@ -13,6 +13,8 @@ from sophyane.coding_runtime import (
     RepositoryIndex,
     TaskQueue,
 )
+from sophyane.context_builder import ContextBuilder, ContextPacket
+from sophyane.providers.base import ProviderCapabilities
 from sophyane.doer import DoerRuntime, StepRecord, _extract_json
 
 
@@ -21,8 +23,16 @@ class CodingDoerRuntime(DoerRuntime):
 
     MAX_BATCH_ACTIONS = 12
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        capabilities: ProviderCapabilities
+        | Callable[[], ProviderCapabilities]
+        | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(*args, **kwargs)
+        self.capabilities = capabilities
         self.index = RepositoryIndex(self.workspace)
         self.patch_engine = PatchEngine(self.workspace)
         self.mechanical = MechanicalVerifier(self.workspace)
@@ -30,6 +40,28 @@ class CodingDoerRuntime(DoerRuntime):
         self.repository_snapshot = self.index.build()
         self.checkpoints: list[dict[str, Any]] = []
         self.task_queue = TaskQueue()
+        self._coding_context_packet = ContextPacket()
+
+    # SOPHYANE_CODING_PROVIDER_AWARE_REPOSITORY_CONTEXT_V1
+    def _capabilities(self) -> ProviderCapabilities:
+        value = self.capabilities
+        if callable(value):
+            try:
+                value = value()
+            except Exception:
+                return ProviderCapabilities()
+        if isinstance(value, ProviderCapabilities):
+            return value
+        return ProviderCapabilities()
+
+    def _read_repository_context_file(self, relative: str) -> str | None:
+        path = (self.workspace / relative).resolve()
+        if path != self.workspace and self.workspace not in path.parents:
+            return None
+        try:
+            return path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
 
     @staticmethod
     def _system(role: str) -> str:
@@ -65,27 +97,243 @@ class CodingDoerRuntime(DoerRuntime):
     def _context(self, prompt: str) -> str:
         base = super()._context(prompt)
         self.repository_snapshot = self.index.build()
-        repository = {
-            "summary": {
-                "file_count": len(self.repository_snapshot.files),
-                "symbol_count": len(self.repository_snapshot.symbols),
-                "tests": self.repository_snapshot.tests[:100],
-                "manifests": self.repository_snapshot.manifests,
-                "digest": self.repository_snapshot.digest,
-            },
-            "search_hits": self.index.search(prompt, limit=10),
-            "relevant_context": self.index.context(prompt, max_chars=6_000),
+
+        search_hits = self.index.search(prompt, limit=10)
+        ranked_paths = self.index.ranked_context_paths(
+            prompt,
+            limit=12,
+        )
+
+        direct_paths: set[str] = set()
+        for item in self.index.search(prompt, limit=36):
+            relative = str(item.get("path", ""))
+            if relative:
+                direct_paths.add(relative)
+
+        summary = {
+            "file_count": len(self.repository_snapshot.files),
+            "symbol_count": len(self.repository_snapshot.symbols),
+            "tests": self.repository_snapshot.tests[:100],
+            "manifests": self.repository_snapshot.manifests,
+            "digest": self.repository_snapshot.digest,
         }
-        parts = [
-            item
-            for item in [
+
+        packet = ContextPacket()
+
+        # Compact repository intelligence outranks large source files for
+        # bounded providers. This prevents one oversized high-ranked file from
+        # evicting every useful repository clue before it is itself omitted.
+        packet.add(
+            "Repository summary",
+            json.dumps(summary, ensure_ascii=False),
+            priority=100,
+        )
+
+        if search_hits:
+            packet.add(
+                "Repository search hits",
+                json.dumps(search_hits, ensure_ascii=False),
+                priority=95,
+            )
+
+        for position, relative in enumerate(ranked_paths):
+            text = self._read_repository_context_file(relative)
+            if text is None:
+                continue
+
+            direct = relative in direct_paths
+            packet.add(
+                (
+                    f"Direct repository file: {relative}"
+                    if direct
+                    else f"Repository dependency: {relative}"
+                ),
+                text,
+                priority=(
+                    max(75, 85 - position)
+                    if direct
+                    else max(50, 60 - position)
+                ),
+            )
+
+        if base:
+            packet.add(
+                "Persistent coding context",
                 base,
-                "Repository intelligence:\n"
-                + json.dumps(repository, ensure_ascii=False),
-            ]
-            if item
-        ]
-        return "\n\n".join(parts)
+                priority=70,
+            )
+
+        # Preserve the unreduced packet so heterogeneous fallback children can
+        # each perform truthful provider-specific admission.
+        self._coding_context_packet = packet
+
+        return self._context_for_capabilities(
+            self._capabilities()
+        )
+
+    # SOPHYANE_CODING_PER_CHILD_CONTEXT_RENDERING_V1
+    def _context_for_capabilities(
+        self,
+        capabilities: ProviderCapabilities,
+    ) -> str:
+        if not isinstance(
+            capabilities,
+            ProviderCapabilities,
+        ):
+            capabilities = ProviderCapabilities()
+
+        return ContextBuilder(
+            capabilities
+        ).build(
+            self._coding_context_packet
+        ).text
+
+    # SOPHYANE_CODING_CAPABILITY_BACKEND_V1
+    def _backend_for_capabilities(
+        self,
+        renderer: Callable[[ProviderCapabilities], str],
+        system: str,
+    ) -> str:
+        hook = getattr(
+            self.backend,
+            "generate_for_capabilities",
+            None,
+        )
+
+        if callable(hook):
+            return hook(
+                renderer,
+                system,
+            )
+
+        return self.backend(
+            renderer(self._capabilities()),
+            system,
+        )
+
+    # SOPHYANE_PROVIDER_AWARE_VERIFIER_EVIDENCE_V1
+    def _verifier_payload_for_capabilities(
+        self,
+        *,
+        prompt: str,
+        objective: str,
+        criteria: list[str],
+        history: list[StepRecord],
+        observation: dict[str, Any],
+        mechanical: dict[str, Any],
+        repository_digest: str,
+        git_status: Any,
+        capabilities: ProviderCapabilities,
+    ) -> dict[str, Any]:
+        values: dict[str, Any] = {
+            "user_request": prompt,
+            "objective": objective,
+            "success_criteria": criteria,
+            "prior_steps": [
+                asdict(item)
+                for item in history[-4:]
+            ],
+            "latest_observation": observation,
+            "execution_report": self.executor.report.to_dict(),
+            "repository_digest": repository_digest,
+            "mechanical_verification": mechanical,
+            "git_status": git_status,
+            "instruction": (
+                "Mark goal_met true only when all requirements are evidenced. "
+                "Mechanical failures are authoritative. For coding work require "
+                "successful relevant tests or commands unless the user explicitly "
+                "requested code only."
+            ),
+        }
+
+        packet = ContextPacket()
+
+        def add(
+            key: str,
+            *,
+            priority: int,
+            pinned: bool = False,
+        ) -> None:
+            packet.add(
+                key,
+                json.dumps(
+                    values[key],
+                    ensure_ascii=False,
+                    default=str,
+                ),
+                priority=priority,
+                pinned=pinned,
+            )
+
+        # Immutable verification contract survives bounded admission.
+        add(
+            "user_request",
+            priority=100,
+            pinned=True,
+        )
+        add(
+            "objective",
+            priority=100,
+            pinned=True,
+        )
+        add(
+            "success_criteria",
+            priority=100,
+            pinned=True,
+        )
+        add(
+            "mechanical_verification",
+            priority=100,
+            pinned=True,
+        )
+        add(
+            "instruction",
+            priority=100,
+            pinned=True,
+        )
+
+        # Current evidence is more useful than historical evidence.
+        add(
+            "latest_observation",
+            priority=90,
+        )
+        add(
+            "execution_report",
+            priority=85,
+        )
+        add(
+            "repository_digest",
+            priority=70,
+        )
+        add(
+            "git_status",
+            priority=60,
+        )
+        add(
+            "prior_steps",
+            priority=50,
+        )
+
+        if not isinstance(
+            capabilities,
+            ProviderCapabilities,
+        ):
+            capabilities = ProviderCapabilities()
+
+        admitted = ContextBuilder(
+            capabilities
+        ).build(packet)
+
+        included = {
+            item.label
+            for item in admitted.included
+        }
+
+        return {
+            key: value
+            for key, value in values.items()
+            if key in included
+        }
 
     def _plan(
         self,
@@ -293,26 +541,32 @@ class CodingDoerRuntime(DoerRuntime):
             if plan_checks
             else {"passed": None, "results": []}
         )
-        payload = {
-            "user_request": prompt,
-            "objective": objective,
-            "success_criteria": criteria,
-            "prior_steps": [asdict(item) for item in history[-4:]],
-            "latest_observation": observation,
-            "execution_report": self.executor.report.to_dict(),
-            "repository_digest": self.index.build().digest,
-            "mechanical_verification": mechanical,
-            "git_status": self.git.status(),
-            "instruction": (
-                "Mark goal_met true only when all requirements are evidenced. "
-                "Mechanical failures are authoritative. For coding work require "
-                "successful relevant tests or commands unless the user explicitly "
-                "requested code only."
-            ),
-        }
+        repository_digest = self.index.build().digest
+        git_status = self.git.status()
+
+        def verifier_renderer(
+            capabilities: ProviderCapabilities,
+        ) -> str:
+            payload = self._verifier_payload_for_capabilities(
+                prompt=prompt,
+                objective=objective,
+                criteria=criteria,
+                history=history,
+                observation=observation,
+                mechanical=mechanical,
+                repository_digest=repository_digest,
+                git_status=git_status,
+                capabilities=capabilities,
+            )
+
+            return json.dumps(
+                payload,
+                ensure_ascii=False,
+            )
+
         verdict = _extract_json(
-            self.backend(
-                json.dumps(payload, ensure_ascii=False),
+            self._backend_for_capabilities(
+                verifier_renderer,
                 self._system("verifier"),
             )
         )

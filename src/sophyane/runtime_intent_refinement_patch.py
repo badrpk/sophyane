@@ -683,6 +683,70 @@ def install_intent_refinement() -> None:
                 continue
 
 
+            # SOPHYANE_MODE3_COMPARE_SINGLE_TURN_V1
+            #
+            # Compare profile is an explicit model benchmark. After authoritative
+            # objective preflight, send the original request exactly once to
+            # the selected comparison provider. Do not enter intent refinement,
+            # execution planning, structured loops or verifier generations.
+            import os as _compare_os
+
+            _compare_session_mode = str(
+                _compare_os.environ.get(
+                    "SOPHYANE_SESSION_MODE"
+                )
+                or ""
+            ).strip().lower()
+
+            _compare_local_profile = str(
+                _compare_os.environ.get(
+                    "SOPHYANE_LOCAL_PROFILE"
+                )
+                or ""
+            ).strip().lower()
+
+            if (
+                _compare_session_mode == "local_llm"
+                and _compare_local_profile == "compare"
+                and self.small_local
+            ):
+                self.last_mode = "chat"
+                self.last_user_message = message
+                self.progress(
+                    "Running direct local model comparison"
+                )
+
+                try:
+                    _compare_response = self.call_provider(
+                        message
+                    )
+                    _compare_text = getattr(
+                        _compare_response,
+                        "text",
+                        str(_compare_response),
+                    )
+                    self.last_raw = _compare_text
+                except Exception as error:  # noqa: BLE001
+                    self.emit(
+                        "system",
+                        f"Error: {error}",
+                    )
+                    continue
+
+                self.history.extend(
+                    [
+                        ("user", message[:300]),
+                        ("assistant", _compare_text[:500]),
+                    ]
+                )
+                self.history = self.history[-4:]
+
+                self.emit(
+                    "Sophyane",
+                    _compare_text,
+                )
+                continue
+
             # SOPHYANE_NIFDU_NATIVE_EXECUTION_HANDOFF_V1
             #
             # Option 4 -> NIFDU uses ChatGPT only as the model/provider.

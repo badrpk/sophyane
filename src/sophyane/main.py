@@ -239,7 +239,13 @@ def create_provider(config: dict[str, Any]):
         os.environ["SOPHYANE_LOCAL_ONLY"] = "1"
         os.environ["SOPHYANE_DISABLE_CLOUD_FALLBACK"] = "1"
 
-    if session_mode == "nifdu_llm":
+    if (
+        session_mode == "nifdu_llm"
+        or (
+            session_mode == "human_conversation"
+            and session_provider == "nifdu_browser"
+        )
+    ):
         from sophyane.providers.nifdu_browser import (
             NifduBrowserProvider,
         )
@@ -255,7 +261,13 @@ def create_provider(config: dict[str, Any]):
             ),
         )
 
-    if session_mode == "codex_cli":
+    if (
+        session_mode == "codex_cli"
+        or (
+            session_mode == "human_conversation"
+            and session_provider == "codex_cli"
+        )
+    ):
         from sophyane.providers.codex_cli import (
             CodexCliProvider,
         )
@@ -272,13 +284,24 @@ def create_provider(config: dict[str, Any]):
         )
 
     if session_mode == "agy":
-        from sophyane.providers.codex_cli import AntigravityProvider
-
-        primary = AntigravityProvider(
-            model=(session_model or "agy-default"),
-            timeout=int(session_timeout or "300"),
+        # SOPHYANE_AGY_TERMINAL_AUTHORITY_V1
+        # Explicit AGY mode means AGY is the intelligence authority.
+        # A failure must be reported as an AGY failure rather than silently
+        # transferring ownership to Codex or NIFDU.
+        from sophyane.providers.codex_cli import (
+            AntigravityProvider,
         )
-        return _AgyFailoverProvider(primary, timeout=int(session_timeout or "300"))
+
+        return AntigravityProvider(
+            model=(
+                session_model
+                or "agy-default"
+            ),
+            timeout=int(
+                session_timeout
+                or "300"
+            ),
+        )
 
     if session_mode == "cloud_llm":
         config = dict(config)

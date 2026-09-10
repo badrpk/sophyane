@@ -30,6 +30,52 @@ TIMEOUT = int(
     )
 )
 
+# SOPHYANE_CDP_ABSOLUTE_CALL_DEADLINE_V1
+#
+# Generation latency and DevTools transport latency are different
+# authorities. A single CDP command must never inherit the full model
+# generation allowance, and unrelated DevTools events must never reset
+# its operation deadline.
+CDP_CONNECT_TIMEOUT = float(
+    os.environ.get(
+        "SOPHYANE_CDP_CONNECT_TIMEOUT",
+        "5",
+    )
+)
+
+CDP_CALL_TIMEOUT = float(
+    os.environ.get(
+        "SOPHYANE_CDP_CALL_TIMEOUT",
+        "10",
+    )
+)
+
+CDP_READINESS_TIMEOUT = float(
+    os.environ.get(
+        "SOPHYANE_CDP_READINESS_TIMEOUT",
+        "5",
+    )
+)
+
+
+def bounded_cdp_timeout(
+    configured,
+):
+    configured = max(
+        0.1,
+        float(configured),
+    )
+
+    bridge_timeout = max(
+        0.1,
+        float(TIMEOUT),
+    )
+
+    return min(
+        configured,
+        bridge_timeout,
+    )
+
 
 def endpoint(path: str) -> str:
     return f"http://{HOST}:{PORT}{path}"
@@ -56,6 +102,15 @@ def pages():
 
 
 def chat_page():
+    # SOPHYANE_CDP_READINESS_AWARE_CHAT_PAGE_SELECTION_V1
+    #
+    # Prefer an existing ChatGPT target that is currently capable of
+    # generation. A newer Work/project tab may be quota exhausted while
+    # another ordinary ChatGPT tab remains usable.
+    #
+    # If no target can be proven interactive, preserve historical
+    # matches[-1] fallback behavior so wait_prompt() remains responsible
+    # for the final quota/challenge/signed-out diagnostic.
     matches = [
         page
         for page in pages()
@@ -73,14 +128,149 @@ def chat_page():
             "instance exposing this DevTools port."
         )
 
-    return matches[-1]
+    # SOPHYANE_CDP_BOUNDED_READINESS_SELECTION_V1
+    # SOPHYANE_CDP_FAIL_CLOSED_TARGET_SELECTION_V1
+    #
+    # Target discovery is only a readiness probe. It must not consume one
+    # complete socket timeout per stale ChatGPT tab.
+    #
+    # A responsive-but-semantically-unusable page is still a valid fallback
+    # because wait_prompt() can report quota, challenge, or signed-out state.
+    # A target whose CDP transport/protocol probe fails must never be returned
+    # as though readiness selection had succeeded.
+    selection_deadline = (
+        time.monotonic()
+        + bounded_cdp_timeout(
+            CDP_READINESS_TIMEOUT
+        )
+    )
+
+    semantic_fallback = None
+    transport_failures = []
+
+    # SOPHYANE_CDP_FAIR_TARGET_PROBE_BUDGET_V1
+    #
+    # A single stale renderer must not consume the complete global
+    # readiness-selection window and prevent later candidates from
+    # being probed. Divide the remaining readiness time across the
+    # remaining candidates and apply that share to each candidate's
+    # CDP command deadline.
+    candidates = list(
+        reversed(matches)
+    )
+
+    for index, page in enumerate(
+        candidates
+    ):
+        now = time.monotonic()
+
+        if now >= selection_deadline:
+            break
+
+        remaining_selection = (
+            selection_deadline
+            - now
+        )
+
+        candidates_left = (
+            len(candidates)
+            - index
+        )
+
+        candidate_budget = max(
+            0.1,
+            remaining_selection
+            / candidates_left,
+        )
+
+        cdp = None
+
+        try:
+            cdp = CDP(page)
+
+            if hasattr(
+                cdp,
+                "call_timeout",
+            ):
+                cdp.call_timeout = min(
+                    float(
+                        cdp.call_timeout
+                    ),
+                    candidate_budget,
+                )
+
+            readiness = chatgpt_readiness(
+                cdp
+            )
+
+            # Reaching this point proves that this target answered the
+            # readiness CDP operation. Preserve the first responsive target
+            # encountered in reversed(matches), which keeps historical
+            # matches[-1] preference when that target is healthy.
+            if semantic_fallback is None:
+                semantic_fallback = page
+
+            if readiness.get(
+                "interactive"
+            ):
+                return page
+
+        except Exception as exc:
+            # A stale/closing/unresponsive DevTools target must not prevent
+            # another ChatGPT target from being considered, but it must also
+            # never become the semantic fallback.
+            transport_failures.append(
+                (
+                    str(
+                        page.get(
+                            "id",
+                            "",
+                        )
+                    ),
+                    exc,
+                )
+            )
+            continue
+
+        finally:
+            if cdp is not None:
+                cdp.close()
+
+    if semantic_fallback is not None:
+        return semantic_fallback
+
+    if transport_failures:
+        target_id, last_error = (
+            transport_failures[-1]
+        )
+
+        raise RuntimeError(
+            "No responsive ChatGPT CDP target "
+            "was found during readiness selection. "
+            f"Last target={target_id!r}; "
+            "last transport error="
+            f"{type(last_error).__name__}: "
+            f"{last_error}"
+        ) from last_error
+
+    raise RuntimeError(
+        "No responsive ChatGPT CDP target "
+        "was found before the bounded "
+        "readiness-selection deadline."
+    )
 
 
 class CDP:
     def __init__(self, page):
+        self.call_timeout = (
+            CDP_CALL_TIMEOUT
+        )
+
         self.socket = websocket.create_connection(
             page["webSocketDebuggerUrl"],
-            timeout=30,
+            timeout=bounded_cdp_timeout(
+                CDP_CONNECT_TIMEOUT
+            ),
             origin=f"http://{HOST}:{PORT}",
         )
 
@@ -100,19 +290,72 @@ class CDP:
         self.ident += 1
         ident = self.ident
 
-        self.socket.send(
-            json.dumps(
-                {
-                    "id": ident,
-                    "method": method,
-                    "params": params or {},
-                }
+        operation_timeout = (
+            bounded_cdp_timeout(
+                self.call_timeout
             )
         )
 
+        deadline = (
+            time.monotonic()
+            + operation_timeout
+        )
+
+        payload = json.dumps(
+            {
+                "id": ident,
+                "method": method,
+                "params": params or {},
+            }
+        )
+
+        try:
+            self.socket.settimeout(
+                operation_timeout
+            )
+
+            self.socket.send(
+                payload
+            )
+
+        except websocket.WebSocketTimeoutException as exc:
+            raise TimeoutError(
+                f"CDP {method} timed out "
+                "while sending the command."
+            ) from exc
+
         while True:
+            remaining = (
+                deadline
+                - time.monotonic()
+            )
+
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"CDP {method} timed out "
+                    f"after {operation_timeout:.3f}s."
+                )
+
+            try:
+                self.socket.settimeout(
+                    max(
+                        0.05,
+                        remaining,
+                    )
+                )
+
+                raw_message = (
+                    self.socket.recv()
+                )
+
+            except websocket.WebSocketTimeoutException as exc:
+                raise TimeoutError(
+                    f"CDP {method} timed out "
+                    f"after {operation_timeout:.3f}s."
+                ) from exc
+
             message = json.loads(
-                self.socket.recv()
+                raw_message
             )
 
             if message.get("id") != ident:
@@ -266,6 +509,38 @@ def assistant_state(cdp):
 
 
 
+# SOPHYANE_CDP_FRESH_USAGE_LIMIT_RESPONSE_V1
+def chatgpt_usage_limit_response(text):
+    """Return True for an explicit ChatGPT generation quota response.
+
+    This classifier is intentionally applied only to a response proven fresh
+    relative to the pre-send assistant state. Historical conversation text
+    mentioning limits must not make an otherwise usable page unavailable.
+    """
+    value = " ".join(
+        str(
+            text
+            or ""
+        ).lower().split()
+    )
+
+    if not value:
+        return False
+
+    explicit = (
+        "you've hit your usage limit",
+        "you have hit your usage limit",
+        "usage limit reached",
+        "you've reached your usage limit",
+        "you have reached your usage limit",
+    )
+
+    return any(
+        phrase in value
+        for phrase in explicit
+    )
+
+
 # SOPHYANE_CDP_CHATGPT_INTERACTIVE_READINESS_V1
 def chatgpt_readiness(cdp):
     """Return semantic ChatGPT readiness without mutating the page.
@@ -299,6 +574,283 @@ def chatgpt_readiness(cdp):
     !!document.querySelector(
       '[contenteditable="true"]'
     );
+
+  // SOPHYANE_CDP_CHATGPT_USAGE_LIMIT_STATE_V1
+  // SOPHYANE_CDP_CHATGPT_ACTIVE_USAGE_LIMIT_V2
+  //
+  // IMPORTANT:
+  // Do not infer CURRENT quota state from document.body.innerText.
+  // Conversation history may legitimately contain an old assistant/user
+  // message such as "you've hit your usage limit; try again at 6:39 PM".
+  //
+  // Only a visible active ChatGPT UI notice OUTSIDE conversation-history
+  // message containers is allowed to block generation.
+  const usageLimitPattern =
+    /you.?ve hit your usage limit|usage limit|upgrade your plan|add credits|try again at/i;
+
+  const historySelectors = [
+    'article',
+    '[data-message-author-role]',
+    '[data-testid^="conversation-turn"]',
+    '[data-testid*="conversation-turn"]'
+  ].join(',');
+
+  const isVisible = (el) => {
+    if (!el) {
+      return false;
+    }
+
+    const style = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+
+    return (
+      style.display !== 'none'
+      && style.visibility !== 'hidden'
+      && Number.parseFloat(
+        style.opacity || '1'
+      ) > 0
+      && rect.width > 0
+      && rect.height > 0
+    );
+  };
+
+  // SOPHYANE_CDP_CHATGPT_ACTIVE_WORK_USAGE_LIMIT_V1
+  //
+  // Current ChatGPT Work exhaustion is rendered as a composer-adjacent
+  // shell such as:
+  //
+  //   "You’re out of Work usage for now"
+  //
+  // It is not necessarily an alert/status/aria-live node and therefore
+  // can evade the generic quota-candidate classifier below. Detect that
+  // exact active shell independently, while still excluding historical
+  // conversation turns.
+  const workUsageLimitPattern =
+    /you(?:'|’)?re out of work usage for now|out of work usage for now/i;
+
+  const activeWorkUsageNodes =
+    Array.from(
+      document.querySelectorAll('body *')
+    ).filter((el) => {
+      const text =
+        (el.innerText || '').trim();
+
+      if (
+        !text
+        || text.length > 1000
+        || !workUsageLimitPattern.test(text)
+        || !isVisible(el)
+      ) {
+        return false;
+      }
+
+      if (
+        typeof el.closest === 'function'
+        && el.closest(historySelectors)
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+
+  const activeWorkUsageNotice =
+    activeWorkUsageNodes.length > 0;
+
+  const activeWorkUsageText =
+    activeWorkUsageNotice
+      ? (
+          activeWorkUsageNodes
+            .map(
+              el => (el.innerText || '').trim()
+            )
+            .sort(
+              (a, b) => a.length - b.length
+            )[0]
+          || ''
+        )
+      : '';
+
+  const quotaCandidates = [];
+
+  for (
+    const el
+    of Array.from(
+      document.querySelectorAll('body *')
+    )
+  ) {
+    const text =
+      (el.innerText || '').trim();
+
+    if (
+      !text
+      || text.length > 1000
+      || !usageLimitPattern.test(text)
+    ) {
+      continue;
+    }
+
+    if (!isVisible(el)) {
+      continue;
+    }
+
+    //
+    // Historical chat content is evidence about a PREVIOUS response,
+    // never evidence of the CURRENT account/composer state.
+    //
+    if (
+      typeof el.closest === 'function'
+      && el.closest(historySelectors)
+    ) {
+      continue;
+    }
+
+    //
+    // Prefer the smallest matching node rather than a parent container
+    // whose innerText merely includes text from a matching descendant.
+    //
+    const matchingChild =
+      Array.from(
+        el.children || []
+      ).some((child) => {
+        const childText =
+          (child.innerText || '').trim();
+
+        return (
+          childText
+          && childText.length <= 1000
+          && usageLimitPattern.test(
+            childText
+          )
+        );
+      });
+
+    if (matchingChild) {
+      continue;
+    }
+
+    const host =
+      (
+        typeof el.closest === 'function'
+        && el.closest(
+          [
+            '[role="alert"]',
+            '[role="status"]',
+            '[role="dialog"]',
+            '[aria-live="assertive"]',
+            '[aria-live="polite"]'
+          ].join(',')
+        )
+      )
+      || el;
+
+    if (!isVisible(host)) {
+      continue;
+    }
+
+    const hostStyle =
+      getComputedStyle(host);
+
+    const role =
+      (
+        host.getAttribute('role')
+        || ''
+      ).toLowerCase();
+
+    const ariaLive =
+      (
+        host.getAttribute('aria-live')
+        || ''
+      ).toLowerCase();
+
+    const activeSemantics =
+      role === 'alert'
+      || role === 'status'
+      || role === 'dialog'
+      || ariaLive === 'assertive'
+      || ariaLive === 'polite'
+      || hostStyle.position === 'fixed'
+      || hostStyle.position === 'sticky';
+
+    //
+    // A plain visible node outside conversation history may still be an
+    // active quota shell. Keep it only when it is associated with the
+    // composer region rather than arbitrary page copy.
+    //
+    const promptEl =
+      document.querySelector(
+        '#prompt-textarea, textarea, [contenteditable="true"]'
+      );
+
+    let composerAssociated = false;
+
+    if (
+      promptEl
+      && isVisible(promptEl)
+    ) {
+      const promptRect =
+        promptEl.getBoundingClientRect();
+
+      const hostRect =
+        host.getBoundingClientRect();
+
+      composerAssociated =
+        (
+          hostRect.bottom
+          >= promptRect.top - 420
+          && hostRect.top
+          <= promptRect.bottom + 220
+        );
+    }
+
+    if (
+      !activeSemantics
+      && !composerAssociated
+    ) {
+      continue;
+    }
+
+    quotaCandidates.push({
+      text,
+      role,
+      ariaLive
+    });
+  }
+
+  const activeUsageLimit =
+    (
+      quotaCandidates.length > 0
+      || activeWorkUsageNotice
+    );
+
+  const activeUsageLimitText =
+    quotaCandidates.length > 0
+      ? quotaCandidates[0].text
+      : activeWorkUsageText;
+
+  const tryAgainMatch =
+    activeUsageLimitText.match(
+      /try again at [^.\n]+/i
+    );
+
+  const workResetMatch =
+    activeWorkUsageNotice
+      ? bodyText.match(
+          /(?:wait for your usage to reset at|usage to reset at)\s+[^.\n]+/i
+        )
+      : null;
+
+  const tryAgainText =
+    tryAgainMatch
+      ? tryAgainMatch[0]
+      : (
+          workResetMatch
+            ? workResetMatch[0]
+            : ''
+        );
+
+  const usageLimited =
+    activeUsageLimit;
 
   const challengeTitle =
     /just a moment/i.test(
@@ -385,11 +937,20 @@ def chatgpt_readiness(cdp):
     challenged,
     loginControl,
     signedOut,
+    usageLimited,
+    activeUsageLimit,
+    activeUsageLimitText,
+    activeWorkUsageNotice,
+    activeWorkUsageText,
+    quotaCandidateCount:
+      quotaCandidates.length,
+    tryAgainText,
     composer,
     interactive:
       composer
       && !challenged
       && !signedOut
+      && !usageLimited
   };
 })()
 """
@@ -424,6 +985,13 @@ def chatgpt_readiness(cdp):
     ):
         reason = (
             "chatgpt_signed_out"
+        )
+
+    elif result.get(
+        "usageLimited"
+    ):
+        reason = (
+            "chatgpt_usage_limit"
         )
 
     elif not result.get(
@@ -491,6 +1059,37 @@ def wait_prompt(cdp):
                 "ChatGPT is signed out in the persistent NIFDU Chromium "
                 "profile; sign in manually in that browser profile and "
                 "retry. NIFDU CDP transport is ready."
+            )
+
+        # SOPHYANE_CDP_CHATGPT_USAGE_LIMIT_FAIL_FAST_V1
+        #
+        # Do not populate a prompt, poll the assistant DOM, or burn the
+        # full bridge timeout when ChatGPT has explicitly disabled new
+        # generation for the current account/session.
+        if last.get(
+            "usageLimited"
+        ):
+            retry = str(
+                last.get(
+                    "tryAgainText",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            detail = (
+                "; "
+                + retry
+                if retry
+                else ""
+            )
+
+            raise RuntimeError(
+                "ChatGPT usage limit reached; NIFDU CDP transport is "
+                "ready but the selected ChatGPT session cannot generate "
+                "a new response"
+                + detail
+                + "."
             )
 
         time.sleep(
@@ -608,32 +1207,35 @@ def populate_prompt(cdp, text):
     );
   }}
   else {{
-    e.innerHTML = '';
+      // SOPHYANE_CDP_LIGHTWEIGHT_CONTENTEDITABLE_PROMPT_V1
+      //
+      // Insert the complete value directly into the editable DOM instead
+      // of routing the whole prompt through synchronous execCommand.
+      e.replaceChildren(
+        document.createTextNode(value)
+      );
 
-    const selection =
-      window.getSelection();
+      const selection =
+        window.getSelection();
 
-    const range =
-      document.createRange();
+      if (selection) {{
+        const range =
+          document.createRange();
 
-    range.selectNodeContents(e);
+        range.selectNodeContents(e);
+        range.collapse(false);
 
-    selection.removeAllRanges();
-    selection.addRange(range);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }}
 
-    document.execCommand(
-      'insertText',
-      false,
-      value
-    );
-
-    e.dispatchEvent(
+e.dispatchEvent(
       new InputEvent(
         'input',
         {{
           bubbles: true,
           inputType: 'insertText',
-          data: value
+          data: null
         }}
       )
     );
@@ -648,6 +1250,197 @@ def populate_prompt(cdp, text):
         raise RuntimeError(
             "Unable to populate ChatGPT prompt."
         )
+
+
+
+def prepare_for_new_generation(
+    cdp,
+    *,
+    timeout=20.0,
+    interval=0.25,
+):
+    """Settle a stale ChatGPT generation before submitting a new prompt.
+
+    A bridge response timeout does not imply that the browser-side ChatGPT
+    generation stopped. The next same-provider protocol-repair request may
+    therefore inherit an active Stop control and no usable Send control.
+
+    Recovery is intentionally bounded:
+
+    1. observe whether a generation is still active;
+    2. if active, click ChatGPT's ordinary Stop control once;
+    3. wait until the generation control disappears;
+    4. only then allow the caller to establish its new response baseline.
+
+    This never bypasses authentication or browser verification and never
+    switches providers.
+    """
+
+    deadline = (
+        time.monotonic()
+        + max(
+            1.0,
+            float(timeout),
+        )
+    )
+
+    stop_requested = False
+
+    state_expression = r"""
+(() => {
+  const direct =
+    document.querySelector(
+      '[data-testid="stop-button"]'
+    );
+
+  const fallback =
+    [...document.querySelectorAll('button')]
+    .find(button => {
+      const label =
+        (
+          button.getAttribute('aria-label')
+          || ''
+        ).trim();
+
+      return (
+        /^stop generating$/i.test(label)
+        || /^stop response$/i.test(label)
+        || /^stop$/i.test(label)
+      );
+    });
+
+  const button =
+    direct || fallback || null;
+
+  const visible =
+    !!button
+    && (() => {
+      const rect =
+        button.getBoundingClientRect();
+
+      const style =
+        getComputedStyle(button);
+
+      return (
+        rect.width > 0
+        && rect.height > 0
+        && style.display !== 'none'
+        && style.visibility !== 'hidden'
+      );
+    })();
+
+  return {
+    generating: !!visible,
+    stopPresent: !!button
+  };
+})()
+"""
+
+    stop_expression = r"""
+(() => {
+  const direct =
+    document.querySelector(
+      '[data-testid="stop-button"]'
+    );
+
+  const fallback =
+    [...document.querySelectorAll('button')]
+    .find(button => {
+      const label =
+        (
+          button.getAttribute('aria-label')
+          || ''
+        ).trim();
+
+      return (
+        /^stop generating$/i.test(label)
+        || /^stop response$/i.test(label)
+        || /^stop$/i.test(label)
+      );
+    });
+
+  const button =
+    direct || fallback || null;
+
+  if (!button)
+    return false;
+
+  button.click();
+  return true;
+})()
+"""
+
+    while time.monotonic() < deadline:
+        state = (
+            cdp.evaluate(
+                state_expression
+            )
+            or {}
+        )
+
+        generating = bool(
+            state.get(
+                "generating"
+            )
+        )
+
+        if not generating:
+            return
+
+        if not stop_requested:
+            stopped = bool(
+                cdp.evaluate(
+                    stop_expression
+                )
+            )
+
+            if stopped:
+                stop_requested = True
+
+        time.sleep(
+            max(
+                0.05,
+                float(interval),
+            )
+        )
+
+    raise RuntimeError(
+        "ChatGPT prior generation did not settle "
+        "before the next NIFDU prompt."
+    )
+
+
+def cleanup_failed_generation(
+    cdp,
+    *,
+    generation_submitted,
+    timeout=20.0,
+):
+    """Best-effort cleanup after a submitted NIFDU request fails.
+
+    Once ChatGPT has accepted a prompt, a Python-side timeout or transport
+    exception does not guarantee that browser-side generation stopped.
+
+    Clean that generation before returning control to the caller so an
+    immediate same-provider retry does not inherit a stale Stop state.
+
+    Cleanup is deliberately best-effort. The original provider exception
+    remains authoritative; any cleanup exception is returned to the caller
+    for diagnostic annotation rather than replacing the primary failure.
+    """
+
+    if not generation_submitted:
+        return None
+
+    try:
+        prepare_for_new_generation(
+            cdp,
+            timeout=timeout,
+        )
+    except Exception as exc:
+        return exc
+
+    return None
 
 
 def click_send(cdp):
@@ -886,10 +1679,28 @@ def ask(prompt, image=None):
 
     cdp = CDP(page)
 
+    # SOPHYANE_NIFDU_FAILED_GENERATION_CLEANUP_V1
+    #
+    # Cleanup is valid only after ChatGPT has actually accepted a new
+    # generation request. Pre-send failures must remain read-only with
+    # respect to generation state.
+    generation_submitted = False
+
     try:
         cdp.call("Runtime.enable")
 
         wait_prompt(cdp)
+
+        # SOPHYANE_NIFDU_POST_TIMEOUT_GENERATION_RECOVERY_V1
+        #
+        # A transport timeout only terminates this Python-side wait. ChatGPT
+        # may still be generating in the browser, leaving a Stop control in
+        # place and making the next same-provider protocol repair unable to
+        # send. Settle/cancel that stale generation before taking the new
+        # assistant/user baseline.
+        prepare_for_new_generation(
+            cdp,
+        )
 
         before = assistant_state(cdp)
 
@@ -941,6 +1752,16 @@ def ask(prompt, image=None):
             cdp,
             prompt,
         )
+
+        # SOPHYANE_NIFDU_AMBIGUOUS_SEND_COMMIT_V1
+        #
+        # CDP Runtime.evaluate is side-effecting here: browser JavaScript may
+        # execute button.click() even if the WebSocket response carrying the
+        # evaluation result is subsequently lost. Mark the request as
+        # potentially submitted before entering click_send(), so any exception
+        # from that boundary performs state-based cleanup rather than assuming
+        # that no browser generation could have started.
+        generation_submitted = True
 
         click_send(cdp)
 
@@ -996,6 +1817,39 @@ def ask(prompt, image=None):
                 and streaming
             ):
                 streaming_seen = True
+
+            # SOPHYANE_CDP_FRESH_USAGE_LIMIT_TERMINAL_V1
+            #
+            # ChatGPT may represent an exhausted generation quota as an
+            # assistant message rather than as a composer-level banner.
+            # Such a response is terminal for this provider call. Treating it
+            # as an unfinished ordinary answer burns the entire bridge timeout
+            # and incorrectly surfaces "Timed out waiting for ChatGPT."
+            #
+            # Require freshness relative to the pre-send state so historical
+            # quota messages in an older conversation remain harmless.
+            response_changed = bool(
+                text
+                and (
+                    count > before_count
+                    or text != before_text
+                )
+            )
+
+            if (
+                response_changed
+                and not streaming
+                and chatgpt_usage_limit_response(
+                    text
+                )
+            ):
+                raise RuntimeError(
+                    "ChatGPT usage limit reached; "
+                    "NIFDU CDP transport is ready but "
+                    "the selected ChatGPT session cannot "
+                    "generate a new response: "
+                    + text
+                )
 
             # ChatGPT's current UI may reuse/update an existing
             # assistant DOM node instead of appending a new node.
@@ -1108,6 +1962,32 @@ def ask(prompt, image=None):
         raise TimeoutError(
             "Timed out waiting for ChatGPT."
         )
+
+    except Exception as exc:
+        # SOPHYANE_NIFDU_FAILED_GENERATION_CLEANUP_V1
+        #
+        # Do not hand an active browser-side generation back to the strict
+        # runtime. Its automatic protocol repair may invoke this provider
+        # immediately, so leaving a Stop state here poisons the next request.
+        #
+        # Preserve the original exception as the root cause. Cleanup failure
+        # is secondary diagnostic evidence only.
+        cleanup_error = cleanup_failed_generation(
+            cdp,
+            generation_submitted=generation_submitted,
+        )
+
+        if cleanup_error is not None:
+            try:
+                exc.add_note(
+                    "NIFDU browser-generation cleanup also failed: "
+                    f"{type(cleanup_error).__name__}: "
+                    f"{cleanup_error}"
+                )
+            except Exception:
+                pass
+
+        raise
 
     finally:
         cdp.close()

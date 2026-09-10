@@ -1521,3 +1521,248 @@ def test_orchestration_patch_preserves_real_execution():
     assert tui_v2._execution_requested(
         "build a website"
     )
+
+# SOPHYANE_NIFDU_CREATE_BYPASSES_DISCOVERY_REGRESSION_V1
+
+def test_nifdu_create_request_does_not_enter_named_file_discovery(
+    tmp_path,
+):
+    from sophyane.nifdu_guarded_execution import (
+        grounded_nifdu_named_file_discovery,
+    )
+
+    requests = (
+        "create deal_broker_agents.py",
+        "write a new file deal_broker_agents.py",
+        "make the file deal_broker_agents.py",
+        "implement deal_broker_agents.py",
+        'return {"type":"write_file","path":"deal_broker_agents.py"}',
+        (
+            'Return exactly one JSON object: '
+            '{"action":{"type":"write_file",'
+            '"path":"tools/deal_broker_agents.py",'
+            '"content":"..."}}'
+        ),
+    )
+
+    for request in requests:
+        assert grounded_nifdu_named_file_discovery(
+            request,
+            roots=[tmp_path],
+        ) is None
+
+
+def test_nifdu_real_named_file_discovery_remains_grounded(
+    tmp_path,
+):
+    from sophyane.nifdu_guarded_execution import (
+        grounded_nifdu_named_file_discovery,
+    )
+
+    requests = (
+        "is there any file in my device named yaqeen.py",
+        "where is yaqeen.py",
+        "search the path of yaqeen.py",
+        "locate yaqeen.py",
+    )
+
+    for request in requests:
+        result = grounded_nifdu_named_file_discovery(
+            request,
+            roots=[tmp_path],
+        )
+
+        assert result is not None
+        assert result["handled"] is True
+        assert result["paths"] == []
+
+
+def test_nifdu_create_with_intentionally_absent_target_bypasses_discovery(
+    tmp_path,
+):
+    from sophyane.nifdu_guarded_execution import (
+        grounded_nifdu_named_file_discovery,
+    )
+
+    request = """
+SOPHYANE_ROLE=PLANNER.
+This is a CREATE operation.
+The target file is intentionally absent:
+tools/deal_broker_agents.py
+
+Return:
+{
+  "action": {
+    "type": "write_file",
+    "path": "tools/deal_broker_agents.py",
+    "content": "..."
+  }
+}
+"""
+
+    assert grounded_nifdu_named_file_discovery(
+        request,
+        roots=[tmp_path],
+    ) is None
+
+
+# SOPHYANE_NIFDU_INLINE_CONTENT_CONTRACT_REGRESSION_V1
+
+
+def test_nifdu_guarded_write_accepts_inline_content_header(
+    tmp_path,
+):
+    from sophyane.nifdu_guarded_execution import (
+        apply_file_write_proposal,
+    )
+
+    result = apply_file_write_proposal(
+        """WRITE_FILE
+path: nifdu_create_probe.py
+content: print("CREATE_ROUTE_PASS")
+END_WRITE_FILE""",
+        workspace=tmp_path,
+        expected_filename="nifdu_create_probe.py",
+    )
+
+    assert result.read_text(
+        encoding="utf-8"
+    ) == 'print("CREATE_ROUTE_PASS")\n'
+
+
+def test_nifdu_guarded_write_preserves_inline_plus_following_lines(
+    tmp_path,
+):
+    from sophyane.nifdu_guarded_execution import (
+        apply_file_write_proposal,
+    )
+
+    result = apply_file_write_proposal(
+        """WRITE_FILE
+path: inline_multiline.py
+content: first = 1
+second = 2
+print(first + second)
+END_WRITE_FILE""",
+        workspace=tmp_path,
+        expected_filename="inline_multiline.py",
+    )
+
+    assert result.read_text(
+        encoding="utf-8"
+    ) == (
+        "first = 1\n"
+        "second = 2\n"
+        "print(first + second)\n"
+    )
+
+
+def test_nifdu_guarded_write_still_rejects_invalid_content_header(
+    tmp_path,
+):
+    import pytest
+
+    from sophyane.nifdu_guarded_execution import (
+        NifduExecutionError,
+        apply_file_write_proposal,
+    )
+
+    with pytest.raises(
+        NifduExecutionError,
+        match="missing content",
+    ):
+        apply_file_write_proposal(
+            """WRITE_FILE
+path: invalid.py
+contents: print("NO")
+END_WRITE_FILE""",
+            workspace=tmp_path,
+            expected_filename="invalid.py",
+        )
+
+
+# SOPHYANE_NIFDU_SAFE_NESTED_PATH_REGRESSION_V1
+
+
+def test_nifdu_requested_python_filename_preserves_nested_path():
+    from sophyane.nifdu_guarded_execution import (
+        requested_python_filename,
+    )
+
+    assert (
+        requested_python_filename(
+            "create tools/deal_broker_agents.py"
+        )
+        == "tools/deal_broker_agents.py"
+    )
+
+
+def test_nifdu_guarded_write_accepts_existing_nested_parent(
+    tmp_path,
+):
+    from sophyane.nifdu_guarded_execution import (
+        apply_file_write_proposal,
+    )
+
+    tools = tmp_path / "tools"
+    tools.mkdir()
+
+    result = apply_file_write_proposal(
+        """WRITE_FILE
+path: tools/deal_broker_agents.py
+content: print("BROKER")
+END_WRITE_FILE""",
+        workspace=tmp_path,
+        expected_filename="tools/deal_broker_agents.py",
+    )
+
+    assert result == tools / "deal_broker_agents.py"
+    assert result.read_text(
+        encoding="utf-8"
+    ) == 'print("BROKER")\n'
+
+
+def test_nifdu_guarded_write_rejects_nested_traversal(
+    tmp_path,
+):
+    import pytest
+
+    from sophyane.nifdu_guarded_execution import (
+        NifduExecutionError,
+        apply_file_write_proposal,
+    )
+
+    with pytest.raises(
+        NifduExecutionError,
+    ):
+        apply_file_write_proposal(
+            """WRITE_FILE
+path: tools/../escape.py
+content: print("NO")
+END_WRITE_FILE""",
+            workspace=tmp_path,
+            expected_filename="tools/../escape.py",
+        )
+
+
+def test_nifdu_guarded_write_rejects_absolute_path(
+    tmp_path,
+):
+    import pytest
+
+    from sophyane.nifdu_guarded_execution import (
+        NifduExecutionError,
+        apply_file_write_proposal,
+    )
+
+    with pytest.raises(
+        NifduExecutionError,
+        match="absolute paths",
+    ):
+        apply_file_write_proposal(
+            """WRITE_FILE
+path: /tmp/escape.py
+content: print("NO")
+END_WRITE_FILE""",
+            workspace=tmp_path,
+        )

@@ -169,3 +169,20 @@ def test_exact_live_local_gguf_output_is_recovered() -> None:
         "BaseHTTPRequestHandler"
         in content
     )
+
+
+def test_recovers_direct_top_level_nifdu_write_with_unescaped_html_quotes():
+    from sophyane.execution_runtime import extract_plan
+
+    raw = (
+        '{"type":"write_file","path":"index.html",'
+        '"content":"<!doctype html><input placeholder="admin@example.com">"}'
+    )
+
+    assert extract_plan(raw) == {
+        "action": {
+            "type": "write_file",
+            "path": "index.html",
+            "content": '<!doctype html><input placeholder="admin@example.com">',
+        }
+    }

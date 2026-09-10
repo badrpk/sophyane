@@ -88,19 +88,35 @@ def _explicit_no_edit_request(request: str) -> bool:
     text = " ".join(
         str(request or "").casefold().split()
     )
-    return any(
+    explicit_prohibition = bool(
+        re.search(
+            r"\bdo not (?:edit|modify|write)\b"
+            r"(?!\s+(?:any\s+)?other\b)",
+            text,
+        )
+        or re.search(
+            r"\bdo not create\b"
+            r"(?!\s+(?:(?:any\s+)?other|new)\b)",
+            text,
+        )
+    ) or any(
         marker in text
         for marker in (
-            "do not create",
-            "do not edit",
-            "do not modify",
-            "do not write",
             "no edits",
             "no writes",
             "read-only",
             "read only",
         )
     )
+
+    coordinated_prohibition = bool(
+        re.search(
+            r"\bdo not create\b[^.!?\n]*\bor\s+(?:edit|modify|write)\b",
+            text,
+        )
+    )
+
+    return explicit_prohibition or coordinated_prohibition
 
 
 def _browser_request(request: str) -> bool:
@@ -200,6 +216,10 @@ def _browser_request(request: str) -> bool:
             "website",
             "web app",
             "html",
+            "frontend",
+            "front-end",
+            "client-side",
+            "client side",
             "touch controls",
         )
     )
@@ -250,31 +270,48 @@ def _extract_partial_html(text: str) -> str | None:
 
 
 def _raw_html_prompt(original_request: str, existing: str = "") -> str:
+    # SOPHYANE_FULL_CLOUD_TASK_CONTEXT_V1
+    #
+    # Never silently throw away the beginning of the immutable user request or
+    # most of the artifact before asking a frontier provider to implement it.
+    # Transport/provider-specific budgeting belongs at the provider-context
+    # layer, not inside a task-specific prompt builder.
     if existing:
         return (
             "Rewrite this existing browser project as ONE complete self-contained index.html. "
-            "Apply the requested change, preserve working features, include CSS and JavaScript inline, and output raw HTML only. "
-            "No JSON, markdown, explanation, shell commands, cd, or make. Keep code compact.\n"
-            f"CHANGE: {original_request[-240:]}\nEXISTING HTML:\n{existing[:1800]}"
+            "Apply the requested change, preserve working features, include CSS and JavaScript inline, "
+            "and output raw HTML only. No JSON, markdown, explanation, shell commands, cd, or make. "
+            "Prioritize correctness, completeness, maintainability, interaction quality, responsive polish "
+            "and faithful implementation of the complete customer request.\n"
+            f"CHANGE:\n{original_request}\n"
+            f"EXISTING HTML:\n{existing}"
         )
     return (
-        "Create ONE compact self-contained index.html for the request. Put CSS and JavaScript inline. "
-        "Use no external files, images, libraries, or fonts. Output raw HTML only, beginning <!doctype html> and ending </html>. "
-        "Close every script and body tag. No JSON, markdown, explanation, shell commands, cd, or make. "
-        "Prefer short variable names and compact code.\n"
-        f"REQUEST: {original_request[-360:]}"
+        "Create ONE polished responsive self-contained index.html for the complete request. "
+        "Put CSS and JavaScript inline. For visual websites, high-quality HTTPS images from "
+        "Unsplash, Pexels, or Pixabay are allowed when they materially improve the product; "
+        "prefer meaningful imagery, strong hierarchy, typography, spacing and mobile polish. "
+        "Use no external JavaScript libraries or fonts. Output raw HTML only, beginning <!doctype html> "
+        "and ending </html>. Close every script and body tag. No JSON, markdown, explanation, "
+        "shell commands, cd, or make. Prioritize correctness, completeness, maintainability and "
+        "product quality rather than artificially minimizing source size.\n"
+        f"REQUEST:\n{original_request}"
     )
 
 
 def _html_continuation_prompt(partial: str, problem: str = "") -> str:
-    tail = partial[-1600:]
+    # SOPHYANE_FULL_STRUCTURAL_RECOVERY_CONTEXT_V1
+    #
+    # The frontier model receives the complete preserved artifact so it can
+    # resolve symbols, scopes and structures defined well before the cutoff.
     issue = f" The current structural problem is: {problem}." if problem else ""
     return (
         "Continue the unfinished index.html from exactly after its final character."
-        f"{issue} Output ONLY missing JavaScript/HTML; never repeat earlier code or opening tags. "
-        "Complete the current function and game loop, close every open brace, then close </script>, </body>, and </html>. "
+        f"{issue} The complete preserved artifact is provided below for context. "
+        "Output ONLY the missing continuation; never repeat earlier code or opening tags. "
+        "Close every structure that remains open and finish </script>, </body>, and </html> as required. "
         "End immediately after </html>. No markdown or explanation.\n"
-        f"FINAL TAIL:\n{tail}"
+        f"COMPLETE PRESERVED ARTIFACT:\n{partial}"
     )
 
 
@@ -413,8 +450,72 @@ def _one_shot_browser_artifact(
         _raw_html_prompt(original_request, existing)
     )
     raw = getattr(response, "text", str(response))
-    html = _extract_html(raw)
-    partial = _extract_partial_html(raw)
+
+    # SOPHYANE_BROWSER_STRUCTURED_ONE_SHOT_WRITE_V1
+    #
+    # NIFDU may obey the runtime action contract even when this browser path
+    # requested raw HTML. Accept one complete index.html write action here so
+    # the artifact remains atomic instead of falling through into regenerative
+    # write/append chunking.
+    structured_html = None
+    structured_response = False
+
+    try:
+        from sophyane import execution_runtime as runtime
+
+        structured_plan = runtime.extract_plan(raw)
+        structured_response = structured_plan is not None
+        structured_action = (
+            _selected_action(runtime, structured_plan)
+            if structured_plan
+            else None
+        )
+
+        if (
+            isinstance(structured_action, dict)
+            and str(
+                structured_action.get("type") or ""
+            ).strip().casefold() == "write_file"
+            and Path(
+                str(
+                    structured_action.get("path")
+                    or structured_action.get("file")
+                    or ""
+                )
+            ).name.casefold() == "index.html"
+            and isinstance(
+                structured_action.get("content"),
+                str,
+            )
+        ):
+            structured_html = structured_action["content"]
+            progress(
+                "Recovered complete structured index.html from "
+                "one-shot provider response"
+            )
+    except Exception as error:
+        progress(
+            "Structured one-shot browser extraction failed safely: "
+            f"{type(error).__name__}: {error}"
+        )
+
+    # SOPHYANE_BROWSER_STRUCTURED_ACTION_FALLBACK_GATE_V1
+    #
+    # Once the response has been recognized as a runtime action, do not scan
+    # its serialized JSON text for incidental embedded HTML. In particular an
+    # append_file action must never be promoted into a complete one-shot file
+    # merely because its content happens to contain closing HTML tags.
+    if structured_html is not None:
+        html = structured_html
+        partial = _extract_partial_html(
+            structured_html
+        )
+    elif structured_response:
+        html = None
+        partial = None
+    else:
+        html = _extract_html(raw)
+        partial = _extract_partial_html(raw)
 
     for attempt in range(1, 3):
         problem = _validate_html(html, original_request) if html is not None else "document has no closing </html>"
@@ -845,9 +946,52 @@ def _command_text(action: dict[str, Any]) -> str:
 # A repeated read-only inspection may be useful evidence, but it cannot prove
 # that a requested mutation happened. This classifier is intentionally scoped
 # to the duplicate-command completion boundary.
+def _is_process_observation_command(
+    command: str,
+) -> bool:
+    """Return True for commands that only observe process/runtime state.
+
+    A successful observation proves that the inspection command worked.
+    It does not prove that the observed long-running task completed.
+    """
+    try:
+        parts = shlex.split(str(command or ""))
+    except ValueError:
+        return False
+
+    if not parts:
+        return False
+
+    # Ignore simple wrappers that preserve observation-only semantics.
+    while parts and parts[0] in {
+        "env",
+        "command",
+    }:
+        parts = parts[1:]
+
+    if not parts:
+        return False
+
+    executable = Path(parts[0]).name
+
+    return executable in {
+        "ps",
+        "pgrep",
+        "pidof",
+        "pstree",
+        "jobs",
+    }
+
+
 def _is_read_only_inspection_command(
     command: str,
 ) -> bool:
+    # SOPHYANE_PROCESS_OBSERVATION_NONTERMINAL_V1
+    #
+    # Process inspection can establish RUNNING / PRESENT / ABSENT state,
+    # but never successful completion of the observed task.
+    if _is_process_observation_command(command):
+        return True
     try:
         tokens = shlex.split(
             str(command or "").strip()
@@ -870,6 +1014,7 @@ def _is_read_only_inspection_command(
         "grep",
         "egrep",
         "fgrep",
+        "rg",
         "find",
         "ls",
         "stat",
@@ -1420,20 +1565,20 @@ def _compact_repair_prompt(request: str, files: list[str], result: str) -> str:
         "\\\"content\\\":\\\"complete content\\\"}} "
         "or {\\\"files\\\":[{\\\"path\\\":\\\"relative/path\\\","
         "\\\"content\\\":\\\"complete content\\\"}]}. "
-        "Keep every JSON response below 3500 characters. "
-        "Keep file content in each response below 2600 characters. "
-        "For a large file, first use write_file with the first chunk, then use "
-        "append_file for later chunks. Never resend the whole large file. "
-        "Each chunk must end at a safe source-code boundary, not inside a string. "
+        "Do not artificially split a file merely to keep the response small. "
+        "When one file can be represented in the provider response, prefer one complete "
+        "write_file action containing the coherent file rather than model-generated source chunks. "
+        "Use append_file only when the task itself genuinely requires appending or when a prior "
+        "verified action already established an intentional partial artifact. "
         "Create or extend only one project file per response. "
         "When all required files are ready, return exactly one run_command action. "
         "Use relative paths only and never use cd.\n"
         "EXECUTION CONTRACT:\n"
         + execution_prefix_for_repair(request)
         + "\n"
-        + f"ORIGINAL TASK:\n{request[-7000:]}\n"
+        + f"ORIGINAL TASK:\n{request}\n"
         + f"CURRENT FILES:\n{existing}\n"
-        f"LAST RESPONSE OR RESULT:\n{result[-1800:]}\n"
+        f"LAST RESPONSE OR RESULT:\n{result}\n"
         "Choose the single next unfinished action for ORIGINAL TASK only."
     )
 
@@ -2361,6 +2506,21 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
         ):
             return (
                 "DONE\n\nExecution evidence:\n"
+                + "\n".join(evidence)
+            )
+
+        # SOPHYANE_TARGETED_PATCH_COMPLETION_STOP_V1
+        #
+        # targeted_patch is itself a bounded, exact-one-match repository
+        # mutation. execute_action() returns success only after the atomic
+        # replacement has completed. Do not require another provider turn
+        # merely to decide whether this already-completed edit is finished.
+        if kind == "targeted_patch" and ok:
+            return (
+                "Targeted repository patch completed successfully."
+                "\n\nWorkspace: "
+                + str(workspace)
+                + "\n\nExecution evidence:\n"
                 + "\n".join(evidence)
             )
 

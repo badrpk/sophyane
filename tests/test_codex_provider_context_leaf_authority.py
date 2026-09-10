@@ -25,9 +25,12 @@ def test_direct_leaf_path_calls_provider_generate():
     start = source.index(
         "SOPHYANE_CODEX_LEAF_PROVIDER_CALL_AUTHORITY_V1"
     )
-    section = source[start : start + 2200]
+    section = source[start : start + 6000]
 
-    assert "if _direct_leaf_authoritative:" in section
+    assert (
+        "if _direct_leaf_authoritative:" in section
+        or "elif _direct_leaf_authoritative:" in section
+    )
     assert "value = provider.generate(" in section
 
 
@@ -37,7 +40,8 @@ def test_non_leaf_sessions_preserve_self_ask_fallback():
     start = source.index(
         "SOPHYANE_CODEX_LEAF_PROVIDER_CALL_AUTHORITY_V1"
     )
-    section = source[start : start + 2200]
+    section = source[start : start + 6000]
 
+    assert "_direct_leaf_authoritative" in section
     assert "else:" in section
     assert "value = self.ask(" in section

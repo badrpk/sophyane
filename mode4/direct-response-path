@@ -1,0 +1,4 @@
+if provider_response.is_complete():
+    return provider_response
+else:
+    raise ValueError('Provider response is incomplete')

@@ -1418,3 +1418,119 @@ def try_native_readonly_reply(
         return _tool_versions_reply()
 
     return None
+
+# SOPHYANE_NATIVE_SENSOR_CAPABILITY_TRUTH_V1
+
+_TERMUX_NATIVE_SENSOR_COMMANDS: dict[str, str] = {
+    "camera_capture": "termux-camera-photo",
+    "microphone_capture": "termux-microphone-record",
+    "device_sensors": "termux-sensor",
+    "speech_to_text": "termux-speech-to-text",
+}
+
+
+def _termux_sensor_capability(
+    capability_id: str,
+    command: str,
+    *,
+    google_play_termux: bool,
+) -> dict[str, Any]:
+    """Return conservative native sensor capability truth.
+
+    Discovery is intentionally side-effect free. An executable being present
+    proves only that a wrapper command exists; it does not prove Android API
+    access, permission, successful capture, or a real sensor observation.
+    """
+    command_path = shutil.which(command)
+    command_present = bool(command_path)
+
+    if not command_present:
+        return {
+            "id": capability_id,
+            "command": command,
+            "command_path": None,
+            "command_present": False,
+            "available": False,
+            "verified": True,
+            "backend": None,
+            "reason": "command_not_found",
+        }
+
+    # Real-device evidence on the Google Play Termux build proves
+    # termux-camera-photo is currently blocked at the Termux:API layer.
+    # Do not generalize that camera-specific observation to microphone,
+    # sensor streaming, or speech recognition without probing them.
+    if google_play_termux and capability_id == "camera_capture":
+        return {
+            "id": capability_id,
+            "command": command,
+            "command_path": command_path,
+            "command_present": True,
+            "available": False,
+            "verified": True,
+            "backend": None,
+            "reason": "google_play_termux_api_unavailable",
+        }
+
+    return {
+        "id": capability_id,
+        "command": command,
+        "command_path": command_path,
+        "command_present": True,
+        "available": False,
+        "verified": False,
+        "backend": None,
+        "reason": "active_probe_required",
+    }
+
+
+def native_sensor_capabilities() -> dict[str, Any]:
+    """Describe native Android/Termux sensor availability without using sensors.
+
+    This function must never capture a photo, record audio, request a sensor
+    stream, trigger speech recognition, or infer operational access merely
+    from executable presence.
+
+    ``available`` becomes true only after a separate active operation has
+    produced and verified real sensor evidence.
+    """
+    termux_version = str(
+        os.environ.get("TERMUX_VERSION") or ""
+    ).strip()
+
+    is_termux = bool(
+        termux_version
+        or os.environ.get("PREFIX", "").startswith(
+            "/data/data/com.termux/"
+        )
+    )
+
+    google_play_termux = termux_version.casefold().startswith(
+        "googleplay."
+    )
+
+    capabilities = {
+        capability_id: _termux_sensor_capability(
+            capability_id,
+            command,
+            google_play_termux=google_play_termux,
+        )
+        for capability_id, command
+        in _TERMUX_NATIVE_SENSOR_COMMANDS.items()
+    }
+
+    return {
+        "ok": True,
+        "platform": {
+            "termux": is_termux,
+            "termux_version": termux_version or None,
+            "google_play_termux": google_play_termux,
+        },
+        "capabilities": capabilities,
+        "verification_policy":
+            "command_presence_is_not_runtime_sensor_evidence",
+        "active_probe_required": any(
+            item["reason"] == "active_probe_required"
+            for item in capabilities.values()
+        ),
+    }

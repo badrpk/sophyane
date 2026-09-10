@@ -317,7 +317,17 @@ def _bounded_deterministic_reasoning(
 def _direct_local_reasoning_handler(
     request: ExecutionRequest,
 ) -> ExecutionResult | None:
-    """Handle D1-D3 bounded reasoning through the local model."""
+    """Handle D1-D3 bounded reasoning when session authority permits it."""
+    # SOPHYANE_INTELLIGENCE_AUTHORITY_V1
+    #
+    # Capability selection must never silently override the intelligence
+    # source explicitly selected for this session.
+    from sophyane.intelligence_authority import (
+        local_reasoning_allowed,
+    )
+
+    if not local_reasoning_allowed():
+        return None
     from sophyane.task_compiler import (
         estimate_difficulty,
         should_compile,
@@ -769,19 +779,122 @@ def execute_request(
     request_id: str = "",
     metadata: dict[str, Any] | None = None,
 ) -> ExecutionResult | None:
-    root = Path(workspace or Path.cwd()).expanduser().resolve()
+    root = Path(
+        workspace
+        or Path.cwd()
+    ).expanduser().resolve()
+
+    request_metadata = dict(
+        metadata
+        or {}
+    )
+
+    # SOPHYANE_SESSION_AUTHORITY_METADATA_V1
+    try:
+        from sophyane.intelligence_authority import (
+            current_intelligence_authority,
+        )
+
+        request_metadata.setdefault(
+            "intelligence_authority",
+            current_intelligence_authority().to_dict(),
+        )
+    except Exception:
+        pass
+
+    # SOPHYANE_BADRPK_CAPABILITY_GRAPH_V1
+    #
+    # Repository capability discovery informs the universal execution
+    # request, but it never changes session/provider authority.
+    try:
+        from sophyane.ecosystem_capabilities import (
+            capability_plan_dict,
+        )
+
+        request_metadata.setdefault(
+            "badrpk_capability_plan",
+            capability_plan_dict(
+                str(text or ""),
+                workspace=root,
+            ),
+        )
+    except Exception:
+        # Ecosystem discovery is advisory. Failure must not make the
+        # execution kernel unavailable.
+        pass
 
     request = ExecutionRequest(
-        text=str(text or "").strip(),
+        text=str(
+            text
+            or ""
+        ).strip(),
         workspace=str(root),
         request_id=request_id,
-        metadata=metadata or {},
+        metadata=request_metadata,
     )
 
     if not request.text:
         return None
 
-    return initialize_registry().execute(request)
+    # Snapshot before execution so successes and failures can become
+    # structured experience without inventing artifact evidence.
+    try:
+        from sophyane.runtime_orchestration_patch import (
+            _snapshot,
+        )
+
+        workspace_before = _snapshot(
+            root
+        )
+    except Exception:
+        workspace_before = {}
+
+    result = initialize_registry().execute(
+        request
+    )
+
+    # SOPHYANE_ECOSYSTEM_EXPERIENCE_V1
+    #
+    # Ordinary unified-kernel attempts become bounded execution experience.
+    #
+    # Deterministic capabilities already have one canonical learning boundary
+    # in _record_verified_deterministic_learning(). Re-entering the ecosystem
+    # learner here duplicates verified successes and incorrectly admits
+    # unverified deterministic observations such as folder listings.
+    result_evidence = (
+        result.evidence
+        if isinstance(
+            getattr(result, "evidence", None),
+            dict,
+        )
+        else {}
+    )
+
+    deterministic_capability_result = (
+        result_evidence.get(
+            "deterministic"
+        )
+        is True
+    )
+
+    if not deterministic_capability_result:
+        try:
+            from sophyane.execution_experience import (
+                record_execution_experience,
+            )
+
+            record_execution_experience(
+                request_text=request.text,
+                workspace=root,
+                result=result,
+                metadata=request.metadata,
+                workspace_before=workspace_before,
+            )
+        except Exception:
+            # Learning is never allowed to change task success/failure.
+            pass
+
+    return result
 
 
 def execute_text(
@@ -837,3 +950,26 @@ __all__ = [
     "execute_text",
     "initialize_registry",
 ]
+
+# SOPHYANE_DISCOVERY_ENGINE_ENTRYPOINT_V1
+def execute_discovery(
+    objective: str,
+    *,
+    workspace: str | Path | None = None,
+    hypothesis_limit: int = 3,
+    novelty_threshold: float = 0.35,
+):
+    """Run an explicit closed-loop Sophyane discovery episode.
+
+    Discovery is opt-in and does not replace ordinary execution routing.
+    """
+    from sophyane.discovery_engine import (
+        run_discovery,
+    )
+
+    return run_discovery(
+        objective,
+        workspace=workspace,
+        hypothesis_limit=hypothesis_limit,
+        novelty_threshold=novelty_threshold,
+    )

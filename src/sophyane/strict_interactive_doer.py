@@ -85,7 +85,7 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
             "user_request": prompt,
             "objective": objective or prompt,
             "success_criteria": criteria,
-            "workspace_context": context[-5000:],
+            "workspace_context": context,
             "previous_steps": [asdict(item) for item in history[-3:]],
             "planner_failure": str(last_error or "unknown planner failure"),
             "required_output": {
@@ -208,8 +208,26 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
         verifier_instruction: str,
     ) -> dict[str, Any]:
         self._visible_step = len(history) + 1
-        request = self._planner_request(prompt, context, objective, criteria, history, verifier_instruction)
-        current_prompt = json.dumps(request, ensure_ascii=False)
+        def request_for_capabilities(capabilities):
+            return self._planner_request(
+                prompt,
+                self._context_for_capabilities(capabilities),
+                objective,
+                criteria,
+                history,
+                verifier_instruction,
+            )
+
+        request = request_for_capabilities(
+            self._capabilities()
+        )
+
+        current_renderer = (
+            lambda capabilities: json.dumps(
+                request_for_capabilities(capabilities),
+                ensure_ascii=False,
+            )
+        )
         last_error: Exception | None = None
 
         for attempt in range(1, self.protocol_attempts + 1):
@@ -220,7 +238,10 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
             )
             try:
                 with self.progress.waiting("🧠", label):
-                    raw = self.backend(current_prompt, self._system("planner"))
+                    raw = self._backend_for_capabilities(
+                        current_renderer,
+                        self._system("planner"),
+                    )
                 plan = parse_and_validate_plan(raw)
                 action = plan.get("action", {})
                 if isinstance(action, dict) and self._mirrors_user_request(prompt, action):
@@ -256,48 +277,89 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
                             "↻",
                             "Semantic-resolver output detected; resetting planner context",
                         )
-                        current_prompt = json.dumps(
-                            {
-                                "planner_reset": True,
-                                "instruction": (
-                                    "You are now the execution planner, not a semantic resolver. "
-                                    "Ignore every previous semantic-resolver schema. "
-                                    "Return exactly one compact JSON object with objective, "
-                                    "success_criteria and action. Do not return resolved_terms, "
-                                    "confidence, material_change or uncertain_terms."
-                                ),
-                                "required_schema": {
-                                    "objective": "non-empty string",
-                                    "success_criteria": ["measurable requirement"],
-                                    "action": {
-                                        "type": "write_file",
-                                        "path": "relative/file.py",
-                                        "content": "complete file content",
+                        def current_renderer(
+                            capabilities,
+                            *,
+                            _instruction=(
+                                "You are now the execution planner, not a semantic resolver. "
+                                "Ignore every previous semantic-resolver schema. "
+                                "Return exactly one compact JSON object with objective, "
+                                "success_criteria and action. Do not return resolved_terms, "
+                                "confidence, material_change or uncertain_terms."
+                            ),
+                        ):
+                            return json.dumps(
+                                {
+                                    "planner_reset": True,
+                                    "instruction": _instruction,
+                                    "required_schema": {
+                                        "objective": "non-empty string",
+                                        "success_criteria": ["measurable requirement"],
+                                        "action": {
+                                            "type": "write_file",
+                                            "path": "relative/file.py",
+                                            "content": "complete file content",
+                                        },
                                     },
+                                    "execution_request": request_for_capabilities(
+                                        capabilities
+                                    ),
                                 },
-                                "execution_request": request,
-                            },
-                            ensure_ascii=False,
-                        )
+                                ensure_ascii=False,
+                            )
                     else:
                         self.progress.emit(
                             "↻",
                             "Requesting strict JSON regeneration automatically",
                         )
-                        current_prompt = strict_repair_request(
-                            request,
-                            raw_text,
-                            error,
-                            attempt + 1,
-                        )
+                        def current_renderer(
+                            capabilities,
+                            *,
+                            _raw_text=raw_text,
+                            _error=error,
+                            _attempt=attempt + 1,
+                        ):
+                            return strict_repair_request(
+                                request_for_capabilities(
+                                    capabilities
+                                ),
+                                _raw_text,
+                                _error,
+                                _attempt,
+                            )
+
+        exact_single_file = (
+            self._explicit_single_file_contract_path(
+                prompt
+            )
+        )
+
+        if exact_single_file is not None:
+            raise ProtocolError(
+                "strict planner failed for exact single-file "
+                f"contract {exact_single_file!r}; generic "
+                "artifact fallback is not permitted"
+            ) from last_error
 
         self.progress.emit("↻", "Strict planning failed; requesting a generic implementation bundle")
-        artifact_prompt = self._artifact_fallback_request(
-            prompt, context, objective, criteria, history, last_error
-        )
+        def artifact_renderer(capabilities):
+            return self._artifact_fallback_request(
+                prompt,
+                self._context_for_capabilities(
+                    capabilities
+                ),
+                objective,
+                criteria,
+                history,
+                last_error,
+            )
+
         try:
             with self.progress.waiting("🧩", "Generating implementation files from the active LLM"):
-                raw = self.backend(artifact_prompt, self._system("planner"))
+                raw = self._backend_for_capabilities(
+                    artifact_renderer,
+                    self._system("planner"),
+                )
             plan = self._plan_from_artifacts(raw, prompt)
             self._current_checks = list(plan.get("deterministic_checks", []))
             self._show_decision(plan)
@@ -309,6 +371,66 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
                 "planner and generic artifact generation both failed: "
                 f"planner={last_error}; artifacts={type(error).__name__}: {error}"
             ) from error
+
+    def _explicit_single_file_contract_path(
+        self,
+        prompt: str,
+    ) -> str | None:
+        """Return the one explicitly authorized workspace file, or None.
+
+        Recognition is intentionally narrow. Merely mentioning a path does
+        not authorize fail-closed exact-single-file behavior.
+        """
+        explicit = re.search(
+            r"""(?is)
+            \bcreate\s+exactly\s+one\s+file\s*:\s*
+            (?P<path>
+                (?:[A-Za-z0-9_.-]+/)*
+                [A-Za-z0-9_.-]+
+                \.(?:py|toml|md|json|yaml|yml|txt|ini|cfg|
+                    cpp|cc|cxx|h|hpp|js|ts|html|css)
+            )
+            """,
+            str(prompt or ""),
+            re.X,
+        )
+
+        if explicit is None:
+            return None
+
+        raw = (
+            explicit.group("path")
+            .strip()
+            .replace("\\", "/")
+        )
+
+        if not raw:
+            return None
+
+        candidate = Path(raw).expanduser()
+
+        if candidate.is_absolute():
+            return None
+
+        root = (
+            Path(self.workspace)
+            .expanduser()
+            .resolve()
+        )
+
+        resolved = (
+            root
+            / candidate
+        ).resolve()
+
+        try:
+            return (
+                resolved
+                .relative_to(root)
+                .as_posix()
+            )
+        except ValueError:
+            return None
 
     @staticmethod
     def _requested_workspace_files(
@@ -418,6 +540,535 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
 
         return verdict
 
+    def _deterministic_exact_single_file_prewrite_failure_verdict(
+        self,
+        prompt: str,
+        observation: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Fail deterministically when exact planning stopped before mutation."""
+        requested = (
+            self._explicit_single_file_contract_path(
+                prompt
+            )
+        )
+
+        if requested is None:
+            return None
+
+        if str(
+            observation.get("status") or ""
+        ).strip().lower() != "error":
+            return None
+
+        error_text = str(
+            observation.get("error") or ""
+        )
+
+        if (
+            "strict planner failed for exact single-file contract"
+            not in error_text
+        ):
+            return None
+
+        if (
+            "generic artifact fallback is not permitted"
+            not in error_text
+        ):
+            return None
+
+        report = getattr(
+            self.executor,
+            "report",
+            None,
+        )
+
+        files = (
+            list(getattr(report, "files", []) or [])
+            if report is not None
+            else []
+        )
+
+        commands = (
+            list(getattr(report, "commands", []) or [])
+            if report is not None
+            else []
+        )
+
+        if files or commands:
+            return None
+
+        root = (
+            Path(self.workspace)
+            .expanduser()
+            .resolve()
+        )
+
+        target = (
+            root
+            / requested
+        ).resolve()
+
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return None
+
+        if target.exists():
+            return None
+
+        return {
+            "goal_met": False,
+            "confidence": 1,
+            "missing_requirements": [
+                (
+                    "The exact requested file was not created "
+                    "because strict planning failed before any "
+                    "workspace action."
+                )
+            ],
+            "next_instruction": (
+                "Retry planning for the same exact "
+                "single-file contract."
+            ),
+            "final_answer": "",
+            "verification_mode": (
+                "deterministic_exact_single_file_"
+                "prewrite_failure"
+            ),
+            "mechanical_verification": {
+                "passed": False,
+                "results": [],
+            },
+        }
+
+    def _single_file_fastpath_is_filesystem_only(
+        self,
+        prompt: str,
+        requested_path: str,
+    ) -> bool:
+        """Allow full deterministic completion only for a narrow write contract.
+
+        Exact single-file recognition is deliberately broader because it also
+        protects planner failure from unsafe generic artifact fallback. Full
+        goal completion is narrower: filesystem evidence must be sufficient
+        to prove every user-visible requirement.
+        """
+        requested = str(
+            requested_path
+            or ""
+        ).strip().replace(
+            "\\",
+            "/",
+        )
+
+        if not requested:
+            return False
+
+        escaped = re.escape(
+            requested
+        )
+
+        pattern = rf"""(?isx)
+            \A\s*
+            create\s+exactly\s+one\s+file\s*:\s*
+            {escaped}
+            \s*
+            (?:
+                the\s+first\s+and\s+only\s+
+                workspace-changing\s+action\s+
+                must\s+be\s*:\s*
+                write_file\s+{escaped}
+                \s*
+            )?
+            (?:
+                do\s+not\s+modify\s+any\s+other\s+file\.
+                \s*
+            )?
+            success\s+means\s+only\s+that\s+
+            {escaped}\s+is\s+created\s+and\s+is\s+nonempty\.
+            \s*\Z
+        """
+
+        return (
+            re.fullmatch(
+                pattern,
+                str(prompt or ""),
+            )
+            is not None
+        )
+
+    def _deterministic_single_file_write_verdict(
+        self,
+        prompt: str,
+        observation: dict[str, Any],
+        *,
+        mechanical: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Finish only an explicit, fully evidenced one-file write contract.
+
+        This is intentionally narrower than the generic execution contract.
+        Any ambiguity falls through to the normal semantic verifier.
+        """
+        checks = list(
+            self._current_checks
+            or []
+        )
+
+        if checks:
+            if mechanical is None:
+                return None
+
+            if not isinstance(
+                mechanical,
+                dict,
+            ):
+                return None
+
+            if mechanical.get("passed") is not True:
+                return None
+
+            results = mechanical.get(
+                "results"
+            )
+
+            if not isinstance(
+                results,
+                list,
+            ):
+                return None
+
+            if len(results) != len(checks):
+                return None
+
+            for check, result in zip(
+                checks,
+                results,
+            ):
+                if not isinstance(
+                    result,
+                    dict,
+                ):
+                    return None
+
+                if result.get("passed") is not True:
+                    return None
+
+                if result.get("check") != check:
+                    return None
+
+        elif mechanical is not None:
+            return None
+
+        if bool(
+            getattr(
+                self,
+                "_requires_command",
+                False,
+            )
+        ):
+            return None
+
+        if str(
+            observation.get("status")
+            or ""
+        ).strip().lower() != "written":
+            return None
+
+        observed = observation.get("file")
+
+        if not isinstance(
+            observed,
+            dict,
+        ):
+            return None
+
+        observed_path = str(
+            observed.get("path")
+            or ""
+        ).strip().replace("\\", "/")
+
+        if not observed_path:
+            return None
+
+        requested_path = (
+            self._explicit_single_file_contract_path(
+                prompt
+            )
+        )
+
+        if requested_path is None:
+            return None
+
+        root = (
+            Path(self.workspace)
+            .expanduser()
+            .resolve()
+        )
+
+        def workspace_relative(
+            value: object,
+        ) -> str | None:
+            raw = str(
+                value
+                or ""
+            ).strip()
+
+            if not raw:
+                return None
+
+            candidate = (
+                Path(raw)
+                .expanduser()
+            )
+
+            if not candidate.is_absolute():
+                candidate = (
+                    root
+                    / candidate
+                )
+
+            resolved = candidate.resolve()
+
+            try:
+                return (
+                    resolved
+                    .relative_to(root)
+                    .as_posix()
+                )
+            except ValueError:
+                return None
+
+        requested_relative = (
+            workspace_relative(
+                requested_path
+            )
+        )
+
+        observed_relative = (
+            workspace_relative(
+                observed_path
+            )
+        )
+
+        if (
+            requested_relative is None
+            or observed_relative is None
+            or requested_relative
+            != observed_relative
+        ):
+            return None
+
+        if checks:
+            for check in checks:
+                if not isinstance(
+                    check,
+                    dict,
+                ):
+                    return None
+
+                kind = str(
+                    check.get("type")
+                    or ""
+                ).strip()
+
+                if kind not in {
+                    "file_exists",
+                    "contains",
+                }:
+                    return None
+
+                check_path = str(
+                    check.get("path")
+                    or ""
+                ).strip().replace(
+                    "\\",
+                    "/",
+                )
+
+                check_relative = (
+                    workspace_relative(
+                        check_path
+                    )
+                )
+
+                if (
+                    check_relative is None
+                    or check_relative
+                    != requested_relative
+                ):
+                    return None
+
+                if (
+                    kind == "contains"
+                    and not str(
+                        check.get("text")
+                        or ""
+                    )
+                ):
+                    return None
+
+        report = getattr(
+            self.executor,
+            "report",
+            None,
+        )
+
+        file_evidence = (
+            list(
+                getattr(
+                    report,
+                    "files",
+                    [],
+                )
+                or []
+            )
+            if report is not None
+            else []
+        )
+
+        if len(file_evidence) != 1:
+            return None
+
+        evidence = file_evidence[0]
+
+        evidence_path = str(
+            getattr(
+                evidence,
+                "path",
+                "",
+            )
+            or ""
+        ).strip().replace("\\", "/")
+
+        evidence_relative = (
+            workspace_relative(
+                evidence_path
+            )
+        )
+
+        if (
+            evidence_relative is None
+            or evidence_relative
+            != requested_relative
+        ):
+            return None
+
+        target = (
+            root
+            / requested_relative
+        ).resolve()
+
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return None
+
+        if not target.is_file():
+            return None
+
+        data = target.read_bytes()
+
+        if not data:
+            return None
+
+        evidence_size = getattr(
+            evidence,
+            "size",
+            None,
+        )
+
+        observed_size = observed.get(
+            "size"
+        )
+
+        if (
+            evidence_size is None
+            or observed_size is None
+            or int(evidence_size) != len(data)
+            or int(observed_size) != len(data)
+        ):
+            return None
+
+        from hashlib import sha256
+
+        digest = sha256(data).hexdigest()
+
+        evidence_sha = str(
+            getattr(
+                evidence,
+                "sha256",
+                "",
+            )
+            or ""
+        )
+
+        observed_sha = str(
+            observed.get("sha256")
+            or ""
+        )
+
+        if (
+            not evidence_sha
+            or not observed_sha
+            or evidence_sha != digest
+            or observed_sha != digest
+        ):
+            return None
+
+        mechanical_result = (
+            mechanical
+            if mechanical is not None
+            else {
+                "passed": None,
+                "results": [],
+            }
+        )
+
+        if not self._single_file_fastpath_is_filesystem_only(
+            prompt,
+            requested_relative,
+        ):
+            return {
+                "goal_met": False,
+                "confidence": 1,
+                "missing_requirements": [
+                    (
+                        "The requested file write is verified, "
+                        "but substantive content requirements "
+                        "are not proven by filesystem evidence."
+                    )
+                ],
+                "next_instruction": (
+                    "Audit the written file against the "
+                    "remaining content requirements."
+                ),
+                "final_answer": "",
+                "verification_mode": (
+                    "deterministic_single_file_"
+                    "content_unverified"
+                ),
+                "mechanical_verification": (
+                    mechanical_result
+                ),
+            }
+
+        return {
+            "goal_met": True,
+            "confidence": 1,
+            "missing_requirements": [],
+            "next_instruction": "",
+            "final_answer": (
+                "Objective completed with verified "
+                "single-file filesystem evidence."
+            ),
+            "verification_mode": (
+                "deterministic_single_file_write"
+            ),
+            "mechanical_verification": (
+                mechanical_result
+            ),
+        }
+
     def _verify(
         self,
         prompt: str,
@@ -427,6 +1078,27 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
         observation: dict[str, Any],
     ) -> dict[str, Any]:
         observation = dict(observation)
+
+        deterministic_failure = (
+            self._deterministic_exact_single_file_prewrite_failure_verdict(
+                prompt,
+                observation,
+            )
+        )
+
+        if deterministic_failure is not None:
+            return deterministic_failure
+
+        deterministic_verdict = (
+            self._deterministic_single_file_write_verdict(
+                prompt,
+                observation,
+            )
+        )
+
+        if deterministic_verdict is not None:
+            return deterministic_verdict
+
         if self._current_checks:
             observation["deterministic_checks"] = self._current_checks
 
@@ -438,6 +1110,18 @@ class StrictInteractiveCodingDoerRuntime(InteractiveCodingDoerRuntime):
             if self._current_checks
             else {"passed": None, "results": []}
         )
+
+        if self._current_checks:
+            deterministic_verdict = (
+                self._deterministic_single_file_write_verdict(
+                    prompt,
+                    observation,
+                    mechanical=mechanical,
+                )
+            )
+
+            if deterministic_verdict is not None:
+                return deterministic_verdict
 
         try:
             verdict = super()._verify(

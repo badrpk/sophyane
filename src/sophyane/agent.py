@@ -18,8 +18,13 @@ from sophyane.autonomous_builder import (
     run_inventory_workflow,
     supports_request as supports_autonomous_build,
 )
+from sophyane.context_builder import ContextBuilder, ContextPacket
 from sophyane.memory import MemoryStore
-from sophyane.providers.base import Provider, ProviderError
+from sophyane.providers.base import (
+    Provider,
+    ProviderCapabilities,
+    ProviderError,
+)
 from sophyane.router import Route, route
 from sophyane.tools import (
     list_directory,
@@ -394,6 +399,7 @@ class SophyaneAgent:
             or provider_id(self.provider)
         )
         local_mode = active_provider == "local_gguf"
+        context_packet: ContextPacket | None = None
 
         if local_mode:
             # Skip bulky memory dumps — they drown 0.5B–1B models.
@@ -401,33 +407,109 @@ class SophyaneAgent:
             prompt = "\n".join(sections)
             system = LOCAL_CHAT_SYSTEM_PROMPT
         else:
-            memory_context = self.memory.format_relevant(original_message)
-            if len(memory_context) > 1200:
-                memory_context = memory_context[:1200] + "\n…"
-            recent = self.memory.recent_messages(limit=4)
-            history_lines = []
-            for item in recent[:-1]:
-                content = str(item.get("content") or "")
-                if len(content) > 400:
-                    content = content[:400] + "…"
-                history_lines.append(f"{item['role']}: {content}")
+            memory_context = self.memory.format_relevant(
+                original_message
+            )
+            recent = self.memory.recent_messages(
+                limit=4
+            )
 
-            sections = []
+            history_lines: list[str] = []
+
+            for item in recent[:-1]:
+                role = str(
+                    item.get(
+                        "role",
+                        "",
+                    )
+                )
+                content = str(
+                    item.get(
+                        "content",
+                        "",
+                    )
+                    or ""
+                )
+
+                history_lines.append(
+                    f"{role}: {content}"
+                )
+
+            # SOPHYANE_AGENT_PROVIDER_AWARE_CHAT_CONTEXT_V1
+            #
+            # Keep semantic context units separate until provider admission.
+            # The current user request is immutable and pinned. Optional memory
+            # and conversation history may be omitted for genuinely bounded
+            # providers, but are not pre-truncated by arbitrary cloud limits.
+            packet = ContextPacket()
+
             if memory_context:
-                sections.append(memory_context)
+                packet.add(
+                    "Relevant memory:",
+                    memory_context,
+                    priority=50,
+                )
+
             if history_lines:
-                sections.append(
-                    "Recent conversation:\n" + "\n".join(history_lines)
+                packet.add(
+                    "Recent conversation:",
+                    "\n".join(
+                        history_lines
+                    ),
+                    priority=30,
                 )
-            sections.append(f"Current user request:\n{original_message}")
+
+            packet.add(
+                "Current user request:",
+                original_message,
+                priority=100,
+                pinned=True,
+            )
+
             if captured:
-                sections.append(
-                    "New memories saved during this request:\n"
-                    + "\n".join(f"- {item}" for item in captured)
+                packet.add(
+                    "New memories saved during this request:",
+                    "\n".join(
+                        f"- {item}"
+                        for item in captured
+                    ),
+                    priority=80,
                 )
-            prompt = "\n\n".join(sections)
-            if len(prompt) > 6000:
-                prompt = prompt[-6000:]
+
+            get_capabilities = getattr(
+                self.provider,
+                "get_capabilities",
+                None,
+            )
+
+            if callable(get_capabilities):
+                try:
+                    capabilities = get_capabilities()
+                except Exception:
+                    capabilities = ProviderCapabilities()
+            else:
+                capabilities = ProviderCapabilities()
+
+            if not isinstance(
+                capabilities,
+                ProviderCapabilities,
+            ):
+                capabilities = ProviderCapabilities()
+
+            context_packet = packet
+
+            # Keep a legacy rendering for providers that do not implement the
+            # structured-context entry point. FallbackProvider instead renders
+            # this packet independently for every attempted child.
+            prompt = ContextBuilder(
+                capabilities
+            ).build(packet).text
+
+            # SOPHYANE_PRESERVE_COMPLETE_CLOUD_REQUEST_CONTEXT_V1
+            #
+            # No fixed 1200/400/6000 character slices are applied to cloud
+            # conversation context. Provider-aware admission owns any omission,
+            # while the immutable request remains pinned.
             system = (
                 SYSTEM_PROMPT
                 + "\n\nSOPHYANE_RESPONSE_MODE: CHAT"
@@ -444,7 +526,27 @@ class SophyaneAgent:
                 pass
 
         try:
-            text = self.provider.generate(prompt, system)
+            # SOPHYANE_AGENT_STRUCTURED_FALLBACK_CONTEXT_V1
+            generate_context = getattr(
+                self.provider,
+                "generate_context",
+                None,
+            )
+
+            if (
+                not local_mode
+                and context_packet is not None
+                and callable(generate_context)
+            ):
+                text = generate_context(
+                    context_packet,
+                    system,
+                )
+            else:
+                text = self.provider.generate(
+                    prompt,
+                    system,
+                )
         except ProviderError as error:
             message = str(error).strip().lower()
             expected_cancellation = (

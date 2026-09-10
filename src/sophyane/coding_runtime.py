@@ -184,15 +184,85 @@ class RepositoryIndex:
         scored.sort(key=lambda item: (-item[0], json.dumps(item[1], sort_keys=True)))
         return [item for _, item in scored[: max(1, int(limit))]]
 
+    # SOPHYANE_RANKED_REPOSITORY_CONTEXT_V1
+    def _local_dependency_paths(self, relative: str) -> list[str]:
+        if not self.snapshot.files:
+            self.build()
+
+        available = set(self.snapshot.files)
+        dependencies: list[str] = []
+
+        for imported in self.snapshot.imports.get(relative, []):
+            module_path = imported.replace(".", "/")
+            candidates = (
+                f"{module_path}.py",
+                f"{module_path}/__init__.py",
+            )
+
+            for candidate in candidates:
+                if candidate in available and candidate not in dependencies:
+                    dependencies.append(candidate)
+                    break
+
+            # A repository may use a src/ package layout while imports omit
+            # the physical src prefix.
+            suffixes = (
+                f"/{module_path}.py",
+                f"/{module_path}/__init__.py",
+            )
+            for candidate in self.snapshot.files:
+                if candidate in dependencies:
+                    continue
+                if any(candidate.endswith(suffix) for suffix in suffixes):
+                    dependencies.append(candidate)
+                    break
+
+        return dependencies
+
+    def ranked_context_paths(
+        self,
+        query: str,
+        *,
+        limit: int = 12,
+    ) -> list[str]:
+        if not self.snapshot.files:
+            self.build()
+
+        direct: list[str] = []
+
+        for item in self.search(query, limit=max(30, int(limit) * 3)):
+            relative = str(item.get("path", ""))
+            if (
+                relative
+                and relative in self.snapshot.files
+                and relative not in direct
+            ):
+                direct.append(relative)
+
+            if len(direct) >= max(1, int(limit)):
+                break
+
+        ordered = list(direct)
+
+        # Expand only one deterministic local dependency neighborhood from
+        # directly relevant files. Direct matches always retain precedence.
+        for relative in direct:
+            for dependency in self._local_dependency_paths(relative):
+                if dependency not in ordered:
+                    ordered.append(dependency)
+                if len(ordered) >= max(1, int(limit)):
+                    return ordered
+
+        return ordered[: max(1, int(limit))]
+
     def context(self, query: str, *, max_chars: int = 16_000) -> str:
-        results = self.search(query, limit=30)
-        paths: list[str] = []
-        for item in results:
-            path = str(item.get("path", ""))
-            if path and path not in paths:
-                paths.append(path)
-        chunks: list[str] = []
-        used = 0
+        paths = self.ranked_context_paths(query, limit=12)
+        if not paths:
+            return ""
+
+        budget = max(1, int(max_chars))
+        readable: list[tuple[str, str]] = []
+
         for relative in paths:
             path = (self.root / relative).resolve()
             if self.root not in path.parents and path != self.root:
@@ -201,12 +271,29 @@ class RepositoryIndex:
                 text = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
                 continue
-            allowance = max_chars - used
-            if allowance <= 0:
+            readable.append((relative, text))
+
+        if not readable:
+            return ""
+
+        chunks: list[str] = []
+        used = 0
+
+        # Fair-share admission prevents one large high-ranked file from
+        # consuming the complete repository-context allowance. Unused share
+        # naturally becomes available to later files through remaining_budget.
+        for index, (relative, text) in enumerate(readable):
+            remaining_budget = budget - used
+            if remaining_budget <= 0:
                 break
+
+            remaining_files = len(readable) - index
+            allowance = max(1, remaining_budget // remaining_files)
             excerpt = text[:allowance]
+
             chunks.append(f"### {relative}\n{excerpt}")
             used += len(excerpt)
+
         return "\n\n".join(chunks)
 
 

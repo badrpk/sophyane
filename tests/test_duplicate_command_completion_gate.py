@@ -127,3 +127,53 @@ def test_pytest_duplicate_can_still_be_meaningful_verification():
         command,
         synthetic,
     )
+
+
+# SOPHYANE_PROCESS_OBSERVATION_NONTERMINAL_REGRESSION_V1
+def test_process_observation_commands_are_inspection_only():
+    commands = [
+        "ps -ef",
+        "ps -ef | grep -E '[l]ake build NavierStokes|[l]ean'",
+        "pgrep -af 'lake build NavierStokes'",
+        "pidof lean",
+        "pstree -p 11799",
+    ]
+
+    for command in commands:
+        assert adaptive._is_read_only_inspection_command(
+            command
+        ), command
+
+
+def test_live_build_ps_success_cannot_complete_project_verification():
+    command = (
+        "ps -ef | grep -E "
+        "'[l]ake build NavierStokes|[l]ean .*/NavierStokes/'"
+    )
+
+    synthetic = (
+        f"Command: {command}\n"
+        "Exit code: 0\n"
+        "STDOUT:\n"
+        "u0_a511 11799 11593 0 pts/4 lake build NavierStokes\n"
+        "u0_a511 7169 11799 13 pts/4 lean NavierStokes/PulseGrowth.lean\n"
+        "STDERR:\n"
+    )
+
+    meaningful = adaptive.verification_result_is_meaningful(
+        command,
+        synthetic,
+    )
+
+    allowed_to_complete = (
+        not adaptive._is_read_only_inspection_command(
+            command
+        )
+        and meaningful
+    )
+
+    assert adaptive._is_read_only_inspection_command(
+        command
+    )
+
+    assert allowed_to_complete is False

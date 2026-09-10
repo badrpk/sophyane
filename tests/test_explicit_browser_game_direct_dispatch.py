@@ -85,3 +85,37 @@ def test_existing_project_does_not_disable_browser_game_shortcut():
     assert "_direct_browser_game" in section
     assert "tui_v2.run_structured_loop(" in section
 
+
+
+def test_frontend_commerce_request_routes_to_browser_artifact():
+    from sophyane.adaptive_execution import _browser_request
+
+    request = (
+        "Build a complete high-fidelity frontend/admin commerce experience. "
+        "Provide functional client-side navigation and simulated ecommerce workflows."
+    )
+    assert _browser_request(request) is True
+
+
+def test_client_side_browser_prototype_routes_to_browser_artifact():
+    from sophyane.adaptive_execution import _browser_request
+
+    assert _browser_request(
+        "Create a polished client-side commerce prototype with navigation"
+    ) is True
+
+
+def test_repository_frontend_implementation_keeps_repository_authority():
+    from sophyane.adaptive_execution import _browser_request
+
+    assert _browser_request(
+        "Inspect the existing repository and implement the frontend changes"
+    ) is False
+
+
+def test_frontend_with_api_and_persistence_is_not_browser_only():
+    from sophyane.adaptive_execution import _browser_request
+
+    assert _browser_request(
+        "Build a frontend with REST API endpoints and a persistent SQLite database"
+    ) is False

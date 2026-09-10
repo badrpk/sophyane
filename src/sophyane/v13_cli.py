@@ -347,7 +347,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-steps", type=int, default=16, help="maximum planner-executor-verifier cycles")
     parser.add_argument(
         "--workspace",
-        default=".",
+        default=os.environ.get("SOPHYANE_LAUNCH_DIR", "."),
         help="repository or directory in which approved edits and commands execute",
     )
     parser.add_argument(
@@ -1362,7 +1362,30 @@ def main() -> int:
     looks_like_coding = bool(execution_intent) or any(
         token in lower_prompt for token in coding_markers
     )
-    force_chat = provider_id == "local_gguf" and not looks_like_coding
+
+    # SOPHYANE_MODE3_COMPARE_DIRECT_BENCHMARK_V1
+    #
+    # Compare mode is a direct model benchmark, not a repository execution
+    # workflow. A prompt such as "write a Python function" must therefore be
+    # sent exactly once to the comparison provider instead of entering the
+    # strict coding planner/repair/verifier pipeline, which can multiply one
+    # benchmark turn into several expensive local generations.
+    local_profile = str(
+        os.environ.get("SOPHYANE_LOCAL_PROFILE") or ""
+    ).strip().lower()
+
+    compare_benchmark = (
+        provider_id == "local_gguf"
+        and local_profile == "compare"
+    )
+
+    force_chat = (
+        compare_benchmark
+        or (
+            provider_id == "local_gguf"
+            and not looks_like_coding
+        )
+    )
     if not force_chat and len(original_prompt) < 240:
         stripped = lower_prompt.strip()
         if stripped.endswith("?") or stripped.startswith(
@@ -1481,6 +1504,54 @@ def main() -> int:
 
         return provider.generate(prompt, system)
 
+    # SOPHYANE_CODING_BACKEND_CAPABILITY_RENDERER_V1
+    def backend_for_capabilities(
+        renderer,
+        system: str,
+    ) -> str:
+        generate_for_capabilities = getattr(
+            provider,
+            "generate_for_capabilities",
+            None,
+        )
+
+        if callable(generate_for_capabilities):
+            return generate_for_capabilities(
+                renderer,
+                system,
+                local_rescue_timeout=60,
+                local_rescue_budget=coding_local_rescue_budget,
+            )
+
+        getter = getattr(
+            provider,
+            "get_capabilities",
+            None,
+        )
+        try:
+            capabilities = getter() if callable(getter) else None
+        except Exception:
+            capabilities = None
+
+        from sophyane.providers.base import ProviderCapabilities
+
+        if not isinstance(
+            capabilities,
+            ProviderCapabilities,
+        ):
+            capabilities = ProviderCapabilities()
+
+        return backend(
+            renderer(capabilities),
+            system,
+        )
+
+    setattr(
+        backend,
+        "generate_for_capabilities",
+        backend_for_capabilities,
+    )
+
     if args.single_agent or args.multi_agent:
         mode = "multi" if args.multi_agent else "single"
         policy = _execution_policy(args.approval_timeout, not args.no_auto_continue)
@@ -1556,6 +1627,8 @@ def main() -> int:
         max_steps=args.max_steps,
         protocol_attempts=args.protocol_attempts,
         progress=progress,
+        # SOPHYANE_CODING_PROVIDER_CAPABILITY_WIRING_V1
+        capabilities=getattr(provider, "get_capabilities", None),
     )
     run_started = time.perf_counter()
     result = runtime.run(original_prompt)

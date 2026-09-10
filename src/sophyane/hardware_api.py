@@ -20,6 +20,13 @@ from sophyane.hardware_registry import (
 from sophyane.kernel import boot_kernel
 from sophyane.kernel.app_factory import create_app
 from sophyane.kernel.erp import erp_query, list_erp_systems, probe_all_erp, probe_erp
+from sophyane.native_readonly_capabilities import native_sensor_capabilities
+from sophyane.native_sensor_actions import (
+    probe_and_record_camera_capture,
+    probe_and_record_microphone_capture,
+    probe_and_record_speech_to_text,
+)
+from sophyane.native_sensor_evidence import attach_sensor_probe_evidence
 from sophyane.platform_probe import format_platform_report, probe_platform
 from sophyane.version import __version__
 
@@ -58,6 +65,94 @@ class HardwareAPI:
     def software(self) -> dict[str, Any]:
         report = hardware_compatibility_report()
         return {"open_software": report.get("open_software", [])}
+
+    def sensors(self) -> dict[str, Any]:
+        """Return read-only discovery plus cached active sensor evidence."""
+        report = native_sensor_capabilities()
+        return attach_sensor_probe_evidence(report)
+
+    def camera_probe(
+        self,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Run one explicit bounded Android camera capture."""
+
+        params = params or {}
+
+        wait_raw = params.get(
+            "wait_seconds",
+            60,
+        )
+
+        if (
+            isinstance(wait_raw, bool)
+            or not isinstance(wait_raw, int)
+            or not 1 <= wait_raw <= 120
+        ):
+            return {
+                "ok": False,
+                "error": (
+                    "wait_seconds must be an integer "
+                    "from 1 to 120"
+                ),
+            }
+
+        result = probe_and_record_camera_capture(
+            wait_seconds=wait_raw,
+        )
+
+        return {
+            "ok": True,
+            "result": result,
+        }
+
+
+    def microphone_probe(
+        self,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Run one explicit bounded microphone probe."""
+
+        params = params or {}
+
+        duration_raw = params.get(
+            "duration_seconds",
+            1,
+        )
+
+        if (
+            isinstance(duration_raw, bool)
+            or not isinstance(duration_raw, int)
+            or not 1 <= duration_raw <= 10
+        ):
+            return {
+                "ok": False,
+                "error": (
+                    "duration_seconds must be an integer "
+                    "from 1 to 10"
+                ),
+            }
+
+        result = probe_and_record_microphone_capture(
+            duration_seconds=duration_raw,
+        )
+
+        return {
+            "ok": True,
+            "result": result,
+        }
+
+    def speech_to_text_probe(
+        self,
+    ) -> dict[str, Any]:
+        """Run one explicit bounded speech recognition operation."""
+
+        result = probe_and_record_speech_to_text()
+
+        return {
+            "ok": True,
+            "result": result,
+        }
 
     def chat(self, message: str, *, edge: bool = False) -> dict[str, Any]:
         if not self._generate:
@@ -156,9 +251,19 @@ class HardwareAPI:
             "hardware": self.hardware,
             "backends": self.backends,
             "software": self.software,
+            "sensors": self.sensors,
             "kernel": self.kernel,
             "improve_status": self.improve_status,
         }
+        if method == "camera_probe":
+            return self.camera_probe(params)
+
+        if method == "microphone_probe":
+            return self.microphone_probe(params)
+
+        if method == "speech_to_text_probe":
+            return self.speech_to_text_probe()
+
         if method == "chat":
             return self.chat(
                 str(params.get("message") or params.get("prompt") or ""),
@@ -266,6 +371,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/v1/hardware/compat": "hardware",
             "/v1/hardware/backends": "backends",
             "/v1/hardware/software": "software",
+            "/v1/hardware/sensors": "sensors",
             "/v1/hardware/report": "report_text",
             "/v1/kernel": "kernel",
             "/v1/kernel/status": "kernel",
@@ -288,6 +394,36 @@ class _Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._send(400, {"ok": False, "error": "invalid json"})
             return
+        if path == "/v1/hardware/sensors/camera/probe":
+            self._send(
+                200,
+                self._safe_dispatch(
+                    "camera_probe",
+                    params if isinstance(params, dict) else {},
+                ),
+            )
+            return
+
+        if path == "/v1/hardware/sensors/microphone/probe":
+            self._send(
+                200,
+                self._safe_dispatch(
+                    "microphone_probe",
+                    params if isinstance(params, dict) else {},
+                ),
+            )
+            return
+
+        if path == "/v1/hardware/sensors/speech-to-text/probe":
+            self._send(
+                200,
+                self._safe_dispatch(
+                    "speech_to_text_probe",
+                    {},
+                ),
+            )
+            return
+
         if path in {"/v1/hardware/chat", "/v1/chat"}:
             self._send(200, self._safe_dispatch("chat", params if isinstance(params, dict) else {}))
             return

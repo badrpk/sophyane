@@ -1,0 +1,566 @@
+==============================================================================
+SOPHYANE MODE-3 LOCAL MODEL BENCHMARK
+Qwen2.5-1.5B vs Spark-X2.5-4B
+10 tasks, increasing coding difficulty
+Started: 2026-09-07T20:00:19
+==============================================================================
+
+Ensuring both local servers are ready...
+SERVERS_READY=PASS
+
+==============================================================================
+TASK 1/10 — Very Easy
+==============================================================================
+Write a Python function `is_even(n)` that returns `True` if `n` is even and `False` otherwise. Return only the code.
+
+LOCAL MODEL COMPARISON
+
+=== Qwen2.5-1.5B ===
+elapsed=0.948s, completion_tokens=20, tokens/sec=23.21, characters=51
+
+```python
+def is_even(n):
+    return n % 2 == 0
+```
+
+=== Spark-X2.5-4B ===
+elapsed=10.491s, completion_tokens=151, tokens/sec=14.68, characters=51
+
+```python
+def is_even(n):
+    return n % 2 == 0
+```
+
+=== Comparison ===
+Faster: Qwen2.5-1.5B
+Longer output: Qwen2.5-1.5B
+Execution: sequential; identical prompt/system/temperature/max_tokens; Spark reasoning budget=128 tokens.
+
+TASK_TOTAL_WALL=11.445s
+
+==============================================================================
+TASK 2/10 — Easy
+==============================================================================
+Write a Python function `reverse_string(s)` that returns the input string reversed. Do not use `reversed()`. Return only the code.
+
+LOCAL MODEL COMPARISON
+
+=== Qwen2.5-1.5B ===
+elapsed=1.878s, completion_tokens=35, tokens/sec=23.08, characters=144
+
+```python
+def reverse_string(s):
+    reversed_str = ""
+    for char in s:
+        reversed_str = char + reversed_str
+    return reversed_str
+```
+
+=== Spark-X2.5-4B ===
+elapsed=11.514s, completion_tokens=149, tokens/sec=14.03, characters=55
+
+```python
+def reverse_string(s):
+    return s[::-1]
+```
+
+=== Comparison ===
+Faster: Qwen2.5-1.5B
+Longer output: Qwen2.5-1.5B
+Execution: sequential; identical prompt/system/temperature/max_tokens; Spark reasoning budget=128 tokens.
+
+TASK_TOTAL_WALL=13.398s
+
+==============================================================================
+TASK 3/10 — Easy+
+==============================================================================
+Write a Python function `count_vowels(s)` that returns the number of vowels in a string, case-insensitively. Treat only a,e,i,o,u as vowels. Return only the code.
+
+LOCAL MODEL COMPARISON
+
+=== Qwen2.5-1.5B ===
+elapsed=2.055s, completion_tokens=36, tokens/sec=22.49, characters=110
+
+```python
+def count_vowels(s):
+    vowels = "aeiouAEIOU"
+    return sum(1 for char in s if char in vowels)
+```
+
+=== Spark-X2.5-4B ===
+elapsed=12.493s, completion_tokens=144, tokens/sec=12.71, characters=163
+
+```python
+def count_vowels(s):
+    vowels = "aeiou"
+    count = 0
+    for char in s.lower():
+        if char in vowels:
+            count += 1
+    return count
+```
+
+=== Comparison ===
+Faster: Qwen2.5-1.5B
+Longer output: Spark-X2.5-4B
+Execution: sequential; identical prompt/system/temperature/max_tokens; Spark reasoning budget=128 tokens.
+
+TASK_TOTAL_WALL=14.555s
+
+==============================================================================
+TASK 4/10 — Medium-
+==============================================================================
+Write a Python function `unique_preserve_order(items)` that removes duplicates while preserving the first occurrence order. It must work for hashable values. Return only the code.
+
+LOCAL MODEL COMPARISON
+
+=== Qwen2.5-1.5B ===
+elapsed=15.060s, completion_tokens=48, tokens/sec=16.40, characters=209
+
+```python
+def unique_preserve_order(items):
+    seen = set()
+    result = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+```
+
+=== Spark-X2.5-4B ===
+elapsed=14.791s, completion_tokens=185, tokens/sec=13.30, characters=209
+
+```python
+def unique_preserve_order(items):
+    seen = set()
+    result = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+```
+
+=== Comparison ===
+Faster: Spark-X2.5-4B
+Longer output: Qwen2.5-1.5B
+Execution: sequential; identical prompt/system/temperature/max_tokens; Spark reasoning budget=128 tokens.
+
+TASK_TOTAL_WALL=29.857s
+
+==============================================================================
+TASK 5/10 — Medium
+==============================================================================
+Write a Python function `is_balanced(s)` that returns `True` only when (), [], and {} brackets are correctly balanced and nested. Ignore all non-bracket characters. Return only the code.
+
+LOCAL MODEL COMPARISON
+
+=== Qwen2.5-1.5B ===
+elapsed=5.704s, completion_tokens=78, tokens/sec=22.51, characters=332
+
+```python
+def is_balanced(s):
+    stack = []
+    brackets = {'(': ')', '[': ']', '{': '}'}
+    
+    for char in s:
+        if char in brackets:
+            stack.append(char)
+        elif char in brackets.values():
+            if not stack or brackets[stack.pop()] != char:
+                return False
+    
+    return not stack
+```
+
+=== Spark-X2.5-4B ===
+elapsed=21.687s, completion_tokens=226, tokens/sec=10.94, characters=313
+
+```python
+def is_balanced(s):
+    stack = []
+    pairs = {')': '(', ']': '[', '}': '{'}
+    for ch in s:
+        if ch in '([{':
+            stack.append(ch)
+        elif ch in ')]}':
+            if not stack or stack[-1] != pairs[ch]:
+                return False
+            stack.pop()
+    return not stack
+```
+
+=== Comparison ===
+Faster: Qwen2.5-1.5B
+Longer output: Qwen2.5-1.5B
+Execution: sequential; identical prompt/system/temperature/max_tokens; Spark reasoning budget=128 tokens.
+
+TASK_TOTAL_WALL=27.397s
+
+==============================================================================
+TASK 6/10 — Medium+
+==============================================================================
+Write a Python function `merge_intervals(intervals)` where intervals is a list of [start, end] pairs. Merge all overlapping intervals and return them sorted by start. Touching intervals such as [1,2] and [2,3] must also merge. Return only the code.
+
+LOCAL MODEL COMPARISON
+
+=== Qwen2.5-1.5B ===
+elapsed=19.297s, completion_tokens=240, tokens/sec=12.97, characters=1171
+
+```python
+def merge_intervals(intervals):
+    if not intervals:
+        return []
+    
+    # Sort intervals by their start time
+    intervals.sort(key=lambda x: x[0])
+    
+    merged = []
+    current_interval = intervals[0]
+    
+    for interval in intervals[1:]:
+        if interval[0] <= current_interval[1]:
+            # Merge overlapping intervals
+            current_interval[1] = max(current_interval[1], interval[1])
+        else:
+            # Add the current interval to the merged list
+            merged.append(current_interval)
+            current_interval = interval
+    
+    # Add the last interval to the merged list
+    merged.append(current_interval)
+    
+    return merged
+```
+
+This function first checks if the input list of intervals is empty and returns an empty list if true. It then sorts the intervals by their start time. It initializes a list `merged` to store the merged intervals and a variable `current_interval` to keep track of the current interval being processed. It iterates through the sorted intervals, merging overlapping intervals and adding the non-overlapping intervals to the `merged` list. Finally, it returns the `merged` list.
+
+=== Spark-X2.5-4B ===
+elapsed=24.686s, completion_tokens=258, tokens/sec=11.22, characters=539
+
+```python
+def merge_intervals(intervals):
+    if not intervals:
+        return []
+    
+    intervals.sort(key=lambda x: x[0])
+    
+    merged = []
+    current_start, current_end = intervals[0]
+    
+    for start, end in intervals[1:]:
+        if start <= current_end:  # overlapping or touching
+            current_end = max(current_end, end)
+        else:
+            merged.append([current_start, current_end])
+            current_start, current_end = start, end
+    
+    merged.append([current_start, current_end])
+    return merged
+```
+
+=== Comparison ===
+Faster: Qwen2.5-1.5B
+Longer output: Qwen2.5-1.5B
+Execution: sequential; identical prompt/system/temperature/max_tokens; Spark reasoning budget=128 tokens.
+
+TASK_TOTAL_WALL=43.991s
+
+==============================================================================
+TASK 7/10 — Hard-
+==============================================================================
+Implement a Python class `LRUCache` with `__init__(capacity)`, `get(key)`, and `put(key, value)`. `get` returns -1 when absent. Both get and put should be O(1) average time. Do not use functools.lru_cache. Return only the code.
+
+LOCAL MODEL COMPARISON
+
+=== Qwen2.5-1.5B ===
+elapsed=21.227s, completion_tokens=237, tokens/sec=12.28, characters=1073
+
+```python
+class LRUCache:
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.cache = {}
+        self.order = []
+
+    def get(self, key):
+        if key in self.cache:
+            self.order.remove(key)
+            self.order.append(key)
+            return self.cache[key]
+        return -1
+
+    def put(self, key, value):
+        if key in self.cache:
+            self.order.remove(key)
+            self.order.append(key)
+            self.cache[key] = value
+        else:
+            if len(self.cache) == self.capacity:
+                self.cache.pop(self.order.pop(0))
+            self.cache[key] = value
+            self.order.append(key)
+```
+
+This implementation uses a dictionary to store the key-value pairs and a list to maintain the order of access. The `get` method checks if the key exists in the cache. If it does, it removes the key from the order list and adds it back to the end. The `put` method adds a new key-value pair to the cache. If the cache is at its capacity, it removes the oldest key from the order list and the cache.
+
+=== Spark-X2.5-4B ===
+elapsed=56.468s, completion_tokens=512, tokens/sec=9.42, characters=1480
+
+```python
+class LRUCache:
+    class Node:
+        def __init__(self, key, value):
+            self.key = key
+            self.value = value
+            self.prev = None
+            self.next = None
+
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        self.cache = {}
+        self.head = self.Node(None, None)
+        self.tail = self.Node(None, None)
+        self.head.next = self.tail
+        self.tail.prev = self.head
+
+    def _remove(self, node):
+        prev_node = node.prev
+        next_node = node.next
+        prev_node.next = next_node
+        next_node.prev = prev_node
+
+    def _add_to_head(self, node):
+        node.prev = self.head
+        node.next = self.head.next
+        self.head.next.prev = node
+        self.head.next = node
+
+    def get(self, key: int) -> int:
+        if key not in self.cache:
+            return -1
+        node = self.cache[key]
+        self._remove(node)
+        self._add_to_head(node)
+        return node.value
+
+    def put(self, key: int, value: int) -> None:
+        if key in self.cache:
+            node = self.cache[key]
+            node.value = value
+            self._add_to_head(node)
+            return
+        new_node = self.Node(key, value)
+        self.cache[key] = new_node
+        self._add_to_head(new_node)
+        if len(self.cache) > self.capacity:
+            tail = self.tail.prev
+            self._remove(tail)
+            del self.cache[tail.key]
+            self.tail.prev = self.head
+
+=== Comparison ===
+Faster: Qwen2.5-1.5B
+Longer output: Spark-X2.5-4B
+Execution: sequential; identical prompt/system/temperature/max_tokens; Spark reasoning budget=128 tokens.
+
+TASK_TOTAL_WALL=77.704s
+
+==============================================================================
+TASK 8/10 — Hard
+==============================================================================
+Write a Python function `shortest_paths(graph, start)` implementing Dijkstra's algorithm. `graph` is a dict mapping each node to a list of `(neighbor, weight)` pairs with non-negative weights. Return a dict containing the shortest distance from start to every reachable node. Return only the code.
+
+LOCAL MODEL COMPARISON
+
+=== Qwen2.5-1.5B ===
+elapsed=32.147s, completion_tokens=315, tokens/sec=14.28, characters=1622
+
+```python
+import heapq
+
+def shortest_paths(graph, start):
+    # Initialize distances with infinity, except for the start node
+    distances = {node: float('inf') for node in graph}
+    distances[start] = 0
+    
+    # Priority queue to store nodes to visit, with the smallest distance first
+    priority_queue = [(0, start)]
+    
+    while priority_queue:
+        current_distance, current_node = heapq.heappop(priority_queue)
+        
+        # If the current distance is greater than the known distance, skip this node
+        if current_distance > distances[current_node]:
+            continue
+        
+        # Explore all neighbors of the current node
+        for neighbor, weight in graph[current_node]:
+            distance = current_distance + weight
+            
+            # If a shorter path is found, update the distance and add to the priority queue
+            if distance < distances[neighbor]:
+                distances[neighbor] = distance
+                heapq.heappush(priority_queue, (distance, neighbor))
+    
+    return distances
+```
+
+This function uses a priority queue to efficiently find the shortest path to each reachable node from the start node. It initializes the distances to infinity except for the start node, which is set to 0. The priority queue is used to always process the node with the smallest known distance. As it explores each neighbor, it updates the distance if a shorter path is found, and adds the neighbor to the priority queue if it hasn't been visited before. The function returns a dictionary containing the shortest distance from the start node to every reachable node.
+
+=== Spark-X2.5-4B ===
+elapsed=31.066s, completion_tokens=288, tokens/sec=9.95, characters=600
+
+```python
+import heapq
+
+def shortest_paths(graph, start):
+    distances = {node: float('inf') for node in graph}
+    distances[start] = 0
+    pq = [(0, start)]
+    visited = set()
+    
+    while pq:
+        current_dist, u = heapq.heappop(pq)
+        if u in visited:
+            continue
+        visited.add(u)
+        for v, weight in graph[u]:
+            if v not in visited:
+                new_dist = current_dist + weight
+                if new_dist < distances[v]:
+                    distances[v] = new_dist
+                    heapq.heappush(pq, (new_dist, v))
+    
+    return distances
+```
+
+=== Comparison ===
+Faster: Spark-X2.5-4B
+Longer output: Qwen2.5-1.5B
+Execution: sequential; identical prompt/system/temperature/max_tokens; Spark reasoning budget=128 tokens.
+
+TASK_TOTAL_WALL=63.227s
+
+==============================================================================
+TASK 9/10 — Hard+
+==============================================================================
+Write a Python function `topological_sort(graph)` where graph is a dict mapping each node to an iterable of outgoing neighbors. Return a valid topological ordering containing every node, including nodes that appear only as neighbors. If the graph contains a directed cycle, raise `ValueError`. Return only the code.
+
+LOCAL MODEL COMPARISON
+
+=== Qwen2.5-1.5B ===
+elapsed=32.335s, completion_tokens=268, tokens/sec=8.52, characters=1245
+
+```python
+def topological_sort(graph):
+    # Helper function to perform DFS and detect cycles
+    def dfs(node, visited, stack):
+        visited[node] = True
+        stack.append(node)
+        for neighbor in graph[node]:
+            if not visited[neighbor]:
+                dfs(neighbor, visited, stack)
+            elif neighbor in stack:
+                raise ValueError("Graph contains a directed cycle")
+        stack.pop()
+
+    # Initialize visited and stack
+    visited = {node: False for node in graph}
+    stack = []
+
+    # Perform DFS for each unvisited node
+    for node in graph:
+        if not visited[node]:
+            dfs(node, visited, stack)
+
+    # If the stack is empty, the graph is acyclic
+    if not stack:
+        return list(stack)
+    else:
+        raise ValueError("Graph contains a directed cycle")
+```
+
+This function uses a depth-first search (DFS) approach to detect cycles in the graph. It iterates through each node, marking it as visited and pushing it onto a stack. If it encounters a node that is already in the stack, it indicates a cycle. If the stack is empty after processing all nodes, the graph is acyclic, and the function returns the topological order. If a cycle is detected, it raises a `ValueError`.
+
+=== Spark-X2.5-4B ===
+elapsed=125.100s, completion_tokens=407, tokens/sec=3.41, characters=1120
+
+```python
+def topological_sort(graph):
+    # Build adjacency list and in-degree map
+    adj = {}
+    in_degree = {}
+    nodes = set()
+    
+    for node, neighbors in graph.items():
+        nodes.add(node)
+        adj[node] = list(neighbors)
+        for neighbor in neighbors:
+            nodes.add(neighbor)
+            in_degree[neighbor] = in_degree.get(neighbor, 0) + 1
+    
+    # Initialize queue with nodes having in-degree 0
+    queue = [node for node in nodes if in_degree.get(node, 0) == 0]
+    result = []
+    
+    while queue:
+        # Process nodes in the current level (or any order)
+        current_level = queue
+        queue = []
+        
+        for node in current_level:
+            result.append(node)
+            # Decrease in-degree of neighbors
+            for neighbor in adj[node]:
+                in_degree[neighbor] -= 1
+                if in_degree[neighbor] == 0:
+                    queue.append(neighbor)
+    
+    # If result doesn't contain all nodes, there's a cycle
+    if len(result) != len(nodes):
+        raise ValueError("Graph contains a directed cycle")
+    
+    return result
+```
+
+=== Comparison ===
+Faster: Qwen2.5-1.5B
+Longer output: Qwen2.5-1.5B
+Execution: sequential; identical prompt/system/temperature/max_tokens; Spark reasoning budget=128 tokens.
+
+TASK_TOTAL_WALL=157.446s
+
+==============================================================================
+TASK 10/10 — Advanced
+==============================================================================
+Write a Python function `longest_common_subsequence(a, b)` that returns one actual longest common subsequence string, not merely its length. Use dynamic programming. If several LCS strings have the same maximum length, returning any one is acceptable. Return only the code.
+
+BENCHMARK_ERROR after 431.054s: ProviderError: Request timed out after 300 seconds.
+
+
+==============================================================================
+FINAL PERFORMANCE SUMMARY
+==============================================================================
+Task  Level          Qwen(s)   Spark(s)    Winner    Q tok    S tok
+------------------------------------------------------------------------------
+1     Very Easy        0.948     10.491      Qwen       20      151
+2     Easy             1.878     11.514      Qwen       35      149
+3     Easy+            2.055     12.493      Qwen       36      144
+4     Medium-         15.060     14.791     Spark       48      185
+5     Medium           5.704     21.687      Qwen       78      226
+6     Medium+         19.297     24.686      Qwen      240      258
+7     Hard-           21.227     56.468      Qwen      237      512
+8     Hard            32.147     31.066     Spark      315      288
+9     Hard+           32.335    125.100      Qwen      268      407
+
+TASKS_COMPLETED=9/10
+QWEN_SPEED_WINS=7
+SPARK_SPEED_WINS=2
+QWEN_TOTAL_MODEL_TIME=130.651s
+SPARK_TOTAL_MODEL_TIME=308.296s
+OVERALL_SPEED_WINNER=Qwen2.5-1.5B
+QWEN_OVERALL_SPEED_ADVANTAGE=2.36x
+
+BENCHMARK_COMPLETE=PASS

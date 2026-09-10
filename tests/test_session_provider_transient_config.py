@@ -92,7 +92,7 @@ def test_mode3_source_is_transient():
     )
 
     assert (
-        'os.environ["SOPHYANE_SESSION_MODEL"] = local_model'
+        'os.environ["SOPHYANE_SESSION_MODEL"] = selected_model'
         in window
     )
 

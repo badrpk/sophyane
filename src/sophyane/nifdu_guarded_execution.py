@@ -78,7 +78,24 @@ def parse_file_write_proposal(
             "NIFDU proposal path is empty"
         )
 
-    if lines[2].strip() != _CONTENT:
+    # SOPHYANE_NIFDU_INLINE_CONTENT_CONTRACT_V1
+    #
+    # ChatGPT may preserve the WRITE_FILE contract while rendering the first
+    # content line on the same line as the content: header:
+    #
+    #     content: print("example")
+    #
+    # Accept that narrow serialization variant without weakening the outer
+    # WRITE_FILE/path/END_WRITE_FILE contract.
+    content_line = lines[2]
+    content_header = content_line.strip()
+
+    if not (
+        content_header == _CONTENT
+        or content_header.startswith(
+            _CONTENT + " "
+        )
+    ):
         raise NifduExecutionError(
             "NIFDU proposal is missing content:"
         )
@@ -88,8 +105,26 @@ def parse_file_write_proposal(
             "NIFDU proposal must end with END_WRITE_FILE"
         )
 
-    content = "\n".join(
+    inline_content = ""
+
+    if content_header != _CONTENT:
+        inline_content = content_header[
+            len(_CONTENT):
+        ].lstrip()
+
+    content_lines = []
+
+    if inline_content:
+        content_lines.append(
+            inline_content
+        )
+
+    content_lines.extend(
         lines[3:-1]
+    )
+
+    content = "\n".join(
+        content_lines
     )
 
     # Preserve a normal text-file trailing newline.
@@ -129,23 +164,20 @@ def _resolve_target(
             "unsafe path component"
         )
 
-    # Keep the first execution contract intentionally narrow.
-    if len(raw.parts) != 1:
-        raise NifduExecutionError(
-            "nested paths are not allowed by this gate"
-        )
+    # SOPHYANE_NIFDU_SAFE_NESTED_PYTHON_PATH_V1
+    #
+    # Permit workspace-relative nested Python paths while keeping every path
+    # component narrow and rejecting traversal/absolute paths above.
+    for part in raw.parts:
+        if not re.fullmatch(
+            r"[A-Za-z0-9_.-]+",
+            part,
+        ):
+            raise NifduExecutionError(
+                "unsafe path component"
+            )
 
-    name = raw.name
-
-    if not re.fullmatch(
-        r"[A-Za-z0-9_.-]+",
-        name,
-    ):
-        raise NifduExecutionError(
-            "unsafe filename"
-        )
-
-    if not name.endswith(
+    if not raw.name.endswith(
         ".py"
     ):
         raise NifduExecutionError(
@@ -154,7 +186,7 @@ def _resolve_target(
 
     target = (
         workspace
-        / name
+        / raw
     ).resolve()
 
     try:
@@ -222,8 +254,13 @@ _FILE_REQUEST_RE = re.compile(
     )
     \b
     .*?
-    \b
-    (?P<filename>[A-Za-z0-9_.-]+\.py)
+    (?P<filename>
+        [A-Za-z0-9_.-]+
+        (?:
+            /[A-Za-z0-9_.-]+
+        )*
+        \.py
+    )
     \b
     """,
     re.IGNORECASE | re.VERBOSE | re.DOTALL,
@@ -721,6 +758,32 @@ _FILE_DISCOVERY_PATTERNS = (
 )
 
 
+# SOPHYANE_NIFDU_CREATE_BYPASSES_FILE_DISCOVERY_V1
+
+_FILE_MUTATION_INTENT = re.compile(
+    r"""
+    (?:
+        \bcreate\s+(?:a\s+|the\s+|new\s+)?(?:file\s+)?(?:named\s+|called\s+)?
+        |
+        \bwrite\s+(?:a\s+|the\s+|new\s+)?(?:file\s+)?
+        |
+        \bmake\s+(?:a\s+|the\s+|new\s+)?(?:file\s+)?
+        |
+        \bgenerate\s+(?:a\s+|the\s+|new\s+)?(?:file\s+)?
+        |
+        \bimplement\b
+        |
+        \bwrite_file\b
+        |
+        \"type\"\s*:\s*\"write_file\"
+        |
+        \baction\.type\s+must\s+be\s+[\"']?write_file
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
 def requested_python_discovery_filename(
     request: str,
 ) -> str | None:
@@ -728,6 +791,18 @@ def requested_python_discovery_filename(
         request
         or ""
     )
+
+    # Named-file discovery is a read-only grounding fast path. A request that
+    # explicitly asks Sophyane to create/write/implement a file must continue
+    # to the guarded generation/planner path even when the target is absent.
+    #
+    # In particular, structured planner prompts commonly contain JSON such as
+    # {"type": "write_file", "path": "tools/example.py"}. The word "path"
+    # must not cause that mutation request to be stolen by file discovery.
+    if _FILE_MUTATION_INTENT.search(
+        text
+    ) is not None:
+        return None
 
     for pattern in _FILE_DISCOVERY_PATTERNS:
         match = pattern.search(

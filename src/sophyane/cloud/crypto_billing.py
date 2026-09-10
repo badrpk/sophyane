@@ -444,11 +444,10 @@ def user_report_payment(invoice_id: str, user_id: str, txid: str = "") -> dict[s
     auto = try_auto_confirm_monero(invoice_id)
     if auto.get("ok") and auto.get("paid"):
         return auto
-    # For KuCoin / no RPC: trust user report for small plans after txid provided, else awaiting
-    if txid and len(txid) >= 8:
-        # Mark paid on self-report with txid (operator can dispute); suitable for small SaaS
-        return mark_paid(invoice_id, txid=txid, note="user-submitted txid")
-    inv = get_invoice(invoice_id)
+    # SOPHYANE_VERIFIED_CRYPTO_PAYMENT_AUTHORITY_V1
+    # Customer-supplied txids are evidence only.
+    # Independent provider/RPC verification is required.
+
     return {
         "ok": True,
         "pending": True,

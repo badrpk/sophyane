@@ -1,5 +1,6 @@
 """Observable bounded execution loop for structured software actions."""
 from __future__ import annotations
+import shlex
 
 # --- sophyane native fast-path hook ---
 try:
@@ -20,6 +21,7 @@ import shutil
 import subprocess
 import threading
 import time
+import tempfile
 import urllib.request
 import webbrowser
 from pathlib import Path
@@ -30,7 +32,7 @@ MAX_CAPTURE = 12000
 VALID_ACTIONS = {
     "write_file", "append_file", "mkdir", "run", "shell", "run_command", "bash",
     "open_browser", "browser", "respond", "message", "answer", "final_answer", "reply", "run_interactive", "interactive",
-    "play_demo", "analyze_log", "verify", "check",
+    "play_demo", "analyze_log", "verify", "check", "targeted_patch",
 }
 _BROWSER_SERVERS: dict[Path, tuple[http.server.ThreadingHTTPServer, threading.Thread, str]] = {}
 
@@ -122,7 +124,32 @@ def _recover_quasi_json_file_action(
         value
     )
 
-    if nested is None:
+    # SOPHYANE_NIFDU_DIRECT_QUASI_JSON_WRITE_RECOVERY_V1
+    #
+    # NIFDU also emits the executable action directly:
+    #
+    #   {"type":"write_file","path":"index.html",
+    #    "content":"<input placeholder="Email">"}
+    #
+    # This is structurally the same safe file action as the nested form above,
+    # but unescaped quotes inside source content make it invalid JSON. Recover
+    # only the exact type/path/content envelope; normal runtime path and action
+    # guards remain authoritative.
+    direct_pattern = re.compile(
+        r'^\s*\{\s*'
+        r'"type"\s*:\s*"(?P<kind>write_file|append_file)"\s*,\s*'
+        r'"(?:path|file)"\s*:\s*"(?P<path>(?:\\.|[^"\\])*)"\s*,\s*'
+        r'"content"\s*:\s*"(?P<content>.*)"\s*\}\s*$',
+        flags=re.S,
+    )
+
+    recovered_file = (
+        nested
+        if nested is not None
+        else direct_pattern.fullmatch(value)
+    )
+
+    if recovered_file is None:
         return None
 
     def decode_json_escapes(
@@ -198,11 +225,11 @@ def _recover_quasi_json_file_action(
         return "".join(output)
 
     decoded_path = decode_json_escapes(
-        nested.group("path")
+        recovered_file.group("path")
     )
 
     decoded_content = decode_json_escapes(
-        nested.group("content")
+        recovered_file.group("content")
     )
 
     if (
@@ -214,7 +241,7 @@ def _recover_quasi_json_file_action(
 
     return {
         "action": {
-            "type": nested.group("kind"),
+            "type": recovered_file.group("kind"),
             "path": decoded_path.strip(),
             "content": decoded_content,
         }
@@ -257,7 +284,7 @@ def _recover_quasi_json_run_command_action(
     if not value:
         return None
 
-    match = re.fullmatch(
+    nested_match = re.fullmatch(
         r'\s*\{\s*'
         r'"action"\s*:\s*\{\s*'
         r'"type"\s*:\s*"run_command"\s*,\s*'
@@ -265,6 +292,30 @@ def _recover_quasi_json_run_command_action(
         r'\s*\}\s*\}\s*',
         value,
         flags=re.S,
+    )
+
+    # SOPHYANE_DIRECT_QUASI_JSON_RUN_COMMAND_RECOVERY_V1
+    #
+    # Live NIFDU can also emit the executable command directly:
+    #
+    #   {"type":"run","command":"node -e '... "quoted JS" ...'"}
+    #
+    # Recover only known run aliases with the same narrow verification-family
+    # gate below. This repairs serialization only and does not broaden command
+    # execution authority.
+    direct_match = re.fullmatch(
+        r'\s*\{\s*'
+        r'"type"\s*:\s*"(?P<kind>run|run_command|shell|bash)"\s*,\s*'
+        r'"command"\s*:\s*"(?P<command>.*)"'
+        r'\s*\}\s*',
+        value,
+        flags=re.S,
+    )
+
+    match = (
+        nested_match
+        if nested_match is not None
+        else direct_match
     )
 
     if match is None:
@@ -350,18 +401,33 @@ def _recover_quasi_json_run_command_action(
     if not command:
         return None
 
-    # SOPHYANE_QUASI_JSON_PYTHON_COMMAND_ONLY_V1
+    # SOPHYANE_QUASI_JSON_VERIFICATION_COMMAND_FAMILY_V2
     #
-    # This malformed-envelope recovery exists only for the exact NIFDU
-    # Python verification family observed live. Do not turn malformed
-    # arbitrary shell commands into executable actions.
+    # Malformed-envelope recovery is intentionally restricted to interpreter
+    # families observed in NIFDU verification responses. Recovery fixes JSON
+    # serialization only; execute_action() remains authoritative for actually
+    # running the recovered command.
     #
-    # Absolute/custom interpreter paths remain unsupported here because a
-    # correctly serialized command can already express those explicitly.
-    if re.match(
+    # Supported malformed recovery families:
+    #   python / python3 / python3.x ...
+    #   node -e '...'
+    #
+    # Do not broaden this to arbitrary shell commands.
+    python_verification = re.match(
         r"^python(?:3(?:\.\d+)?)?(?:\s|$)",
         command,
-    ) is None:
+    ) is not None
+
+    node_verification = re.match(
+        r"^node\s+-e\s+(['\"]).*\1\s*$",
+        command,
+        flags=re.S,
+    ) is not None
+
+    if not (
+        python_verification
+        or node_verification
+    ):
         return None
 
     return {
@@ -618,7 +684,42 @@ def _open_browser(workspace: Path, url: str, progress: Progress) -> str:
 
 
 def _normalize_action(value: Any) -> dict[str, Any] | None:
-    """Accept common Gemini variants and return one canonical action dict."""
+    """Accept common provider variants and return one canonical action dict."""
+
+    # SOPHYANE_NIFDU_STRING_ACTION_NORMALIZATION_V1
+    #
+    # Browser/external providers cross a text boundary, so a structurally
+    # valid action commonly arrives here as a JSON object encoded as str.
+    # Decode only a complete JSON object/array and recurse through the same
+    # normalizer.  Never treat arbitrary prose as executable input.
+    if isinstance(value, str):
+        candidate = value.strip()
+
+        if not candidate or candidate[0] not in "[{":
+            return None
+
+        try:
+            decoded = json.loads(candidate)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+        if not isinstance(decoded, (dict, list)):
+            return None
+
+        return _normalize_action(decoded)
+
+    # SOPHYANE_PROVIDER_ACTION_TYPE_CANONICALIZATION_V1
+    #
+    # Some provider contracts historically emitted {"type": "run"}.
+    # Runtime execution has one canonical command action name:
+    # run_command.  Normalize the alias before nested/shape processing so
+    # every downstream validator sees the same protocol.
+    if isinstance(value, dict):
+        raw_type = str(value.get("type") or "").strip().lower()
+
+        if raw_type == "run":
+            value = dict(value)
+            value["type"] = "run_command"
     if not isinstance(value, dict):
         return None
 
@@ -698,6 +799,51 @@ def _normalize_action(value: Any) -> dict[str, Any] | None:
     return None
 
 
+
+
+# SOPHYANE_SEARCH_NO_MATCH_NONFATAL_V1
+def _command_exit_code_is_accepted(
+    command: str,
+    exit_code: int | None,
+) -> bool:
+    """Return whether a process exit code represents valid command execution.
+
+    Normal commands require exit code 0.
+
+    grep, egrep and fgrep use:
+      0 = one or more matches
+      1 = no matches
+     >1 = execution/error condition
+
+    A valid no-match search remains read-only evidence and must not be treated
+    as terminal task verification.
+    """
+    if exit_code == 0:
+        return True
+
+    if exit_code != 1:
+        return False
+
+    try:
+        tokens = shlex.split(
+            str(command or "").strip()
+        )
+    except ValueError:
+        return False
+
+    if not tokens:
+        return False
+
+    executable = Path(
+        tokens[0]
+    ).name.casefold()
+
+    return executable in {
+        "grep",
+        "egrep",
+        "fgrep",
+    }
+
 def execute_action(action: dict[str, Any], workspace: Path, progress: Progress) -> tuple[bool, str]:
     action = _normalize_action(action) or action
     kind = str(action.get("type") or "").strip().lower()
@@ -712,6 +858,121 @@ def execute_action(action: dict[str, Any], workspace: Path, progress: Progress) 
             or action.get("result")
             or ""
         )
+    if kind == "targeted_patch":
+        try:
+            target = _safe_target(
+                str(
+                    action.get("path")
+                    or action.get("file")
+                    or ""
+                ),
+                workspace,
+            )
+        except ValueError as error:
+            return False, str(error)
+
+        old_text = action.get("old")
+        new_text = action.get("new")
+
+        if not isinstance(old_text, str) or not isinstance(new_text, str):
+            return (
+                False,
+                "targeted_patch requires string old and new fields.",
+            )
+
+        if not old_text:
+            return (
+                False,
+                "targeted_patch old text must not be empty.",
+            )
+
+        try:
+            current = target.read_text(
+                encoding="utf-8"
+            )
+        except OSError as error:
+            return (
+                False,
+                f"targeted_patch could not read {target}: {error}",
+            )
+
+        match_count = current.count(
+            old_text
+        )
+
+        if match_count != 1:
+            return (
+                False,
+                (
+                    "targeted_patch expected exactly one "
+                    f"old-text match; found {match_count}."
+                ),
+            )
+
+        replacement = current.replace(
+            old_text,
+            new_text,
+            1,
+        )
+
+        temporary_path = None
+
+        try:
+            fd, temporary_name = tempfile.mkstemp(
+                prefix=f".{target.name}.",
+                suffix=".targeted-patch.tmp",
+                dir=str(target.parent),
+            )
+
+            temporary_path = Path(
+                temporary_name
+            )
+
+            with os.fdopen(
+                fd,
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                handle.write(
+                    replacement
+                )
+                handle.flush()
+                os.fsync(
+                    handle.fileno()
+                )
+
+            os.replace(
+                temporary_path,
+                target,
+            )
+
+            temporary_path = None
+
+        except OSError as error:
+            if temporary_path is not None:
+                try:
+                    temporary_path.unlink(
+                        missing_ok=True
+                    )
+                except OSError:
+                    pass
+
+            return (
+                False,
+                f"targeted_patch could not replace {target}: {error}",
+            )
+
+        progress(
+            f"Patched {target} "
+            f"({len(old_text)} old characters -> "
+            f"{len(new_text)} new characters)"
+        )
+
+        return (
+            True,
+            f"Patched {target}.",
+        )
+
     if kind in {"write_file", "append_file"}:
         target = _safe_target(str(action.get("path") or action.get("file") or ""), workspace)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -764,10 +1025,21 @@ def execute_action(action: dict[str, Any], workspace: Path, progress: Progress) 
 
             break
 
-        # A command action is successful only when the real process exits 0.
-        # Previously every completed command returned ok=True, causing failed
-        # installs and failed tests to open the success menu.
-        return exit_code == 0, result
+        # SOPHYANE_SEARCH_NO_MATCH_NONFATAL_V1
+        #
+        # Most commands succeed only with exit code 0.  Search utilities are
+        # different: grep-family exit code 1 means the search completed
+        # normally but found zero matches.  That is valid execution evidence,
+        # not a command failure.
+        #
+        # This does NOT make a no-match search terminal verification:
+        # adaptive_execution classifies grep-family commands as read-only
+        # inspection, so they cannot prove that a requested mutation or build
+        # completed.
+        return _command_exit_code_is_accepted(
+            command,
+            exit_code,
+        ), result
     if kind in {"run_interactive", "interactive", "play_demo"}:
         command = str(action.get("command") or action.get("content") or action.get("cmd") or "").strip()
         if not command:

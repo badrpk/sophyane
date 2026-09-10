@@ -931,6 +931,29 @@ def try_memory_router(state: SLIState, progress: Progress) -> SLIState:
 
     if _try_repository_memory(state, progress):
         return state
+
+    # SOPHYANE_REPOSITORY_MEMORY_MISS_AUTHORITY_V1
+    #
+    # A repository-memory request has already established both its
+    # retrieval capability and target identity.  If disk-first
+    # repository memory was checked and missed, do not reinterpret the
+    # request through the generic chunk router: that router may produce
+    # an unrelated/non-target report and mark the state successful,
+    # preventing the graph's explicit internet fallback from running.
+    #
+    # Returning here keeps the miss non-terminal and lets try_internet()
+    # preserve repository_target / RequestAuthorityContext identity.
+    if (
+        state.route == "repository_memory"
+        and state.meta.get("local_memory_checked") is True
+        and state.meta.get("local_memory_hit") is False
+    ):
+        progress(
+            "SLI-graph: repository memory miss; "
+            "preserving target for fallback"
+        )
+        return state
+
     if _try_local_chunk_memory(state, progress):
         return state
     retrieval_routes = {

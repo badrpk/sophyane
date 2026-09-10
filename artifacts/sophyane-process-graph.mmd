@@ -1,0 +1,14 @@
+flowchart TD
+  START([START])
+  END([END])
+  source_pdf[source PDF]
+  validated_document[validated document]
+  pages[pages]
+  extracted_text[extracted text]
+  structured_sections[structured sections]
+  START --> source_pdf
+  source_pdf --> validated_document
+  validated_document --> pages
+  pages --> extracted_text
+  extracted_text --> structured_sections
+  structured_sections --> END

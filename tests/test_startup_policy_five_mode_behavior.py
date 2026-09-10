@@ -27,6 +27,12 @@ def clean_mode_environment(monkeypatch):
     """
     keys = (
         "SOPHYANE_SESSION_MODE",
+        "SOPHYANE_SESSION_PROVIDER",
+        "SOPHYANE_SESSION_MODEL",
+        "SOPHYANE_SESSION_TIMEOUT",
+        "SOPHYANE_LOCAL_PROFILE",
+        "SOPHYANE_LLAMA_SERVER",
+        "SOPHYANE_LLAMA_CONTEXT",
         "SOPHYANE_SLI_GRAPH",
         *STRICT_FLAGS,
     )
@@ -82,10 +88,24 @@ def _invoke(monkeypatch, answer: str):
         lambda: True,
     )
 
+    # Mode 4 has a second-stage external-intelligence selector.
+    # Existing startup-policy tests that ask for generic Mode 4 mean
+    # Cloud API, so explicitly answer 4 -> 1 rather than replaying
+    # "4" into both prompts (which would select Antigravity).
+    answers = iter(
+        ("4", "1")
+        if answer == "4"
+        else (
+            ("3", "1")
+            if answer == "3"
+            else (answer,)
+        )
+    )
+
     monkeypatch.setattr(
         builtins,
         "input",
-        lambda _prompt="": answer,
+        lambda _prompt="": next(answers),
     )
 
     # Load deterministic config/LLM state.

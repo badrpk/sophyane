@@ -17,7 +17,9 @@ from typing import Any
 
 from sophyane.providers.base import (
     Provider,
+    ProviderCapabilities,
     ProviderError,
+    ProviderMetadata,
 )
 
 
@@ -200,6 +202,25 @@ class NifduBrowserProvider(
 
     provider_id = "nifdu_browser"
 
+    # SOPHYANE_NIFDU_PROVIDER_MANAGED_CAPACITY_V1
+    #
+    # ChatGPT owns the actual model/session context and output limits behind
+    # the browser UI. The CDP transport does not expose a truthful numeric
+    # context/output contract, so Sophyane must not fabricate one.
+    metadata = ProviderMetadata(
+        provider_id="nifdu_browser",
+        display_name="NIFDU Browser (ChatGPT)",
+        default_model="chatgpt-browser",
+        environment_variable="",
+        requires_api_key=False,
+        capabilities=ProviderCapabilities(
+            context_window_tokens=None,
+            max_output_tokens=None,
+            provider_managed_context=True,
+            provider_managed_output=True,
+        ),
+    )
+
     def __init__(
         self,
         *,
@@ -216,6 +237,8 @@ class NifduBrowserProvider(
         self,
         prompt: str,
         system_prompt: str = "",
+        *,
+        image_path: str | None = None,
     ) -> str:
         selection_file = (
             _selection_path()
@@ -347,9 +370,21 @@ class NifduBrowserProvider(
             # positionally because it would be interpreted as an
             # image path.
             if not args:
+                if image_path:
+                    raise ProviderError(
+                        "Selected NIFDU callable does not "
+                        "declare image transport support."
+                    )
+
                 return callable_object()
 
             if len(args) == 1:
+                if image_path:
+                    raise ProviderError(
+                        "Selected NIFDU callable does not "
+                        "declare image transport support."
+                    )
+
                 return callable_object(
                     user_prompt
                 )
@@ -374,7 +409,7 @@ class NifduBrowserProvider(
             ):
                 return callable_object(
                     user_prompt,
-                    None,
+                    image_path,
                 )
 
             raise ProviderError(

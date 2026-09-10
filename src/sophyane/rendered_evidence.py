@@ -411,8 +411,127 @@ ws.onopen = async () => {
             }
         );
 
+        // SOPHYANE_RENDER_IMAGE_SETTLE_V1
+        //
+        // Do not classify ordinary lazy/slow images as broken merely
+        // because they were outside the initial mobile viewport. Trigger
+        // each image, wait boundedly for load/error settlement, then
+        // restore the page to the top before collecting evidence.
         await sleep(
-            1500
+            250
+        );
+
+        await command(
+            "Runtime.evaluate",
+            {
+                expression: `
+(async () => {
+    const images = [
+        ...document.images
+    ];
+
+    for (const img of images) {
+        try {
+            img.loading = "eager";
+        } catch (_) {}
+    }
+
+    const deadline =
+        Date.now() + 6000;
+
+    for (const img of images) {
+        if (
+            img.complete &&
+            img.naturalWidth > 0 &&
+            img.naturalHeight > 0
+        ) {
+            continue;
+        }
+
+        try {
+            img.scrollIntoView({
+                block: "center",
+                inline: "nearest"
+            });
+        } catch (_) {}
+
+        await new Promise(
+            resolve =>
+                setTimeout(
+                    resolve,
+                    120
+                )
+        );
+    }
+
+    while (
+        Date.now() <
+        deadline
+    ) {
+        const pending =
+            images.filter(
+                img =>
+                    !img.complete
+            );
+
+        if (
+            pending.length === 0
+        ) {
+            break;
+        }
+
+        await new Promise(
+            resolve =>
+                setTimeout(
+                    resolve,
+                    150
+                )
+        );
+    }
+
+    window.scrollTo(
+        0,
+        0
+    );
+
+    await new Promise(
+        resolve =>
+            requestAnimationFrame(
+                () =>
+                    requestAnimationFrame(
+                        resolve
+                    )
+            )
+    );
+
+    return {
+        images:
+            images.length,
+
+        unresolved:
+            images.filter(
+                img =>
+                    !img.complete
+            ).length,
+
+        broken:
+            images.filter(
+                img =>
+                    img.complete &&
+                    (
+                        img.naturalWidth === 0 ||
+                        img.naturalHeight === 0
+                    )
+            ).length
+    };
+})()
+`,
+                returnByValue:
+                    true,
+
+                awaitPromise:
+                    true
+            }
         );
 
         const evaluated =
@@ -870,9 +989,18 @@ def capture_rendered_evidence(
                 / "evidence.json"
             )
 
+            screenshot_directory = (
+                root
+                / ".sophyane"
+                / "rendered"
+            )
+            screenshot_directory.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
             screenshot_path = (
-                temp
-                / "screenshot.png"
+                screenshot_directory
+                / "latest.png"
             )
 
             headless_log = (

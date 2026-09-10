@@ -53,7 +53,7 @@ def test_irrelevant_normalized_action_is_semantically_demoted(
     proposal = producer()
 
     assert proposal.kind == "action"
-    assert proposal.payload["action"]["type"] == "run"
+    assert proposal.payload["action"]["type"] == "run_command"
     assert proposal.payload["action"]["command"] == "ls -la"
     assert proposal.confidence == 0.08
     assert any(

@@ -512,3 +512,79 @@ def test_wait_prompt_fails_fast_on_signed_out_state(
         raise AssertionError(
             "wait_prompt should fail fast on signed-out state"
         )
+
+
+def test_explicit_usage_limit_assistant_response_is_detected():
+    from sophyane.providers.nifdu_cdp_bridge import (
+        chatgpt_usage_limit_response,
+    )
+
+    assert (
+        chatgpt_usage_limit_response(
+            "You've hit your usage limit. "
+            "Upgrade your plan or add credits to continue, "
+            "or try again at 6:39 PM."
+        )
+        is True
+    )
+
+
+def test_ordinary_limit_discussion_is_not_usage_limit_response():
+    from sophyane.providers.nifdu_cdp_bridge import (
+        chatgpt_usage_limit_response,
+    )
+
+    assert (
+        chatgpt_usage_limit_response(
+            "The timeout limit in your Python program is 30 seconds."
+        )
+        is False
+    )
+
+
+def test_fresh_usage_limit_is_terminal_before_completion_timeout():
+    source = _source()
+
+    assert (
+        "SOPHYANE_CDP_FRESH_USAGE_LIMIT_TERMINAL_V1"
+        in source
+    )
+
+    usage_gate = source.index(
+        "SOPHYANE_CDP_FRESH_USAGE_LIMIT_TERMINAL_V1"
+    )
+
+    timeout_raise = source.index(
+        'raise TimeoutError(\n'
+        '            "Timed out waiting for ChatGPT."',
+        usage_gate,
+    )
+
+    block = source[
+        usage_gate:timeout_raise
+    ]
+
+    assert (
+        "response_changed"
+        in block
+    )
+
+    assert (
+        "count > before_count"
+        in block
+    )
+
+    assert (
+        "text != before_text"
+        in block
+    )
+
+    assert (
+        "chatgpt_usage_limit_response"
+        in block
+    )
+
+    assert (
+        "ChatGPT usage limit reached"
+        in block
+    )

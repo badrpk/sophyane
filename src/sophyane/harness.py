@@ -113,22 +113,98 @@ class ModelRegistry:
 @dataclass
 class ContextManager:
     max_chars: int = 12000
+    # Keep the historical public tuple representation for compatibility.
     items: list[tuple[str, str]] = field(default_factory=list)
+    _policies: list[tuple[int, bool]] = field(
+        default_factory=list,
+        repr=False,
+    )
 
-    def add(self, role: str, content: str) -> None:
-        self.items.append((role, content))
+    # SOPHYANE_PRIORITY_PINNED_CONTEXT_V1
+    def add(
+        self,
+        role: str,
+        content: str,
+        *,
+        priority: int = 0,
+        pinned: bool = False,
+    ) -> None:
+        """Add context with optional eviction priority and pinning.
+
+        Legacy callers that provide only role/content retain the historical
+        behavior: equal-priority unpinned entries are evicted oldest-first.
+
+        Pinned entries are never silently evicted merely to satisfy the soft
+        character budget. This lets immutable goals survive long repair loops.
+        """
+        self.items.append(
+            (
+                str(role),
+                str(content),
+            )
+        )
+        self._policies.append(
+            (
+                int(priority),
+                bool(pinned),
+            )
+        )
         self._trim()
 
+    def _sync_policies(self) -> None:
+        """Preserve compatibility with callers that populated items directly."""
+        if len(self._policies) > len(self.items):
+            del self._policies[len(self.items):]
+
+        while len(self._policies) < len(self.items):
+            self._policies.append(
+                (
+                    0,
+                    False,
+                )
+            )
+
+    def _size(self) -> int:
+        return sum(
+            len(role) + len(content)
+            for role, content in self.items
+        )
+
     def _trim(self) -> None:
+        self._sync_policies()
+
         while (
             self.items
-            and sum(len(role) + len(content) for role, content in self.items)
-            > self.max_chars
+            and self._size() > self.max_chars
         ):
-            self.items.pop(0)
+            candidates = [
+                (
+                    priority,
+                    index,
+                )
+                for index, (
+                    priority,
+                    pinned,
+                ) in enumerate(self._policies)
+                if not pinned
+            ]
+
+            if not candidates:
+                # The budget is soft with respect to immutable/pinned context.
+                # Losing the goal is worse than exceeding this local char hint.
+                break
+
+            _, victim = min(candidates)
+
+            self.items.pop(victim)
+            self._policies.pop(victim)
 
     def render(self) -> str:
-        return "\n".join(f"[{role}] {content}" for role, content in self.items)
+        self._sync_policies()
+        return "\n".join(
+            f"[{role}] {content}"
+            for role, content in self.items
+        )
 
 
 @dataclass(frozen=True)
@@ -364,7 +440,20 @@ class AgentHarness:
         output = ""
         started = time.perf_counter()
         for iteration in range(1, self.max_iterations + 1):
-            self.context.add("user", prompt)
+            # SOPHYANE_HARNESS_IMMUTABLE_GOAL_PIN_V1
+            #
+            # The first user task is the immutable goal. Later verification
+            # feedback may become more recent, but must never evict that goal.
+            self.context.add(
+                "user",
+                prompt,
+                priority=(
+                    100
+                    if iteration == 1
+                    else 80
+                ),
+                pinned=iteration == 1,
+            )
             assembled = self.context.render()
             step_started = time.perf_counter()
             last_model, output = self.models.generate(assembled, system_prompt)
@@ -386,7 +475,11 @@ class AgentHarness:
                     "feedback": verification.feedback,
                 }
             )
-            self.context.add("assistant", output)
+            self.context.add(
+                "assistant",
+                output,
+                priority=20,
+            )
             if verification.passed:
                 return HarnessResult(
                     output,

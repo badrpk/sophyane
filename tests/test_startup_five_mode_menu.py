@@ -313,9 +313,16 @@ def test_local_llm_selection_remains_strict_local(
         lambda: [],
     )
 
+    answers = iter(
+        (
+            "3",
+            "1",
+        )
+    )
+
     monkeypatch.setattr(
         "builtins.input",
-        lambda prompt="": "3",
+        lambda prompt="": next(answers),
     )
 
     monkeypatch.delenv(

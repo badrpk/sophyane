@@ -6,11 +6,17 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from sophyane.config import CONFIG_DIR, get_secret
+from sophyane.context_builder import ContextBuilder, ContextPacket
 from sophyane.decision_visibility import is_fatal_provider_error
-from sophyane.providers.base import Provider, ProviderError, ProviderMetadata
+from sophyane.providers.base import (
+    Provider,
+    ProviderCapabilities,
+    ProviderError,
+    ProviderMetadata,
+)
 from sophyane.runtime_cancel import cancelled
 
 
@@ -112,6 +118,56 @@ class FallbackProvider(Provider):
     @property
     def chain(self) -> tuple[str, ...]:
         return tuple(name for name, _ in self._providers)
+
+    # SOPHYANE_FALLBACK_EFFECTIVE_CAPABILITIES_V1
+    def _provider_for_capabilities(self) -> Provider | None:
+        """Return the provider whose capacity is currently authoritative.
+
+        A heterogeneous fallback chain has no truthful aggregate context or
+        output limit. Before generation, the configured primary is
+        authoritative. After successful generation, last_provider is
+        authoritative for that completed call.
+        """
+        preferred = str(
+            self.last_provider
+            or self.primary
+            or ""
+        ).strip().lower()
+
+        if preferred:
+            for name, provider in self._providers:
+                if str(name).strip().lower() == preferred:
+                    return provider
+
+        return None
+
+    def get_capabilities(self) -> ProviderCapabilities:
+        provider = self._provider_for_capabilities()
+
+        if provider is None:
+            return ProviderCapabilities()
+
+        getter = getattr(
+            provider,
+            "get_capabilities",
+            None,
+        )
+
+        if not callable(getter):
+            return ProviderCapabilities()
+
+        try:
+            capabilities = getter()
+        except Exception:
+            return ProviderCapabilities()
+
+        if not isinstance(
+            capabilities,
+            ProviderCapabilities,
+        ):
+            return ProviderCapabilities()
+
+        return capabilities
 
     def get_token_usage(self) -> dict[str, int]:
         totals = {
@@ -234,6 +290,71 @@ class FallbackProvider(Provider):
                     original,
                 )
 
+    # SOPHYANE_FALLBACK_CAPABILITY_RENDERER_V1
+    def generate_for_capabilities(
+        self,
+        renderer: Callable[[ProviderCapabilities], str],
+        system_prompt: str,
+        *,
+        local_rescue_timeout: int | None = None,
+        local_rescue_budget: LocalRescueBudget | None = None,
+    ) -> str:
+        """Render a provider-specific prompt independently for each child."""
+
+        def prompt_for(
+            _name: str,
+            provider: Provider,
+        ) -> str:
+            getter = getattr(
+                provider,
+                "get_capabilities",
+                None,
+            )
+
+            if callable(getter):
+                try:
+                    capabilities = getter()
+                except Exception:
+                    capabilities = ProviderCapabilities()
+            else:
+                capabilities = ProviderCapabilities()
+
+            if not isinstance(
+                capabilities,
+                ProviderCapabilities,
+            ):
+                capabilities = ProviderCapabilities()
+
+            return renderer(capabilities)
+
+        return self.generate(
+            "",
+            system_prompt,
+            local_rescue_timeout=local_rescue_timeout,
+            local_rescue_budget=local_rescue_budget,
+            _prompt_factory=prompt_for,
+        )
+
+    # SOPHYANE_FALLBACK_PER_CHILD_CONTEXT_RENDERING_V1
+    def generate_context(
+        self,
+        packet: ContextPacket,
+        system_prompt: str,
+        *,
+        local_rescue_timeout: int | None = None,
+        local_rescue_budget: LocalRescueBudget | None = None,
+    ) -> str:
+        """Render the same structured context independently for each child."""
+
+        return self.generate_for_capabilities(
+            lambda capabilities: ContextBuilder(
+                capabilities
+            ).build(packet).text,
+            system_prompt,
+            local_rescue_timeout=local_rescue_timeout,
+            local_rescue_budget=local_rescue_budget,
+        )
+
     def generate(
         self,
         prompt: str,
@@ -241,6 +362,7 @@ class FallbackProvider(Provider):
         *,
         local_rescue_timeout: int | None = None,
         local_rescue_budget: LocalRescueBudget | None = None,
+        _prompt_factory: Callable[[str, Provider], str] | None = None,
     ) -> str:
         """Generate through the configured provider chain.
 
@@ -326,7 +448,15 @@ class FallbackProvider(Provider):
             )
 
             try:
-                text = provider.generate(prompt, system_prompt)
+                provider_prompt = (
+                    _prompt_factory(name, provider)
+                    if _prompt_factory is not None
+                    else prompt
+                )
+                text = provider.generate(
+                    provider_prompt,
+                    system_prompt,
+                )
             except Exception as error:  # noqa: BLE001
                 if cancelled():
                     raise ProviderError(
@@ -424,7 +554,11 @@ class FallbackProvider(Provider):
             )
 
             strict_cloud = (
-                session_mode == "cloud_llm"
+                session_mode
+                in {
+                    "cloud_llm",
+                    "nifdu_llm",
+                }
                 or disable_local_fallback
             )
 
@@ -515,8 +649,16 @@ class FallbackProvider(Provider):
                     )
 
                     try:
+                        provider_prompt = (
+                            _prompt_factory(
+                                provider_id,
+                                local,
+                            )
+                            if _prompt_factory is not None
+                            else prompt
+                        )
                         text = local.generate(
-                            prompt,
+                            provider_prompt,
                             system_prompt,
                         )
                     finally:
@@ -667,9 +809,14 @@ def build_fallback_provider(
         in {"1", "true", "yes", "on"}
     )
 
-    if session_mode == "cloud_llm":
-        # Keep cloud mode free of local rescue, while allowing explicit
-        # external harness/browser failover when configured by Mode 4.
+    if session_mode in {
+        "cloud_llm",
+        "nifdu_llm",
+    }:
+        # Keep an explicitly selected external-LLM session under its
+        # fixed provider authority. Persisted fallback configuration must
+        # not silently append local or alternate reasoning providers.
+        # Explicit Mode-4 failover remains opt-in below.
         external_failover = str(
             _provider_policy_os.environ.get("SOPHYANE_MODE4_EXTERNAL_FAILOVER") or ""
         ).strip().lower() in {"1", "true", "yes", "on"}

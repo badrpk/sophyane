@@ -1,0 +1,22 @@
+{
+  "dealId": "laptops-001",
+  "currency": "USD",
+  "product": "Used business laptops",
+  "quantity": 50,
+  "buyer": {
+    "name": "Buyer enquiry",
+    "requirements": "i5 or better, 8GB RAM minimum, SSD, good battery health, delivery this week",
+    "targetUnitPrice": 180,
+    "maxUnitPrice": 210,
+    "preferredPayment": "20% deposit, balance after inspection",
+    "mustHave": ["delivery this week", "working chargers", "7 day return window"]
+  },
+  "seller": {
+    "name": "Seller offer",
+    "offerDetails": "50 Dell Latitude i5 laptops, 8GB RAM, 256GB SSD, chargers included, delivery in 5 days",
+    "askingUnitPrice": 220,
+    "minUnitPrice": 195,
+    "preferredPayment": "30% deposit, balance before dispatch",
+    "canOffer": ["delivery in 5 days", "chargers included", "3 day return window"]
+  }
+}

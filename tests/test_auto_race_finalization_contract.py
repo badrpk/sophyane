@@ -213,4 +213,4 @@ def test_execution_json_remains_action():
     )
 
     assert proposal.kind == "action"
-    assert proposal.payload["action"]["type"] == "run"
+    assert proposal.payload["action"]["type"] == "run_command"

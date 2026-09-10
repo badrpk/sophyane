@@ -1,0 +1,15 @@
+{
+  "completed_cycles": 0,
+  "configuration_fingerprint": "302c7a1d211e9b5a26cda0157f14c50ddc37010fcd842d9afb6427e85b184e82",
+  "consecutive_failures": 1,
+  "created_at": 1788450828.69086,
+  "cycle_index": 1,
+  "last_cycle_finished_at": 1788450828.7019784,
+  "last_cycle_started_at": 1788450828.6909566,
+  "last_cycle_status": "failed",
+  "last_error": "TimeoutError",
+  "max_cycles": 1,
+  "next_eligible_run_at": 1788450833.7019784,
+  "run_id": "rsi-1788450828-5888",
+  "updated_at": 1788450828.7019784
+}

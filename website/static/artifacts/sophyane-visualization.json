@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "source": "user-grounded",
+  "intent": {
+    "requested": true,
+    "explicit": true,
+    "chart_type": "bar",
+    "reason": "explicit visualization request"
+  },
+  "title": "Sophyane visualization",
+  "chart_type": "bar",
+  "points": [
+    {
+      "label": "hardware-api Serve",
+      "value": 8770.0
+    },
+    {
+      "label": "mesh-serve Mesh",
+      "value": 8777.0
+    },
+    {
+      "label": "API",
+      "value": 8780.0
+    },
+    {
+      "label": "Stable named Cloudflare tunnel or real public",
+      "value": 443.0
+    }
+  ]
+}

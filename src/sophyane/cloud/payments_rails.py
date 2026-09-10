@@ -589,9 +589,10 @@ def user_report_payment(invoice_id: str, user_id: str, txid: str = "") -> dict[s
             ),
         )
         con.commit()
-    if txid and len(txid) >= 4:
-        return mark_paid(invoice_id, txid=txid, note="user-submitted reference/txid")
-    inv = get_invoice(invoice_id)
+    # SOPHYANE_VERIFIED_PAYMENT_AUTHORITY_V1
+    # Customer proof is evidence only. It cannot
+    # independently certify receipt of funds.
+
     return {
         "ok": True,
         "pending": True,

@@ -1,0 +1,26 @@
+{
+  "source": "conversation-grounded",
+  "description": "source PDF → validated document → pages → extracted text → structured sections",
+  "steps": [
+    {
+      "label": "source PDF",
+      "node_id": "source_pdf"
+    },
+    {
+      "label": "validated document",
+      "node_id": "validated_document"
+    },
+    {
+      "label": "pages",
+      "node_id": "pages"
+    },
+    {
+      "label": "extracted text",
+      "node_id": "extracted_text"
+    },
+    {
+      "label": "structured sections",
+      "node_id": "structured_sections"
+    }
+  ]
+}

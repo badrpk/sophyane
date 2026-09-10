@@ -798,6 +798,38 @@ def _pure_media_request(message: str) -> bool:
     execution requests.
     """
 
+    # SOPHYANE_SOFTWARE_ARTIFACT_OUTRANKS_MEDIA_V1
+    #
+    # Media vocabulary may describe content inside a software artifact.
+    # "dog photography" inside a website request must not convert the
+    # entire build into a direct media/chat response.
+    _software_text = " ".join(
+        str(message or "").casefold().split()
+    )
+
+    _explicit_software_artifact = any(
+        term in _software_text
+        for term in (
+            "website",
+            "web site",
+            "web app",
+            "web application",
+            "browser app",
+            "browser project",
+            "index.html",
+            "html",
+            "css",
+            "javascript",
+            "source code",
+            "codebase",
+            "repository",
+        )
+    )
+
+    if _explicit_software_artifact:
+        return False
+
+
     text = " ".join(str(message or "").lower().split())
 
     if not text:
@@ -946,6 +978,49 @@ def _execution_requested(message: str) -> bool:
     _guard_text = " ".join(
         str(message or "").casefold().split()
     )
+
+    # SOPHYANE_EXPLICIT_WEB_BUILD_EXECUTION_V1
+    #
+    # Explicit software construction outranks descriptive/media vocabulary.
+    # Require BOTH a build/mutation verb and an explicit browser/software
+    # artifact so informational questions remain ordinary chat.
+    _web_build_verbs = (
+        "make ",
+        "create ",
+        "build ",
+        "develop ",
+        "implement ",
+        "design ",
+        "write ",
+        "generate ",
+        "rebuild ",
+        "redesign ",
+    )
+
+    _web_artifact_terms = (
+        "website",
+        "web site",
+        "web app",
+        "web application",
+        "browser app",
+        "browser project",
+        "index.html",
+        " html",
+        "html ",
+    )
+
+    if (
+        any(
+            verb in _guard_text
+            for verb in _web_build_verbs
+        )
+        and any(
+            artifact in _guard_text
+            for artifact in _web_artifact_terms
+        )
+    ):
+        return True
+
 
     if "make use of" in _guard_text:
         imperative_prefixes = (

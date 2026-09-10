@@ -365,12 +365,46 @@ def install_provider_context_patch() -> None:
                             )
                         )
 
+                        _local_compare_authoritative = (
+                            _session_mode == "local_llm"
+                            and str(
+                                os.environ.get(
+                                    "SOPHYANE_LOCAL_PROFILE"
+                                )
+                                or ""
+                            ).strip().lower()
+                            == "compare"
+                            and primary == "local_gguf"
+                            and callable(
+                                getattr(
+                                    provider,
+                                    "generate",
+                                    None,
+                                )
+                            )
+                        )
+
                         _direct_leaf_authoritative = (
                             _nifdu_leaf_authoritative
                             or _codex_leaf_authoritative
                         )
 
-                        if _direct_leaf_authoritative:
+                        # SOPHYANE_MODE3_COMPARE_LEAF_AUTHORITY_V1
+                        #
+                        # Mode-3 comparison is itself the complete inference
+                        # operation. Do not route it back through self.ask(),
+                        # which re-enters Sophyane orchestration and can turn
+                        # one benchmark into several local generations.
+                        if _local_compare_authoritative:
+                            from sophyane.agent import (
+                                LOCAL_CHAT_SYSTEM_PROMPT,
+                            )
+
+                            value = provider.generate(
+                                active_message,
+                                LOCAL_CHAT_SYSTEM_PROMPT,
+                            )
+                        elif _direct_leaf_authoritative:
                             value = provider.generate(
                                 active_message
                             )
