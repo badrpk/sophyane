@@ -290,6 +290,12 @@ class GeminiProvider(Provider):
         if "sophyane_response_mode: chat" in text:
             return "chat"
 
+        # Discovery Human Conversation requests have their own exact
+        # {"reply": "..."} contract.  PLAN_SCHEMA cannot represent that
+        # contract, so keep conversation_reply out of planner JSON mode.
+        if '"operation":"conversation_reply"' in text:
+            return "chat"
+
         raw_markers = (
             "output raw html only",
             "raw html",

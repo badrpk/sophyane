@@ -189,3 +189,22 @@ def test_human_conversation_persisted_provider_is_used_when_no_explicit_provider
     assert captured == [
         configured
     ]
+
+
+def test_gemini_conversation_reply_uses_chat_response_mode():
+    """conversation_reply must never be constrained by planner JSON schema."""
+    from sophyane.providers.gemini import GeminiProvider
+
+    prompt = (
+        'SOPHYANE_DISCOVERY_REASONING_REQUEST\\n'
+        '{"operation":"conversation_reply",'
+        '"discovery_context":{"return_schema":{"reply":"string"}}}'
+    )
+
+    assert (
+        GeminiProvider._response_mode(
+            prompt,
+            "Return one valid JSON object only.",
+        )
+        == "chat"
+    )
