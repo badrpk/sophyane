@@ -14,7 +14,7 @@ Flow:
         ↓
     form present thought
         ↓
-    reason using fixed selected intelligence authority
+    reason using bounded session intelligence authority
         ↓
     reply naturally
         ↓
@@ -24,7 +24,7 @@ Flow:
         ↓
     future turns recall them automatically
 
-No provider switching occurs here.
+Mode 6 uses only codex_cli -> nifdu_browser -> local_gguf, without persistence.
 """
 from __future__ import annotations
 
@@ -101,6 +101,8 @@ def _authority_snapshot() -> dict[str, Any]:
                 "provider_switching_allowed",
                 None,
             ),
+            "provider_failover_order": list(authority.provider_failover_order),
+            "bounded_provider_failover": authority.bounded_provider_failover,
             "llm_allowed": getattr(
                 authority,
                 "llm_allowed",
@@ -340,10 +342,7 @@ def _default_responder(
     user_text: str,
     context: Mapping[str, Any],
 ) -> Any:
-    """Use the fixed session provider already selected by Sophyane.
-
-    No alternate provider or local rescue is attempted here.
-    """
+    """Use session authority, including the bounded Mode-6 cascade."""
 
     from sophyane.discovery_provider_reasoner import (
         SessionProviderReasoner,
@@ -581,6 +580,8 @@ def human_conversation_status() -> dict[str, Any]:
         "automatic_sparse_conversation_memory": True,
         "conversation_memory_is_verified_world_knowledge": False,
         "provider_switching": False,
+        "provider_failover_order": _authority_snapshot().get("provider_failover_order", []),
+        "bounded_provider_failover": _authority_snapshot().get("bounded_provider_failover", False),
         "memory": conversation_memory_status(),
     }
 

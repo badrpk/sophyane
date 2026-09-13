@@ -12,6 +12,31 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 
+ACTIVE_INTELLIGENCE_PROVIDERS = ("codex_cli", "nifdu_browser", "local_gguf")
+SOURCE_MUTATION_PROVIDERS = ("codex_cli", "nifdu_browser")
+
+
+def active_intelligence_providers() -> tuple[str, ...]:
+    return ACTIVE_INTELLIGENCE_PROVIDERS
+
+
+def provider_allowed_for_operational_intelligence(provider: str) -> bool:
+    return str(provider or "").strip().casefold() in ACTIVE_INTELLIGENCE_PROVIDERS
+
+
+def provider_allowed_for_source_mutation(provider: str) -> bool:
+    return str(provider or "").strip().casefold() in SOURCE_MUTATION_PROVIDERS
+
+
+def provider_intelligence_status(provider: str) -> str:
+    return "ACTIVE" if provider_allowed_for_operational_intelligence(provider) else "PROVIDER_DISABLED"
+
+
+def require_active_provider(provider: str) -> None:
+    if not provider_allowed_for_operational_intelligence(provider):
+        raise PermissionError(f"PROVIDER_DISABLED: {provider}")
+
+
 NO_LLM_MODES = {
     "sli_graph",
     "sli_chunks",
@@ -45,6 +70,8 @@ class IntelligenceAuthority:
     local_reasoning_allowed: bool
     provider_switching_allowed: bool
     llm_allowed: bool
+    provider_failover_order: tuple[str, ...] = ()
+    bounded_provider_failover: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -118,13 +145,17 @@ def current_intelligence_authority() -> IntelligenceAuthority:
         )
 
     if mode == "human_conversation":
+        from sophyane.providers.human_conversation import MODE6_PROVIDER_ORDER
+
         return IntelligenceAuthority(
             session_mode=mode,
-            session_provider=provider,
-            session_model=model,
+            session_provider="codex_cli",
+            session_model="codex-default",
             local_reasoning_allowed=True,
             provider_switching_allowed=False,
             llm_allowed=True,
+            provider_failover_order=MODE6_PROVIDER_ORDER,
+            bounded_provider_failover=True,
         )
 
     if mode in RACE_MODES:
@@ -159,6 +190,7 @@ def local_reasoning_allowed() -> bool:
 def assert_provider_allowed(
     provider_id: str,
 ) -> None:
+    require_active_provider(provider_id)
     authority = current_intelligence_authority()
 
     provider = str(
@@ -177,6 +209,14 @@ def assert_provider_allowed(
             "SOPHYANE_INTELLIGENCE_AUTHORITY_VIOLATION:"
             f" mode={authority.session_mode or '<unset>'}"
             f" provider={provider}"
+        )
+
+    if authority.bounded_provider_failover:
+        if provider in authority.provider_failover_order:
+            return
+        raise PermissionError(
+            "SOPHYANE_INTELLIGENCE_AUTHORITY_VIOLATION:"
+            f" mode={authority.session_mode} attempted={provider}"
         )
 
     if authority.provider_switching_allowed:

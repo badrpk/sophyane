@@ -6,6 +6,9 @@ import re
 import time
 from typing import Any
 
+from sophyane.intelligence_authority import (
+    provider_allowed_for_source_mutation, provider_allowed_for_operational_intelligence,
+)
 from sophyane.provider_state import publish
 from sophyane.sli_provider_controller import get_sli_provider_controller
 
@@ -67,7 +70,7 @@ def install_quality_escalation() -> None:
         candidates = [cfg.get("quality_rescue_provider"), *(cfg.get("fallback_order", []) or []), *fallback.DEFAULT_FALLBACK_ORDER]
         for candidate in candidates:
             value = str(candidate or "").strip().lower()
-            if value and value not in order and value not in {"fallback", *LOCAL_PROVIDER_IDS}:
+            if provider_allowed_for_source_mutation(value) and value not in order:
                 order.append(value)
         return order
 
@@ -78,7 +81,7 @@ def install_quality_escalation() -> None:
         publish(primary=primary, active=active, mode=mode)
 
     def cloud_candidates(self: Any, preferred: str = "", active_rescue: str = "") -> list[tuple[str, Any]]:
-        cloud = [(name, provider) for name, provider in getattr(self, "_providers", []) if name not in LOCAL_PROVIDER_IDS]
+        cloud = [(name, provider) for name, provider in getattr(self, "_providers", []) if provider_allowed_for_source_mutation(name)]
         target = active_rescue or preferred
         if target:
             cloud.sort(key=lambda item: item[0] != target)

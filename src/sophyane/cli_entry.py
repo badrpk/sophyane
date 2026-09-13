@@ -60,7 +60,10 @@ def _available_intelligence_options() -> str:
 
 def _runtime_identity() -> str:
     try:
-        config = load_config()
+        if os.environ.get("SOPHYANE_SESSION_MODE", "").strip().lower() == "human_conversation":
+            config = {}
+        else:
+            config = load_config()
     except Exception:
         config = {}
 
@@ -96,13 +99,7 @@ def _runtime_identity() -> str:
                 or "local_gguf"
             ).strip()
     elif session_mode == "human_conversation":
-        model = str(
-            os.environ.get("SOPHYANE_SESSION_MODEL")
-            or _session_ready_model(
-                config.get("model")
-            )
-            or "not configured"
-        ).strip()
+        model = "codex_cli -> nifdu_browser -> local_gguf"
     else:
         model = str(
             _session_ready_model(
@@ -173,6 +170,7 @@ def _start_local_server_if_needed() -> None:
     # SLI-only modes do not use an LLM. Never inspect, start, or report the
     # llama.cpp/GGUF runtime for these sessions, even when local_gguf is saved
     # as the default provider in the persistent configuration.
+    # Mode 6 starts Local only when its request-local cascade reaches it.
     if (
         _metadata_only_invocation()
         or os.environ.get("SOPHYANE_SLI_ONLY") == "1"
@@ -182,6 +180,7 @@ def _start_local_server_if_needed() -> None:
             "sli_chunks",
             "sli_graph",
             "continuous_sli",
+            "human_conversation",
         }
     ):
         return

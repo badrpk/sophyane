@@ -49,12 +49,11 @@ def save_json(path: Path, data: dict[str, Any], private: bool = False) -> None:
             pass
 
 
-DEFAULT_PROVIDER = "gemini"
-DEFAULT_MODEL = "gemini-3.6-flash"
-DEFAULT_FALLBACK_ORDER = (
-    "gemini", "xai", "openai", "anthropic", "groq", "openrouter",
-    "deepseek", "local_gguf",
-)
+from sophyane.intelligence_authority import ACTIVE_INTELLIGENCE_PROVIDERS
+
+DEFAULT_PROVIDER = ACTIVE_INTELLIGENCE_PROVIDERS[0]
+DEFAULT_MODEL = "codex-default"
+DEFAULT_FALLBACK_ORDER = ACTIVE_INTELLIGENCE_PROVIDERS
 
 
 def default_config() -> dict[str, Any]:
@@ -75,14 +74,16 @@ def default_llm_config() -> dict[str, Any]:
         "active_provider": DEFAULT_PROVIDER,
         "fallback_order": list(DEFAULT_FALLBACK_ORDER),
         "providers": {
+            "codex_cli": {"enabled": True, "model": "codex-default"},
+            "nifdu_browser": {"enabled": True, "model": "chatgpt-browser"},
             "gemini": {
-                "enabled": True,
-                "model": DEFAULT_MODEL,
+                "enabled": False,
+                "model": "gemini-3.6-flash",
                 "api_key_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
                 "base_url": "https://generativelanguage.googleapis.com/v1beta",
             },
-            "openai": {"enabled": True, "model": "gpt-4o-mini"},
-            "xai": {"enabled": True, "model": "grok-3-mini"},
+            "openai": {"enabled": False, "model": "gpt-4o-mini"},
+            "xai": {"enabled": False, "model": "grok-3-mini"},
             "local_gguf": {"enabled": True},
         },
     }

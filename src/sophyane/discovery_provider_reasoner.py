@@ -1,7 +1,7 @@
 """Session-authoritative LLM reasoning for Sophyane discovery.
 
-This bridge never chooses a different provider. The provider selected by the
-session remains the sole reasoning authority for the discovery episode.
+This bridge preserves session authority. Mode 6 permits only its dedicated
+bounded cascade; semantic repair stays within each provider attempt.
 """
 from __future__ import annotations
 
@@ -72,6 +72,58 @@ def _json_safe(
         ),
     )
 
+
+
+# SOPHYANE_MODE6_COMPACT_LOCAL_CONVERSATION_V1
+_MODE6_LOCAL_CONVERSATION_SYSTEM = (
+    "You are Sophyane's local read-only Mode-6 conversation fallback. "
+    "Reply naturally and directly. Return exactly one JSON object with "
+    'one key: {"reply":"string"}. Do not claim file changes or actions.'
+)
+
+
+def _mode6_candidate_request(
+    *,
+    provider_id: str,
+    operation: str,
+    prompt: str,
+    system_prompt: str,
+    context: object,
+) -> tuple[str, str]:
+    """Compact only ordinary Mode-6 conversation turns for local GGUF.
+
+    Codex and NIFDU keep the complete discovery request. Structured discovery
+    operations also remain unchanged. The local conversational fallback gets
+    the current user message without serialized thought/memory bulk, which is
+    prohibitively expensive to prefill on mobile llama.cpp hardware.
+    """
+    if (
+        str(provider_id or "") != "local_gguf"
+        or str(operation or "") != "conversation_reply"
+        or not isinstance(context, dict)
+    ):
+        return prompt, system_prompt
+
+    user_message = str(
+        context.get("user_message", "")
+        or ""
+    )
+
+    # Preserve the current request rather than historical/internal context.
+    # The downstream LocalGgufProvider retains its own absolute prompt bound.
+    compact = {
+        "provider": "local_gguf",
+        "user_message": user_message,
+        "return_schema": {
+            "reply": "string",
+        },
+    }
+
+    return (
+        "SOPHYANE_MODE6_LOCAL_CONVERSATION\\n"
+        + _json_safe(compact),
+        _MODE6_LOCAL_CONVERSATION_SYSTEM,
+    )
 
 
 # SOPHYANE_DISCOVERY_JSON_FENCE_NORMALIZATION_V1
@@ -642,6 +694,13 @@ class SessionProviderReasoner:
             load_runtime_config,
         )
 
+        from sophyane.intelligence_authority import current_intelligence_authority
+
+        if current_intelligence_authority().session_mode == "human_conversation":
+            from sophyane.providers.human_conversation import mode6_config
+
+            return create_provider(mode6_config())
+
         try:
             config = (
                 load_runtime_config()
@@ -710,6 +769,7 @@ class SessionProviderReasoner:
             provider_image_path
             and authority.session_provider
             != "nifdu_browser"
+            and authority.session_mode != "human_conversation"
         ):
             raise RuntimeError(
                 "VISUAL_PROVIDER_NOT_AUTHORIZED:"
@@ -736,6 +796,8 @@ class SessionProviderReasoner:
                 "provider_switching_allowed": (
                     authority.provider_switching_allowed
                 ),
+                "provider_failover_order": list(authority.provider_failover_order),
+                "bounded_provider_failover": authority.bounded_provider_failover,
             },
             "discovery_context": (
                 context
@@ -822,6 +884,41 @@ class SessionProviderReasoner:
             self._get_provider()
         )
 
+        from sophyane.providers.human_conversation import HumanConversationProvider
+
+        if isinstance(provider, HumanConversationProvider):
+            def generate_mode6_candidate(candidate):
+                candidate_prompt, candidate_system_prompt = (
+                    _mode6_candidate_request(
+                        provider_id=str(
+                            getattr(candidate, "provider_id", "")
+                            or ""
+                        ),
+                        operation=operation,
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        context=context,
+                    )
+                )
+
+                return self._generate_response(
+                    candidate,
+                    operation,
+                    candidate_prompt,
+                    candidate_system_prompt,
+                    provider_image_path,
+                )
+
+            return provider.run_request(
+                generate_mode6_candidate,
+                image_path=provider_image_path,
+            )
+        return self._generate_response(
+            provider, operation, prompt, system_prompt, provider_image_path,
+        )
+
+    @staticmethod
+    def _generate_response(provider, operation, prompt, system_prompt, provider_image_path):
         if provider_image_path:
             result = provider.generate(
                 prompt,
@@ -855,8 +952,47 @@ class SessionProviderReasoner:
         ):
             return normalized
 
-        # Same-provider semantic repair only. Session intelligence authority
-        # remains fixed; this never invokes provider fallback or switching.
+        # SOPHYANE_MODE6_SEMANTIC_AVAILABILITY_BEFORE_REPAIR_V1
+        #
+        # Some external transports, notably the browser-backed NIFDU bridge,
+        # can report quota/session availability failures as successful text
+        # rather than raising an exception. Do not send such infrastructure
+        # diagnostics into semantic schema repair: surface them as an
+        # availability-classified RuntimeError so the bounded Mode-6 cascade
+        # can try its next provider.
+        #
+        # This check runs only after a response has failed the actual operation
+        # contract, so a valid JSON conversation reply that merely discusses a
+        # quota/usage-limit phrase remains legitimate model content.
+        provider_id = str(
+            getattr(
+                provider,
+                "provider_id",
+                "",
+            )
+            or ""
+        )
+
+        if provider_id in {
+            "codex_cli",
+            "nifdu_browser",
+        }:
+            from sophyane.providers.human_conversation import (
+                availability_failure,
+            )
+
+            semantic_availability_error = RuntimeError(
+                text
+            )
+
+            if availability_failure(
+                semantic_availability_error
+            ):
+                raise semantic_availability_error
+
+        # Repair is part of this candidate's request, before any transport
+        # failover. A genuine schema violation is terminal, never a failover
+        # trigger.
         repair_prompt = _semantic_repair_prompt(
             operation=operation,
             original_prompt=prompt,

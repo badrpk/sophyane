@@ -3,7 +3,7 @@ import os
 import pytest
 
 
-def test_human_conversation_runtime_identity_uses_explicit_session_model(
+def test_human_conversation_runtime_identity_describes_bounded_cascade(
     monkeypatch,
 ):
     from sophyane import cli_entry
@@ -23,7 +23,7 @@ def test_human_conversation_runtime_identity_uses_explicit_session_model(
 
     identity = cli_entry._runtime_identity()
 
-    assert "chatgpt-browser" in identity
+    assert "codex_cli -> nifdu_browser -> local_gguf" in identity
     assert "gemini" not in identity.casefold()
 
 
@@ -73,15 +73,12 @@ def test_human_conversation_explicit_codex_provider_is_authoritative(
         }
     )
 
-    assert isinstance(
-        provider,
-        FakeCodexProvider,
-    )
-    assert provider.model == "gpt-test"
-    assert provider.timeout == 77
+    assert provider.chain == ("codex_cli", "nifdu_browser", "local_gguf")
+    assert provider.model == "codex-default"
+    assert provider.timeout == 600
 
 
-def test_human_conversation_without_explicit_provider_keeps_persisted_provider(
+def test_human_conversation_without_explicit_provider_ignores_persisted_provider(
     monkeypatch,
 ):
     import sophyane.main as main
@@ -131,6 +128,8 @@ def test_human_conversation_without_explicit_provider_keeps_persisted_provider(
         "timeout": 600,
     }
 
-    main.create_provider(original)
+    provider = main.create_provider(original)
 
-    assert captured["config"] == original
+    assert provider.chain == ("codex_cli", "nifdu_browser", "local_gguf")
+    assert captured == {}
+    assert original == {"provider": "gemini", "model": "gemini-3.7-flash", "timeout": 600}

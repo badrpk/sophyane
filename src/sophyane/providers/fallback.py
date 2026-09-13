@@ -25,21 +25,12 @@ LLM_CONFIG_FILE = CONFIG_DIR / "llm.json"
 LOCAL_PROVIDER_IDS = {"local_gguf"}
 
 # Canonical default order when llm.json is missing or incomplete.
-DEFAULT_FALLBACK_ORDER = (
-    # Mode-4 external intelligence preference: authenticated local Codex
-    # first, then browser/CDP harnesses, then API providers.
-    "codex_cli",
-    "nifdu_browser",
-    "agy",
-    "gemini",
-    "openai",
-    "xai",
-    "anthropic",
-    "groq",
-    "openrouter",
-    "deepseek",
-    "local_gguf",
+from sophyane.intelligence_authority import (
+    ACTIVE_INTELLIGENCE_PROVIDERS, provider_allowed_for_operational_intelligence,
+    require_active_provider,
 )
+
+DEFAULT_FALLBACK_ORDER = ACTIVE_INTELLIGENCE_PROVIDERS
 
 
 @dataclass
@@ -774,12 +765,14 @@ def build_fallback_provider(
 ) -> FallbackProvider:
     from sophyane.plugin_loader import PluginLoader
 
+    primary = str(config.get("provider", "")).strip().lower()
+    require_active_provider(primary)
+
     if not isinstance(loader, PluginLoader):
         loader = PluginLoader()
 
     discovered = loader.discover()
     llm_config = load_llm_config()
-    primary = str(config.get("provider", "")).strip().lower()
     order = resolve_provider_order(
         primary,
         llm_config=llm_config,
@@ -838,6 +831,8 @@ def build_fallback_provider(
 
     chain: list[tuple[str, Provider]] = []
     for provider_id in order:
+        if not provider_allowed_for_operational_intelligence(provider_id):
+            continue
         provider_class = discovered.get(provider_id)
         if provider_class is None:
             continue

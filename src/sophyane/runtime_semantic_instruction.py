@@ -217,6 +217,8 @@ def apply_provider_preference(
     """Update persistent state and reorder accessible fallback chains."""
 
     preference = preference.casefold().strip()
+    from sophyane.intelligence_authority import require_active_provider
+    require_active_provider("local_gguf" if preference == "local" else preference)
 
     if preference not in {"local", "gemini"}:
         return False

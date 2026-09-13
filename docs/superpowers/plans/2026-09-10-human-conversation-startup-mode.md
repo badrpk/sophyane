@@ -4,7 +4,7 @@ Goal: Add Mode 6 Human Conversation while preserving Modes 1-5.
 
 Architecture:
 - startup_policy selects SOPHYANE_SESSION_MODE=human_conversation.
-- Mode 6 preserves provider/model/timeout authority.
+- Mode 6 establishes transient `codex_cli -> nifdu_browser -> local_gguf` authority; persistent configuration remains unchanged.
 - Mode 6 clears stale SLI, learning, and strict-local flags.
 - cli_entry directly calls human_conversation_cli.main().
 - v13_cli/tui_v2 remain unchanged for Mode 6.

@@ -19,10 +19,11 @@ from sophyane.evolution.trusted_supplemental_executor import TrustedSupplemental
 from sophyane.scoped_candidate_diff import candidate_diff_for_paths
 
 
-def git(repo: Path, *args: str, text: bool = True):
+def git(repo: Path, *args: str, text: bool = True, input: str | None = None):
     return subprocess.run(
         ("git", "-C", str(repo), *args), check=True,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=text,
+        input=input,
     ).stdout.strip() if text else subprocess.run
 
 
@@ -250,7 +251,9 @@ def test_unsupported_profiles_are_rejected(tmp_path: Path, isolated_hitl: Path, 
 def test_symlink_and_gitlink_targets_are_rejected(tmp_path: Path, isolated_hitl: Path, profile: str, mode: str) -> None:
     repo = fixture_repo(tmp_path)
     path = profile
-    blob = git(repo, "rev-parse", "HEAD") if profile == "gitlink" else git(repo, "hash-object", "-w", "--stdin")
+    blob = git(repo, "rev-parse", "HEAD") if profile == "gitlink" else git(
+        repo, "hash-object", "-w", "--stdin", input="app.py"
+    )
     git(repo, "update-index", "--add", "--cacheinfo", f"{mode},{blob},{path}")
     git(repo, "commit", "-m", profile)
     if profile == "symlink":

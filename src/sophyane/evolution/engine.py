@@ -666,77 +666,22 @@ Trace:
         max_tokens: int = 16384,
         cloud_first: bool = True,
     ) -> str:
-        """Use Gemini first, then the dedicated larger local analyst."""
-        local_enabled = (
-            os.environ.get(
-                "SOPHYANE_EVOLUTION_ALLOW_LOCAL_FALLBACK",
-                "1",
-            )
-            != "0"
+        """Source-changing analysis uses only the authorized coding chain."""
+        from sophyane.providers.human_conversation import HumanConversationProvider
+        from sophyane.rsi.authority import Operation
+
+        return HumanConversationProvider({"max_tokens": max_tokens}).generate(
+            prompt, "Propose changes only; do not execute commands or edit files.",
+            operation=Operation.SOPHYANE_SOURCE_MUTATION,
         )
-
-        force_local = (
-            os.environ.get(
-                "SOPHYANE_EVOLUTION_FORCE_LOCAL_ANALYST",
-                "0",
-            )
-            == "1"
-        )
-
-        if force_local or not cloud_first:
-            print(
-                "Evolution analyst route: larger local GGUF"
-            )
-            return self._evolution_local_llm(
-                prompt,
-                max_tokens=max_tokens,
-            )
-
-        try:
-            output = self._gemini(prompt)
-            print(
-                "Evolution analyst route: Gemini"
-            )
-            return output
-
-        except Exception as cloud_error:
-            if (
-                not local_enabled
-                or not self._cloud_failure_allows_local_fallback(
-                    cloud_error
-                )
-            ):
-                raise
-
-            print(
-                "Gemini unavailable; using larger local "
-                "evolution analyst."
-            )
-            print(
-                "Cloud failure: "
-                f"{type(cloud_error).__name__}: "
-                f"{cloud_error}"
-            )
-
-            try:
-                return self._evolution_local_llm(
-                    prompt,
-                    max_tokens=max_tokens,
-                )
-            except Exception as local_error:
-                raise RuntimeError(
-                    "Both evolution analysts failed. "
-                    f"Cloud: {type(cloud_error).__name__}: "
-                    f"{cloud_error}. "
-                    f"Local: {type(local_error).__name__}: "
-                    f"{local_error}"
-                ) from local_error
 
     def _gemini(
         self,
         prompt: str,
     ) -> str:
-        """Generate complete Gemini output with explicit completion checks."""
+        """Dormant compatibility implementation; intelligence use is disabled."""
+        from sophyane.intelligence_authority import require_active_provider
+        require_active_provider("gemini")
         key = self._gemini_key()
 
         if not key:
@@ -1156,7 +1101,7 @@ Return JSON only:
 
         try:
             parsed = self._json_object(
-                self._gemini(prompt)
+                self._analyst_llm(prompt)
             )
         except Exception as error:
             return FeedbackReport(
@@ -1275,7 +1220,7 @@ Return:
 
         try:
             parsed = self._json_object(
-                self._gemini(prompt)
+                self._analyst_llm(prompt)
             )
         except Exception:
             return None

@@ -14,6 +14,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from sophyane.intelligence_authority import (
+    ACTIVE_INTELLIGENCE_PROVIDERS, require_active_provider,
+    provider_allowed_for_operational_intelligence,
+)
+
 from sophyane.execution_runtime import (
     _normalize_action,
 )
@@ -58,7 +63,7 @@ def _mode1_provider_order(primary: str, config: dict[str, Any]) -> tuple[str, ..
     order: list[str] = []
     def add(value: Any) -> None:
         name = str(value or "").strip().lower()
-        if name and name not in order and name != "fallback":
+        if provider_allowed_for_operational_intelligence(name) and name not in order:
             order.append(name)
     add(primary)
     explicit_present = "provider_fallback_order" in config or "fallback_order" in config
@@ -68,7 +73,7 @@ def _mode1_provider_order(primary: str, config: dict[str, Any]) -> tuple[str, ..
     # An explicitly supplied lane is authoritative: independent workers must
     # not collapse into a cross-class fallback chain.
     if not explicit_present and (primary not in {"local", "local_gguf"} or bool(config.get("allow_local_fallbacks"))):
-        for value in ("gemini", "xai", "openai", "anthropic", "groq", "openrouter", "deepseek", "nifdu_browser", "codex_cli", "agy", "nifdu", "neuron", "local_gguf"):
+        for value in ACTIVE_INTELLIGENCE_PROVIDERS:
             add(value)
     return tuple(order)
 
@@ -625,6 +630,7 @@ def _single_provider(
     config: dict[str, Any],
 ):
     """Create exactly one provider without a fallback chain."""
+    require_active_provider(provider_id)
     if str(provider_id).strip().lower() in {"nifdu", "neuron"}:
         return _NativeRaceProvider(str(provider_id).strip().lower())
 
@@ -1917,6 +1923,8 @@ def _mode1_capability_class(provider_id: str) -> str:
 def _mode1_provider_available(provider_id: str, config: dict[str, Any]) -> bool:
     """Use startup's readiness inventory; explicit test inventories remain supported."""
     provider = str(provider_id).strip().lower()
+    if not provider_allowed_for_operational_intelligence(provider):
+        return False
     if provider in {"nifdu", "neuron"}:
         try:
             from sophyane.native_backends import probe_nifdu, probe_neuron
@@ -2099,8 +2107,8 @@ def build_real_workers(
         request=request, provider_id="local_gguf", repository_identity=repository_identity, principles_root=workspace,
     )
 
-    primary = str(config.get("provider") or "gemini").strip().lower()
-    candidates = [primary, "nifdu", "neuron"]
+    primary = str(config.get("provider") or ACTIVE_INTELLIGENCE_PROVIDERS[0]).strip().lower()
+    candidates = [primary, *ACTIVE_INTELLIGENCE_PROVIDERS]
     explicit = config.get("provider_workers") or config.get("available_providers") or ()
     candidates.extend(str(item).strip().lower() for item in explicit)
     try:

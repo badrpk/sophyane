@@ -303,6 +303,8 @@ def reinforce_structure(data: dict[str, Any], tokens: list[str], request: str) -
 
 
 def _gemini_propose(unknown: list[str], request: str) -> dict[str, dict[str, Any]]:
+    from sophyane.intelligence_authority import require_active_provider
+    require_active_provider("gemini")
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not api_key or not unknown:
         return {}
@@ -359,9 +361,7 @@ def _gemini_propose(unknown: list[str], request: str) -> dict[str, dict[str, Any
 
 
 def propose_roles(unknown: list[str], request: str) -> dict[str, dict[str, Any]]:
-    proposed = _gemini_propose(unknown, request)
-    if proposed:
-        return proposed
+    # Deterministic knowledge remains available without a disabled API route.
     out: dict[str, dict[str, Any]] = {}
     for term in unknown:
         # also try pre-merge surface forms in FALLBACK

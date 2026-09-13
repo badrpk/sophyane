@@ -68,7 +68,18 @@ def test_noninteractive_human_conversation_keeps_configured_provider(
 
     result = startup_policy.choose_startup_provider()
 
-    assert result == config
+    # Human Conversation now owns one explicit bounded provider cascade.
+    # Saved/configured provider preference must not replace Mode-6 authority.
+    assert result["provider"] == "codex_cli"
+    assert result["model"] == "codex-default"
+    assert result["company"] == "Human Conversation"
+    assert result["timeout"] >= 300
+    assert result["provider_failover_order"] == [
+        "codex_cli",
+        "nifdu_browser",
+        "local_gguf",
+    ]
+    assert result["bounded_provider_failover"] is True
     assert (
         os.environ["SOPHYANE_SESSION_MODE"]
         == "human_conversation"
@@ -172,7 +183,10 @@ def test_human_conversation_with_local_config_can_start_local_server(
 
     cli_entry._start_local_server_if_needed()
 
-    assert calls == [True]
+    # Mode 6 constructs Local lazily only after external providers become
+    # unavailable. Starting a Human Conversation session must not eagerly
+    # start llama.cpp.
+    assert calls == []
 
 
 def test_human_conversation_does_not_use_mode3_profile_server_path(
@@ -217,5 +231,7 @@ def test_human_conversation_does_not_use_mode3_profile_server_path(
 
     cli_entry._start_local_server_if_needed()
 
-    assert normal_calls == [True]
+    # Human Conversation must use neither Local startup mechanism eagerly.
+    # The ordinary Local provider is constructed lazily by the Mode-6 cascade.
+    assert normal_calls == []
     assert profile_calls == []

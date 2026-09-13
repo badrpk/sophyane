@@ -30,8 +30,9 @@ SOPHYANE_SESSION_MODE=human_conversation
 
 The mode must not invent or persist a new provider configuration.
 
-The selected/current provider remains authoritative through the existing
-provider construction and session environment mechanisms.
+Mode 6 establishes transient Codex-first authority with the bounded cascade
+`codex_cli -> nifdu_browser -> local_gguf`. Gemini is excluded from
+Mode 6; explicit Mode-4 selections remain unchanged.
 
 ## Runtime Flow
 
@@ -62,11 +63,10 @@ explicit repository execution
 Selecting option 6 must:
 
 - set SOPHYANE_SESSION_MODE=human_conversation
-- preserve the current provider/model configuration
+- preserve persistent provider/model configuration
 - not persist provider changes
 - clear incompatible SLI-only, learning, and strict-local flags
-- leave explicit session provider/model/timeout authority intact when already
-  present
+- replace stale transient authority with `codex_cli` / `codex-default`
 - print a clear Human Conversation mode banner
 
 Human Conversation must remain available independently of whether the current
@@ -105,22 +105,20 @@ session.
 
 ## Provider Authority
 
-Human Conversation mode must not itself choose between Local, Cloud, NIFDU,
-Codex, or AGY providers.
+Mode 6 owns exactly `codex_cli -> nifdu_browser -> local_gguf`, implemented by
+`providers/human_conversation.py`. Every independent request starts at Codex.
+Provider-internal retries and same-provider semantic repair precede failover.
+Only availability/transport failures advance the cascade. Cancellation,
+programming errors, authority violations and invalid contracts are terminal.
 
-Provider authority continues to come from existing configuration and transient
-session environment state.
+`provider_switching_allowed` remains false. Structured status exposes
+`provider_failover_order` and `bounded_provider_failover: true`. Neither
+fallback success nor startup selection writes provider/model configuration
+or `llm.json`.
 
-The mode therefore separates:
-
-interaction surface:
-    human_conversation
-
-from:
-
-provider:
-    local_gguf / cloud provider / nifdu_browser / codex_cli / agy / other
-    supported provider
+Verified camera artifacts are sent only through a provider with image transport.
+Codex and Local currently lack that transport, so visual requests report their
+unavailability and use NIFDU; no image is silently discarded.
 
 ## Banner and Identity
 
@@ -141,8 +139,7 @@ Tests must prove:
 6. Selecting 6 clears stale learning flags.
 7. Selecting 6 clears stale strict-local execution flags.
 8. Selecting 6 does not persist provider configuration.
-9. Selecting 6 does not overwrite an existing transient session provider,
-   model, or timeout.
+9. Selecting 6 establishes transient Codex-first authority even after Gemini.
 10. cli_entry.main() dispatches Human Conversation directly to
     human_conversation_cli.main().
 11. Human Conversation dispatch does not call v13_cli.main().

@@ -93,38 +93,20 @@ def test_local_gguf_configured_timeout_is_long_enough_for_coding() -> None:
         == configured_timeout
     )
 
-    local = None
-
-    for provider_id, candidate in getattr(
+    # Mode 6 is intentionally lazy. Provider candidates are no longer
+    # eagerly materialized into ``_providers``. Verify the public cascade
+    # advertises Local and that the factory's generation timeout budget is
+    # inherited from the configured timeout.
+    assert "local_gguf" in getattr(
         provider,
-        "_providers",
+        "chain",
         (),
-    ):
-        print(
-            "chain provider:",
-            provider_id,
-            type(candidate).__name__,
-            "timeout=",
-            getattr(
-                candidate,
-                "timeout",
-                None,
-            ),
-        )
-
-        if provider_id == "local_gguf":
-            local = candidate
-            break
-
-    assert local is not None, (
-        "local_gguf is absent from the configured "
-        "fallback provider chain"
     )
 
     assert (
         int(
             getattr(
-                local,
+                provider,
                 "timeout",
                 0,
             )

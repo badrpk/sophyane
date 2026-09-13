@@ -85,6 +85,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def load_runtime_config() -> dict[str, Any]:
+    if os.environ.get("SOPHYANE_SESSION_MODE", "").strip().lower() == "human_conversation":
+        from sophyane.providers.human_conversation import mode6_config
+
+        return mode6_config()
     config = load_config()
 
     # SOPHYANE_MODE3_PURE_LOCAL_CONFIG_V1
@@ -199,6 +203,19 @@ def create_provider(config: dict[str, Any]):
         or ""
     ).strip().lower()
 
+    if session_mode == "human_conversation":
+        from sophyane.providers.human_conversation import HumanConversationProvider
+
+        return HumanConversationProvider(config)
+
+    from sophyane.intelligence_authority import require_active_provider
+
+    effective_provider = {
+        "nifdu_llm": "nifdu_browser", "codex_cli": "codex_cli",
+        "local_llm": "local_gguf", "agy": "agy",
+    }.get(session_mode, os.environ.get("SOPHYANE_SESSION_PROVIDER") or config.get("provider", ""))
+    require_active_provider(effective_provider)
+
     # SOPHYANE_TRANSIENT_SESSION_PROVIDER_V1
     session_provider = str(
         os.environ.get("SOPHYANE_SESSION_PROVIDER")
@@ -241,10 +258,6 @@ def create_provider(config: dict[str, Any]):
 
     if (
         session_mode == "nifdu_llm"
-        or (
-            session_mode == "human_conversation"
-            and session_provider == "nifdu_browser"
-        )
     ):
         from sophyane.providers.nifdu_browser import (
             NifduBrowserProvider,
@@ -263,10 +276,6 @@ def create_provider(config: dict[str, Any]):
 
     if (
         session_mode == "codex_cli"
-        or (
-            session_mode == "human_conversation"
-            and session_provider == "codex_cli"
-        )
     ):
         from sophyane.providers.codex_cli import (
             CodexCliProvider,

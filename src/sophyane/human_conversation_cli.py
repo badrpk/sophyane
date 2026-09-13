@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 
@@ -300,6 +301,11 @@ def _execute_repository_request(
     )
     from sophyane.config import load_config
     from sophyane.main import create_provider
+    from sophyane.request_classification import (
+        RepositoryCapability,
+        classify_repository_capability,
+    )
+    from sophyane.rsi.authority import Operation
 
     request = str(text or "").strip()
 
@@ -308,8 +314,19 @@ def _execute_repository_request(
             "repository execution request must be non-empty"
         )
 
+    capability = classify_repository_capability(request)
+    operation = (
+        Operation.READ_ONLY_OPERATION
+        if capability is RepositoryCapability.READ_ONLY
+        else Operation.SOPHYANE_SOURCE_MUTATION
+    )
+
+    from sophyane.main import load_runtime_config
+
     provider = create_provider(
-        load_config()
+        load_runtime_config()
+        if os.environ.get("SOPHYANE_SESSION_MODE", "").strip().lower() == "human_conversation"
+        else load_config()
     )
 
     system_prompt = (
@@ -320,6 +337,16 @@ def _execute_repository_request(
     )
 
     def ask(prompt: str) -> str:
+        from sophyane.providers.human_conversation import HumanConversationProvider
+
+        if isinstance(provider, HumanConversationProvider):
+            return str(
+                provider.generate(
+                    str(prompt),
+                    system_prompt,
+                    operation=operation,
+                )
+            )
         return str(
             provider.generate(
                 str(prompt),

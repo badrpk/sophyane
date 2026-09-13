@@ -176,7 +176,7 @@ def test_six_clears_incompatible_flags(
         )
 
 
-def test_six_preserves_provider_authority(
+def test_six_establishes_codex_first_authority(
     monkeypatch,
 ):
     monkeypatch.setenv(
@@ -200,19 +200,19 @@ def test_six_preserves_provider_authority(
         os.environ[
             "SOPHYANE_SESSION_PROVIDER"
         ]
-        == "nifdu_browser"
+        == "codex_cli"
     )
     assert (
         os.environ[
             "SOPHYANE_SESSION_MODEL"
         ]
-        == "chatgpt-browser"
+        == "codex-default"
     )
     assert (
         os.environ[
             "SOPHYANE_SESSION_TIMEOUT"
         ]
-        == "180"
+        == "300"
     )
 
 
@@ -225,7 +225,10 @@ def test_six_does_not_persist_provider(
         )
     )
 
-    assert result == config
+    assert result["provider"] == "codex_cli"
+    assert result["model"] == "codex-default"
+    assert result["provider_failover_order"] == ["codex_cli", "nifdu_browser", "local_gguf"]
+    assert config["provider"] == "local_gguf"
     assert writes == []
 
 
@@ -271,7 +274,10 @@ def test_noninteractive_human_mode_preserved(
         startup_policy.choose_startup_provider()
     )
 
-    assert result == config
+    assert result["provider"] == "codex_cli"
+    assert result["model"] == "codex-default"
+    assert result["provider_failover_order"] == ["codex_cli", "nifdu_browser", "local_gguf"]
+    assert config["provider"] == "local_gguf"
     assert (
         os.environ[
             "SOPHYANE_SESSION_MODE"

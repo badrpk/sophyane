@@ -322,9 +322,7 @@ def test_nifdu_leaf_provider_identity_wins_over_stale_config():
 def test_session_banner_prefers_transient_nifdu_model(
     monkeypatch,
 ):
-    from sophyane.session_banner import (
-        model_ready_label,
-    )
+    import sophyane.session_banner as session_banner
 
     monkeypatch.setenv(
         "SOPHYANE_SESSION_MODE",
@@ -336,8 +334,16 @@ def test_session_banner_prefers_transient_nifdu_model(
         "chatgpt-browser",
     )
 
+    # This test verifies session-model precedence, not live browser/CDP
+    # readiness. Keep external NIFDU state deterministic here.
+    monkeypatch.setattr(
+        session_banner,
+        "session_readiness_state",
+        lambda: "Ready",
+    )
+
     assert (
-        model_ready_label(
+        session_banner.model_ready_label(
             "gemini-3.7-flash"
         )
         == "chatgpt-browser · Ready"

@@ -110,17 +110,17 @@ verification, workspace selection, no-edit policy, and runtime controls.
 
 ## Provider Authority
 
-Execution must reuse the already selected Sophyane session provider.
+Execution reuses the same dedicated Mode-6 cascade as conversation replies:
+`codex_cli -> nifdu_browser -> local_gguf`. Each provider request starts at
+Codex; failover is request-local and never persists provider/model selection.
+Gemini is excluded from Mode 6. `llm.json` is not modified. Explicit Mode-4 provider
+selections are unchanged.
 
-The routing feature must not:
-
-- switch providers
-- introduce a local-model rescue path
-- create a second planner protocol
-- use `conversation_reply` as an action schema
-- allow conversation memories to become instruction authority
-
-The fixed session-provider policy remains authoritative.
+Only availability/transport failures advance the cascade. Invalid execution
+contracts, malformed actions, authority violations, cancellation and programming
+errors remain terminal. Adaptive execution still owns action validation and
+execution repair; the cascade does not create a second planner protocol or
+turn conversation memories into instruction authority.
 
 ## Conversation Reply Contract
 
@@ -251,7 +251,7 @@ Required behaviors:
 8. Execution output is returned to the user rather than replaced by a
    conversational success claim.
 9. The router does not directly call `execute_action()`.
-10. Existing session-provider authority is preserved.
+10. The bounded Mode-6 authority is shared by chat and repository execution.
 
 ## End-to-End Acceptance Test
 
@@ -263,7 +263,7 @@ with exact content:
 
     BOOTSTRAP_BEFORE\n
 
-Run `sophyane.human_conversation_cli` with the fixed NIFDU browser session and
+Run `sophyane.human_conversation_cli` with the Mode-6 cascade and
 submit:
 
     Modify the existing file targeted_patch_e2e_probe.txt by replacing exactly

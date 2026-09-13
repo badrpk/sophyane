@@ -7,11 +7,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from sophyane.config import CONFIG_DIR, get_secret, load_config, save_config, save_json
+from sophyane.config import CONFIG_DIR, CONFIG_FILE, get_secret, load_json, default_config, save_config, save_json
 from sophyane.plugin_loader import PluginLoader
 
 LOCAL_IDS = {"local_gguf"}
 LLM_FILE = CONFIG_DIR / "llm.json"
+
+
+def load_config() -> dict[str, Any]:
+    """Read startup settings without initializing provider configuration."""
+    return load_json(CONFIG_FILE) or default_config()
 
 
 def _load_llm() -> dict[str, Any]:
@@ -296,7 +301,28 @@ def resolve_local_session_config() -> dict[str, Any]:
     }
 
 
+def _human_conversation_session(config: dict[str, Any]) -> dict[str, Any]:
+    """Establish transient Mode-6 authority without writing configuration."""
+    from sophyane.providers.human_conversation import mode6_status
+
+    os.environ["SOPHYANE_SESSION_MODE"] = "human_conversation"
+    os.environ["SOPHYANE_SESSION_PROVIDER"] = "codex_cli"
+    os.environ["SOPHYANE_SESSION_MODEL"] = "codex-default"
+    os.environ["SOPHYANE_SESSION_TIMEOUT"] = "300"
+    for key in (
+        "SOPHYANE_SLI_GRAPH", "SOPHYANE_SLI_ONLY", "SOPHYANE_SLI_CONTINUOUS",
+        "SOPHYANE_TOPIC_LEARNING", "SOPHYANE_LOCAL_ONLY",
+        "SOPHYANE_DISABLE_CLOUD_FALLBACK", "SOPHYANE_DISABLE_LOCAL_FALLBACK",
+        "SOPHYANE_ALLOW_CLOUD_LOCAL_RESCUE", "SOPHYANE_MODE4_EXTERNAL_FAILOVER",
+    ):
+        os.environ.pop(key, None)
+    return {**config, "provider": "codex_cli", "model": "codex-default",
+            "company": "Human Conversation", "timeout": 300, **mode6_status()}
+
+
 def choose_startup_provider() -> dict[str, Any]:
+    # Startup selection must not initialize llm.json before the user can
+    # choose a transient mode. Keep the existing injectable config reader.
     config = load_config()
     llm = _load_llm()
     local = _local_candidate(config, llm)
@@ -398,8 +424,7 @@ def choose_startup_provider() -> dict[str, Any]:
             return updated
 
         if requested_mode == "human_conversation":
-            os.environ["SOPHYANE_SESSION_MODE"] = "human_conversation"
-            return config
+            return _human_conversation_session(config)
 
         if requested_mode == "cloud_llm":
             if not clouds:
@@ -565,25 +590,11 @@ def choose_startup_provider() -> dict[str, Any]:
             return updated
 
         if answer == "6":
-            os.environ["SOPHYANE_SESSION_MODE"] = "human_conversation"
-
-            for key in (
-                "SOPHYANE_SLI_GRAPH",
-                "SOPHYANE_SLI_ONLY",
-                "SOPHYANE_SLI_CONTINUOUS",
-                "SOPHYANE_TOPIC_LEARNING",
-                "SOPHYANE_LOCAL_ONLY",
-                "SOPHYANE_DISABLE_CLOUD_FALLBACK",
-            ):
-                os.environ.pop(key, None)
-
             print(
-                "Mode: Human Conversation "
-                "(chat + voice/camera + repository execution)",
+                "Mode: Human Conversation (codex_cli -> nifdu_browser -> local_gguf)",
                 file=sys.stderr,
             )
-
-            return config
+            return _human_conversation_session(config)
 
         if answer == "5":
             # SOPHYANE_MODE5_DEDICATED_LEARNING_AUTHORITY_V1
