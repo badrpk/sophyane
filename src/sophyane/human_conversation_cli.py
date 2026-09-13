@@ -1002,6 +1002,88 @@ def _camera_status_text() -> str:
     )
 
 
+
+def _runtime_introspection_reply(
+    text: str,
+    *,
+    execution_context_active: bool = False,
+) -> str | None:
+    """Answer clear Mode-6 runtime-state questions without LLM speculation."""
+
+    normalized = " ".join(
+        str(text or "").casefold().strip().split()
+    )
+
+    terminal = normalized.rstrip(
+        "?!. "
+    )
+
+    if not terminal:
+        return None
+
+    explicit_agent_question = (
+        "agent" in terminal
+        and any(
+            phrase in terminal
+            for phrase in (
+                "how many",
+                "running",
+                "status",
+                "purpose",
+                "job",
+                "doing",
+                "what is name",
+                "what is the name",
+            )
+        )
+    )
+
+    direct_activity_followups = {
+        "is it doing something now or it will do in future",
+        "is it doing something now or will it do something in future",
+        "is it doing something now",
+        "what it is doing",
+        "what is it doing",
+        "what are you doing now",
+    }
+
+    if (
+        not explicit_agent_question
+        and terminal
+        not in direct_activity_followups
+    ):
+        return None
+
+    context_line = (
+        "A repository execution context is retained for follow-up, "
+        "but no repository job is executing while Sophyane is "
+        "waiting at this prompt."
+        if execution_context_active
+        else
+        "No repository execution job is currently active."
+    )
+
+    return "\n".join(
+        (
+            "Runtime status:",
+            "  Name: Sophyane",
+            (
+                "  Purpose: interactive Mode-6 conversation "
+                "and guarded repository execution."
+            ),
+            "  Interactive sessions: 1",
+            "  Background agents running: 0",
+            "  Current state: idle, waiting for your input.",
+            "  " + context_line,
+            (
+                "  Provider entries such as codex_cli, "
+                "nifdu_browser, and local_gguf are available "
+                "capabilities/fallbacks, not concurrently "
+                "running agents."
+            ),
+        )
+    )
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="sophyane-human-chat"
@@ -1090,6 +1172,21 @@ def main() -> int:
             return 0
 
         if not text:
+            continue
+
+        runtime_reply = _runtime_introspection_reply(
+            text,
+            execution_context_active=(
+                active_execution_request
+                is not None
+            ),
+        )
+
+        if runtime_reply is not None:
+            print(
+                "\nSophyane:",
+                runtime_reply,
+            )
             continue
 
         if text.strip() == "/camera-status":
