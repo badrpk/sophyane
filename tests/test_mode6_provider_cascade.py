@@ -681,3 +681,129 @@ def test_repository_repair_authority_stable(cascade, monkeypatch, tmp_path,
                             else 'Inspect only; do not edit'))
     assert _execute_repository_request(request_text, workspace=tmp_path)
     assert operations == [Operation(expected_operation)] * 2
+
+def test_mutation_quota_cooldown_restores_codex_as_first_provider(tmp_path):
+    """Codex must automatically regain mutation priority after quota expiry."""
+    from datetime import datetime, timedelta, timezone
+
+    from sophyane.providers.base import ProviderError
+    from sophyane.providers.human_conversation import HumanConversationProvider
+    from sophyane.rsi.authority import CODING_PROVIDER_ORDER, Operation
+    from sophyane.rsi.availability import AvailabilityStore
+
+    pkt = timezone(timedelta(hours=5))
+    clock = [
+        datetime(
+            2026,
+            9,
+            13,
+            15,
+            2,
+            0,
+            tzinfo=pkt,
+        )
+    ]
+
+    def now():
+        return clock[0]
+
+    store = AvailabilityStore(
+        tmp_path / "provider_availability.json",
+        clock=now,
+    )
+
+    assert tuple(CODING_PROVIDER_ORDER) == (
+        "codex_cli",
+        "nifdu_browser",
+    )
+
+    store.failure(
+        "codex_cli",
+        ProviderError(
+            "You've hit your usage limit. "
+            "try again at 6:32 PM."
+        ),
+    )
+
+    assert store.blocked("codex_cli") is True
+
+    class FakeProvider:
+        def __init__(self, provider_id):
+            self.provider_id = provider_id
+
+    provider = HumanConversationProvider()
+    provider._mutation_availability = store
+
+    before_reset = []
+
+    def create_before_reset(name):
+        before_reset.append(name)
+        return FakeProvider(name)
+
+    provider._create = create_before_reset
+
+    def request_before_reset(candidate):
+        if candidate.provider_id == "codex_cli":
+            raise AssertionError(
+                "Codex must be skipped during its active quota cooldown"
+            )
+
+        if candidate.provider_id == "nifdu_browser":
+            return "answered-by-nifdu"
+
+        raise AssertionError(
+            f"unexpected mutation provider: {candidate.provider_id}"
+        )
+
+    assert provider.run_request(
+        request_before_reset,
+        operation=Operation.SOPHYANE_SOURCE_MUTATION,
+    ) == "answered-by-nifdu"
+
+    assert before_reset == [
+        "nifdu_browser",
+    ]
+    assert provider.last_provider == "nifdu_browser"
+
+    clock[0] = datetime(
+        2026,
+        9,
+        13,
+        18,
+        33,
+        0,
+        tzinfo=pkt,
+    )
+
+    assert store.blocked("codex_cli") is False
+
+    after_reset = []
+
+    def create_after_reset(name):
+        after_reset.append(name)
+        return FakeProvider(name)
+
+    provider._create = create_after_reset
+
+    def request_after_reset(candidate):
+        if candidate.provider_id == "codex_cli":
+            return "answered-by-codex"
+
+        raise AssertionError(
+            "NIFDU must not become sticky after Codex cooldown expires"
+        )
+
+    assert provider.run_request(
+        request_after_reset,
+        operation=Operation.SOPHYANE_SOURCE_MUTATION,
+    ) == "answered-by-codex"
+
+    assert after_reset == [
+        "codex_cli",
+    ]
+    assert provider.last_provider == "codex_cli"
+
+    assert tuple(CODING_PROVIDER_ORDER) == (
+        "codex_cli",
+        "nifdu_browser",
+    )
