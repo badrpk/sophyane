@@ -845,3 +845,23 @@ def test_ordinary_chat_after_no_active_execution_stays_conversational(
 
     output = capsys.readouterr().out
     assert "CHAT_OK" in output
+
+
+def test_domain_backed_saas_build_routes_to_repository_execution():
+    from sophyane.human_conversation_cli import (
+        _repository_execution_request,
+    )
+
+    assert _repository_execution_request(
+        "make saas on www.shmry.com"
+    ) is True
+
+
+def test_domain_mention_without_execution_remains_conversational():
+    from sophyane.human_conversation_cli import (
+        _repository_execution_request,
+    )
+
+    assert _repository_execution_request(
+        "what is saas on www.shmry.com"
+    ) is False

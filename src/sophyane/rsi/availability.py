@@ -127,6 +127,66 @@ class AvailabilityStore:
             entry['cooldowns'] = active
             return bool(active)
 
+    def revalidation_due(
+        self,
+        provider,
+        *,
+        interval=timedelta(minutes=15),
+    ):
+        """Return whether a cached NIFDU quota is due one live revalidation.
+
+        Known Codex quota windows remain hard blocks until their reset.
+
+        NIFDU is browser/session backed, so its live state may change
+        independently of an earlier ChatGPT quota observation. Only an
+        active NIFDU quota is eligible, and at most once per interval.
+        """
+        if provider != "nifdu_browser":
+            return False
+
+        now = aware(self.clock())
+
+        with self._state() as state:
+            entry = self._entry(state, provider)
+
+            if entry.get("failure_class") != "quota":
+                return False
+
+            active_quota = False
+
+            for cooldown in entry.get("cooldowns", []):
+                if cooldown.get("kind") != "quota":
+                    continue
+
+                value = (
+                    cooldown.get("retry_at")
+                    or cooldown.get("probe_after")
+                )
+
+                if not value:
+                    continue
+
+                if aware(datetime.fromisoformat(value)) > now:
+                    active_quota = True
+                    break
+
+            if not active_quota:
+                return False
+
+            anchor = (
+                entry.get("last_probe_at")
+                or entry.get("observed_at")
+            )
+
+            if not anchor:
+                return False
+
+            return (
+                aware(datetime.fromisoformat(anchor))
+                + interval
+                <= now
+            )
+
     def probe(self, provider):
         with self._state() as state:
             self._entry(state, provider)['last_probe_at'] = aware(self.clock()).isoformat()

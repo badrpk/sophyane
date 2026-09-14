@@ -93,7 +93,27 @@ def _repository_execution_request(text: str) -> bool:
         )
     )
 
-    return executable and repository_context
+    web_product_context = bool(
+        re.search(
+            r"\b(?:saas|website|web\s+app|webapp|site|app)\b",
+            normalized,
+        )
+        and re.search(
+            r"(?:"
+            r"https?://[^\s]+|"
+            r"\bwww\.[a-z0-9.-]+\.[a-z]{2,}(?:/[^\s]*)?|"
+            r"\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
+            r"(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+"
+            r"(?:/[^\s]*)?"
+            r")",
+            normalized,
+        )
+    )
+
+    return executable and (
+        repository_context
+        or web_product_context
+    )
 
 
 

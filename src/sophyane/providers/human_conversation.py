@@ -92,6 +92,7 @@ def availability_failure(error: BaseException) -> bool:
             'callable selection is missing', 'bridge module is missing',
             'cdp disconnected', 'session not found', 'process exited',
             'no chatgpt chromium tab found', 'no responsive chatgpt cdp target',
+            'browser verification challenge',
             'chatgpt usage limit reached',
             "you've hit your usage limit",
             'you have hit your usage limit',
@@ -268,8 +269,12 @@ class HumanConversationProvider(Provider):
             if cancelled():
                 raise ProviderError('Mode-6 request cancelled')
             if store.blocked(name):
-                self.last_errors.append(f'{name}: cooldown')
-                continue
+                if (
+                    name != "nifdu_browser"
+                    or not store.revalidation_due(name)
+                ):
+                    self.last_errors.append(f'{name}: cooldown')
+                    continue
             try:
                 store.probe(name)
                 provider = self._create(name)
