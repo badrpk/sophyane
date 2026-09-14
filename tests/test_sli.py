@@ -749,6 +749,10 @@ def test_repository_memory_hit_is_disk_first_and_target_bound(tmp_path, monkeypa
 def test_repository_memory_miss_preserves_target_on_fallback(tmp_path, monkeypatch):
     import sophyane.sli_graph as graph
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv(
+        "SOPHYANE_HOME",
+        str(tmp_path / "sophyane-home"),
+    )
     captured = []
     module = __import__("sophyane.code_memory.internet_acquire", fromlist=["acquire_and_build"])
     monkeypatch.setattr(module, "acquire_and_build", lambda request, **kwargs: captured.append(request) or "fallback")

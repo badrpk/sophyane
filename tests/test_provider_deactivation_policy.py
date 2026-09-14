@@ -5,6 +5,26 @@ from sophyane import intelligence_authority as policy
 DISABLED = ('gemini', 'openai', 'anthropic', 'claude', 'xai', 'grok', 'groq',
             'openrouter', 'deepseek', 'agy', 'neuron', 'nifdu', 'browser', 'other_local')
 
+@pytest.fixture(autouse=True)
+def _restore_quality_escalation_installation():
+    from sophyane.providers import fallback
+
+    before_generate = fallback.FallbackProvider.generate
+    before_resolve = fallback.resolve_provider_order
+    before_installed = getattr(fallback, '_quality_escalation_installed', None)
+    had_installed_state = hasattr(fallback, '_quality_escalation_installed')
+    try:
+        yield
+    finally:
+        fallback.FallbackProvider.generate = before_generate
+        fallback.resolve_provider_order = before_resolve
+        if had_installed_state:
+            fallback._quality_escalation_installed = before_installed
+        else:
+            if hasattr(fallback, "_quality_escalation_installed"):
+                delattr(fallback, "_quality_escalation_installed")
+
+
 
 def test_exact_active_authority():
     assert getattr(policy, 'ACTIVE_INTELLIGENCE_PROVIDERS', None) == ('codex_cli', 'nifdu_browser', 'local_gguf')

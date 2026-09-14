@@ -645,7 +645,20 @@ def _normalise_action(action: Any) -> dict[str, Any] | None:
             # account, file, etc. Do not guess without structural evidence.
             return None
 
+        if action_kind in {"inspect", "read_file"}:
+            canonical = dict(value)
+            path = canonical.get("path") or canonical.get("file")
+            if not isinstance(path, str) or not path.strip():
+                return None
+            canonical["type"] = "read_file"
+            canonical["path"] = path.strip()
+            canonical.pop("action", None)
+            canonical.pop("file", None)
+            return canonical
+
         aliases = {
+            "inspect": "read_file",
+            "read_file": "read_file",
             "write_file": "write_file",
             "write": "write_file",
             "create_file": "write_file",
@@ -724,6 +737,8 @@ def _normalise_action(action: Any) -> dict[str, Any] | None:
     kind = str(value.get("type") or value.get("kind") or "").strip().lower()
 
     aliases = {
+        "inspect": "read_file",
+        "read_file": "read_file",
         "command": "run_command",
         "cmd": "run_command",
         "shell": "run_command",
@@ -768,6 +783,13 @@ def _normalise_action(action: Any) -> dict[str, Any] | None:
         if not isinstance(content, str):
             return None
         value["path"] = path.strip()
+
+    if value.get("type") == "read_file":
+        path = value.get("path") or value.get("file")
+        if not isinstance(path, str) or not path.strip():
+            return None
+        value["path"] = path.strip()
+        value.pop("file", None)
 
     # SOPHYANE_EXECUTABLE_ACTION_TYPE_GATE_V1
     #
@@ -1103,6 +1125,9 @@ def _no_edit_action_problem(
             if problem:
                 return f"batch item {index}: {problem}"
 
+        return ""
+
+    if kind == "read_file":
         return ""
 
     if kind in {
@@ -1583,6 +1608,18 @@ def _compact_repair_prompt(request: str, files: list[str], result: str) -> str:
     )
 
 
+def _read_only_continuation_prompt(request: str, evidence: str) -> str:
+    return (
+        "READ-ONLY REPOSITORY CONTINUATION. Return one JSON object only. "
+        "Answer the ORIGINAL TASK using the grounded file observation below. "
+        "Do not request or perform filesystem mutation, shell commands, or "
+        "additional tools. Use exactly this final response contract: "
+        '{"action":{"type":"respond","message":"user-facing answer"}}.\n'
+        f"ORIGINAL TASK:\n{request}\n"
+        f"GROUNDED READ EVIDENCE:\n{evidence}\n"
+    )
+
+
 _READ_ONLY_INSPECTION_HINTS = (
     "which file",
     "what file",
@@ -1737,6 +1774,9 @@ def _simple_file_write_request_completed(
 # SOPHYANE_FULL_STACK_SERVICE_FABRIC_CUTOVER_V1
 
 
+from sophyane.rsi.supervisor import foreground as _rsi_foreground
+
+@_rsi_foreground
 def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable[[str], Any],
                       workspace: Path | None = None, max_steps: int = 12,
                       progress: Callable[[str], None] | None = None) -> str:
@@ -1827,6 +1867,7 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     evidence: list[str] = []
     repairs = 0
     successful_commands: set[str] = set()
+    read_only_execution = _explicit_no_edit_request(original_request)
 
     # SOPHYANE_VERIFIED_MUTATION_COMPLETION_STOP_V1
     #
@@ -2127,7 +2168,7 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             action["type"] = "message"
             kind = "message"
 
-        if kind in {"respond", "message"} and not _files(workspace):
+        if kind in {"respond", "message"} and not _files(workspace) and not read_only_execution:
             current = "Premature completion: no artifact exists."
             continue
         progress(f"Step {step}/{max_steps}: preparing {kind or 'action'}")
@@ -2615,6 +2656,12 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                 return "Execution stopped safely after bounded repair attempts.\n\n" + "\n".join(evidence)
             repairs += 1
             response = ask(_compact_repair_prompt(original_request, _files(workspace), result))
+            current = getattr(response, "text", str(response))
+            continue
+        if read_only_execution and kind == "read_file":
+            evidence.append(f"Step {step}: {result}")
+            progress("Read-only observation completed; requesting final answer")
+            response = ask(_read_only_continuation_prompt(original_request, result))
             current = getattr(response, "text", str(response))
             continue
         if kind in {"respond", "message", "open_browser", "browser"}:

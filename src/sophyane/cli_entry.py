@@ -279,6 +279,9 @@ def _canonicalize_launch_workspace() -> str | None:
     return None
 
 
+from sophyane.rsi.supervisor import runtime_session as _rsi_runtime_session
+
+@_rsi_runtime_session
 def main() -> int:
     import os
     from pathlib import Path

@@ -189,7 +189,9 @@ def test_failed_browser_proof_deletes_product_artifact(
 
 def test_graph_recovers_after_acquisition_failure(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    monkeypatch.setenv("SOPHYANE_HOME", str(tmp_path / "sophyane-home"))
     failed_acquisition = (
         "SLI strict acquisition failed.\n"
         "No candidate satisfied both licence "

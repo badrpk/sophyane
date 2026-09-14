@@ -5,6 +5,7 @@ def test_prepare_workspace_creates_sandbox(monkeypatch, tmp_path: Path):
     from sophyane import deep_agent_runtime as runtime
 
     monkeypatch.setattr(runtime, "ROOT", tmp_path / ".sophyane")
+    monkeypatch.delenv("SOPHYANE_HOME", raising=False)
     workspace = tmp_path / "task"
     prepared = runtime.prepare_workspace(workspace, request="build demo")
 

@@ -45,7 +45,7 @@ def _run(
     monkeypatch.setattr(
         cli,
         "conversation_turn",
-        lambda text: (
+        lambda text, **kwargs: (
             conversation_calls.append(text)
             or _Turn("ok")
         ),

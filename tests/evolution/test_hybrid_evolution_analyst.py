@@ -10,17 +10,9 @@ def test_evolution_analyst_has_local_fallback() -> None:
         EvolutionEngine._analyst_llm
     )
 
-    assert "_gemini" in source
-    assert "_evolution_local_llm" in source
-    assert (
-        "SOPHYANE_EVOLUTION_ALLOW_LOCAL_FALLBACK"
-        in source
-    )
-    assert (
-        "SOPHYANE_EVOLUTION_FORCE_LOCAL_ANALYST"
-        in source
-    )
-
+    assert "_gemini" not in source
+    assert "HumanConversationProvider" in source
+    assert "SOPHYANE_SOURCE_MUTATION" in source
 
 def test_local_analyst_uses_separate_endpoint() -> None:
     source = inspect.getsource(

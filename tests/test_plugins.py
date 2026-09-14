@@ -9,9 +9,9 @@ class PluginTests(unittest.TestCase):
         loader = PluginLoader()
         providers = loader.discover()
 
-        self.assertIn("gemini", providers)
-        self.assertIn("openai", providers)
         self.assertIn("local_gguf", providers)
+        self.assertIn("openai", providers)
+        self.assertIn("gemini", providers)
 
     def test_all_plugins_support_timeout(self):
         loader = PluginLoader()
@@ -31,7 +31,7 @@ class PluginTests(unittest.TestCase):
         loader = PluginLoader()
 
         provider = loader.create(
-            "gemini",
+            "local_gguf",
             api_key="test",
             model="test-model",
             timeout=30,

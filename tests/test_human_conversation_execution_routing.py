@@ -286,7 +286,7 @@ def test_once_normal_chat_stays_conversational(
     monkeypatch.setattr(
         cli,
         "conversation_turn",
-        lambda text: FakeTurn(),
+        lambda text, **kwargs: FakeTurn(),
     )
 
     assert cli.main() == 0
@@ -387,7 +387,7 @@ def test_interactive_normal_chat_stays_conversational(
     monkeypatch.setattr(
         cli,
         "conversation_turn",
-        lambda text: FakeTurn(),
+        lambda text, **kwargs: FakeTurn(),
     )
 
     assert cli.main() == 0
@@ -496,7 +496,7 @@ def test_voice_normal_transcript_stays_conversational(
     monkeypatch.setattr(
         cli,
         "conversation_turn",
-        lambda text: FakeTurn(),
+        lambda text, **kwargs: FakeTurn(),
     )
 
     assert cli.main() == 0
@@ -557,6 +557,7 @@ def test_camera_originated_repo_like_text_remains_conversational(
         *,
         visual_artifact_path=None,
         metadata=None,
+        **kwargs,
     ):
         captured["text"] = text
         captured["visual_artifact_path"] = visual_artifact_path
@@ -825,7 +826,7 @@ def test_ordinary_chat_after_no_active_execution_stays_conversational(
     monkeypatch.setattr(
         cli,
         "conversation_turn",
-        lambda text: FakeTurn(),
+        lambda text, **kwargs: FakeTurn(),
     )
 
     monkeypatch.setattr(

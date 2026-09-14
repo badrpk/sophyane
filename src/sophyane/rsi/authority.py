@@ -28,3 +28,11 @@ def require(provider: str, operation: Operation) -> None:
     if provider == 'local_gguf' and operation is Operation.READ_ONLY_OPERATION:
         return
     raise AuthorityViolation(f'{provider!r} has no authority for {operation.value}')
+
+
+def verify_mutation_authority(provider: str) -> bool:
+    try:
+        require(provider, Operation.SOPHYANE_SOURCE_MUTATION)
+    except AuthorityViolation:
+        return False
+    return True

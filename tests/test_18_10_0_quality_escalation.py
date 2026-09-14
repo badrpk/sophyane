@@ -2,6 +2,20 @@ from __future__ import annotations
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _restore_provider_state():
+    from sophyane import provider_state
+
+    before = provider_state.snapshot()
+    yield
+    provider_state.publish(
+        primary=before["primary"],
+        active=before["active"],
+        mode=before["mode"],
+    )
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _restore_fallback_provider_class_after_module():
     """Keep quality-escalation runtime installation local to this module."""
@@ -87,12 +101,12 @@ def test_repeated_validator_repair_escalates_once(monkeypatch):
         "load_llm_config",
         lambda: {
             "active_provider": "local_gguf",
-            "fallback_order": ["local_gguf", "gemini"],
+            "fallback_order": ["local_gguf", "codex_cli"],
             "allow_quality_escalation": True,
-            "quality_rescue_provider": "gemini",
+            "quality_rescue_provider": "codex_cli",
             "providers": {
                 "local_gguf": {"enabled": True},
-                "gemini": {"enabled": True},
+                "codex_cli": {"enabled": True},
             },
         },
     )
@@ -117,11 +131,11 @@ def test_repeated_validator_repair_escalates_once(monkeypatch):
         "qwen-local",
         ["bad-one", "local-resumed"],
     )
-    cloud = FakeProvider("gemini", "gemini-test", ["expert-repair"])
+    cloud = FakeProvider("codex_cli", "codex-test", ["expert-repair"])
 
     install_quality_escalation()
     provider = fallback.FallbackProvider(
-        [("local_gguf", local), ("gemini", cloud)],
+        [("local_gguf", local), ("codex_cli", cloud)],
         primary="local_gguf",
     )
 
@@ -132,7 +146,7 @@ def test_repeated_validator_repair_escalates_once(monkeypatch):
 
     assert provider.generate(repair, "") == "bad-one"
     assert provider.generate(repair, "") == "expert-repair"
-    assert provider.last_provider == "gemini"
+    assert provider.last_provider == "codex_cli"
     assert len(cloud.calls) == 1
 
     # Rescue is one-shot; normal work returns to the configured local model.
@@ -150,15 +164,15 @@ def test_local_order_includes_configured_rescue():
         "local_gguf",
         llm_config={
             "allow_quality_escalation": True,
-            "quality_rescue_provider": "gemini",
-            "fallback_order": ["gemini", "openai"],
+            "quality_rescue_provider": "codex_cli",
+            "fallback_order": ["codex_cli", "nifdu_browser"],
         },
     )
 
     assert order[0] == "local_gguf"
-    assert "gemini" in order
-    assert "openai" in order
-    assert order.count("gemini") == 1
+    assert "codex_cli" in order
+    assert "nifdu_browser" in order
+    assert order.count("codex_cli") == 1
 
 
 def test_quality_escalation_can_be_disabled():

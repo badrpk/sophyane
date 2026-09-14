@@ -59,7 +59,7 @@ def _run_cli(
 
     conversation_calls = []
 
-    def fake_turn(text):
+    def fake_turn(text, **kwargs):
         conversation_calls.append(
             text
         )
@@ -386,7 +386,7 @@ def test_once_mode_never_activates_voice(
 
     conversation_calls = []
 
-    def fake_turn(text):
+    def fake_turn(text, **kwargs):
         conversation_calls.append(
             text
         )

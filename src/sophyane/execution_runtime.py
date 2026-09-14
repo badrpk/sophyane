@@ -30,7 +30,7 @@ from typing import Any, Callable
 Progress = Callable[[str], None]
 MAX_CAPTURE = 12000
 VALID_ACTIONS = {
-    "write_file", "append_file", "mkdir", "run", "shell", "run_command", "bash",
+    "read_file", "write_file", "append_file", "mkdir", "run", "shell", "run_command", "bash",
     "open_browser", "browser", "respond", "message", "answer", "final_answer", "reply", "run_interactive", "interactive",
     "play_demo", "analyze_log", "verify", "check", "targeted_patch",
 }
@@ -770,6 +770,8 @@ def _normalize_action(value: Any) -> dict[str, Any] | None:
         action_kind = action_value.strip().lower()
         if action_kind in {"answer", "final_answer", "reply"}:
             action_kind = "respond"
+        if action_kind in {"inspect", "read_file"}:
+            action_kind = "read_file"
         if action_kind in VALID_ACTIONS:
             normalized = dict(value)
             normalized["type"] = action_kind
@@ -844,10 +846,33 @@ def _command_exit_code_is_accepted(
         "fgrep",
     }
 
+from sophyane.rsi.supervisor import foreground as _rsi_foreground
+
+@_rsi_foreground
 def execute_action(action: dict[str, Any], workspace: Path, progress: Progress) -> tuple[bool, str]:
     action = _normalize_action(action) or action
     kind = str(action.get("type") or "").strip().lower()
     progress(f"Action: {kind or 'unknown'}")
+    if kind == "read_file":
+        try:
+            target = _safe_target(
+                str(action.get("path") or action.get("file") or ""),
+                workspace,
+            )
+        except ValueError as error:
+            return False, str(error)
+        if not target.is_file():
+            if target.exists():
+                return False, f"Read blocked: target is not a file: {target}"
+            return False, f"Read failed: file does not exist: {target}"
+        try:
+            content = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            return False, f"Read failed for {target}: {error}"
+        return True, (
+            f"Read file: {action.get('path') or action.get('file')}\n"
+            f"CONTENT:\n{_clip(content)}"
+        )
     if kind in {"respond", "message"}:
         return True, str(
             action.get("message")

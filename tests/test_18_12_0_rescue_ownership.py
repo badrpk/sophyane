@@ -2,6 +2,20 @@ from __future__ import annotations
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _restore_provider_state():
+    from sophyane import provider_state
+
+    before = provider_state.snapshot()
+    yield
+    provider_state.publish(
+        primary=before["primary"],
+        active=before["active"],
+        mode=before["mode"],
+    )
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _restore_fallback_provider_class_after_module():
     """Keep quality-escalation runtime installation local to this module."""
@@ -87,12 +101,12 @@ def test_cloud_rescue_owns_repair_sequence_until_nonrepair(monkeypatch):
         "load_llm_config",
         lambda: {
             "active_provider": "local_gguf",
-            "fallback_order": ["local_gguf", "gemini"],
+            "fallback_order": ["local_gguf", "codex_cli"],
             "allow_quality_escalation": True,
-            "quality_rescue_provider": "gemini",
+            "quality_rescue_provider": "codex_cli",
             "providers": {
                 "local_gguf": {"enabled": True},
-                "gemini": {"enabled": True},
+                "codex_cli": {"enabled": True},
             },
         },
     )
@@ -109,27 +123,27 @@ def test_cloud_rescue_owns_repair_sequence_until_nonrepair(monkeypatch):
 
         def generate(self, prompt: str, system_prompt: str) -> str:
             del system_prompt
-            if self.provider_id == "gemini":
+            if self.provider_id == "codex_cli":
                 assert "complete corrected artifact" in prompt
             return self.replies.pop(0)
 
     install_quality_escalation()
     local = FakeProvider("local_gguf", "qwen", ["local-1", "local-2", "local-next-task"])
-    cloud = FakeProvider("gemini", "gemini-test", ["cloud-repair-1", "cloud-repair-2"])
+    cloud = FakeProvider("codex_cli", "codex-test", ["cloud-repair-1", "cloud-repair-2"])
     provider = fallback.FallbackProvider(
-        [("local_gguf", local), ("gemini", cloud)],
+        [("local_gguf", local), ("codex_cli", cloud)],
         primary="local_gguf",
     )
 
     repair = "Repairing incomplete provider HTML: validation failed; return a corrected document."
     assert provider.generate(repair, "") == "local-1"
     assert provider.generate(repair, "") == "cloud-repair-1"
-    assert provider.last_provider == "gemini"
+    assert provider.last_provider == "codex_cli"
 
     # A subsequent repair remains with the cloud expert instead of returning
     # prematurely to the weak local model.
     assert provider.generate(repair, "") == "cloud-repair-2"
-    assert provider.last_provider == "gemini"
+    assert provider.last_provider == "codex_cli"
 
     # The first non-repair call ends the rescue sequence and resumes local-first.
     assert provider.generate("Start the next independent task.", "") == "local-2"

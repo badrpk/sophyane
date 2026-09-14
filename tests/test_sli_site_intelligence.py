@@ -1,3 +1,19 @@
+import pytest
+
+
+# SOPHYANE_DETERMINISTIC_SLI_TEST_BOUNDARY_V1
+#
+# These tests verify deterministic semantic classification/rendering.
+# Optional local generative design is tested separately with explicit
+# generators/provider doubles in test_sli_site_generative.py.
+@pytest.fixture(autouse=True)
+def _disable_optional_generative_design(monkeypatch):
+    monkeypatch.setenv(
+        "SOPHYANE_DISABLE_GENERATIVE_SITE_DESIGN",
+        "1",
+    )
+
+
 from sophyane.code_memory.sli_rich_site_compose import (
     Entity,
     _render,

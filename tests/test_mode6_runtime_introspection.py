@@ -12,15 +12,14 @@ import sophyane.human_conversation_cli as cli
         "what is name, purpose, job and status of this running agent?",
         "is it doing something now or it will do in future?",
         "what it is doing?",
+        "could you explain your current activity?",
     ],
 )
-def test_mode6_runtime_status_questions_do_not_reach_conversation_llm(
+def test_mode6_runtime_questions_reach_llm_with_trusted_runtime(
     monkeypatch,
     capsys,
     question,
 ):
-    """Runtime state must come from Sophyane, not LLM speculation."""
-
     values = iter(
         [
             question,
@@ -34,80 +33,66 @@ def test_mode6_runtime_status_questions_do_not_reach_conversation_llm(
         lambda _prompt="": next(values),
     )
 
-    def forbidden_conversation_turn(*args, **kwargs):
-        raise AssertionError(
-            "runtime status question reached conversational LLM"
+    calls = []
+
+    class Result:
+        reply = "No background agents are running right now."
+
+    def fake_conversation_turn(text, **kwargs):
+        calls.append(
+            {
+                "text": text,
+                "kwargs": kwargs,
+            }
         )
+        return Result()
 
     monkeypatch.setattr(
         cli,
         "conversation_turn",
-        forbidden_conversation_turn,
+        fake_conversation_turn,
     )
 
     monkeypatch.setattr(
         "sys.argv",
-        [
-            "sophyane-human-chat",
-        ],
+        ["sophyane-human-chat"],
     )
 
     assert cli.main() == 0
 
+    assert len(calls) == 1
+    assert calls[0]["text"] == question
+
+    runtime = calls[0]["kwargs"]["trusted_runtime"]
+
+    assert runtime["interactive_sessions"] == 1
+    assert runtime["background_agents_running"] == 0
+    assert runtime["current_state"] == "idle_waiting_for_input"
+    assert runtime["repository_execution"]["job_active"] is False
+    assert runtime["provider_entries_are_capabilities"] is True
+
     output = capsys.readouterr().out.casefold()
 
+    assert "no background agents" in output
     assert "sophyane error:" not in output
-    assert (
-        "idle" in output
-        or "waiting" in output
-        or "no active" in output
-    )
 
 
-def test_mode6_runtime_status_does_not_claim_provider_chain_is_agent_count(
+def test_provider_capabilities_are_not_reported_as_running_agents(
     monkeypatch,
-    capsys,
 ):
-    """Available providers are not concurrently running agents."""
+    state = cli._mode6_runtime_state()
 
-    values = iter(
-        [
-            "how many agents sophyane is running?",
-            "/exit",
-        ]
+    assert state["background_agents_running"] == 0
+    assert state["provider_entries_are_capabilities"] is True
+
+
+def test_retained_execution_context_is_not_active_background_job():
+    state = cli._mode6_runtime_state(
+        execution_context_active=True,
     )
 
-    monkeypatch.setattr(
-        builtins,
-        "input",
-        lambda _prompt="": next(values),
-    )
+    repository = state["repository_execution"]
 
-    def forbidden_conversation_turn(*args, **kwargs):
-        raise AssertionError(
-            "agent-count question reached conversational LLM"
-        )
-
-    monkeypatch.setattr(
-        cli,
-        "conversation_turn",
-        forbidden_conversation_turn,
-    )
-
-    monkeypatch.setattr(
-        "sys.argv",
-        [
-            "sophyane-human-chat",
-        ],
-    )
-
-    assert cli.main() == 0
-
-    output = capsys.readouterr().out.casefold()
-
-    assert "codex_cli -> nifdu_browser -> local_gguf" not in output
-    assert (
-        "background" in output
-        or "active execution" in output
-        or "interactive session" in output
-    )
+    assert repository["context_retained"] is True
+    assert repository["job_active"] is False
+    assert state["background_agents_running"] == 0

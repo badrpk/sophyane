@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from sophyane.mode6_rsi_handoff import (
+    record_mode6_improvement_observation,
+)
+
 import argparse
 import hashlib
 import json
@@ -10,6 +14,9 @@ from pathlib import Path
 from sophyane.human_conversation import (
     conversation_turn,
     human_conversation_status,
+)
+from sophyane.mode6_session import (
+    Mode6ConversationSession,
 )
 
 from sophyane.native_sensor_actions import (
@@ -1003,87 +1010,51 @@ def _camera_status_text() -> str:
 
 
 
-def _runtime_introspection_reply(
-    text: str,
+def _handoff_turn_improvement(
+    result,
+) -> dict[str, object]:
+    """Record optional Mode-6 improvement evidence without executing RSI."""
+
+    observation = getattr(
+        result,
+        "improvement_observation",
+        None,
+    )
+
+    if observation is None:
+        return {
+            "ok": True,
+            "recorded": False,
+            "reason": "no_observation",
+        }
+
+    return record_mode6_improvement_observation(
+        observation
+    )
+
+
+def _mode6_runtime_state(
     *,
     execution_context_active: bool = False,
-) -> str | None:
-    """Answer clear Mode-6 runtime-state questions without LLM speculation."""
+) -> dict[str, object]:
+    """Return deterministic current Mode-6 runtime facts."""
 
-    normalized = " ".join(
-        str(text or "").casefold().strip().split()
-    )
-
-    terminal = normalized.rstrip(
-        "?!. "
-    )
-
-    if not terminal:
-        return None
-
-    explicit_agent_question = (
-        "agent" in terminal
-        and any(
-            phrase in terminal
-            for phrase in (
-                "how many",
-                "running",
-                "status",
-                "purpose",
-                "job",
-                "doing",
-                "what is name",
-                "what is the name",
-            )
-        )
-    )
-
-    direct_activity_followups = {
-        "is it doing something now or it will do in future",
-        "is it doing something now or will it do something in future",
-        "is it doing something now",
-        "what it is doing",
-        "what is it doing",
-        "what are you doing now",
+    return {
+        "interactive_sessions": 1,
+        "background_agents_running": 0,
+        "current_state": "idle_waiting_for_input",
+        "repository_execution": {
+            "context_retained": bool(
+                execution_context_active
+            ),
+            "job_active": False,
+        },
+        "provider_entries_are_capabilities": True,
     }
 
-    if (
-        not explicit_agent_question
-        and terminal
-        not in direct_activity_followups
-    ):
-        return None
+from sophyane.rsi.supervisor import runtime_session as _rsi_runtime_session
 
-    context_line = (
-        "A repository execution context is retained for follow-up, "
-        "but no repository job is executing while Sophyane is "
-        "waiting at this prompt."
-        if execution_context_active
-        else
-        "No repository execution job is currently active."
-    )
-
-    return "\n".join(
-        (
-            "Runtime status:",
-            "  Name: Sophyane",
-            (
-                "  Purpose: interactive Mode-6 conversation "
-                "and guarded repository execution."
-            ),
-            "  Interactive sessions: 1",
-            "  Background agents running: 0",
-            "  Current state: idle, waiting for your input.",
-            "  " + context_line,
-            (
-                "  Provider entries such as codex_cli, "
-                "nifdu_browser, and local_gguf are available "
-                "capabilities/fallbacks, not concurrently "
-                "running agents."
-            ),
-        )
-    )
-
+@_rsi_runtime_session
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="sophyane-human-chat"
@@ -1125,7 +1096,13 @@ def main() -> int:
             )
         else:
             result = conversation_turn(
-                args.once
+                args.once,
+                trusted_runtime=
+                    _mode6_runtime_state(),
+            )
+
+            _handoff_turn_improvement(
+                result
             )
 
             print(
@@ -1146,6 +1123,7 @@ def main() -> int:
     )
 
     active_execution_request: str | None = None
+    conversation_session = Mode6ConversationSession()
 
     while True:
         try:
@@ -1172,21 +1150,6 @@ def main() -> int:
             return 0
 
         if not text:
-            continue
-
-        runtime_reply = _runtime_introspection_reply(
-            text,
-            execution_context_active=(
-                active_execution_request
-                is not None
-            ),
-        )
-
-        if runtime_reply is not None:
-            print(
-                "\nSophyane:",
-                runtime_reply,
-            )
             continue
 
         if text.strip() == "/camera-status":
@@ -1284,9 +1247,29 @@ def main() -> int:
                         visual_artifact_path,
                     metadata=
                         turn_metadata,
+                    recent_turns=
+                        conversation_session.recent_turns(),
+                    trusted_runtime=
+                        _mode6_runtime_state(
+                            execution_context_active=(
+                                active_execution_request
+                                is not None
+                            ),
+                        ),
+                )
+
+                _handoff_turn_improvement(
+                    result
                 )
 
                 reply = result.reply
+
+                conversation_session.append_user(
+                    text
+                )
+                conversation_session.append_assistant(
+                    reply
+                )
 
             elif active_execution_request is not None:
                 execution_request = (
@@ -1316,10 +1299,30 @@ def main() -> int:
 
             else:
                 result = conversation_turn(
-                    text
+                    text,
+                    recent_turns=
+                        conversation_session.recent_turns(),
+                    trusted_runtime=
+                        _mode6_runtime_state(
+                            execution_context_active=(
+                                active_execution_request
+                                is not None
+                            ),
+                        ),
+                )
+
+                _handoff_turn_improvement(
+                    result
                 )
 
                 reply = result.reply
+
+                conversation_session.append_user(
+                    text
+                )
+                conversation_session.append_assistant(
+                    reply
+                )
 
             print(
                 "\nSophyane:",

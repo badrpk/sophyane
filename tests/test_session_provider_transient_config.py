@@ -233,6 +233,15 @@ def test_cloud_session_overrides_stale_local_model(
     )
 
     captured = {}
+    authority = {}
+
+    def fake_require_active_provider(provider):
+        authority["provider"] = provider
+
+    monkeypatch.setattr(
+        "sophyane.intelligence_authority.require_active_provider",
+        fake_require_active_provider,
+    )
 
     def fake_build(
         _loader,
@@ -257,6 +266,11 @@ def test_cloud_session_overrides_stale_local_model(
     )
 
     assert (
+        authority["provider"]
+        == "gemini"
+    )
+
+    assert (
         captured["provider"]
         == "gemini"
     )
@@ -269,4 +283,14 @@ def test_cloud_session_overrides_stale_local_model(
     assert (
         captured["timeout"]
         == 180
+    )
+
+    assert (
+        os.environ["SOPHYANE_DISABLE_LOCAL_FALLBACK"]
+        == "1"
+    )
+
+    assert (
+        os.environ["SOPHYANE_ALLOW_CLOUD_LOCAL_RESCUE"]
+        == "0"
     )

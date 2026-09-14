@@ -60,3 +60,16 @@ def _isolate_transient_sophyane_session_environment(
             key,
             None,
         )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_autonomous_rsi_runtime(monkeypatch, tmp_path):
+    """Background startup must never read/write the user's RSI state in tests."""
+    from sophyane.rsi.supervisor import stop_supervisor
+    from sophyane.rsi.observation_bus import autonomous_bus
+    stop_supervisor()
+    autonomous_bus.drain(256)
+    monkeypatch.setenv('SOPHYANE_AUTONOMOUS_RSI_STATE', str(tmp_path / 'autonomous-rsi'))
+    yield
+    stop_supervisor()
+    autonomous_bus.drain(256)

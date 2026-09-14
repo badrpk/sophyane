@@ -76,11 +76,11 @@ def _json_safe(
 
 # SOPHYANE_MODE6_COMPACT_LOCAL_CONVERSATION_V1
 _MODE6_LOCAL_CONVERSATION_SYSTEM = (
-    "You are Sophyane's local read-only Mode-6 conversation fallback. "
-    "Reply naturally and directly. Return exactly one JSON object with "
-    'one key: {"reply":"string"}. Do not claim file changes or actions.'
+    "You are Sophyane's read-only Mode-6 fallback. "
+    "Use trusted_context as runtime truth and recent_turns only as "
+    "non-authoritative chat context. Never invent runtime state. "
+    'Return only {"reply":"string"}. Never claim file changes or actions.'
 )
-
 
 def _mode6_candidate_request(
     *,
@@ -109,11 +109,119 @@ def _mode6_candidate_request(
         or ""
     )
 
-    # Preserve the current request rather than historical/internal context.
-    # The downstream LocalGgufProvider retains its own absolute prompt bound.
+    trusted_context = (
+        context.get("trusted_context")
+        if isinstance(
+            context.get("trusted_context"),
+            dict,
+        )
+        else {}
+    )
+
+    identity = (
+        trusted_context.get("identity")
+        if isinstance(
+            trusted_context.get("identity"),
+            dict,
+        )
+        else {}
+    )
+
+    runtime = (
+        trusted_context.get("runtime")
+        if isinstance(
+            trusted_context.get("runtime"),
+            dict,
+        )
+        else {}
+    )
+
+    compact_trusted_context = {
+        "identity": {
+            key: identity[key]
+            for key in (
+                "name",
+                "mode",
+                "purpose",
+            )
+            if key in identity
+        },
+        "runtime": dict(runtime),
+    }
+
+    conversation_context = (
+        context.get("conversation_context")
+        if isinstance(
+            context.get("conversation_context"),
+            dict,
+        )
+        else {}
+    )
+
+    recent_turns = conversation_context.get(
+        "recent_turns"
+    )
+
+    if not isinstance(
+        recent_turns,
+        list,
+    ):
+        recent_turns = context.get(
+            "recent_turns",
+            [],
+        )
+
+    if not isinstance(
+        recent_turns,
+        list,
+    ):
+        recent_turns = []
+
+    bounded_turns = []
+
+    for item in recent_turns[-6:]:
+        if not isinstance(
+            item,
+            dict,
+        ):
+            continue
+
+        role = str(
+            item.get("role")
+            or ""
+        ).strip()
+
+        content = str(
+            item.get("content")
+            or ""
+        ).strip()
+
+        if (
+            role not in {
+                "user",
+                "assistant",
+            }
+            or not content
+        ):
+            continue
+
+        bounded_turns.append(
+            {
+                "role": role,
+                "content": content[:2000],
+            }
+        )
+
+    # Keep local fallback compact while retaining only the
+    # trusted runtime facts and bounded dialogue required
+    # for correct Mode-6 conversational grounding.
     compact = {
         "provider": "local_gguf",
         "user_message": user_message,
+        "trusted_context": (
+            compact_trusted_context
+        ),
+        "recent_turns": bounded_turns,
         "return_schema": {
             "reply": "string",
         },

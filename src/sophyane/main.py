@@ -208,14 +208,6 @@ def create_provider(config: dict[str, Any]):
 
         return HumanConversationProvider(config)
 
-    from sophyane.intelligence_authority import require_active_provider
-
-    effective_provider = {
-        "nifdu_llm": "nifdu_browser", "codex_cli": "codex_cli",
-        "local_llm": "local_gguf", "agy": "agy",
-    }.get(session_mode, os.environ.get("SOPHYANE_SESSION_PROVIDER") or config.get("provider", ""))
-    require_active_provider(effective_provider)
-
     # SOPHYANE_TRANSIENT_SESSION_PROVIDER_V1
     session_provider = str(
         os.environ.get("SOPHYANE_SESSION_PROVIDER")
@@ -255,6 +247,35 @@ def create_provider(config: dict[str, Any]):
 
         os.environ["SOPHYANE_LOCAL_ONLY"] = "1"
         os.environ["SOPHYANE_DISABLE_CLOUD_FALLBACK"] = "1"
+
+    if session_mode == "cloud_llm":
+        config = dict(config)
+
+        if session_provider:
+            config["provider"] = session_provider
+
+        if session_model:
+            config["model"] = session_model
+
+        if session_timeout:
+            config["timeout"] = int(
+                session_timeout
+            )
+
+        # Cloud mode must not silently rescue through a local model.
+        os.environ["SOPHYANE_DISABLE_LOCAL_FALLBACK"] = "1"
+        os.environ["SOPHYANE_ALLOW_CLOUD_LOCAL_RESCUE"] = "0"
+
+    from sophyane.intelligence_authority import require_active_provider
+
+    effective_provider = {
+        "nifdu_llm": "nifdu_browser", "codex_cli": "codex_cli",
+        "local_llm": config.get("provider", "local_gguf"), "agy": "agy",
+    }.get(
+        session_mode,
+        config.get("provider", ""),
+    )
+    require_active_provider(effective_provider)
 
     if (
         session_mode == "nifdu_llm"
@@ -311,24 +332,6 @@ def create_provider(config: dict[str, Any]):
                 or "300"
             ),
         )
-
-    if session_mode == "cloud_llm":
-        config = dict(config)
-
-        if session_provider:
-            config["provider"] = session_provider
-
-        if session_model:
-            config["model"] = session_model
-
-        if session_timeout:
-            config["timeout"] = int(
-                session_timeout
-            )
-
-        # Cloud mode must not silently rescue through a local model.
-        os.environ["SOPHYANE_DISABLE_LOCAL_FALLBACK"] = "1"
-        os.environ["SOPHYANE_ALLOW_CLOUD_LOCAL_RESCUE"] = "0"
 
     loader = PluginLoader()
     try:
@@ -468,6 +471,9 @@ def interactive(config: dict[str, Any], verbose: bool) -> int:
     return run_grok_style_tui(config=config, verbose=verbose)
 
 
+from sophyane.rsi.supervisor import runtime_session as _rsi_runtime_session
+
+@_rsi_runtime_session
 def main() -> int:
     ensure_directories()
     parser = build_parser()

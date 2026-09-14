@@ -1,3 +1,19 @@
+import pytest
+
+
+# SOPHYANE_DETERMINISTIC_SLI_TEST_BOUNDARY_V1
+#
+# Image-provenance tests verify deterministic identity and subject-image
+# safety. Optional local generative design is independently exercised by
+# test_sli_site_generative.py and must not introduce real inference here.
+@pytest.fixture(autouse=True)
+def _disable_optional_generative_design(monkeypatch):
+    monkeypatch.setenv(
+        "SOPHYANE_DISABLE_GENERATIVE_SITE_DESIGN",
+        "1",
+    )
+
+
 from unittest.mock import patch
 
 from sophyane.code_memory.sli_rich_site_compose import (

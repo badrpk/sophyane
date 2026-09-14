@@ -310,7 +310,7 @@ def test_unrelated_typed_turn_never_activates_camera(
     monkeypatch.setattr(
         cli,
         "conversation_turn",
-        lambda text: (
+        lambda text, **kwargs: (
             turns.append(text)
             or _Turn("fine")
         ),

@@ -166,6 +166,9 @@ class SophyaneAgent:
         self.memory = memory
         self.logger = logger
 
+    from sophyane.rsi.supervisor import foreground as _rsi_foreground
+
+    @_rsi_foreground
     def ask(self, message: str) -> AgentResponse:
         # Mode 2.5 already has an SLI-grounded request envelope. Do not let
         # broad connector heuristics reinterpret that envelope as an action

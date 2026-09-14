@@ -1,4 +1,5 @@
 from __future__ import annotations
+import pytest
 
 import json
 from pathlib import Path
@@ -277,38 +278,30 @@ def test_antigravity_provider_uses_discovered_read_only_contract(tmp_path, monke
 
 def test_create_provider_honors_antigravity_session(monkeypatch):
     monkeypatch.setenv("SOPHYANE_SESSION_MODE", "agy")
-    monkeypatch.setenv("SOPHYANE_SESSION_MODEL", "agy-default")
-    monkeypatch.setenv("SOPHYANE_SESSION_TIMEOUT", "300")
-    monkeypatch.setattr(codex_cli, "agy_available", lambda: True)
-
-    provider = create_provider({})
-
-    assert isinstance(provider, AntigravityProvider)
-    assert provider.model == "agy-default"
-    assert provider.timeout == 300
+    with pytest.raises(PermissionError, match="PROVIDER_DISABLED: agy"):
+        create_provider({})
 
 
 def test_antigravity_session_bypasses_race_and_reaches_normal_runtime(
     monkeypatch,
 ):
-    monkeypatch.setenv("SOPHYANE_SESSION_MODE", "agy")
-    monkeypatch.setenv("SOPHYANE_SESSION_MODEL", "agy-default")
-    monkeypatch.setattr(codex_cli, "agy_available", lambda: True)
+    monkeypatch.setenv("SOPHYANE_SESSION_MODE", "codex_cli")
+    monkeypatch.setenv("SOPHYANE_SESSION_MODEL", "codex-default")
 
     provider_calls = []
     captured = {}
 
     def fake_generate(self, prompt, system=None):
         provider_calls.append((prompt, system))
-        return "AGY downstream response"
+        return "Codex downstream response"
 
-    monkeypatch.setattr(AntigravityProvider, "generate", fake_generate)
+    monkeypatch.setattr(CodexCliProvider, "generate", fake_generate)
 
     import sophyane.agent as agent_module
 
     class FakeAgent:
         def __init__(self, provider, *_args):
-            assert isinstance(provider, AntigravityProvider)
+            assert isinstance(provider, CodexCliProvider)
             self.provider = provider
 
         def ask(self, message):
@@ -319,7 +312,7 @@ def test_antigravity_session_bypasses_race_and_reaches_normal_runtime(
         cli,
         "_run_adaptive_race_request",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("AGY entered adaptive race")
+            AssertionError("Codex entered adaptive race")
         ),
     )
 
@@ -332,10 +325,8 @@ def test_antigravity_session_bypasses_race_and_reaches_normal_runtime(
 
     assert tui.run_observable_tui(config={}) == 0
     assert captured["dispatch"] is None
-
     response = captured["ask"]("Plan the requested change")
-
-    assert response.text == "AGY downstream response"
+    assert response.text == "Codex downstream response"
     assert provider_calls == [("Plan the requested change", None)]
 
 

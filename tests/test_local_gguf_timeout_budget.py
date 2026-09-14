@@ -57,10 +57,7 @@ def test_local_gguf_configured_timeout_is_long_enough_for_coding() -> None:
         )
     )
 
-    provider = create_provider(
-        config
-    )
-
+    provider = create_provider({**config, "provider": "local_gguf"})
     print(
         "configured timeout:",
         configured_timeout,

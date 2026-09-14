@@ -572,18 +572,18 @@ def test_mode1_provider_quota_fails_over_without_changing_request(monkeypatch, t
             self.name = name
         def generate(self, prompt, system):
             calls.append((self.name, prompt, system))
-            if self.name == "agy":
-                raise RuntimeError("AGY quota exhausted")
+            if self.name == "codex_cli":
+                raise RuntimeError("Codex quota exhausted")
             return "answer: preserved objective"
 
     monkeypatch.setattr(orchestrator, "_single_provider", lambda *, provider_id, config: Provider(provider_id))
     producer = orchestrator.make_provider_producer(
-        engine="cloud", provider_id="agy", request="answer preserved objective",
-        workspace=tmp_path, config={"provider_fallback_order": ["gemini"]}, mode="answer",
+        engine="cloud", provider_id="codex_cli", request="answer preserved objective",
+        workspace=tmp_path, config={"provider_fallback_order": ["nifdu_browser"]}, mode="answer",
     )
     result = producer()
     assert result.payload["answer"] == "answer: preserved objective"
-    assert [item[0] for item in calls] == ["agy", "gemini"]
+    assert [item[0] for item in calls] == ["codex_cli", "nifdu_browser"]
     assert calls[0][1] == calls[1][1]
     assert calls[0][2] == calls[1][2]
 
@@ -599,8 +599,8 @@ def test_mode1_successful_provider_does_not_fallback(monkeypatch, tmp_path):
 
     monkeypatch.setattr(orchestrator, "_single_provider", lambda **kwargs: Provider())
     producer = orchestrator.make_provider_producer(
-        engine="cloud", provider_id="agy", request="answer first choice",
-        workspace=tmp_path, config={"provider_fallback_order": ["gemini"]}, mode="answer",
+        engine="cloud", provider_id="codex_cli", request="answer first choice",
+        workspace=tmp_path, config={"provider_fallback_order": ["nifdu_browser"]}, mode="answer",
     )
     assert producer().payload["answer"] == "answer: first choice"
     assert len(calls) == 1
@@ -617,8 +617,8 @@ def test_mode1_nonrecoverable_safety_failure_is_not_bypassed(monkeypatch, tmp_pa
 
     monkeypatch.setattr(orchestrator, "_single_provider", lambda **kwargs: Provider())
     producer = orchestrator.make_provider_producer(
-        engine="cloud", provider_id="agy", request="answer gated",
-        workspace=tmp_path, config={"provider_fallback_order": ["gemini"]}, mode="answer",
+        engine="cloud", provider_id="codex_cli", request="answer gated",
+        workspace=tmp_path, config={"provider_fallback_order": ["nifdu_browser"]}, mode="answer",
     )
     import pytest
     with pytest.raises(RuntimeError, match="safety"):
@@ -643,7 +643,7 @@ def test_mode1_unusable_execution_proposal_fails_over_without_changing_objective
                 (self.name, prompt, system)
             )
 
-            if self.name == "gemini":
+            if self.name == "codex_cli":
                 # Transport succeeded, but plain prose is only a plan in
                 # execution mode and therefore cannot satisfy the request.
                 return "I would create the Snake game."
@@ -679,12 +679,12 @@ def test_mode1_unusable_execution_proposal_fails_over_without_changing_objective
 
     producer = orchestrator.make_provider_producer(
         engine="cloud",
-        provider_id="gemini",
+        provider_id="codex_cli",
         request=request,
         workspace=tmp_path,
         config={
             "provider_fallback_order": [
-                "codex_cli",
+                "nifdu_browser",
             ],
         },
         mode="execution",
@@ -698,8 +698,8 @@ def test_mode1_unusable_execution_proposal_fails_over_without_changing_objective
         item[0]
         for item in calls
     ] == [
-        "gemini",
         "codex_cli",
+        "nifdu_browser",
     ]
 
     # The exact same objective-derived prompts cross the fallback boundary.
@@ -749,7 +749,7 @@ def test_mode1_valid_execution_first_choice_does_not_fallback(
 
     producer = orchestrator.make_provider_producer(
         engine="cloud",
-        provider_id="gemini",
+        provider_id="codex_cli",
         request="Create game.html",
         workspace=tmp_path,
         config={
@@ -761,7 +761,7 @@ def test_mode1_valid_execution_first_choice_does_not_fallback(
     )
 
     assert producer().kind == "action"
-    assert calls == ["gemini"]
+    assert calls == ["codex_cli"]
 
 
 def test_mode1_incomplete_answer_fails_over_to_complete_answer(
@@ -781,7 +781,7 @@ def test_mode1_incomplete_answer_fails_over_to_complete_answer(
                 (self.name, prompt, system)
             )
 
-            if self.name == "agy":
+            if self.name == "codex_cli":
                 return "Here is an idea."
 
             return (
@@ -805,12 +805,12 @@ def test_mode1_incomplete_answer_fails_over_to_complete_answer(
 
     producer = orchestrator.make_provider_producer(
         engine="cloud",
-        provider_id="agy",
+        provider_id="codex_cli",
         request=request,
         workspace=tmp_path,
         config={
             "provider_fallback_order": [
-                "gemini",
+                "nifdu_browser",
             ],
         },
         mode="answer",
@@ -824,8 +824,8 @@ def test_mode1_incomplete_answer_fails_over_to_complete_answer(
         item[0]
         for item in calls
     ] == [
-        "agy",
-        "gemini",
+        "codex_cli",
+        "nifdu_browser",
     ]
     assert calls[0][1] == calls[1][1]
     assert calls[0][2] == calls[1][2]
@@ -847,7 +847,7 @@ def test_mode1_unusable_proposal_does_not_relax_safety_on_next_route(
         def generate(self, prompt, system):
             calls.append(self.name)
 
-            if self.name == "gemini":
+            if self.name == "nifdu_browser":
                 return "plain unusable execution plan"
 
             raise RuntimeError(
@@ -864,13 +864,12 @@ def test_mode1_unusable_proposal_does_not_relax_safety_on_next_route(
 
     producer = orchestrator.make_provider_producer(
         engine="cloud",
-        provider_id="gemini",
+        provider_id="nifdu_browser",
         request="perform gated action",
         workspace=tmp_path,
         config={
             "provider_fallback_order": [
                 "codex_cli",
-                "agy",
             ],
         },
         mode="execution",
@@ -882,9 +881,9 @@ def test_mode1_unusable_proposal_does_not_relax_safety_on_next_route(
     ):
         producer()
 
-    # Safety remains terminal; AGY is never tried.
+    # The unusable first proposal falls through; safety remains terminal.
     assert calls == [
-        "gemini",
+        "nifdu_browser",
         "codex_cli",
     ]
 
@@ -919,14 +918,14 @@ def test_mode1_emits_objective_and_source_diagnostics(tmp_path):
 
 def test_mode1_builds_independent_capability_workers(monkeypatch, tmp_path):
     import sophyane.race_orchestrator as orchestrator
-    monkeypatch.setattr(orchestrator, "_mode1_provider_available", lambda provider, config: provider in {"gemini", "codex_cli", "agy", "nifdu_browser"})
+    monkeypatch.setattr(orchestrator, "_mode1_provider_available", lambda provider, config: provider in {"codex_cli", "nifdu_browser"})
     workers = orchestrator.build_real_workers(
         request="research with memory and internet",
         workspace=tmp_path,
-        config={"provider": "gemini", "provider_workers": ["codex_cli", "agy", "nifdu_browser"]},
+        config={"provider": "nifdu_browser", "provider_workers": ["codex_cli", "nifdu_browser"]},
         progress=lambda _: None,
     )
-    assert {"local", "api:gemini", "harness:codex_cli", "harness:agy", "browser:nifdu_browser"}.issubset(workers)
+    assert  {"local", "harness:codex_cli", "browser:nifdu_browser"}.issubset(workers)
     assert "sli" not in workers
     assert "cloud" not in workers
 
@@ -944,11 +943,15 @@ def test_mode1_uses_startup_readiness_inventory(monkeypatch, tmp_path):
     workers = orchestrator.build_real_workers(
         request="implement a grounded repository change",
         workspace=tmp_path,
-        config={"provider": "gemini"},
+        config={"provider": "codex_cli"},
         progress=lambda _: None,
     )
-    assert {"local", "api:gemini", "harness:codex_cli", "harness:agy", "browser:nifdu_browser"} <= set(workers)
+    assert {"local", "harness:codex_cli", "browser:nifdu_browser"} <= set(workers)
+    assert "api:gemini" not in workers
+    assert "harness:agy" not in workers
     assert "sli" not in workers
+
+
 
 
 def test_mode1_verified_history_prefers_eligible_provider(monkeypatch, tmp_path):
