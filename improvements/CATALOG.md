@@ -66,3 +66,4 @@ executable patches into `main`.
 - 2026-09-18: 1 proposals · merkle `c5d2c206af360a38…` · device `runnervmlun5p-d5d49d76`
 - 2026-09-19: 1 proposals · merkle `dbc9644c949b5c28…` · device `runnervmlun5p-d5d49d76`
 - 2026-09-20: 1 proposals · merkle `63aab2470f91d643…` · device `runnervmlun5p-d5d49d76`
+- 2026-09-21: 1 proposals · merkle `f2303caf65bc2fa6…` · device `runnervmlun5p-d5d49d76`
