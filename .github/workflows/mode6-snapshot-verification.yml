@@ -1,0 +1,121 @@
+name: Mode6 isolated snapshot verification
+on:
+  push:
+    branches: ["rsi-verification/mode6-ab81cc1b3109"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install trusted verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          python -m pip install pytest numpy pexpect 'psycopg[binary]>=3.3,<4' 'websocket-client>=1.8,<2'
+      - name: Validate and extract frozen snapshot
+        run: |
+          python - <<'PYCODE'
+          import hashlib, json, tarfile
+          from pathlib import Path
+          archive = Path(".rsi/candidate.tar.gz")
+          expected = "ab81cc1b3109a74490fd6aa98709b47d1d358e46563ee39ecaa58d88ee3e9322"
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == expected
+          root = Path("candidate")
+          root.mkdir()
+          with tarfile.open(archive) as bundle:
+              members = bundle.getmembers()
+              names = [m.name for m in members]
+              assert len(names) == len(set(names))
+              for member in members:
+                  path = Path(member.name)
+                  assert member.isfile()
+                  assert not path.is_absolute() and ".." not in path.parts
+              bundle.extractall(root, filter="data")
+          manifest = json.loads((root / "candidate-manifest.json").read_text())
+          actual = {
+              p.relative_to(root).as_posix()
+              for p in root.rglob("*") if p.is_file()
+          }
+          assert actual == set(manifest["files"]) | {"candidate-manifest.json"}
+          for name, entry in manifest["files"].items():
+              data = (root / name).read_bytes()
+              assert len(data) == entry["bytes"]
+              assert hashlib.sha256(data).hexdigest() == entry["sha256"]
+          print("SNAPSHOT_HASHES_VERIFIED")
+          PYCODE
+      - name: Require real sandbox and run focused tests
+        run: |
+          mkdir -p evidence
+          python - <<'PYCODE'
+          import json, os, subprocess, sys, tempfile
+          from pathlib import Path
+          root = Path("candidate").resolve()
+          env = {
+              "PATH": os.environ["PATH"],
+              "LANG": "C.UTF-8",
+              "PYTHONPATH": str(root / "src"),
+              "PYTHONDONTWRITEBYTECODE": "1",
+              "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+              "SOPHYANE_SESSION_MODE": "human_conversation",
+          }
+          tests = [
+              "tests/test_mode6_promoted_retry_sandbox_unavailable.py",
+              "tests/test_mode6_blocked_response_failure_evidence.py",
+              "tests/test_no_edit_command_recovery.py",
+              "tests/test_real_admission_failure_observation.py",
+          ]
+          records = []
+          with tempfile.TemporaryDirectory() as scratch:
+              env.update(HOME=scratch, TMPDIR=scratch, XDG_CACHE_HOME=scratch)
+              boundary = [
+                  "bwrap", "--die-with-parent", "--unshare-all",
+                  "--ro-bind", "/", "/", "--proc", "/proc",
+                  "--dev", "/dev", "--tmpfs", scratch,
+                  "--chdir", str(root), "--",
+              ]
+              commands = [
+                  (sys.executable, "-c", "print('RSI_SANDBOX_PREFLIGHT_OK')"),
+                  (sys.executable, "-m", "pytest", "-q",
+                   "-p", "no:cacheprovider", *tests),
+              ]
+              for index, command in enumerate(commands):
+                  result = subprocess.run(
+                      boundary + list(command), env=env,
+                      capture_output=True, text=True, timeout=300,
+                  )
+                  record = {
+                      "argv": list(command),
+                      "exit_code": result.returncode,
+                      "stdout": result.stdout,
+                      "stderr": result.stderr,
+                  }
+                  records.append(record)
+                  print(json.dumps(record, indent=2))
+                  Path("evidence/results.json").write_text(
+                      json.dumps({
+                          "candidate_sha256": "ab81cc1b3109a74490fd6aa98709b47d1d358e46563ee39ecaa58d88ee3e9322",
+                          "commands": records,
+                          "promotion_authorized": False,
+                      }, indent=2) + "\n"
+                  )
+                  if result.returncode:
+                      raise SystemExit(result.returncode)
+                  if index == 0:
+                      assert result.stdout.strip() == "RSI_SANDBOX_PREFLIGHT_OK"
+          PYCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mode6-snapshot-evidence
+          path: evidence/
+          if-no-files-found: warn
