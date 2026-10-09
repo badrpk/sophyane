@@ -49,10 +49,15 @@ def test_cli_sli_runtime_installation_is_mode2_guarded():
         1,
     )
 
+    # The capability planner is shared execution infrastructure and is
+    # intentionally installed before the Mode-2-only boundary.
+    assert "install_sli_capability_planner()" in before
+    assert "install_sli_capability_planner()" not in after
+
+    # Session-specific SLI machinery remains isolated to explicit Mode 2.
     for installer in (
         "install_sli_brain()",
         "install_sli_builder()",
-        "install_sli_capability_planner()",
         "install_sli_intent_routing()",
         "install_sli_mission_os()",
         "install_sli_onset_feedback()",
@@ -128,3 +133,30 @@ def test_mode1_has_no_legacy_prefer_sli_only_contract():
     ) or ""
 
     assert "prefer_sli_only" not in source
+
+
+def test_capability_planner_is_shared_before_mode2_only_installers():
+    """The capability planner belongs to execution, not Mode-2 UI semantics."""
+    text = CLI.read_text(encoding="utf-8")
+
+    marker = '# They exist only inside an explicitly selected Mode-2 session.'
+    before, after = text.split(marker, 1)
+
+    assert "install_sli_capability_planner()" in before
+
+    # The remaining SLI session machinery stays Mode-2-only.
+    for installer in (
+        "install_sli_brain()",
+        "install_sli_builder()",
+        "install_sli_intent_routing()",
+        "install_sli_mission_os()",
+        "install_sli_onset_feedback()",
+    ):
+        assert installer not in before
+        assert installer in after
+
+
+def test_capability_planner_is_not_installed_twice_in_cli_entry():
+    text = CLI.read_text(encoding="utf-8")
+
+    assert text.count("install_sli_capability_planner()") == 1

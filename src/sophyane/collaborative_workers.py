@@ -167,6 +167,7 @@ def ensure_nifdu() -> dict[str, Any]:
                 except OSError:
                     shutil.copy2(c, target)
                     target.chmod(0o755)
+            invalidate_discovery()
             return {"available": True, "path": str(target), "fetched": False, "linked": str(c)}
     # Auto download sources (not always a prebuilt binary on Linux)
     src = CACHE / "nifdu-src"

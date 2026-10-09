@@ -120,3 +120,67 @@ def test_mode3_environment_forbids_cloud_fallback(
         ]
         == "1"
     )
+
+
+def test_mode3_create_provider_builds_singleton_local_gguf_chain(
+    monkeypatch,
+):
+    import sophyane.main as main
+
+    monkeypatch.setenv(
+        "SOPHYANE_SESSION_MODE",
+        "local_llm",
+    )
+    monkeypatch.setenv(
+        "SOPHYANE_SESSION_PROVIDER",
+        "local_gguf",
+    )
+    monkeypatch.setenv(
+        "SOPHYANE_SESSION_MODEL",
+        "qwen-local-test",
+    )
+
+    provider = main.create_provider(
+        {
+            "provider": "gemini",
+            "model": "stale-cloud-model",
+            "timeout": 600,
+            "temperature": 0.3,
+            "max_tokens": 4096,
+        }
+    )
+
+    assert provider.primary == "local_gguf"
+
+    chain = list(
+        getattr(
+            provider,
+            "_providers",
+            [],
+        )
+        or []
+    )
+
+    assert len(chain) == 1
+    assert chain[0][0] == "local_gguf"
+
+    child = chain[0][1]
+
+    assert (
+        type(child).__name__
+        == "LocalGgufProvider"
+    )
+
+    assert (
+        getattr(
+            child,
+            "model",
+            None,
+        )
+        == "qwen-local-test"
+    )
+
+    assert {
+        str(name)
+        for name, _child in chain
+    } == {"local_gguf"}

@@ -59,10 +59,28 @@ def _auth_key(handler: BaseHTTPRequestHandler) -> str:
     return (handler.headers.get("X-API-Key") or "").strip()
 
 
+def _replay_whatsapp_inbound_at_startup() -> list[dict]:
+    """Replay durable WhatsApp jobs when one portal app starts."""
+    try:
+        from sophyane.cloud import messaging
+
+        return messaging._replay_whatsapp_inbound_spool()
+    except Exception as exc:
+        return [
+            {
+                "ok": False,
+                "queued": False,
+                "stage": "startup_replay",
+                "error": str(exc),
+            }
+        ]
+
+
 class PortalApp:
     def __init__(self) -> None:
         self.store = PortalStore()
         self.site = _site_dir()
+        _replay_whatsapp_inbound_at_startup()
 
     def handle_api(self, method: str, path: str, handler: BaseHTTPRequestHandler) -> bool:
         if method == "OPTIONS":
@@ -789,6 +807,140 @@ class PortalApp:
             return True
 
         # ── Messaging: email / telegram / whatsapp / sms ─────────────────
+        if path == "/api/v1/messaging/whatsapp/webhook":
+            if method == "GET":
+                from sophyane.cloud.messaging import (
+                    verify_whatsapp_webhook_request,
+                )
+
+                challenge = verify_whatsapp_webhook_request(handler.path)
+
+                if challenge is not None:
+                    body = challenge.encode("utf-8")
+                    handler.send_response(200)
+                    handler.send_header(
+                        "Content-Type",
+                        "text/plain; charset=utf-8",
+                    )
+                    handler.send_header(
+                        "Content-Length",
+                        str(len(body)),
+                    )
+                    handler.end_headers()
+                    handler.wfile.write(body)
+                    return True
+
+                _json(
+                    handler,
+                    403,
+                    {
+                        "ok": False,
+                        "error": "WhatsApp webhook verification failed.",
+                    },
+                )
+                return True
+
+            if method == "POST":
+                from sophyane.cloud.messaging import (
+                    enqueue_whatsapp_inbound_message,
+                    parse_whatsapp_inbound_messages,
+                    validate_whatsapp_webhook_envelope,
+                    verify_whatsapp_webhook_signature,
+                )
+
+                length = int(
+                    handler.headers.get("Content-Length") or 0
+                )
+                raw_body = (
+                    handler.rfile.read(length)
+                    if length
+                    else b"{}"
+                )
+
+                supplied_signature = (
+                    handler.headers.get("X-Hub-Signature-256")
+                    or ""
+                )
+
+                if not verify_whatsapp_webhook_signature(
+                    raw_body,
+                    supplied_signature,
+                ):
+                    _json(
+                        handler,
+                        403,
+                        {
+                            "ok": False,
+                            "error": (
+                                "WhatsApp webhook signature "
+                                "verification failed."
+                            ),
+                        },
+                    )
+                    return True
+
+                try:
+                    payload = json.loads(
+                        raw_body.decode("utf-8") or "{}"
+                    )
+                    if not isinstance(payload, dict):
+                        payload = {}
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    payload = {}
+
+                if not validate_whatsapp_webhook_envelope(payload):
+                    _json(
+                        handler,
+                        400,
+                        {
+                            "ok": False,
+                            "error": (
+                                "Invalid WhatsApp webhook "
+                                "envelope."
+                            ),
+                        },
+                    )
+                    return True
+
+                messages = parse_whatsapp_inbound_messages(payload)
+                dispatch = []
+
+                for message in messages:
+                    try:
+                        result = enqueue_whatsapp_inbound_message(
+                            message
+                        )
+                    except Exception as err:  # noqa: BLE001
+                        result = {
+                            "ok": False,
+                            "message_id": str(
+                                message.get("message_id") or ""
+                            ),
+                            "sender": str(
+                                message.get("sender") or ""
+                            ),
+                            "stage": "handoff",
+                            "error": str(err),
+                        }
+
+                    dispatch.append(result)
+
+                handoff_ok = all(
+                    bool(result.get("ok"))
+                    for result in dispatch
+                )
+
+                _json(
+                    handler,
+                    200 if handoff_ok else 503,
+                    {
+                        "ok": handoff_ok,
+                        "messages": messages,
+                        "dispatch": dispatch,
+                    },
+                )
+                return True
+
         if path == "/api/v1/messaging/status" and method == "GET":
             from sophyane.cloud.messaging import public_status
 
@@ -1497,6 +1649,100 @@ def create_portal_app() -> PortalApp:
     return PortalApp()
 
 
+class _PortalHTTPServer(ThreadingHTTPServer):
+    """Portal HTTP server owning the live WhatsApp retry lifecycle."""
+
+    _whatsapp_retry_interval_seconds = 0.1
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._whatsapp_retry_owner_lock = threading.Lock()
+        self._whatsapp_retry_owner_active = False
+        self._serve_forever_active_count = 0
+        self._whatsapp_retry_stop: threading.Event | None = None
+        self._whatsapp_retry_thread: threading.Thread | None = None
+
+    def serve_forever(self, *args: Any, **kwargs: Any) -> None:
+        starts_retry = False
+
+        with self._whatsapp_retry_owner_lock:
+            self._serve_forever_active_count += 1
+
+            if not self._whatsapp_retry_owner_active:
+                self._whatsapp_retry_owner_active = True
+                starts_retry = True
+
+        if starts_retry:
+            stop = threading.Event()
+
+            def retry_loop() -> None:
+                from sophyane.cloud import messaging
+
+                current_stop = stop
+
+                while True:
+                    while not current_stop.is_set():
+                        try:
+                            messaging._retry_whatsapp_inbound_spool()
+                        except Exception:
+                            pass
+
+                        if current_stop.wait(
+                            self._whatsapp_retry_interval_seconds
+                        ):
+                            break
+
+                    with self._whatsapp_retry_owner_lock:
+                        if self._serve_forever_active_count == 0:
+                            self._whatsapp_retry_owner_active = False
+                            self._whatsapp_retry_stop = None
+                            self._whatsapp_retry_thread = None
+                            return
+
+                        current_stop = threading.Event()
+                        self._whatsapp_retry_stop = current_stop
+
+            retry_thread = threading.Thread(
+                target=retry_loop,
+                name="sophyane-whatsapp-live-retry",
+                daemon=True,
+            )
+
+            with self._whatsapp_retry_owner_lock:
+                self._whatsapp_retry_stop = stop
+                self._whatsapp_retry_thread = retry_thread
+
+            try:
+                retry_thread.start()
+            except Exception:
+                with self._whatsapp_retry_owner_lock:
+                    self._whatsapp_retry_owner_active = False
+                    self._whatsapp_retry_stop = None
+                    self._whatsapp_retry_thread = None
+                    self._serve_forever_active_count -= 1
+                raise
+
+        try:
+            super().serve_forever(*args, **kwargs)
+        finally:
+            shutdown_stop: threading.Event | None = None
+            shutdown_thread: threading.Thread | None = None
+
+            with self._whatsapp_retry_owner_lock:
+                self._serve_forever_active_count -= 1
+
+                assert self._serve_forever_active_count >= 0
+
+                if self._serve_forever_active_count == 0:
+                    shutdown_stop = self._whatsapp_retry_stop
+                    shutdown_thread = self._whatsapp_retry_thread
+
+            if shutdown_stop is not None:
+                shutdown_stop.set()
+
+            if shutdown_thread is not None:
+                shutdown_thread.join(timeout=1.0)
+
 def serve_portal(host: str = "0.0.0.0", port: int = 8780) -> ThreadingHTTPServer:
     app = create_portal_app()
     site = app.site
@@ -1670,7 +1916,7 @@ def serve_portal(host: str = "0.0.0.0", port: int = 8780) -> ThreadingHTTPServer
             if not app.handle_api("POST", path, self):
                 _json(self, 404, {"ok": False, "error": "not found"})
 
-    server = ThreadingHTTPServer((host, port), Handler)
+    server = _PortalHTTPServer((host, port), Handler)
     return server
 
 

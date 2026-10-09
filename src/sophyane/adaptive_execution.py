@@ -5,6 +5,8 @@ model output into safe workspace artifacts, execution and mechanical verificatio
 """
 from __future__ import annotations
 
+import os
+
 
 # SOPHYANE_VISUALIZATION_INTENT_FAST_PATH_V1
 def try_visualization_intent(
@@ -71,6 +73,7 @@ def try_visualization_intent(
 
 
 from sophyane.environment_constraints import verification_result_is_meaningful
+from sophyane.providers.base import ProviderError
 
 import re
 import shlex
@@ -85,38 +88,40 @@ def _files(workspace: Path) -> list[str]:
 
 
 def _explicit_no_edit_request(request: str) -> bool:
-    text = " ".join(
-        str(request or "").casefold().split()
-    )
-    explicit_prohibition = bool(
+    text = " ".join(str(request or "").casefold().split())
+    source_authorized = "source edits are explicitly authorized" in text
+
+    global_prohibition = bool(
         re.search(
-            r"\bdo not (?:edit|modify|write)\b"
-            r"(?!\s+(?:any\s+)?other\b)",
+            r"\bdo not\s+(?:edit|modify|write|create)(?:\s+or\s+(?:edit|modify|write|create))*\s+"
+            r"(?:(?:any|all|every)\s+)?files?\b",
+            text,
+        )
+        or re.search(r"\bdo not\s+(?:edit|modify|write)\s+existing files?\b", text)
+        or re.search(
+            r"\bdo not\s+(?:edit|modify|write|create)\s+"
+            r"(?:the\s+)?(?:repository|codebase|workspace|anything)\b",
             text,
         )
         or re.search(
-            r"\bdo not create\b"
-            r"(?!\s+(?:(?:any\s+)?other|new)\b)",
-            text,
-        )
-    ) or any(
-        marker in text
-        for marker in (
-            "no edits",
-            "no writes",
-            "read-only",
-            "read only",
-        )
-    )
-
-    coordinated_prohibition = bool(
-        re.search(
-            r"\bdo not create\b[^.!?\n]*\bor\s+(?:edit|modify|write)\b",
+            r"\bdo not create\b[^.!?\n]*\bor\s+(?:edit|modify|write)\b"
+            r"[^.!?\n]*\bfiles?\b",
             text,
         )
     )
+    if global_prohibition:
+        return True
 
-    return explicit_prohibition or coordinated_prohibition
+    if source_authorized:
+        return False
+
+    if "read-only" in text or "read only" in text:
+        return True
+
+    if any(marker in text for marker in ("no edits", "no writes")):
+        return True
+
+    return False
 
 
 def _browser_request(request: str) -> bool:
@@ -956,6 +961,19 @@ def _recover_simple_empty_file_action(
 
 
 
+def _command_references_workspace_artifact(
+    command: str,
+    workspace: Path,
+) -> bool:
+    """Return whether a command names an existing workspace artifact."""
+    lowered = str(command or "").casefold()
+    for name in _files(workspace):
+        candidate = str(name).strip()
+        if candidate and candidate.casefold() in lowered:
+            return True
+    return False
+
+
 def _command_text(action: dict[str, Any]) -> str:
     argv = action.get("argv")
     if isinstance(argv, list):
@@ -1068,8 +1086,69 @@ def _is_read_only_inspection_command(
     }
 
 
+def _no_edit_shell_syntax_safe(command: str) -> bool:
+    """Reject shell syntax capable of changing execution semantics."""
+    # SOPHYANE_NO_EDIT_SHELL_SYNTAX_GUARD_V1
+    value = str(command or '')
+    if not value.strip():
+        return False
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        return False
+    if any(char in value for char in ';|&<>$`'):
+        return False
+    return True
+
+
+def _no_edit_restricted_compound_inspection(
+    command: str,
+) -> bool:
+    """Admit only explicitly reviewed inspection compositions."""
+    # SOPHYANE_RESTRICTED_COMPOUND_INSPECTION_V1
+    return str(command or "").strip() in {
+        "pwd && find . -maxdepth 2 -type f -print | sort",
+        "find . -maxdepth 2 -type f -print | sort",
+    }
+
+
+def _no_edit_find_arguments_safe(command: str) -> bool:
+    """Reject execution and mutation predicates in find commands."""
+    try:
+        tokens = shlex.split(str(command or "").strip())
+    except ValueError:
+        return False
+
+    if not tokens:
+        return False
+
+    if Path(tokens[0]).name.casefold() != "find":
+        return True
+
+    forbidden = {
+        "-delete",
+        "-exec",
+        "-execdir",
+        "-ok",
+        "-okdir",
+        "-fprint",
+        "-fprint0",
+        "-fprintf",
+        "-fls",
+    }
+
+    return not any(
+        token.casefold() in forbidden
+        for token in tokens[1:]
+    )
+
+
 def _no_edit_command_allowed(command: str) -> bool:
     """Allow bounded inspection plus explicit test-suite verification."""
+    if _no_edit_restricted_compound_inspection(command):
+        return True
+    if not _no_edit_shell_syntax_safe(command):
+        return False
+    if not _no_edit_find_arguments_safe(command):
+        return False
     if _is_read_only_inspection_command(command):
         return True
 
@@ -1099,8 +1178,90 @@ def _no_edit_command_allowed(command: str) -> bool:
     return False
 
 
+def _explicit_read_only_cli_requested(
+    request: str,
+) -> bool:
+    """Return True only when execution/demo of a CLI was requested."""
+    normalized = " ".join(
+        str(request or "").casefold().split()
+    )
+
+    return any(
+        phrase in normalized
+        for phrase in (
+            "demonstrate the cli",
+            "demo the cli",
+            "run the cli",
+            "execute the cli",
+        )
+    )
+
+
+def _existing_python_cli_command(
+    command: str,
+    workspace: Path | None,
+) -> bool:
+    """Recognize a narrow invocation of an existing Python script."""
+    if workspace is None:
+        return False
+
+    try:
+        tokens = shlex.split(
+            str(command or "").strip()
+        )
+    except ValueError:
+        return False
+
+    if len(tokens) < 2:
+        return False
+
+    executable = Path(tokens[0]).name.casefold()
+
+    if not executable.startswith("python"):
+        return False
+
+    script_token = tokens[1]
+
+    if (
+        not script_token
+        or script_token.startswith("-")
+        or not script_token.casefold().endswith(".py")
+    ):
+        return False
+
+    script = Path(script_token)
+
+    if script.is_absolute():
+        try:
+            script.resolve().relative_to(
+                workspace.resolve()
+            )
+        except (OSError, ValueError):
+            return False
+
+        candidate = script
+    else:
+        if ".." in script.parts:
+            return False
+
+        candidate = workspace / script
+
+    try:
+        candidate = candidate.resolve()
+        candidate.relative_to(
+            workspace.resolve()
+        )
+    except (OSError, ValueError):
+        return False
+
+    return candidate.is_file()
+
+
 def _no_edit_action_problem(
     action: dict[str, Any],
+    *,
+    original_request: str = "",
+    workspace: Path | None = None,
 ) -> str:
     kind = str(
         action.get("type")
@@ -1120,7 +1281,11 @@ def _no_edit_action_problem(
                     f"batch item {index}"
                 )
 
-            problem = _no_edit_action_problem(child)
+            problem = _no_edit_action_problem(
+                child,
+                original_request=original_request,
+                workspace=workspace,
+            )
 
             if problem:
                 return f"batch item {index}: {problem}"
@@ -1152,11 +1317,40 @@ def _no_edit_action_problem(
     }:
         command = _command_text(action)
 
-        if not _no_edit_command_allowed(command):
+        if (
+            not _no_edit_restricted_compound_inspection(command)
+            and not _no_edit_shell_syntax_safe(command)
+        ):
             return (
                 "explicit no-edit request rejected "
-                f"command: {command}"
+                f"unsafe shell syntax: {command}"
             )
+
+        if not _no_edit_find_arguments_safe(command):
+            return (
+                "explicit no-edit request rejected "
+                f"unsafe find arguments: {command}"
+            )
+
+        if _no_edit_command_allowed(command):
+            return ""
+
+        # SOPHYANE_EXPLICIT_READ_ONLY_CLI_ADMISSION_V1
+        if (
+            _explicit_read_only_cli_requested(
+                original_request
+            )
+            and _existing_python_cli_command(
+                command,
+                workspace,
+            )
+        ):
+            return ""
+
+        return (
+            "explicit no-edit request rejected "
+            f"command: {command}"
+        )
 
     return ""
 
@@ -1184,10 +1378,41 @@ def _command_problem(action: dict[str, Any], workspace: Path) -> str:
     if not tokens:
         return "command action contains no executable"
     first = tokens[0]
-    if first in {"cd", "build", "create", "develop", "design", "implement", "write", "fix", "repair", "generate"}:
+    if first in {
+        "cd",
+        "build",
+        "create",
+        "develop",
+        "design",
+        "implement",
+        "write",
+        "fix",
+        "repair",
+        "generate",
+        "if",
+        "for",
+        "while",
+        "until",
+        "case",
+        "select",
+    }:
         return "model returned a shell recipe or natural-language instruction instead of source files"
     if first == "make" and not any((workspace / n).is_file() for n in ("Makefile", "makefile", "GNUmakefile")):
         return "make was requested before a Makefile exists"
+    # Shell builtins are valid command heads even though they do not
+    # necessarily have a filesystem executable discoverable by shutil.which().
+    shell_builtins = {
+        "command",
+        "printf",
+        "echo",
+        "test",
+        "true",
+        "false",
+        "pwd",
+    }
+    if first in shell_builtins:
+        return ""
+
     executable = Path(first)
     exists = executable.is_file() if executable.is_absolute() else (workspace / executable).is_file()
     if not exists and shutil.which(first) is None:
@@ -1203,6 +1428,149 @@ _DISCOVERY_REQUEST_PATTERNS = (
     r"\bshow\s+(?:me\s+)?(?:the\s+)?path\b",
     r"\bwhich\b",
 )
+
+
+_DISCOVERY_NONTERMINAL_REQUEST_PATTERNS = (
+    r"\b(?:build|create|implement|modify|repair|fix|refactor|update|write)\b",
+    r"\b(?:run|execute)\s+(?:the\s+)?(?:tests?|pytest|regressions?|verification)\b",
+    r"\bred\s*[-=]>\s*green\b",
+)
+
+
+def _explicit_terminal_output_satisfied(
+    original_request: str,
+    result: str,
+) -> bool:
+    """Require an explicit until-it-outputs condition before generic success."""
+    request = str(original_request or "")
+    match = re.search(
+        r"""\buntil\s+it\s+outputs?\s+["'`]?([^\r\n"'`]+?)["'`]?
+            (?=\s*(?:[.!]|\bif\b|$))""",
+        request,
+        flags=re.I | re.X,
+    )
+    if not match:
+        return True
+
+    expected = match.group(1).strip()
+    if not expected:
+        return True
+
+    return expected in _command_stdout(result)
+
+
+# SOPHYANE_READ_ONLY_EXECUTION_OBLIGATION_LEDGER_V1
+def _read_only_execution_obligations(
+    request: str,
+) -> set[str]:
+    """Return explicit execution obligations carried by a read-only request."""
+    normalized = " ".join(
+        str(request or "").casefold().split()
+    )
+
+    obligations: set[str] = set()
+
+    # Negative instructions must not become execution obligations.
+    # Remove negated spans only for positive test-intent detection;
+    # preserve the original request for all other routing logic.
+    positive_test_text = re.sub(
+        r"\b(?:do not|don\x27t|never|must not|without)\b"
+        r"[^.!?;\n]*",
+        " ",
+        normalized,
+    )
+
+    test_requested = (
+        bool(
+            re.search(
+                r"\b(?:run|execute)\b[^.!?\n]*"
+                r"\b(?:tests?|pytest|test suite)\b",
+                positive_test_text,
+            )
+        )
+        or "run all " in positive_test_text
+        and " test" in positive_test_text
+    )
+
+    cli_requested = any(
+        phrase in normalized
+        for phrase in (
+            "demonstrate the cli",
+            "demo the cli",
+            "run the cli",
+            "execute the cli",
+        )
+    )
+
+    if test_requested:
+        obligations.add("tests")
+
+    if cli_requested:
+        obligations.add("cli")
+
+    return obligations
+
+
+def _read_only_obligations_satisfied_by_command(
+    obligations: set[str],
+    command: str,
+) -> set[str]:
+    """Return explicit obligations grounded by one successful command."""
+    if not obligations:
+        return set()
+
+    try:
+        tokens = shlex.split(
+            str(command or "").strip()
+        )
+    except ValueError:
+        return set()
+
+    if not tokens:
+        return set()
+
+    lowered = [
+        token.casefold()
+        for token in tokens
+    ]
+
+    satisfied: set[str] = set()
+
+    if "tests" in obligations:
+        if (
+            "pytest" in lowered
+            or any(
+                token.endswith("/pytest")
+                for token in lowered
+            )
+            or (
+                len(lowered) >= 3
+                and Path(lowered[0]).name.startswith("python")
+                and lowered[1] == "-m"
+                and lowered[2] == "pytest"
+            )
+        ):
+            satisfied.add("tests")
+
+    if "cli" in obligations:
+        if (
+            len(tokens) >= 2
+            and Path(tokens[0]).name.casefold().startswith("python")
+            and not tokens[1].startswith("-")
+            and tokens[1].casefold().endswith(".py")
+        ):
+            satisfied.add("cli")
+
+    return satisfied
+
+
+def _read_only_unsatisfied_obligations(
+    required: set[str],
+    satisfied: set[str],
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(required - satisfied)
+    )
 
 
 def _command_stdout(result: str) -> str:
@@ -1242,6 +1610,15 @@ def _discovery_request_completed(
     if not any(
         re.search(pattern, request_text)
         for pattern in _DISCOVERY_REQUEST_PATTERNS
+    ):
+        return False
+
+    # Discovery words may appear inside a larger implementation request
+    # (for example, "locate the existing regression test"). Such an
+    # intermediate lookup must not terminate the whole adaptive task.
+    if any(
+        re.search(pattern, request_text)
+        for pattern in _DISCOVERY_NONTERMINAL_REQUEST_PATTERNS
     ):
         return False
 
@@ -1349,15 +1726,13 @@ def _full_stack_initial_bundle_prompt(
         "- BaseHTTPRequestHandler.\n"
         "- Bind to 127.0.0.1 only.\n"
         "- Deterministic schema initialization.\n"
-        "- Deterministic seed/demo rows.\n"
-        "- GET /api/projects.\n"
-        "- GET /api/tasks.\n"
-        "- POST /api/tasks.\n"
-        "- PUT /api/tasks/{id}.\n"
-        "- DELETE /api/tasks/{id}.\n"
-        "- GET /api/stats.\n"
-        "- Search/filter query handling.\n"
-        "- Validate required fields, status and priority.\n"
+        "- Deterministic seed/demo rows appropriate to the user request.\n"
+        "- Define REST-style JSON endpoints from the user's requested domain.\n"
+        "- Preserve the entities, workflows and terminology in USER REQUEST.\n"
+        "- Implement required create/read/update/delete behavior where requested.\n"
+        "- Implement search/filter behavior where requested.\n"
+        "- Validate required domain fields and values.\n"
+        "- Do not invent domain entities or workflows absent from USER REQUEST.\n"
         "- Structured JSON errors with useful HTTP codes.\n"
         "- Per-request SQLite connections safe for "
         "ThreadingHTTPServer.\n"
@@ -1393,9 +1768,10 @@ def _full_stack_next_increment_prompt(
             (
                 "Create static/index.html only. "
                 "Return exactly one write_file JSON action. "
-                "Build a responsive task-management interface with "
-                "dashboard statistics, project/task controls, forms, "
-                "search/filter controls and hooks for static/app.js. "
+                "Build a responsive interface for the product described "
+                "in the original user request, preserving its entities, "
+                "workflows and terminology, with forms and controls required "
+                "by that request plus hooks for static/app.js. "
                 "Do not include JavaScript implementation inline unless "
                 "required for minimal bootstrapping."
             ),
@@ -1406,9 +1782,10 @@ def _full_stack_next_increment_prompt(
                 "Create static/app.js only. "
                 "Return exactly one write_file JSON action. "
                 "Use vanilla JavaScript fetch() against the real REST API. "
-                "Implement loading, create, edit, delete, status changes, "
-                "priority/due-date handling, dashboard refresh, search and "
-                "filtering. No localStorage replacement for backend state."
+                "Implement the interactions required by the original user "
+                "request and the generated backend API. Preserve the user's "
+                "domain entities and workflows. No localStorage replacement "
+                "for backend state."
             ),
         ),
         (
@@ -1417,7 +1794,8 @@ def _full_stack_next_increment_prompt(
                 "Create static/style.css only. "
                 "Return exactly one write_file JSON action. "
                 "Provide a compact responsive layout for the existing "
-                "task-management frontend. No external CSS frameworks."
+                "frontend generated for the original user request. "
+                "No external CSS frameworks."
             ),
         ),
         (
@@ -1426,9 +1804,10 @@ def _full_stack_next_increment_prompt(
                 "Create tests/test_app.py only. "
                 "Return exactly one write_file JSON action. "
                 "Use pytest or unittest with only available Python "
-                "dependencies. Exercise backend CRUD, validation, stats, "
-                "and search/filter behavior against isolated temporary "
-                "storage where practical."
+                "dependencies. Exercise the backend behavior required by "
+                "the original user request, including persistence, API "
+                "validation and requested workflows against isolated "
+                "temporary storage where practical."
             ),
         ),
         (
@@ -1653,7 +2032,12 @@ def _canonicalize_explicit_file_path(
         return action
 
     requested = re.findall(
-        r"""(?:file\s+(?:named|called)?|create\s+(?:a|the)\s+file|write\s+(?:a|the)\s+file)
+        r"""(?:
+                file\s+(?:named|called)? |
+                (?:make|create|write)
+                (?:\s+(?:a|the))?
+                (?:\s+file)?
+            )
             \s*["'`]?([A-Za-z0-9_.-]+\.[A-Za-z0-9_-]+)["'`]?""",
         str(original_request or ""),
         flags=re.I | re.X,
@@ -1686,6 +2070,26 @@ def _canonicalize_explicit_file_path(
     return corrected
 
 
+def _source_mutation_requires_followup(request: str) -> bool:
+    """Return whether an authorized source write requires later execution."""
+    normalized = " ".join(str(request or "").casefold().split())
+
+    followup_markers = (
+        "verify ",
+        "test ",
+        "pytest",
+        "run ",
+        "execute ",
+        "compile",
+        "build ",
+        "benchmark",
+        "then ",
+        "after ",
+    )
+
+    return any(marker in normalized for marker in followup_markers)
+
+
 def _simple_file_write_request_completed(
     original_request: str,
     action: dict[str, Any],
@@ -1707,6 +2111,7 @@ def _simple_file_write_request_completed(
         "run ",
         "execute ",
         "test ",
+        "verify ",
         "pytest",
         "judge.sh",
         "compile",
@@ -1720,15 +2125,18 @@ def _simple_file_write_request_completed(
     if any(marker in request for marker in compound_markers):
         return False
 
-    if not any(
-        phrase in request
-        for phrase in (
-            "create a file",
-            "create the file",
-            "write a file",
-            "write the file",
-        )
-    ):
+    requested_names = re.findall(
+        r"""(?:
+                file\s+(?:named|called)? |
+                (?:make|create|write)
+                (?:\s+(?:a|the))?
+                (?:\s+file)?
+            )
+            \s*["'`]?([A-Za-z0-9_.-]+\.[A-Za-z0-9_-]+)["'`]?""",
+        str(original_request or ""),
+        flags=re.I | re.X,
+    )
+    if not requested_names:
         return False
 
     raw_path = str(action.get("path") or "").strip()
@@ -1757,13 +2165,8 @@ def _simple_file_write_request_completed(
             return False
 
     # When a filename is explicitly named, ensure the written basename matches.
-    names = re.findall(
-        r"""(?:named|called|file)\s+["'`]?([A-Za-z0-9_.-]+\.[A-Za-z0-9_-]+)""",
-        original_request,
-        flags=re.I,
-    )
-    if names and target.name.casefold() not in {
-        name.casefold() for name in names
+    if target.name.casefold() not in {
+        name.casefold() for name in requested_names
     }:
         return False
 
@@ -1776,21 +2179,153 @@ def _simple_file_write_request_completed(
 
 from sophyane.rsi.supervisor import foreground as _rsi_foreground
 
+# SOPHYANE_RSI_STRUCTURED_UNRESOLVED_V1
+class _UnresolvedExecutionResult(str):
+    """An unresolved runtime outcome carrying diagnostic evidence."""
+
+    def __new__(cls, text, *, evidence):
+        value = super().__new__(cls, str(text))
+        value.execution_failed = True
+        value.execution_failure_evidence = tuple(
+            str(item)[:1000] for item in evidence[-16:]
+        )
+        # Preserve existing authoritative capability classification.
+        for name in (
+            "failure_classification",
+            "capability_class",
+            "failure_evidence",
+        ):
+            if hasattr(text, name):
+                setattr(value, name, getattr(text, name))
+        return value
+
+
 @_rsi_foreground
+class _AdaptiveFailureResult(str):
+    """String-compatible unresolved result carrying authoritative failure evidence."""
+
+    def __new__(
+        cls,
+        text: str,
+        *,
+        failure_classification: Any,
+        capability_class: str,
+        failure_evidence: dict[str, Any],
+    ):
+        value = super().__new__(cls, str(text))
+        value.failure_classification = failure_classification
+        value.capability_class = str(capability_class)
+        value.failure_evidence = dict(failure_evidence)
+        return value
+
+
+def _authoritative_missing_reusable_capability_result(
+    *,
+    original_request: str,
+    output: str,
+) -> str:
+    """Classify only an explicit reusable-capability gap with grounded evidence."""
+
+    request = str(original_request or "")
+    result = str(output or "")
+    normalized_request = request.casefold()
+    normalized_result = result.casefold()
+
+    # Request intent alone is never enough.  Require the user to have
+    # explicitly described a reusable capability that is absent.
+    reusable_intent = (
+        "reusable" in normalized_request
+        and any(
+            marker in normalized_request
+            for marker in (
+                "no parser",
+                "no reusable implementation",
+                "no implementation",
+                "does not exist",
+                "doesn't exist",
+                "missing",
+            )
+        )
+    )
+
+    # Likewise, generic execution failure is never enough.  The adaptive
+    # runtime must have grounded evidence that the requested executable
+    # capability is actually absent.
+    missing_execution_evidence = (
+        "executable does not exist:" in normalized_result
+    )
+
+    if not reusable_intent or not missing_execution_evidence:
+        return result
+
+    # Extract the grounded executable identity from execution evidence.
+    marker = "executable does not exist:"
+    capability_name = ""
+
+    for line in result.splitlines():
+        lowered = line.casefold()
+        if marker not in lowered:
+            continue
+
+        offset = lowered.index(marker) + len(marker)
+        capability_name = line[offset:].strip().rstrip(".")
+        if capability_name:
+            break
+
+    if not capability_name:
+        return result
+
+    from sophyane.failure_driven_capability import (
+        FailureClassification,
+    )
+
+    return _AdaptiveFailureResult(
+        result,
+        failure_classification=(
+            FailureClassification.MISSING_REUSABLE_CAPABILITY
+        ),
+        capability_class=f"executable.{capability_name}",
+        failure_evidence={
+            "kind": "missing_executable",
+            "executable": capability_name,
+            "execution_output": result,
+            "request_declared_reusable_capability": True,
+            "request_declared_missing_implementation": True,
+        },
+    )
+
+
+from sophyane.rsi.supervisor import foreground as _admission_failure_foreground
+
+@_admission_failure_foreground
 def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable[[str], Any],
                       workspace: Path | None = None, max_steps: int = 12,
-                      progress: Callable[[str], None] | None = None) -> str:
+                      progress: Callable[[str], None] | None = None,
+                      operation: Any = None) -> str:
     from sophyane import execution_runtime as runtime
+    # SOPHYANE_ADAPTIVE_WORKSPACE_AUTHORITY_V1
+    #
+    # Workspace selection belongs to the outer execution boundary. When the
+    # caller supplies a workspace, it is already authoritative and must not be
+    # reinterpreted from semantic request text. This is especially important
+    # when higher layers append architecture/policy context whose vocabulary
+    # may resemble a different project type.
+    #
+    # Legacy generated-project isolation remains available only when no
+    # workspace was supplied by the caller.
     requested_workspace = (workspace or Path.cwd()).resolve()
 
-    try:
-        from sophyane.harness_workspace import select_workspace
-        workspace = select_workspace(
-            original_request,
-            requested_workspace,
-        )
-    except Exception:
+    if workspace is not None:
         workspace = requested_workspace
+    else:
+        try:
+            from sophyane.harness_workspace import select_workspace
+            workspace = select_workspace(
+                original_request,
+                requested_workspace,
+            )
+        except Exception:
+            workspace = requested_workspace
 
     workspace.mkdir(parents=True, exist_ok=True)
     progress = progress or (lambda _message: None)
@@ -1799,6 +2334,128 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     # a larger budget for complex software tasks, but an explicit max_steps
     # value must remain a hard upper bound inside this loop.
     max_steps = max(1, int(max_steps))
+
+    # SOPHYANE_NIFDU_FULL_PRODUCT_CYCLE_V1
+    #
+    # In a NIFDU-backed Mode-4 session, NIFDU owns the complete browser
+    # product lifecycle: initial build, visual capture, judge, repair and
+    # acceptance.  Do not enter Sophyane's legacy one-shot/wrapper chain
+    # afterward, because that would regenerate an already judged product.
+    #
+    # The first Mode-4 provider turn has already happened before this
+    # adaptive loop is entered.  This branch therefore performs no
+    # additional Sophyane provider-generation call.
+    if (
+        _browser_request(original_request)
+        and os.environ.get(
+            "SOPHYANE_SESSION_MODE",
+            "",
+        ).strip().lower()
+        == "nifdu_llm"
+    ):
+        from sophyane import nifdu_product_supervisor
+
+        progress(
+            "Delegating browser product to NIFDU full "
+            "build/capture/judge/repair cycle"
+        )
+
+        cycle = (
+            nifdu_product_supervisor.run_nifdu_product_cycle(
+                original_request
+            )
+        )
+
+        score = cycle.get("score")
+        iterations = cycle.get("iterations")
+        summary = str(cycle.get("summary") or "").strip()
+
+        if cycle.get("accepted") is not True:
+            return (
+                "NIFDU completed its browser-product quality "
+                "cycle but the product was not accepted.\n\n"
+                f"Score: {score}\n"
+                f"Iterations: {iterations}\n"
+                + (
+                    f"Summary: {summary}\n"
+                    if summary
+                    else ""
+                )
+                + "The active Sophyane project was left unchanged."
+            )
+
+        source = Path(cycle["final_file"]).resolve()
+
+        if not source.is_file():
+            raise RuntimeError(
+                "NIFDU accepted product is unavailable: "
+                f"{source}"
+            )
+
+        html = source.read_text(encoding="utf-8")
+        problem = _validate_html(
+            html,
+            original_request,
+        )
+
+        if problem:
+            raise RuntimeError(
+                "NIFDU accepted product failed Sophyane "
+                f"structural verification: {problem}"
+            )
+
+        target = workspace / "index.html"
+        temporary = workspace / ".index.html.nifdu.tmp"
+
+        try:
+            temporary.write_text(
+                html,
+                encoding="utf-8",
+            )
+            temporary.replace(target)
+        finally:
+            if temporary.exists():
+                try:
+                    temporary.unlink()
+                except OSError:
+                    pass
+
+        progress(
+            f"Adopted accepted NIFDU product into {target} "
+            f"({target.stat().st_size} bytes)"
+        )
+
+        ok, browser_result = runtime.execute_action(
+            {"type": "open_browser"},
+            workspace,
+            progress,
+        )
+
+        if not ok:
+            return (
+                "NIFDU accepted the browser product, but "
+                "final browser presentation failed.\n\n"
+                f"Score: {score}\n"
+                f"Iterations: {iterations}\n"
+                f"Workspace: {workspace}\n"
+                f"File: {target.name}\n\n"
+                f"Execution evidence:\n{browser_result}"
+            )
+
+        return (
+            "NIFDU completed and accepted the browser product.\n\n"
+            f"Score: {score}\n"
+            f"Iterations: {iterations}\n"
+            + (
+                f"Summary: {summary}\n"
+                if summary
+                else ""
+            )
+            + f"Workspace: {workspace}\n"
+            f"File: {target.name}\n\n"
+            "Execution evidence:\n"
+            f"{browser_result}"
+        )
 
     if _browser_request(original_request):
         try:
@@ -1813,6 +2470,7 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     # `current` contains only the provider response that may be parsed as an
     # executable action. Repair prompts add the execution contract through
     # execution_prefix_for_repair() when another provider call is required.
+    current_provider = getattr(initial_text, "provider_id", None)
     current = str(initial_text or "")
 
     # SOPHYANE_FULL_STACK_BUNDLE_FIRST_V1
@@ -1865,9 +2523,32 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             )
 
     evidence: list[str] = []
+    grounded_read_only_observation = ""
     repairs = 0
     successful_commands: set[str] = set()
-    read_only_execution = _explicit_no_edit_request(original_request)
+    pending_no_edit_rejection = False
+    pending_read_only_execution_failure = False
+
+    read_only_required_obligations = (
+        _read_only_execution_obligations(
+            original_request
+        )
+    )
+    read_only_satisfied_obligations: set[str] = set()
+
+    # Operation is used later in this function regardless of whether the
+    # caller supplied an authority classification. Import it unconditionally
+    # so operation=None cannot leave the function-local name unbound.
+    from sophyane.rsi.authority import Operation
+
+    # MODE6_CLASSIFIED_READ_ONLY_ADAPTIVE_HANDOFF_V1
+    # Preserve explicit no-edit parsing for legacy callers, while allowing
+    # callers that already resolved repository authority to carry that
+    # classification into the execution lifecycle.
+    if operation is None:
+        read_only_execution = _explicit_no_edit_request(original_request)
+    else:
+        read_only_execution = operation is Operation.READ_ONLY_OPERATION
 
     # SOPHYANE_VERIFIED_MUTATION_COMPLETION_STOP_V1
     #
@@ -2137,6 +2818,7 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                     rejected,
                 )
             )
+            current_provider = getattr(response, "provider_id", None)
             current = getattr(response, "text", str(response))
             continue
         action = _canonicalize_explicit_file_path(
@@ -2172,6 +2854,18 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             current = "Premature completion: no artifact exists."
             continue
         progress(f"Step {step}/{max_steps}: preparing {kind or 'action'}")
+
+        if (
+            operation is not None
+            and str(getattr(operation, "value", operation)) == "source_mutation"
+            and current_provider == "local_gguf"
+        ):
+            result = (
+                "Execution deferred safely: local_gguf response lacks "
+                "SOPHYANE_SOURCE_MUTATION authority."
+            )
+            evidence.append(result)
+            return result + "\n\nExecution evidence:\n" + "\n".join(evidence)
 
         command_kinds = {
             "command",
@@ -2210,6 +2904,36 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                 "STDOUT:\npreviously successful\n"
                 "STDERR:\n"
             )
+
+            if (
+                read_only_execution
+                and grounded_read_only_observation
+                and not _read_only_unsatisfied_obligations(
+                    read_only_required_obligations,
+                    read_only_satisfied_obligations,
+                )
+            ):
+                # SOPHYANE_READ_ONLY_GROUNDED_DUPLICATE_COMPLETION_V1
+                #
+                # A successful inspection is sufficient evidence when the
+                # original task is itself a read-only listing/inspection
+                # request. A repeated command is provider continuation noise,
+                # not evidence that another command or a mutation is needed.
+                result = (
+                    "Read-only repository inspection completed from grounded "
+                    "evidence.\n\n"
+                    + grounded_read_only_observation
+                )
+                evidence.append(f"Step {step}: {result}")
+                progress(
+                    "Read-only grounded evidence is sufficient; "
+                    "finishing without another execution action"
+                )
+                return (
+                    result
+                    + "\n\nExecution evidence:\n"
+                    + "\n".join(evidence)
+                )
 
             if (
                 not _is_read_only_inspection_command(
@@ -2257,9 +2981,11 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
 
             continue
 
-        if _explicit_no_edit_request(original_request):
+        if read_only_execution:
             no_edit_problem = _no_edit_action_problem(
-                action
+                action,
+                original_request=original_request,
+                workspace=workspace,
             )
 
             if no_edit_problem:
@@ -2272,13 +2998,69 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                     f"Step {step}: {result}"
                 )
                 progress(result)
-                return (
+                pending_no_edit_rejection = True
+                # Retry rejected commands through the selected intelligence.
+                # Admission remains unchanged; writes never enter this retry.
+                if (
+                    kind in command_kinds
+                    and repairs < 2
+                    and step < max_steps
+                ):
+                    repairs += 1
+                    response = ask(
+                        "READ-ONLY ACTION RECOVERY. The runtime rejected the "
+                        "previous command; it was not executed. Preserve all "
+                        "no-edit restrictions. Do not repeat the rejected "
+                        "command, create scripts, or request broader authority. "
+                        "For file inspection or calculations over file contents, "
+                        "choose read_file and use its actual returned contents "
+                        "in a later final answer. If the exact requested command "
+                        "has no admitted alternative, respond truthfully that "
+                        "execution is blocked. Never invent results. Return "
+                        "one executable JSON action, for example "
+                        '{"action":{"type":"read_file","path":"relative/file"}}'
+                        " or a respond action explaining the restriction.\n"
+                        + "ORIGINAL TASK:\n" + original_request
+                        + "\nACTUAL REJECTION:\n" + result
+                    )
+                    current_provider = getattr(response, "provider_id", None)
+                    current = getattr(response, "text", str(response))
+                    continue
+                return _UnresolvedExecutionResult(
                     result
                     + "\n\nExecution evidence:\n"
-                    + "\n".join(evidence)
+                    + "\n".join(evidence),
+                    evidence=evidence,
                 )
 
         ok, result = _execute(runtime, action, workspace, progress)
+        if read_only_execution and kind not in {"respond", "message"}:
+            if ok:
+                pending_read_only_execution_failure = False
+            else:
+                from sophyane.execution_runtime import VALID_ACTIONS
+                from sophyane.runtime_interactive_patch import (
+                    _FILESYSTEM_LATEST_ACTIONS_V13,
+                )
+
+                additional_runtime_actions = {
+                    "analyse_log",
+                    "analyze",
+                    "verify_result",
+                    "check_result",
+                    "batch",
+                }
+
+                action_supported = kind in (
+                    VALID_ACTIONS
+                    | _FILESYSTEM_LATEST_ACTIONS_V13
+                    | additional_runtime_actions
+                )
+
+                if action_supported:
+                    pending_read_only_execution_failure = True
+        if ok and kind not in {"respond", "message"}:
+            pending_no_edit_rejection = False
 
         # SOPHYANE_PYTHON_WRITE_VALIDATION_GATE_V1
         #
@@ -2323,12 +3105,24 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                             )
                         except py_compile.PyCompileError as error:
                             ok = False
+                            current_source = candidate.read_text(
+                                encoding="utf-8",
+                                errors="replace",
+                            )
+                            max_repair_source_chars = 12000
+                            if len(current_source) > max_repair_source_chars:
+                                current_source = (
+                                    current_source[:max_repair_source_chars]
+                                    + "\n...[current target truncated]..."
+                                )
                             result = (
                                 "Python syntax validation failed immediately "
                                 f"after writing {raw_path}.\n"
                                 f"{error.msg}\n"
                                 "Repair this exact file before creating "
-                                "any additional project files."
+                                "any additional project files.\n"
+                                "CURRENT TARGET CONTENT:\n"
+                                f"{current_source}"
                             )
                             progress(
                                 "Python write validation failed: "
@@ -2340,6 +3134,30 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                                 f"{raw_path}"
                             )
         evidence.append(f"Step {step}: {result}")
+
+        if (
+            read_only_execution
+            and ok
+            and command_text
+        ):
+            read_only_satisfied_obligations.update(
+                _read_only_obligations_satisfied_by_command(
+                    read_only_required_obligations,
+                    command_text,
+                )
+            )
+
+        if (
+            read_only_execution
+            and ok
+            and command_text
+            and _is_read_only_inspection_command(command_text)
+        ):
+            grounded_read_only_observation = result
+            # Remember the successful observation so a provider that repeats
+            # it enters the grounded read-only completion path above instead
+            # of executing or repairing the same command again.
+            successful_commands.add(command_text)
 
         # SOPHYANE_SINGLE_FILE_EXECUTION_VERIFICATION_FLOW_V1
         #
@@ -2478,6 +3296,9 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                 "SLI Full-Stack Verification: "
                 "syntax passed"
             )
+            # The next phase is deterministic. Do not fall through to the
+            # generic provider continuation at the bottom of this iteration.
+            continue
 
         elif (
             verification_phase == "full_stack_test"
@@ -2490,6 +3311,9 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                 "SLI Full-Stack Verification: "
                 "tests passed; Service Fabric owns runtime verification"
             )
+            # Service Fabric now owns grounded runtime verification; no
+            # additional model decision is required between these phases.
+            continue
 
         elif verification_phase == "prepare":
             if ok:
@@ -2600,6 +3424,17 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             # generic early-stop path.
             if (
                 workspace_mutated
+                and _explicit_terminal_output_satisfied(
+                    original_request,
+                    result,
+                )
+                and (
+                    repairs == 0
+                    or _command_references_workspace_artifact(
+                        command_text,
+                        workspace,
+                    )
+                )
                 and not deterministic_verification_stage
                 and not bundle_first_full_stack
             ):
@@ -2653,19 +3488,290 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
 
         if not ok:
             if repairs >= 2:
-                return "Execution stopped safely after bounded repair attempts.\n\n" + "\n".join(evidence)
+                return _UnresolvedExecutionResult(
+                    "Execution stopped safely after bounded repair attempts.\n\n"
+                    + "\n".join(evidence),
+                    evidence=evidence,
+                )
             repairs += 1
             response = ask(_compact_repair_prompt(original_request, _files(workspace), result))
+            current_provider = getattr(response, "provider_id", None)
             current = getattr(response, "text", str(response))
             continue
-        if read_only_execution and kind == "read_file":
-            evidence.append(f"Step {step}: {result}")
+        if read_only_execution and ok and kind == "read_file":
             progress("Read-only observation completed; requesting final answer")
-            response = ask(_read_only_continuation_prompt(original_request, result))
+            try:
+                response = ask(
+                    _read_only_continuation_prompt(
+                        original_request,
+                        result,
+                    )
+                )
+            except ProviderError:
+                progress(
+                    "Read-only continuation provider unavailable; "
+                    "returning grounded observation"
+                )
+                return (
+                    "Final response provider unavailable after successful "
+                    "read-only repository observation.\n\n"
+                    + result
+                )
+            current_provider = getattr(response, "provider_id", None)
             current = getattr(response, "text", str(response))
+
+            # SOPHYANE_READONLY_FINAL_STEP_RESPONSE_V1
+            # The final observation has already consumed the last
+            # executable step. Accept only a completion message here.
+            # Never execute another provider action beyond max_steps.
+            if step >= max_steps:
+                final_message = ""
+                try:
+                    import json
+                    completion_payload = json.loads(current)
+                    if isinstance(completion_payload, dict):
+                        completion_action = completion_payload.get(
+                            "action",
+                            completion_payload,
+                        )
+                        if isinstance(completion_action, dict):
+                            completion_kind = str(
+                                completion_action.get("type")
+                                or completion_action.get("action")
+                                or ""
+                            ).casefold()
+                            if completion_kind in {"respond", "message"}:
+                                final_message = str(
+                                    completion_action.get("message") or ""
+                                ).strip()
+                except (TypeError, ValueError):
+                    pass
+
+                outstanding = _read_only_unsatisfied_obligations(
+                    read_only_required_obligations,
+                    read_only_satisfied_obligations,
+                )
+
+                if (
+                    final_message
+                    and not outstanding
+                    and not pending_no_edit_rejection
+                ):
+                    return (
+                        final_message
+                        + "\n\nExecution evidence:\n"
+                        + "\n".join(evidence)
+                    )
+
+                return _UnresolvedExecutionResult(
+                    "Stopped after bounded execution loop. "
+                    "The provider did not supply an admissible final "
+                    "answer after the last read-only observation.\n\n"
+                    + "\n".join(evidence),
+                    evidence=evidence,
+                )
+
+            continue
+
+        if (
+            read_only_execution
+            and command_text
+            and ok
+            and _is_read_only_inspection_command(command_text)
+        ):
+            progress("Read-only observation completed; requesting final answer")
+            try:
+                response = ask(
+                    _read_only_continuation_prompt(
+                        original_request,
+                        result,
+                    )
+                )
+            except ProviderError:
+                progress(
+                    "Read-only continuation provider unavailable; "
+                    "returning grounded observation"
+                )
+                return (
+                    "Final response provider unavailable after successful "
+                    "read-only repository observation.\n\n"
+                    + result
+                )
+            current_provider = getattr(response, "provider_id", None)
+            current = getattr(response, "text", str(response))
+
+            # SOPHYANE_READONLY_FINAL_STEP_RESPONSE_V1
+            # The final observation has already consumed the last
+            # executable step. Accept only a completion message here.
+            # Never execute another provider action beyond max_steps.
+            if step >= max_steps:
+                final_message = ""
+                try:
+                    import json
+                    completion_payload = json.loads(current)
+                    if isinstance(completion_payload, dict):
+                        completion_action = completion_payload.get(
+                            "action",
+                            completion_payload,
+                        )
+                        if isinstance(completion_action, dict):
+                            completion_kind = str(
+                                completion_action.get("type")
+                                or completion_action.get("action")
+                                or ""
+                            ).casefold()
+                            if completion_kind in {"respond", "message"}:
+                                final_message = str(
+                                    completion_action.get("message") or ""
+                                ).strip()
+                except (TypeError, ValueError):
+                    pass
+
+                outstanding = _read_only_unsatisfied_obligations(
+                    read_only_required_obligations,
+                    read_only_satisfied_obligations,
+                )
+
+                if (
+                    final_message
+                    and not outstanding
+                    and not pending_no_edit_rejection
+                ):
+                    return (
+                        final_message
+                        + "\n\nExecution evidence:\n"
+                        + "\n".join(evidence)
+                    )
+
+                return _UnresolvedExecutionResult(
+                    "Stopped after bounded execution loop. "
+                    "The provider did not supply an admissible final "
+                    "answer after the last read-only observation.\n\n"
+                    + "\n".join(evidence),
+                    evidence=evidence,
+                )
+
             continue
         if kind in {"respond", "message", "open_browser", "browser"}:
-            return (result or "Completed.") + "\n\nExecution evidence:\n" + "\n".join(evidence)
+            unsatisfied_read_only_obligations = (
+                _read_only_unsatisfied_obligations(
+                    read_only_required_obligations,
+                    read_only_satisfied_obligations,
+                )
+                if read_only_execution
+                else ()
+            )
+
+            if (
+                kind in {"respond", "message"}
+                and unsatisfied_read_only_obligations
+            ):
+                pending = ", ".join(
+                    unsatisfied_read_only_obligations
+                )
+
+                result = (
+                    "Premature read-only completion rejected: "
+                    "required execution obligations remain: "
+                    + pending
+                    + "."
+                )
+
+                evidence.append(
+                    f"Step {step}: {result}"
+                )
+                progress(result)
+
+                if step >= max_steps:
+                    return _UnresolvedExecutionResult(
+                        result
+                        + "\n\nExecution evidence:\n"
+                        + "\n".join(evidence),
+                        evidence=evidence,
+                    )
+
+                response = ask(
+                    "READ-ONLY EXECUTION OBLIGATIONS REMAIN. "
+                    "Do not claim completion yet. "
+                    "Return the next executable JSON action needed to "
+                    "satisfy the original request. "
+                    "Do not modify files and do not invent execution results. "
+                    "Outstanding obligations: "
+                    + pending
+                    + ".\nORIGINAL TASK:\n"
+                    + original_request
+                    + "\nGROUNDED EXECUTION EVIDENCE:\n"
+                    + "\n".join(evidence[-8:])
+                )
+
+                current_provider = getattr(
+                    response,
+                    "provider_id",
+                    None,
+                )
+                current = getattr(
+                    response,
+                    "text",
+                    str(response),
+                )
+                continue
+
+            provider_final_message = (
+                str(action.get("message") or "").strip()
+                if kind in {"respond", "message"}
+                else ""
+            )
+
+            if (
+                read_only_execution
+                and grounded_read_only_observation
+                and not unsatisfied_read_only_obligations
+                and not pending_no_edit_rejection
+                and (
+                    (
+                        provider_final_message
+                        or str(result or "").strip()
+                    ).casefold() == "no implementation target was specified"
+                    or (
+                        any(
+                            phrase in (
+                                provider_final_message
+                                or str(result or "")
+                            ).casefold()
+                            for phrase in (
+                                "cannot implement anything",
+                                "nothing to implement",
+                                "what feature you want me to build",
+                            )
+                        )
+                        and read_only_execution
+                    )
+                )
+            ):
+                return (
+                    "Read-only repository inspection completed.\n\n"
+                    "Grounded execution evidence:\n"
+                    + grounded_read_only_observation
+                )
+
+            if (
+                read_only_execution
+                and pending_read_only_execution_failure
+                and kind in {"respond", "message"}
+            ):
+                return _UnresolvedExecutionResult(
+                    "Read-only execution remains incomplete after a failed "
+                    "action; a provider completion message cannot establish "
+                    "successful recovery.\n\nExecution evidence:\n"
+                    + "\n".join(evidence),
+                    evidence=evidence,
+                )
+
+            final_result = provider_final_message or result or "Completed."
+            final = final_result + "\n\nExecution evidence:\n" + "\n".join(evidence)
+            if pending_no_edit_rejection:
+                return _UnresolvedExecutionResult(final, evidence=evidence)
+            return final
         # SOPHYANE_FULL_STACK_CONTEXT_DECOMPOSITION_V1
         #
         # A successful full-stack file write advances the deterministic
@@ -2716,6 +3822,24 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             current = ""
             continue
 
+        # SOPHYANE_SOURCE_MUTATION_CONDITIONAL_COMPLETION_V1
+        #
+        # A bare authorized source edit is complete after the successful
+        # filesystem mutation. Compound requests that explicitly require
+        # verification/execution must continue through the normal adaptive
+        # lifecycle and may terminate only after that evidence succeeds.
+        if (
+            operation is Operation.SOPHYANE_SOURCE_MUTATION
+            and ok
+            and kind in {"write_file", "append_file"}
+            and not _source_mutation_requires_followup(original_request)
+        ):
+            return (
+                (result or "Completed.")
+                + "\n\nExecution evidence:\n"
+                + "\n".join(evidence)
+            )
+
         response = ask(
             _compact_repair_prompt(
                 original_request,
@@ -2728,9 +3852,25 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             "text",
             str(response),
         )
-    return "Stopped after bounded execution loop.\n\n" + "\n".join(evidence)
+    unresolved = (
+        "Stopped after bounded execution loop.\n\n"
+        + "\n".join(evidence)
+    )
+    return _UnresolvedExecutionResult(
+        _authoritative_missing_reusable_capability_result(
+            original_request=original_request,
+            output=unresolved,
+        ),
+        evidence=evidence,
+    )
 
 
 def install() -> None:
     from sophyane import execution_runtime
     execution_runtime.run_structured_loop = run_adaptive_loop
+
+
+# Scoped no-edit constraints must not cancel explicitly authorized source repair.
+
+
+# Correct scoped no-edit parsing while preserving global safety prohibitions.

@@ -3,7 +3,7 @@ import pytest
 from sophyane import intelligence_authority as policy
 
 DISABLED = ('gemini', 'openai', 'anthropic', 'claude', 'xai', 'grok', 'groq',
-            'openrouter', 'deepseek', 'agy', 'neuron', 'nifdu', 'browser', 'other_local')
+            'openrouter', 'deepseek', 'neuron', 'nifdu', 'browser', 'other_local')
 
 @pytest.fixture(autouse=True)
 def _restore_quality_escalation_installation():
@@ -27,7 +27,7 @@ def _restore_quality_escalation_installation():
 
 
 def test_exact_active_authority():
-    assert getattr(policy, 'ACTIVE_INTELLIGENCE_PROVIDERS', None) == ('codex_cli', 'nifdu_browser', 'local_gguf')
+    assert getattr(policy, 'ACTIVE_INTELLIGENCE_PROVIDERS', None) == ('codex_cli', 'nifdu_browser', 'local_gguf', 'agy')
     assert getattr(policy, 'SOURCE_MUTATION_PROVIDERS', None) == ('codex_cli', 'nifdu_browser')
 
 
@@ -101,7 +101,7 @@ def test_disabled_is_not_temporarily_available(monkeypatch, name):
 def test_defaults_do_not_route_to_legacy():
     from sophyane.config import default_config, default_llm_config
     assert default_config()['provider'] == 'codex_cli'
-    assert default_llm_config()['fallback_order'] == ['codex_cli', 'nifdu_browser', 'local_gguf']
+    assert default_llm_config()['fallback_order'] == ['codex_cli', 'nifdu_browser', 'local_gguf', 'agy']
 
 
 def test_race_stale_inventory_is_filtered():

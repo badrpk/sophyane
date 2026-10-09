@@ -96,6 +96,39 @@ class GraphResult:
     checkpoint_id: str | None
 
 
+class MemoryStore:
+    """Process-local graph state with no filesystem side effects."""
+
+    def __init__(self) -> None:
+        self._data: dict[tuple[str, str], State] = {}
+
+    @staticmethod
+    def _snapshot(payload: State) -> State:
+        # Match DurableStore checkpoint isolation and serializability without
+        # introducing filesystem persistence.
+        return json.loads(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+
+    def put(self, namespace: str, key: str, payload: State) -> None:
+        self._data[(namespace, key)] = self._snapshot(payload)
+
+    def get(self, namespace: str, key: str) -> State | None:
+        payload = self._data.get((namespace, key))
+        return (
+            self._snapshot(payload)
+            if payload is not None
+            else None
+        )
+
+    def delete(self, namespace: str, key: str) -> bool:
+        return self._data.pop((namespace, key), None) is not None
+
+
 class DurableStore:
     """SQLite/WAL-backed checkpoints, interrupts and named thread state."""
 

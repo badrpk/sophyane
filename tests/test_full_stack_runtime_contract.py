@@ -17,8 +17,10 @@ def test_full_stack_contract_reaches_adaptive_runtime(
         workspace,
         max_steps,
         progress,
+        operation=None,
     ):
         captured["initial_text"] = initial_text
+        captured["operation"] = operation
         captured["original_request"] = original_request
         captured["workspace"] = workspace
         captured["max_steps"] = max_steps
@@ -52,6 +54,7 @@ def test_full_stack_contract_reaches_adaptive_runtime(
     )
 
     assert result == "ok"
+    assert captured["operation"] is None
 
     initial = captured["initial_text"]
     request = captured["original_request"].lower()
@@ -91,3 +94,83 @@ def test_full_stack_classifier_still_selected() -> None:
         plan.project_type
         == "full_stack_web_application"
     )
+
+
+def test_capability_planner_forwards_operation_to_full_stack_runtime(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured = {}
+
+    def fake_original(**kwargs):
+        captured.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(
+        "sophyane.adaptive_execution.run_adaptive_loop",
+        fake_original,
+    )
+    monkeypatch.delattr(
+        "sophyane.adaptive_execution._sli_capability_planner_installed",
+        raising=False,
+    )
+
+    planner.install_sli_capability_planner()
+
+    from sophyane import adaptive_execution
+
+    operation = object()
+
+    result = adaptive_execution.run_adaptive_loop(
+        initial_text='{"type":"write_file","path":"backend/app.py","content":"x"}',
+        original_request=(
+            "Build a production web application with a responsive frontend, "
+            "Python backend, REST API, persistent SQLite database and "
+            "automated tests."
+        ),
+        ask=lambda _message: "",
+        workspace=tmp_path,
+        max_steps=12,
+        operation=operation,
+    )
+
+    assert result == "ok"
+    assert captured["operation"] is operation
+
+
+def test_capability_planner_forwards_operation_to_ordinary_runtime(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured = {}
+
+    def fake_original(**kwargs):
+        captured.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(
+        "sophyane.adaptive_execution.run_adaptive_loop",
+        fake_original,
+    )
+    monkeypatch.delattr(
+        "sophyane.adaptive_execution._sli_capability_planner_installed",
+        raising=False,
+    )
+
+    planner.install_sli_capability_planner()
+
+    from sophyane import adaptive_execution
+
+    operation = object()
+
+    result = adaptive_execution.run_adaptive_loop(
+        initial_text='{"type":"write_file","path":"note.txt","content":"x"}',
+        original_request="Create note.txt containing x.",
+        ask=lambda _message: "",
+        workspace=tmp_path,
+        max_steps=12,
+        operation=operation,
+    )
+
+    assert result == "ok"
+    assert captured["operation"] is operation

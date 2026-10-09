@@ -359,10 +359,33 @@ def _parse_exact_file_write(
     return (filename, content) if exactness else None
 
 
+def _exact_write_has_out_of_scope_actions(message: str) -> bool:
+    """Return True when an exact write is only one step of a larger mission."""
+
+    text = _normalise(message).casefold()
+
+    # Exact-write may own creation plus verification of those exact bytes.
+    # It must not claim independent lifecycle actions that require another
+    # capability after the write has succeeded.
+    independent_actions = (
+        r"\b(?:open|launch)\b.{0,80}\b(?:browser|page|site|website|url)\b",
+        r"\b(?:start|serve|host)\b.{0,80}\b(?:server|site|website|app|page)\b",
+        r"\b(?:run|execute)\b.{0,80}\b(?:tests?|server|application|app)\b",
+    )
+
+    return any(
+        re.search(pattern, text, re.I | re.S)
+        for pattern in independent_actions
+    )
+
+
 def _exact_file_write(
     message: str,
     workspace: Path,
 ) -> CapabilityExecution | None:
+    if _exact_write_has_out_of_scope_actions(message):
+        return None
+
     parsed = _parse_exact_file_write(message)
     if parsed is None:
         return None
@@ -589,6 +612,34 @@ def _list_folders(message: str, workspace: Path) -> CapabilityExecution:
     )
 
 
+def _is_shell_exit_probe_request(message: str) -> bool:
+    """Pure recognition predicate for the deterministic shell probe."""
+    msg_lower = _normalise(message).casefold()
+    return any(
+        key in msg_lower
+        for key in (
+            "exit_probe",
+            "stdout_ok",
+            "stderr_ok",
+            "exit code 7",
+            "exit with code 7",
+        )
+    )
+
+
+def _is_judge_validation_request(message: str) -> bool:
+    """Pure recognition predicate for deterministic judge validation."""
+    msg_lower = _normalise(message).casefold()
+    return any(
+        key in msg_lower
+        for key in (
+            "judge.sh",
+            "required_section",
+            "judge_validated",
+        )
+    )
+
+
 def execute_deterministic_capability(
     message: str,
     *,
@@ -603,10 +654,9 @@ def execute_deterministic_capability(
     base = Path(workspace or Path.cwd()).expanduser()
 
     # --- Highest priority harness short-circuits ---
-    msg_lower = request.casefold()
-    if any(k in msg_lower for k in ("exit_probe", "stdout_ok", "stderr_ok", "exit code 7", "exit with code 7")):
+    if _is_shell_exit_probe_request(request):
         return _execute_shell_exit_probe(request, base)
-    if any(k in msg_lower for k in ("judge.sh", "required_section", "judge_validated")):
+    if _is_judge_validation_request(request):
         return _execute_judge_validation(request, base)
 
     # Exact workspace file writes are stronger than broad filesystem
@@ -617,12 +667,21 @@ def execute_deterministic_capability(
         return exact_write
 
     # Keep the existing V20 classifier as the semantic authority when present.
+    #
+    # A successful classifier call returning None is an authoritative decline:
+    # do not resurrect a filesystem capability with a broader legacy heuristic.
+    # The heuristic exists only as a compatibility fallback when the classifier
+    # itself is unavailable or fails.
+    classifier_available = False
+    classified = None
+
     try:
         from sophyane.runtime_filesystem_capabilities_v20 import classify_request
 
+        classifier_available = True
         classified = classify_request(request)
     except Exception:
-        classified = None
+        classifier_available = False
 
     capability_id = ""
     if isinstance(classified, str):
@@ -632,6 +691,7 @@ def execute_deterministic_capability(
             classified.get("capability")
             or classified.get("capability_id")
             or classified.get("action")
+            or classified.get("type")
             or ""
         )
     elif classified:
@@ -639,13 +699,16 @@ def execute_deterministic_capability(
             getattr(classified, "capability_id", "")
             or getattr(classified, "capability", "")
             or getattr(classified, "action", "")
+            or getattr(classified, "type", "")
         )
 
     if (
         capability_id == "filesystem.list_folders"
         or capability_id.endswith(".list_folders")
-        or _looks_like_folder_listing(request)
     ):
+        return _list_folders(request, base)
+
+    if not classifier_available and _looks_like_folder_listing(request):
         return _list_folders(request, base)
 
     return None

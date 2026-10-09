@@ -74,10 +74,11 @@ def test_noninteractive_human_conversation_keeps_configured_provider(
     assert result["model"] == "codex-default"
     assert result["company"] == "Human Conversation"
     assert result["timeout"] >= 300
+    # Mode 6 owns the bounded conversational transport cascade.
+    # Local GGUF is not an intelligence fallback in this mode.
     assert result["provider_failover_order"] == [
         "codex_cli",
         "nifdu_browser",
-        "local_gguf",
     ]
     assert result["bounded_provider_failover"] is True
     assert (

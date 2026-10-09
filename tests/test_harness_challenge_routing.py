@@ -127,3 +127,115 @@ def test_compound_acceptance_criteria_are_preserved() -> None:
 
     for prompt, minimum in zip(PROMPTS, expected_minimums):
         assert len(criteria(prompt)) >= minimum
+
+
+def test_adaptive_loop_preserves_explicit_caller_workspace(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import sophyane.adaptive_execution as adaptive
+    import sophyane.harness_workspace as harness_workspace
+
+    requested = tmp_path / "steel-plant-command-center"
+    requested.mkdir()
+
+    seen = {}
+
+    def forbidden_reselection(message, current):
+        seen["message"] = message
+        seen["current"] = Path(current).resolve()
+        raise AssertionError(
+            "explicit adaptive workspace was semantically reselected"
+        )
+
+    monkeypatch.setattr(
+        harness_workspace,
+        "select_workspace",
+        forbidden_reselection,
+    )
+
+    # Stop immediately after workspace initialization. We are testing
+    # ownership of the workspace boundary, not provider execution.
+    class StopProbe(RuntimeError):
+        pass
+
+    def stop_on_mkdir(*args, **kwargs):
+        raise StopProbe
+
+    # Path.mkdir is reached immediately after workspace resolution.
+    original_mkdir = Path.mkdir
+
+    def guarded_mkdir(self, *args, **kwargs):
+        if self.resolve() == requested.resolve():
+            raise StopProbe
+        return original_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", guarded_mkdir)
+
+    try:
+        adaptive.run_adaptive_loop(
+            initial_text='{"action":{"type":"respond","message":"planning"}}',
+            original_request=(
+                "Build a steel plant application. "
+                "Do not require Flask, FastAPI, Django or Uvicorn."
+            ),
+            ask=lambda _prompt: (_ for _ in ()).throw(
+                AssertionError("provider must not be called")
+            ),
+            workspace=requested,
+            max_steps=1,
+        )
+    except StopProbe:
+        pass
+
+    assert "message" not in seen
+
+
+def test_adaptive_loop_may_select_isolated_workspace_when_none_supplied(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import sophyane.adaptive_execution as adaptive
+    import sophyane.harness_workspace as harness_workspace
+
+    selected = tmp_path / "generated-project"
+    calls = []
+
+    def select(message, current):
+        calls.append(
+            (message, Path(current).resolve())
+        )
+        return selected
+
+    monkeypatch.setattr(
+        harness_workspace,
+        "select_workspace",
+        select,
+    )
+
+    class StopProbe(RuntimeError):
+        pass
+
+    original_mkdir = Path.mkdir
+
+    def guarded_mkdir(self, *args, **kwargs):
+        if self.resolve() == selected.resolve():
+            raise StopProbe
+        return original_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", guarded_mkdir)
+
+    try:
+        adaptive.run_adaptive_loop(
+            initial_text='{"action":{"type":"respond","message":"planning"}}',
+            original_request="Build a complete new application.",
+            ask=lambda _prompt: (_ for _ in ()).throw(
+                AssertionError("provider must not be called")
+            ),
+            workspace=None,
+            max_steps=1,
+        )
+    except StopProbe:
+        pass
+
+    assert len(calls) == 1

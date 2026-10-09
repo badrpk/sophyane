@@ -260,6 +260,56 @@ def default_capability_graph() -> CapabilityGraph:
         )
     )
 
+    # SOPHYANE_LOCAL_FILESYSTEM_READ_POLICY_V1
+    #
+    # Read-only workspace inspection is deliberately distinct from the
+    # persistent local_filesystem sink. Do not weaken local_filesystem:
+    # existing write/lease contracts depend on its filesystem_write semantics.
+    graph.register(
+        CapabilityDescriptor(
+            capability_id="local_filesystem_read",
+            maximum_input_sensitivity=(
+                Sensitivity.USER_PRIVATE
+            ),
+            maximum_output_sensitivity=(
+                Sensitivity.USER_PRIVATE
+            ),
+            required_verifiers=frozenset(
+                {
+                    "workspace_boundary",
+                }
+            ),
+        )
+    )
+
+    # SOPHYANE_LOCAL_PROCESS_EXECUTION_POLICY_V1
+    #
+    # Local process execution is distinct from filesystem mutation. A caller
+    # must explicitly admit executable effects rather than treating subprocess
+    # execution as an incidental filesystem operation.
+    graph.register(
+        CapabilityDescriptor(
+            capability_id="local_process_execution",
+            maximum_input_sensitivity=(
+                Sensitivity.USER_PRIVATE
+            ),
+            maximum_output_sensitivity=(
+                Sensitivity.USER_PRIVATE
+            ),
+            executable_sink=True,
+            side_effects=frozenset(
+                {
+                    "process_execution",
+                }
+            ),
+            required_verifiers=frozenset(
+                {
+                    "workspace_boundary",
+                }
+            ),
+        )
+    )
+
     graph.register(
         CapabilityDescriptor(
             capability_id="browser_network",
@@ -339,6 +389,16 @@ def default_capability_graph() -> CapabilityGraph:
     graph.connect(
         "local_reasoning",
         "local_filesystem",
+    )
+
+    graph.connect(
+        "local_reasoning",
+        "local_filesystem_read",
+    )
+
+    graph.connect(
+        "local_filesystem",
+        "local_process_execution",
     )
 
     graph.connect(

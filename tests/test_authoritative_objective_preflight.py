@@ -52,7 +52,14 @@ def test_gate_precedes_auto_dispatch() -> None:
     )
 
 
-def test_gate_precedes_provider() -> None:
+def test_gate_precedes_local_semantic_dispatch() -> None:
+    """
+    Objective preflight protects local semantic routing and mutation.
+
+    Explicit external-LLM sessions are intentionally handled earlier:
+    the selected LLM is their first semantic consumer. The local path
+    that reaches this gate must still be preflighted before dispatch.
+    """
     source = _source()
 
     echo = source.index(
@@ -63,12 +70,11 @@ def test_gate_precedes_provider() -> None:
         "SOPHYANE_AUTHORITATIVE_OBJECTIVE_PREFLIGHT"
     )
 
-    assert echo < gate
-
-    assert (
-        "self.call_provider("
-        not in source[echo:gate]
+    dispatch = source.index(
+        "dispatch(message)"
     )
+
+    assert echo < gate < dispatch
 
 
 

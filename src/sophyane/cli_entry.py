@@ -99,7 +99,7 @@ def _runtime_identity() -> str:
                 or "local_gguf"
             ).strip()
     elif session_mode == "human_conversation":
-        model = "codex_cli -> nifdu_browser -> local_gguf"
+        model = "codex_cli -> nifdu_browser"
     else:
         model = str(
             _session_ready_model(
@@ -335,6 +335,9 @@ def main() -> int:
     from sophyane.runtime_safety import install_runtime_safety
     # SOPHYANE_FILESYSTEM_CAPABILITIES_V20
     from sophyane.runtime_filesystem_capabilities_v20 import install_filesystem_capabilities_v20
+    from sophyane.runtime_sli_capability_planner import (
+        install_sli_capability_planner,
+    )
     from sophyane.runtime_software_routing_guard import install_software_routing_guard
     from sophyane.runtime_stagnation_patch import install_stagnation_patch
 
@@ -355,6 +358,13 @@ def main() -> int:
     install_intent_refinement()
     # SOPHYANE_FILESYSTEM_CAPABILITIES_V20
     install_filesystem_capabilities_v20()
+    # SOPHYANE_SHARED_CAPABILITY_PLANNER_V1
+    #
+    # Capability planning is execution infrastructure.  It must be available
+    # to the unified human-conversation front door as well as explicit SLI
+    # graph sessions.  Mode-2 brain/builder/mission semantics remain isolated
+    # below.
+    install_sli_capability_planner()
     install_premium_asset_pipeline()
     # Keep mission routing outermost after all provider wrappers.
     install_capability_acquisition_patch()
@@ -381,6 +391,15 @@ def main() -> int:
         )
         or ""
     ).strip().lower()
+
+    # A plain interactive launch is the ordinary human-conversation path.
+    # Explicit session modes and automation remain authoritative.
+    if (
+        len(sys.argv) <= 1
+        and not explicit_session_mode
+    ):
+        os.environ["SOPHYANE_SESSION_MODE"] = "human_conversation"
+        explicit_session_mode = "human_conversation"
 
     if (
         len(sys.argv) <= 1
@@ -419,9 +438,6 @@ def main() -> int:
     ):
         from sophyane.runtime_sli_brain import install_sli_brain
         from sophyane.runtime_sli_builder import install_sli_builder
-        from sophyane.runtime_sli_capability_planner import (
-            install_sli_capability_planner,
-        )
         from sophyane.runtime_sli_intent_patch import (
             install_sli_intent_routing,
         )
@@ -432,7 +448,6 @@ def main() -> int:
 
         install_sli_intent_routing()
         install_sli_onset_feedback()
-        install_sli_capability_planner()
         install_sli_builder()
         install_sli_mission_os()
         install_sli_brain()

@@ -22,11 +22,23 @@ import urllib.request
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
+import threading
+import math
 
 MESSAGING_ENV = Path.home() / ".config" / "sophyane" / "messaging.env"
 PAYMENTS_ENV = Path.home() / ".config" / "sophyane" / "payments.env"
 SMTP_ENV = Path.home() / ".shmry_email.env"
 WA_OUTBOX = Path.home() / ".local" / "state" / "sophyane" / "whatsapp_outbox" / "queue.jsonl"
+_WHATSAPP_INBOUND_MAX_ATTEMPTS = 3
+_whatsapp_inbound_retry_attempt_lock = threading.Lock()
+
+WHATSAPP_INBOUND_SPOOL = (
+    Path.home()
+    / ".local"
+    / "state"
+    / "sophyane"
+    / "whatsapp_inbound"
+)
 TG_STATE = Path.home() / ".local" / "state" / "sophyane" / "telegram_state.json"
 
 DEFAULT_EMAIL = "badrpk@gmail.com"
@@ -78,6 +90,9 @@ def public_status() -> dict[str, Any]:
     tg_token = bool((e.get("TELEGRAM_BOT_TOKEN") or "").strip())
     wa_cloud = bool((e.get("WHATSAPP_CLOUD_TOKEN") or "").strip() and (e.get("WHATSAPP_PHONE_NUMBER_ID") or "").strip())
     wa_cmd = bool((e.get("WHATSAPP_SEND_CMD") or "").strip())
+    wa_native_agent = bool(
+        (e.get("WHATSAPP_AGENT_API_KEY") or "").strip()
+    )
     smtp_ok = bool((e.get("SMTP_USER") or "").strip() and (e.get("SMTP_PASS") or "").strip())
     channels = {
         "email": {"enabled": smtp_ok, "from": e.get("SMTP_USER") or m["email"], "status": "live" if smtp_ok else "needs_smtp"},
@@ -89,10 +104,30 @@ def public_status() -> dict[str, Any]:
             "hint": ("Users message @" + (e.get("TELEGRAM_BOT_USERNAME") or "sophyanebot") + " for chat + alerts") if tg_token else "Set TELEGRAM_BOT_TOKEN in messaging.env",
         },
         "whatsapp": {
-            "enabled": wa_cloud or wa_cmd,
+            "enabled": wa_cloud or wa_cmd or wa_native_agent,
             "owner": m["whatsapp"],
-            "mode": "cloud_api" if wa_cloud else ("local_cmd" if wa_cmd else "outbox_only"),
-            "status": "live" if (wa_cloud or wa_cmd) else "needs_bridge",
+            "mode": (
+                "cloud_api"
+                if wa_cloud
+                else (
+                    "local_cmd"
+                    if wa_cmd
+                    else (
+                        "native_agent"
+                        if wa_native_agent
+                        else "outbox_only"
+                    )
+                )
+            ),
+            "status": (
+                "live"
+                if (wa_cloud or wa_cmd)
+                else (
+                    "needs_transport"
+                    if wa_native_agent
+                    else "needs_bridge"
+                )
+            ),
             "hint": (
                 "Option A: WhatsApp Cloud API (WHATSAPP_CLOUD_TOKEN + WHATSAPP_PHONE_NUMBER_ID). "
                 "Option B: install wacli and set WHATSAPP_SEND_CMD. "
@@ -517,3 +552,1122 @@ Thank you,
         "Copy of provider request sent to " + support_email + "\n\n" + body,
     )
     return {"ok": to_support.get("ok") or to_owner.get("ok"), "support": to_support, "owner_copy": to_owner, "provider": provider}
+
+
+
+def verify_whatsapp_webhook_signature(
+    raw_body: bytes,
+    supplied_signature: str,
+) -> bool:
+    """Verify Meta's WhatsApp webhook signature over exact request bytes."""
+    import hashlib
+    import hmac
+    import os
+
+    app_secret = (load_messaging_env().get("WHATSAPP_APP_SECRET") or "").strip()
+
+    # Compatibility mode until an app secret is configured.
+    if not app_secret:
+        return True
+
+    prefix = "sha256="
+    if not supplied_signature.startswith(prefix):
+        return False
+
+    supplied_digest = supplied_signature[len(prefix):]
+
+    if (
+        len(supplied_digest) != 64
+        or any(
+            char not in "0123456789abcdefABCDEF"
+            for char in supplied_digest
+        )
+    ):
+        return False
+
+    expected_digest = hmac.new(
+        app_secret.encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    return hmac.compare_digest(
+        expected_digest,
+        supplied_digest.lower(),
+    )
+
+
+def verify_whatsapp_webhook_request(request_path: str) -> str | None:
+    """Return Meta's challenge when WhatsApp webhook verification succeeds."""
+    import os
+    from urllib.parse import parse_qs, urlparse
+
+    query = parse_qs(urlparse(request_path).query)
+
+    mode = query.get("hub.mode", [""])[0]
+    supplied_token = query.get("hub.verify_token", [""])[0]
+    challenge = query.get("hub.challenge", [""])[0]
+    expected_token = (load_messaging_env().get("WHATSAPP_VERIFY_TOKEN") or "").strip()
+
+    if (
+        mode == "subscribe"
+        and expected_token
+        and supplied_token == expected_token
+    ):
+        return challenge
+
+    return None
+
+
+
+_WHATSAPP_INBOUND_IDEMPOTENCY_LIMIT = 4096
+_whatsapp_inbound_completed: dict[str, None] = {}
+_whatsapp_inbound_inflight: set[str] = set()
+
+
+def _whatsapp_inbound_idempotency_lock():
+    import threading
+
+    lock = getattr(
+        _whatsapp_inbound_idempotency_lock,
+        "_lock",
+        None,
+    )
+    if lock is None:
+        lock = threading.Lock()
+        _whatsapp_inbound_idempotency_lock._lock = lock
+    return lock
+
+
+def _reset_whatsapp_inbound_idempotency_for_tests() -> None:
+    """Reset process-local WhatsApp idempotency state for tests."""
+    with _whatsapp_inbound_idempotency_lock():
+        _whatsapp_inbound_completed.clear()
+        _whatsapp_inbound_inflight.clear()
+
+
+def _begin_whatsapp_inbound(message_id: str) -> bool:
+    """Claim a wamid; return False when already completed/in flight."""
+    if not message_id:
+        return True
+
+    with _whatsapp_inbound_idempotency_lock():
+        if (
+            message_id in _whatsapp_inbound_completed
+            or message_id in _whatsapp_inbound_inflight
+        ):
+            return False
+
+        _whatsapp_inbound_inflight.add(message_id)
+        return True
+
+
+def _finish_whatsapp_inbound(
+    message_id: str,
+    *,
+    success: bool,
+) -> None:
+    """Release a claim and remember only successful delivery."""
+    if not message_id:
+        return
+
+    with _whatsapp_inbound_idempotency_lock():
+        _whatsapp_inbound_inflight.discard(message_id)
+
+        if not success:
+            return
+
+        _whatsapp_inbound_completed[message_id] = None
+
+        while (
+            len(_whatsapp_inbound_completed)
+            > _WHATSAPP_INBOUND_IDEMPOTENCY_LIMIT
+        ):
+            oldest = next(iter(_whatsapp_inbound_completed))
+            del _whatsapp_inbound_completed[oldest]
+
+
+def _whatsapp_conversation_reply(message: str) -> str:
+    """Generate a WhatsApp reply through the existing chat behavior."""
+    from sophyane.cloud.telegram_bot import _chat_reply
+
+    return _chat_reply(
+        message,
+        email="",
+        plan="free",
+    )
+
+
+def _create_whatsapp_inbound_executor():
+    from concurrent.futures import ThreadPoolExecutor
+
+    return ThreadPoolExecutor(
+        max_workers=4,
+        thread_name_prefix="sophyane-whatsapp-inbound",
+    )
+
+
+_whatsapp_inbound_executor = (
+    _create_whatsapp_inbound_executor()
+)
+_whatsapp_inbound_futures: set = set()
+
+
+def _whatsapp_inbound_futures_lock():
+    import threading
+
+    lock = getattr(
+        _whatsapp_inbound_futures_lock,
+        "_lock",
+        None,
+    )
+
+    if lock is None:
+        lock = threading.Lock()
+        _whatsapp_inbound_futures_lock._lock = lock
+
+    return lock
+
+
+def _track_whatsapp_inbound_future(future) -> None:
+    with _whatsapp_inbound_futures_lock():
+        _whatsapp_inbound_futures.add(future)
+
+
+def _untrack_whatsapp_inbound_future(future) -> None:
+    with _whatsapp_inbound_futures_lock():
+        _whatsapp_inbound_futures.discard(future)
+
+
+def _snapshot_whatsapp_inbound_futures() -> tuple:
+    with _whatsapp_inbound_futures_lock():
+        return tuple(_whatsapp_inbound_futures)
+
+
+def _clear_whatsapp_inbound_futures() -> None:
+    with _whatsapp_inbound_futures_lock():
+        _whatsapp_inbound_futures.clear()
+
+_WHATSAPP_INBOUND_ADMISSION_LIMIT = 4096
+_whatsapp_inbound_admitted: dict[str, None] = {}
+
+_WHATSAPP_INBOUND_PENDING_LIMIT = 64
+_whatsapp_inbound_pending = 0
+
+
+def _whatsapp_inbound_capacity_lock():
+    """Return the process-local inbound capacity lock."""
+    import threading
+
+    lock = getattr(
+        _whatsapp_inbound_capacity_lock,
+        "_lock",
+        None,
+    )
+
+    if lock is None:
+        lock = threading.Lock()
+        _whatsapp_inbound_capacity_lock._lock = lock
+
+    return lock
+
+
+def _claim_whatsapp_inbound_capacity() -> bool:
+    """Reserve one active-or-pending worker slot."""
+    global _whatsapp_inbound_pending
+
+    with _whatsapp_inbound_capacity_lock():
+        if (
+            _whatsapp_inbound_pending
+            >= _WHATSAPP_INBOUND_PENDING_LIMIT
+        ):
+            return False
+
+        _whatsapp_inbound_pending += 1
+        return True
+
+
+def _release_whatsapp_inbound_capacity() -> None:
+    """Release one active-or-pending worker slot."""
+    global _whatsapp_inbound_pending
+
+    with _whatsapp_inbound_capacity_lock():
+        if _whatsapp_inbound_pending > 0:
+            _whatsapp_inbound_pending -= 1
+
+
+def _reset_whatsapp_inbound_capacity_for_tests() -> None:
+    """Reset process-local worker capacity state."""
+    global _whatsapp_inbound_pending
+
+    with _whatsapp_inbound_capacity_lock():
+        _whatsapp_inbound_pending = 0
+
+
+def _whatsapp_inbound_spool_path(
+    message_id: str,
+) -> Path:
+    """Return the durable path for one inbound WhatsApp job."""
+    import hashlib
+
+    digest = hashlib.sha256(
+        message_id.encode("utf-8")
+    ).hexdigest()
+
+    return WHATSAPP_INBOUND_SPOOL / f"{digest}.json"
+
+
+def _fsync_whatsapp_inbound_directory() -> None:
+    """Durably commit inbound spool directory metadata."""
+    import os
+
+    descriptor = os.open(
+        WHATSAPP_INBOUND_SPOOL,
+        os.O_RDONLY,
+    )
+
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+class _WhatsAppInboundCommitUncertainError(OSError):
+    """This attempt replaced its spool target before persistence failed."""
+
+
+def _persist_whatsapp_inbound_message(
+    message: dict[str, str],
+) -> Path:
+    """Atomically persist one inbound job before worker submission."""
+    import os
+    import tempfile
+
+    message_copy = dict(message)
+    message_id = str(
+        message_copy.get("message_id") or ""
+    )
+
+    WHATSAPP_INBOUND_SPOOL.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    target = _whatsapp_inbound_spool_path(
+        message_id
+    )
+
+    payload = {
+        "message": message_copy,
+        "attempts": 0,
+    }
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".whatsapp-inbound-",
+        suffix=".tmp",
+        dir=WHATSAPP_INBOUND_SPOOL,
+    )
+
+    temporary = Path(temporary_name)
+    replaced = False
+
+    try:
+        with os.fdopen(
+            descriptor,
+            "w",
+            encoding="utf-8",
+        ) as stream:
+            json.dump(
+                payload,
+                stream,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+
+        os.replace(
+            temporary,
+            target,
+        )
+        replaced = True
+        _fsync_whatsapp_inbound_directory()
+
+    except Exception as exc:
+        try:
+            temporary.unlink(
+                missing_ok=True
+            )
+        except Exception:
+            pass
+
+        if replaced:
+            raise _WhatsAppInboundCommitUncertainError(str(exc)) from exc
+        raise
+
+    return target
+
+
+def _recover_whatsapp_inbound_spool() -> list[dict[str, str]]:
+    """Discover durable inbound jobs and restore admission state."""
+    recovered: list[dict[str, str]] = []
+
+    if not WHATSAPP_INBOUND_SPOOL.exists():
+        return recovered
+
+    for path in sorted(
+        WHATSAPP_INBOUND_SPOOL.glob("*.json")
+    ):
+        try:
+            payload = json.loads(
+                path.read_text(
+                    encoding="utf-8"
+                )
+            )
+        except Exception:
+            continue
+
+        if not isinstance(payload, dict):
+            continue
+
+        message = payload.get("message")
+
+        if not isinstance(message, dict):
+            continue
+
+        message_id = message.get("message_id")
+        sender = message.get("sender")
+        text = message.get("text")
+
+        if not all(
+            isinstance(item, str) and item
+            for item in (
+                message_id,
+                sender,
+                text,
+            )
+        ):
+            continue
+
+        normalized = {
+            "message_id": message_id,
+            "sender": sender,
+            "text": text,
+        }
+
+        recovered.append(
+            normalized
+        )
+
+        if message_id:
+            _claim_whatsapp_inbound_admission(
+                message_id
+            )
+
+    return recovered
+
+
+def _remove_whatsapp_inbound_message(
+    message_id: str,
+) -> None:
+    """Remove one durable inbound job after terminal success."""
+    if not message_id:
+        return
+
+    path = _whatsapp_inbound_spool_path(
+        message_id
+    )
+
+    try:
+        path.unlink(
+            missing_ok=True
+        )
+    except FileNotFoundError:
+        pass
+
+
+def _replay_whatsapp_inbound_spool() -> list[dict]:
+    """Submit already-durable inbound jobs after restart."""
+    recovered = _recover_whatsapp_inbound_spool()
+    results: list[dict] = []
+
+    for message in recovered:
+        message_copy = dict(message)
+        message_id = str(
+            message_copy.get("message_id") or ""
+        )
+        sender = str(
+            message_copy.get("sender") or ""
+        )
+        attempts = 0
+        next_attempt_at = 0.0
+
+        durable_path = _whatsapp_inbound_spool_path(
+            message_id
+        )
+
+        try:
+            durable_payload = json.loads(
+                durable_path.read_text(
+                    encoding="utf-8"
+                )
+            )
+        except Exception:
+            durable_payload = {}
+
+        if isinstance(durable_payload, dict):
+            durable_attempts = durable_payload.get(
+                "attempts",
+                0,
+            )
+
+            if (
+                not isinstance(durable_attempts, bool)
+                and isinstance(durable_attempts, int)
+                and durable_attempts >= 0
+            ):
+                attempts = durable_attempts
+
+            durable_next_attempt_at = durable_payload.get(
+                "next_attempt_at",
+                0.0,
+            )
+
+            if (
+                not isinstance(durable_next_attempt_at, bool)
+                and isinstance(
+                    durable_next_attempt_at,
+                    (int, float),
+                )
+                and math.isfinite(
+                    durable_next_attempt_at
+                )
+                and durable_next_attempt_at > 0
+            ):
+                next_attempt_at = float(
+                    durable_next_attempt_at
+                )
+
+        if attempts >= _WHATSAPP_INBOUND_MAX_ATTEMPTS:
+            _release_whatsapp_inbound_admission(
+                message_id
+            )
+
+            results.append(
+                {
+                    "ok": False,
+                    "queued": False,
+                    "message_id": message_id,
+                    "sender": sender,
+                    "stage": "retry_exhausted",
+                    "attempts": attempts,
+                }
+            )
+            continue
+
+        if next_attempt_at > time.time():
+            _release_whatsapp_inbound_admission(
+                message_id
+            )
+
+            results.append(
+                {
+                    "ok": False,
+                    "queued": False,
+                    "message_id": message_id,
+                    "sender": sender,
+                    "stage": "retry_backoff",
+                    "attempts": attempts,
+                    "next_attempt_at": next_attempt_at,
+                }
+            )
+            continue
+
+        if not _claim_whatsapp_inbound_capacity():
+            _release_whatsapp_inbound_admission(
+                message_id
+            )
+
+            results.append(
+                {
+                    "ok": False,
+                    "queued": False,
+                    "message_id": message_id,
+                    "sender": sender,
+                    "stage": "backpressure",
+                    "error": "WhatsApp inbound worker capacity exhausted",
+                }
+            )
+            continue
+
+        try:
+            future = _whatsapp_inbound_executor.submit(
+                process_whatsapp_inbound_message,
+                message_copy,
+            )
+        except Exception as exc:
+            _release_whatsapp_inbound_capacity()
+            _release_whatsapp_inbound_admission(
+                message_id
+            )
+
+            results.append(
+                {
+                    "ok": False,
+                    "queued": False,
+                    "message_id": message_id,
+                    "sender": sender,
+                    "stage": "handoff",
+                    "error": str(exc),
+                }
+            )
+            continue
+
+        _track_whatsapp_inbound_future(
+            future
+        )
+
+        try:
+            future.add_done_callback(
+                _whatsapp_inbound_completion_callback(
+                    message_id
+                )
+            )
+        except Exception:
+            _untrack_whatsapp_inbound_future(
+                future
+            )
+            _release_whatsapp_inbound_capacity()
+            _release_whatsapp_inbound_admission(
+                message_id
+            )
+
+        results.append(
+            {
+                "ok": True,
+                "queued": True,
+                "message_id": message_id,
+                "sender": sender,
+            }
+        )
+
+    return results
+
+def _retry_whatsapp_inbound_spool() -> list[dict]:
+    """Retry durable inbound jobs while the process remains alive."""
+    return _replay_whatsapp_inbound_spool()
+
+
+
+
+def _whatsapp_inbound_admission_lock():
+    import threading
+
+    lock = getattr(
+        _whatsapp_inbound_admission_lock,
+        "_lock",
+        None,
+    )
+
+    if lock is None:
+        lock = threading.Lock()
+        _whatsapp_inbound_admission_lock._lock = lock
+
+    return lock
+
+
+def _claim_whatsapp_inbound_admission(
+    message_id: str,
+) -> bool:
+    """Claim one wamid at the handoff boundary."""
+    if not message_id:
+        return True
+
+    with _whatsapp_inbound_admission_lock():
+        if message_id in _whatsapp_inbound_admitted:
+            return False
+
+        _whatsapp_inbound_admitted[message_id] = None
+
+        while (
+            len(_whatsapp_inbound_admitted)
+            > _WHATSAPP_INBOUND_ADMISSION_LIMIT
+        ):
+            oldest = next(
+                iter(_whatsapp_inbound_admitted)
+            )
+            del _whatsapp_inbound_admitted[oldest]
+
+        return True
+
+
+def _release_whatsapp_inbound_admission(
+    message_id: str,
+) -> None:
+    """Release a claim when executor submission did not succeed."""
+    if not message_id:
+        return
+
+    with _whatsapp_inbound_admission_lock():
+        _whatsapp_inbound_admitted.pop(
+            message_id,
+            None,
+        )
+
+
+def _reset_whatsapp_inbound_admission_for_tests() -> None:
+    """Reset process-local handoff admission state."""
+    with _whatsapp_inbound_admission_lock():
+        _whatsapp_inbound_admitted.clear()
+
+
+def _whatsapp_inbound_future_done(future) -> None:
+    """Forget completed inbound work and release worker capacity."""
+    _untrack_whatsapp_inbound_future(future)
+    _release_whatsapp_inbound_capacity()
+
+    try:
+        future.exception()
+    except Exception:
+        # The HTTP acknowledgement is already independent from
+        # background execution. This callback is final containment.
+        pass
+
+
+def _record_whatsapp_inbound_failed_attempt(
+    message_id: str,
+) -> None:
+    """Durably consume one failed processing attempt."""
+    import os
+    import tempfile
+
+    path = _whatsapp_inbound_spool_path(
+        message_id
+    )
+
+    with _whatsapp_inbound_retry_attempt_lock:
+        try:
+            payload = json.loads(
+                path.read_text(
+                    encoding="utf-8"
+                )
+            )
+        except Exception:
+            return
+
+        if not isinstance(payload, dict):
+            return
+
+        message = payload.get("message")
+
+        if not isinstance(message, dict):
+            return
+
+        attempts = payload.get(
+            "attempts",
+            0,
+        )
+
+        if (
+            isinstance(attempts, bool)
+            or not isinstance(attempts, int)
+            or attempts < 0
+        ):
+            attempts = 0
+
+        payload["attempts"] = attempts + 1
+        payload["next_attempt_at"] = time.time() + 1.0
+
+        path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".whatsapp-inbound-retry-",
+            suffix=".tmp",
+            dir=path.parent,
+        )
+
+        temporary = Path(
+            temporary_name
+        )
+
+        try:
+            with os.fdopen(
+                descriptor,
+                "w",
+                encoding="utf-8",
+            ) as stream:
+                json.dump(
+                    payload,
+                    stream,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                stream.write("\n")
+                stream.flush()
+                os.fsync(
+                    stream.fileno()
+                )
+
+            os.replace(
+                temporary,
+                path,
+            )
+            _fsync_whatsapp_inbound_directory()
+
+        except Exception:
+            try:
+                temporary.unlink(
+                    missing_ok=True
+                )
+            except Exception:
+                pass
+
+            raise
+
+
+def _whatsapp_inbound_completion_callback(
+    message_id: str,
+):
+    """Bind one admitted message ID to worker completion."""
+
+    def completed(future) -> None:
+        failed = False
+
+        try:
+            result = future.result()
+            failed = not (
+                isinstance(result, dict)
+                and result.get("ok") is True
+            )
+        except Exception:
+            failed = True
+
+        try:
+            if failed:
+                try:
+                    _record_whatsapp_inbound_failed_attempt(
+                        message_id
+                    )
+                except Exception:
+                    pass
+                finally:
+                    _release_whatsapp_inbound_admission(
+                        message_id
+                    )
+        finally:
+            _whatsapp_inbound_future_done(future)
+
+    return completed
+
+
+def _drain_whatsapp_inbound_worker_for_tests() -> None:
+    """Wait for currently submitted WhatsApp inbound work."""
+    from concurrent.futures import wait
+
+    pending = _snapshot_whatsapp_inbound_futures()
+
+    if pending:
+        wait(pending)
+
+
+def _reset_whatsapp_inbound_worker_for_tests() -> None:
+    """Replace the shared inbound executor deterministically for tests."""
+    global _whatsapp_inbound_executor
+
+    old_executor = _whatsapp_inbound_executor
+
+    old_executor.shutdown(wait=True)
+
+    _clear_whatsapp_inbound_futures()
+    _reset_whatsapp_inbound_capacity_for_tests()
+
+    _whatsapp_inbound_executor = (
+        _create_whatsapp_inbound_executor()
+    )
+
+
+def enqueue_whatsapp_inbound_message(
+    message: dict[str, str],
+) -> dict:
+    """Hand one inbound WhatsApp message to bounded background work."""
+    message_copy = dict(message)
+    message_id = str(message_copy.get("message_id") or "")
+    sender = str(message_copy.get("sender") or "")
+
+    if not message_id:
+        return {
+            "ok": False,
+            "queued": False,
+            "message_id": message_id,
+            "sender": sender,
+            "stage": "handoff",
+            "error": "WhatsApp inbound message_id is required",
+        }
+
+    if not _claim_whatsapp_inbound_admission(
+        message_id
+    ):
+        return {
+            "ok": True,
+            "queued": False,
+            "duplicate": True,
+            "message_id": message_id,
+            "sender": sender,
+        }
+
+    try:
+        _persist_whatsapp_inbound_message(
+            message_copy
+        )
+    except Exception as exc:
+        durable_evidence = isinstance(
+            exc, _WhatsAppInboundCommitUncertainError
+        )
+
+        _release_whatsapp_inbound_admission(
+            message_id
+        )
+
+        return {
+            "ok": False,
+            "queued": False,
+            "message_id": message_id,
+            "sender": sender,
+            "stage": (
+                "durability_uncertain"
+                if durable_evidence
+                else "handoff"
+            ),
+            "durable_evidence": durable_evidence,
+            "error": str(exc),
+        }
+
+    if not _claim_whatsapp_inbound_capacity():
+        _release_whatsapp_inbound_admission(
+            message_id
+        )
+
+        return {
+            "ok": False,
+            "queued": False,
+            "message_id": message_id,
+            "sender": sender,
+            "stage": "backpressure",
+            "error": "WhatsApp inbound worker capacity exhausted",
+        }
+
+    try:
+        future = _whatsapp_inbound_executor.submit(
+            process_whatsapp_inbound_message,
+            message_copy,
+        )
+    except Exception as exc:
+        _release_whatsapp_inbound_capacity()
+        _release_whatsapp_inbound_admission(
+            message_id
+        )
+
+        return {
+            "ok": False,
+            "queued": False,
+            "message_id": message_id,
+            "sender": sender,
+            "stage": "handoff",
+            "error": str(exc),
+        }
+
+    _track_whatsapp_inbound_future(future)
+
+    try:
+        future.add_done_callback(
+            _whatsapp_inbound_completion_callback(
+                message_id
+            )
+        )
+    except Exception:
+        # Submission succeeded, but without a completion callback
+        # this process cannot safely retain lifecycle ownership.
+        # Keep the durable job recoverable and release only the
+        # process-local tracking, capacity, and admission claims.
+        _untrack_whatsapp_inbound_future(
+            future
+        )
+        _release_whatsapp_inbound_capacity()
+        _release_whatsapp_inbound_admission(
+            message_id
+        )
+
+    return {
+        "ok": True,
+        "queued": True,
+        "message_id": message_id,
+        "sender": sender,
+    }
+
+
+def process_whatsapp_inbound_message(
+    message: dict[str, str],
+) -> dict:
+    """Generate and send the reply for one parsed WhatsApp text message."""
+    message_id = str(message.get("message_id") or "")
+    sender = str(message.get("sender") or "")
+    text = str(message.get("text") or "")
+
+    if not _begin_whatsapp_inbound(message_id):
+        return {
+            "ok": True,
+            "message_id": message_id,
+            "sender": sender,
+            "duplicate": True,
+        }
+
+    success = False
+
+    try:
+        try:
+            reply = _whatsapp_conversation_reply(text)
+        except Exception as err:  # noqa: BLE001
+            return {
+                "ok": False,
+                "message_id": message_id,
+                "sender": sender,
+                "stage": "conversation",
+                "error": str(err),
+            }
+
+        try:
+            sent = send_whatsapp(
+                sender,
+                reply,
+            )
+        except Exception as err:  # noqa: BLE001
+            return {
+                "ok": False,
+                "message_id": message_id,
+                "sender": sender,
+                "reply": reply,
+                "stage": "send",
+                "error": str(err),
+            }
+
+        success = bool(sent.get("ok"))
+
+        if success:
+            _remove_whatsapp_inbound_message(
+                message_id
+            )
+
+        result = {
+            "ok": success,
+            "message_id": message_id,
+            "sender": sender,
+            "reply": reply,
+            "send": sent,
+        }
+
+        if not success:
+            result["stage"] = "send"
+
+        return result
+
+    finally:
+        _finish_whatsapp_inbound(
+            message_id,
+            success=success,
+        )
+
+
+def validate_whatsapp_webhook_envelope(payload: dict) -> bool:
+    """Validate the outer Meta WhatsApp webhook event structure."""
+    if payload.get("object") != "whatsapp_business_account":
+        return False
+
+    entries = payload.get("entry")
+    if not isinstance(entries, list) or not entries:
+        return False
+
+    found_change = False
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return False
+
+        changes = entry.get("changes")
+        if not isinstance(changes, list) or not changes:
+            return False
+
+        for change in changes:
+            if not isinstance(change, dict):
+                return False
+
+            if change.get("field") != "messages":
+                return False
+
+            value = change.get("value")
+            if not isinstance(value, dict):
+                return False
+
+            found_change = True
+
+    return found_change
+
+
+def parse_whatsapp_inbound_messages(payload: dict) -> list[dict[str, str]]:
+    """Extract inbound text messages from a Meta WhatsApp webhook payload."""
+    messages: list[dict[str, str]] = []
+
+    entries = payload.get("entry", [])
+    if not isinstance(entries, list):
+        return messages
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+
+        changes = entry.get("changes", [])
+        if not isinstance(changes, list):
+            continue
+
+        for change in changes:
+            if not isinstance(change, dict):
+                continue
+
+            value = change.get("value", {})
+            if not isinstance(value, dict):
+                continue
+
+            raw_messages = value.get("messages", [])
+            if not isinstance(raw_messages, list):
+                continue
+
+            for raw_message in raw_messages:
+                if not isinstance(raw_message, dict):
+                    continue
+
+                text_payload = raw_message.get("text", {})
+                if not isinstance(text_payload, dict):
+                    continue
+
+                message_id = raw_message.get("id")
+                sender = raw_message.get("from")
+                body = text_payload.get("body")
+
+                if not all(
+                    isinstance(item, str) and item
+                    for item in (message_id, sender, body)
+                ):
+                    continue
+
+                messages.append(
+                    {
+                        "message_id": message_id,
+                        "sender": sender,
+                        "text": body,
+                    }
+                )
+
+    return messages

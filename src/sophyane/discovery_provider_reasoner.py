@@ -224,6 +224,9 @@ def _mode6_candidate_request(
         "recent_turns": bounded_turns,
         "return_schema": {
             "reply": "string",
+            "semantic_disposition": (
+                "conversation | actionable_mission | clarification"
+            ),
         },
     }
 
@@ -480,6 +483,14 @@ def _operation_response_usable(
             "reply"
         )
 
+        semantic_disposition = str(
+            parsed.get(
+                "semantic_disposition",
+                "",
+            )
+            or ""
+        ).strip()
+
         return (
             isinstance(
                 reply,
@@ -488,6 +499,12 @@ def _operation_response_usable(
             and bool(
                 reply.strip()
             )
+            and semantic_disposition
+            in {
+                "conversation",
+                "clarification",
+                "actionable_mission",
+            }
         )
 
     if operation == "generate_hypotheses":
@@ -576,8 +593,11 @@ def _semantic_repair_prompt(
             + "SOPHYANE_DISCOVERY_SCHEMA_REPAIR_REQUEST\n"
             + "Your previous response did not satisfy the requested "
               "conversation_reply contract.\n"
-            + 'Return exactly one JSON object with the top-level field "reply".\n'
+            + 'Return exactly one JSON object with the top-level fields "reply" '
+              'and "semantic_disposition".\n'
             + 'The value of "reply" must be a non-empty string.\n'
+            + 'The value of "semantic_disposition" must be exactly one of '
+              '"conversation", "clarification", or "actionable_mission".\n'
             + "Do not return Markdown, prose outside the JSON object, an action "
               "object, or a files/result envelope.\n"
             + "Return exactly one JSON object and no prose.\n"
@@ -1058,6 +1078,44 @@ class SessionProviderReasoner:
             operation,
             normalized,
         ):
+            # SOPHYANE_MODE6_DIRECT_CONVERSATION_REFUSAL_FAILOVER_V1
+            #
+            # A transport-successful provider can still return a bare refusal
+            # for an otherwise valid conversation_reply.  Such a response is
+            # structurally valid JSON but is not a usable conversational
+            # answer.  Classify only a direct reply-level refusal here so
+            # ordinary answers that quote or discuss refusal wording remain
+            # legitimate content.
+            if operation == "conversation_reply":
+                try:
+                    parsed_reply = json.loads(normalized)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    parsed_reply = {}
+
+                reply_text = (
+                    str(parsed_reply.get("reply") or "").strip()
+                    if isinstance(parsed_reply, dict)
+                    else ""
+                )
+
+                direct_refusal = reply_text.casefold().rstrip(" .!") in {
+                    "i can't assist with that",
+                    "i cannot assist with that",
+                    "i can't help with that request",
+                    "i cannot help with that request",
+                    "i'm unable to assist with that",
+                    "i am unable to assist with that",
+                }
+
+                if direct_refusal:
+                    from sophyane.providers.base import (
+                        ProviderCandidateRejected,
+                    )
+
+                    raise ProviderCandidateRejected(
+                        "MODE6_PROVIDER_DIRECT_CONVERSATION_REFUSAL"
+                    )
+
             return normalized
 
         # SOPHYANE_MODE6_SEMANTIC_AVAILABILITY_BEFORE_REPAIR_V1

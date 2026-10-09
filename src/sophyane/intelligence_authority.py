@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 
-ACTIVE_INTELLIGENCE_PROVIDERS = ("codex_cli", "nifdu_browser", "local_gguf")
+ACTIVE_INTELLIGENCE_PROVIDERS = ("codex_cli", "nifdu_browser", "local_gguf", "agy")
 SOURCE_MUTATION_PROVIDERS = ("codex_cli", "nifdu_browser")
 
 
@@ -151,7 +151,11 @@ def current_intelligence_authority() -> IntelligenceAuthority:
             session_mode=mode,
             session_provider="codex_cli",
             session_model="codex-default",
-            local_reasoning_allowed=True,
+            # Mode 6 is LLM-first and LLM-only for intelligence.  The final
+            # Mode 6 permits only the bounded cloud-provider cascade inside the
+            # bounded provider cascade; it does not authorize independent
+            # deterministic/local reasoning in the execution kernel.
+            local_reasoning_allowed=False,
             provider_switching_allowed=False,
             llm_allowed=True,
             provider_failover_order=MODE6_PROVIDER_ORDER,
@@ -201,6 +205,17 @@ def assert_provider_allowed(
     if not provider:
         return
 
+    # A bounded provider cascade is itself an explicit intelligence
+    # authority. In Mode 6 only providers in the bounded cloud failover
+    # provider in that cascade; it does not enable direct local reasoning.
+    if authority.bounded_provider_failover:
+        if provider in authority.provider_failover_order:
+            return
+        raise PermissionError(
+            "SOPHYANE_INTELLIGENCE_AUTHORITY_VIOLATION:"
+            f" mode={authority.session_mode} attempted={provider}"
+        )
+
     if (
         provider == "local_gguf"
         and not authority.local_reasoning_allowed
@@ -209,14 +224,6 @@ def assert_provider_allowed(
             "SOPHYANE_INTELLIGENCE_AUTHORITY_VIOLATION:"
             f" mode={authority.session_mode or '<unset>'}"
             f" provider={provider}"
-        )
-
-    if authority.bounded_provider_failover:
-        if provider in authority.provider_failover_order:
-            return
-        raise PermissionError(
-            "SOPHYANE_INTELLIGENCE_AUTHORITY_VIOLATION:"
-            f" mode={authority.session_mode} attempted={provider}"
         )
 
     if authority.provider_switching_allowed:

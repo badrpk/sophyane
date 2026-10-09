@@ -74,3 +74,72 @@ def test_do_not_create_or_write_is_no_edit():
         )
         is True
     )
+
+
+# SOPHYANE_SCOPED_NO_EDIT_RSI_RED_V1
+
+def test_descriptive_read_only_phrase_does_not_cancel_explicit_source_authorization():
+    request = (
+        "Sophyane RSI critical repair. "
+        "Source edits are explicitly authorized. "
+        "Repair the defect that was incorrectly treated as read-only."
+    )
+
+    assert _explicit_no_edit_request(request) is False
+
+
+def test_specific_artifact_protection_does_not_cancel_other_authorized_source_edits():
+    request = (
+        "Sophyane RSI critical repair. "
+        "Source edits are explicitly authorized. "
+        "Repair src/sophyane/adaptive_execution.py. "
+        "Do not create or modify "
+        "mode6_ladder_workspace/natural_request.txt."
+    )
+
+    assert _explicit_no_edit_request(request) is False
+
+
+def test_global_file_prohibition_still_wins_over_conflicting_authorization():
+    request = (
+        "Source edits are explicitly authorized. "
+        "Do not edit any files."
+    )
+
+    assert _explicit_no_edit_request(request) is True
+
+
+# SOPHYANE_SINGLE_NO_EDIT_DEFINITION_RED_V1
+
+def test_no_edit_parser_has_one_authoritative_definition():
+    import ast
+    from pathlib import Path
+
+    path = Path("src/sophyane/adaptive_execution.py")
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+
+    definitions = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "_explicit_no_edit_request"
+    ]
+
+    assert len(definitions) == 1, (
+        "_explicit_no_edit_request must have exactly one "
+        f"authoritative definition, found {len(definitions)}"
+    )
+
+    assert definitions[0].lineno < 200
+
+
+def test_shell_builtin_command_is_accepted_for_read_only_inspection():
+    from pathlib import Path
+    from sophyane.adaptive_execution import _command_problem
+
+    problem = _command_problem(
+        {"type": "command", "command": "command -v rg"},
+        Path(".").resolve(),
+    )
+
+    assert problem == ""

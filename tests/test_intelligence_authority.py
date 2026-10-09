@@ -161,3 +161,50 @@ def test_sli_graph_cannot_use_any_local_llm(
         assert_provider_allowed(
             "local_gguf"
         )
+
+# SOPHYANE_MODE6_LLM_ONLY_AUTHORITY_V1
+def test_mode6_disallows_independent_local_reasoning_but_keeps_bounded_llm_cascade(
+    monkeypatch,
+):
+    from sophyane.intelligence_authority import (
+        assert_provider_allowed,
+        current_intelligence_authority,
+    )
+
+    monkeypatch.setenv(
+        "SOPHYANE_SESSION_MODE",
+        "human_conversation",
+    )
+    monkeypatch.setenv(
+        "SOPHYANE_SESSION_PROVIDER",
+        "codex_cli",
+    )
+    monkeypatch.setenv(
+        "SOPHYANE_SESSION_MODEL",
+        "codex-default",
+    )
+
+    authority = current_intelligence_authority()
+
+    assert authority.local_reasoning_allowed is False
+    assert authority.llm_allowed is True
+    assert authority.provider_switching_allowed is False
+    assert authority.bounded_provider_failover is True
+    assert tuple(authority.provider_failover_order) == (
+        "codex_cli",
+        "nifdu_browser",
+    )
+
+    # Only the two cloud transports are authorized in the bounded Mode-6
+    # cascade.
+    for provider in authority.provider_failover_order:
+        assert_provider_allowed(provider)
+
+    import pytest
+
+    # Local GGUF and arbitrary provider switching are both forbidden.
+    with pytest.raises(PermissionError):
+        assert_provider_allowed("local_gguf")
+
+    with pytest.raises(PermissionError):
+        assert_provider_allowed("gemini")

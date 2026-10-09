@@ -406,6 +406,8 @@ def apply_live_instruction(
 def reset_semantic_request(tui: Any) -> None:
     tui._semantic_original_request = ""
     tui._semantic_live_instructions = []
+    # SOPHYANE_SEMANTIC_SNAPSHOT_RESET_V1
+    tui._sophyane_canonical_request_snapshot = ""
 
 
 def semantic_status(tui: Any) -> str:

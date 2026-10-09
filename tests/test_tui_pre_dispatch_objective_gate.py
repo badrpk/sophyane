@@ -55,18 +55,36 @@ def test_gate_precedes_dispatch_user_request() -> None:
     )
 
 
-def test_gate_precedes_first_provider_call() -> None:
+def test_gate_precedes_local_dispatch_not_external_llm_boundary() -> None:
+    """
+    The objective gate protects the local semantic dispatch path.
+
+    Explicit external-LLM sessions intentionally branch earlier so the
+    selected LLM receives the genuine request first. That branch terminates
+    before this local gate. Requests that do reach the gate must be
+    preflighted before local dispatch.
+    """
     text = TUI.read_text()
 
-    assert (
-        text.find(
-            "SOPHYANE_PRE_DISPATCH_OBJECTIVE_GATE"
-        )
-        <
-        text.find(
-            "self.call_provider("
-        )
+    external_boundary = text.index(
+        "SOPHYANE_MODE4_EXTERNAL_LLM_FIRST_BOUNDARY_V1"
     )
+
+    first_provider = text.index(
+        "self.call_provider(",
+        external_boundary,
+    )
+
+    gate = text.index(
+        "SOPHYANE_PRE_DISPATCH_OBJECTIVE_GATE"
+    )
+
+    local_dispatch = text.index(
+        "self.dispatch_user_request(",
+        gate,
+    )
+
+    assert external_boundary < first_provider < gate < local_dispatch
 
 
 def test_handled_preflight_terminates_iteration() -> None:

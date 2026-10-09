@@ -8,6 +8,17 @@ def normalize(text: str) -> str:
     return " ".join(str(text or "").strip().split())
 
 
+def _marker_matches(text: str, marker: str) -> bool:
+    """Match whole words/phrases without substring false positives."""
+    marker_patterns = {
+        "performance bottleneck": r"performance bottlenecks?",
+        "startup time": r"startup (?:time|speed)",
+    }
+    marker_pattern = marker_patterns.get(marker, re.escape(marker))
+    pattern = rf"(?<!\w){marker_pattern}(?!\w)"
+    return re.search(pattern, text, flags=re.I) is not None
+
+
 def criteria(message: str) -> list[str]:
     text = normalize(message)
     lower = text.casefold()
@@ -48,7 +59,7 @@ def criteria(message: str) -> list[str]:
     )
 
     for marker, criterion in rules:
-        if marker in lower and criterion not in selected:
+        if _marker_matches(lower, marker) and criterion not in selected:
             selected.append(criterion)
 
     # Preserve explicit sequential clauses as additional criteria.

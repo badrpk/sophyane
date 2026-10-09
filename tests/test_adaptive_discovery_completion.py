@@ -123,6 +123,32 @@ class DiscoveryCompletionTests(unittest.TestCase):
             )
         )
 
+    def test_implementation_request_with_discovery_word_does_not_complete(self):
+        result = (
+            "Command: find tests -type f -name 'test_*.py'\\n"
+            "Exit code: 0\\n"
+            "STDOUT:\\n"
+            "tests/test_example.py\\n"
+            "STDERR:\\n"
+        )
+
+        self.assertFalse(
+            _discovery_request_completed(
+                (
+                    "Repair the source using RED -> GREEN. "
+                    "Run the relevant regression tests. "
+                    "If an exact filename does not exist, locate the existing "
+                    "equivalent test file and run it."
+                ),
+                {
+                    "type": "run_command",
+                    "command": "find tests -type f -name 'test_*.py'",
+                },
+                True,
+                result,
+            )
+        )
+
     def test_write_action_is_not_discovery_completion(self):
         self.assertFalse(
             _discovery_request_completed(

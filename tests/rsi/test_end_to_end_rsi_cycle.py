@@ -117,15 +117,6 @@ def test_verification_script_cannot_be_in_editable_policy(repo,tmp_path):
         build_controller(repo,tmp_path,editable_paths=frozenset({'value.py','regression.py'}))
 
 
-def test_controller_rejects_concurrent_iteration(repo,tmp_path):
-    import fcntl
-    controller,w,calls=build_controller(repo,tmp_path)
-    with (repo/'.git'/'sophyane-rsi-lifecycle.lock').open('a') as lock:
-        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        with pytest.raises(BlockingIOError): controller.run_once(w)
-    assert calls == []
-
-
 def test_controller_recovers_unfinished_promotion_before_iteration(repo,tmp_path):
     from test_automatic_promotion import do_promote
     baseline,candidate,journal,result=do_promote(repo,tmp_path)

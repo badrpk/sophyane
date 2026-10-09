@@ -98,3 +98,171 @@ def test_plain_semantic_quota_is_availability_not_schema_failure(tmp_path):
     router,clock,calls=router_for(tmp_path,{'codex_cli':'usage limit reached','nifdu_browser':GOOD})
     assert router.request('repair',tmp_path/'candidate').provider == 'nifdu_browser'
     assert calls == ['codex_cli','nifdu_browser']
+
+
+# SOPHYANE_CODING_ROUTER_OPERATION_AUTHORITY_RED_V1
+def test_coding_router_can_request_ordinary_workspace_proposal_under_ordinary_authority(
+    monkeypatch,
+    tmp_path,
+):
+    """
+    Proposal transport for an ordinary user workspace must not require
+    Sophyane-source mutation authority.
+
+    The provider still proposes bytes only; this contract grants no write,
+    verification, approval, or promotion authority.
+    """
+    import sophyane.rsi.coding_provider as coding_provider
+    from sophyane.rsi.authority import Operation
+
+    workspace = (tmp_path / "ordinary-workspace").resolve()
+    workspace.mkdir()
+
+    authority_calls = []
+    provider_calls = []
+
+    class Store:
+        def assert_external(self, candidate):
+            assert candidate == workspace
+
+        def blocked(self, provider):
+            return False
+
+        def probe(self, provider):
+            pass
+
+        def failure(self, provider, error):
+            raise AssertionError(
+                f"unexpected provider failure: {provider}: {error}"
+            )
+
+        def success(self, provider):
+            pass
+
+    class Provider:
+        def generate(self, prompt, system):
+            provider_calls.append(
+                {
+                    "prompt": prompt,
+                    "system": system,
+                }
+            )
+            return {
+                "files": {
+                    "capability.py": "VALUE = 1\n",
+                }
+            }
+
+    def fake_require(provider, operation):
+        authority_calls.append((provider, operation))
+
+        assert operation is Operation.ORDINARY_WORKSPACE_MUTATION, (
+            "ordinary workspace coding proposal incorrectly requested "
+            "Sophyane-source mutation authority"
+        )
+
+    def factory(provider, requested_workspace, timeout):
+        assert requested_workspace == workspace
+        return Provider()
+
+    monkeypatch.setattr(
+        coding_provider,
+        "require",
+        fake_require,
+    )
+
+    router = coding_provider.CodingRouter(
+        Store(),
+        factory,
+        operation=Operation.ORDINARY_WORKSPACE_MUTATION,
+    )
+
+    result = router.request(
+        "Propose reusable parser support.",
+        workspace,
+    )
+
+    assert result.status == "SUCCESS"
+    assert result.files == {
+        "capability.py": "VALUE = 1\n",
+    }
+
+    assert provider_calls
+
+    assert authority_calls
+    assert all(
+        operation is Operation.ORDINARY_WORKSPACE_MUTATION
+        for _, operation in authority_calls
+    )
+
+
+def test_coding_router_default_operation_remains_sophyane_source_mutation(
+    monkeypatch,
+    tmp_path,
+):
+    """
+    Existing RSI callers that do not select an operation retain the original
+    Sophyane-source authority contract.
+    """
+    import sophyane.rsi.coding_provider as coding_provider
+    from sophyane.rsi.authority import Operation
+
+    workspace = (tmp_path / "candidate").resolve()
+    workspace.mkdir()
+
+    authority_calls = []
+
+    class Store:
+        def assert_external(self, candidate):
+            assert candidate == workspace
+
+        def blocked(self, provider):
+            return False
+
+        def probe(self, provider):
+            pass
+
+        def failure(self, provider, error):
+            raise AssertionError(
+                f"unexpected provider failure: {provider}: {error}"
+            )
+
+        def success(self, provider):
+            pass
+
+    class Provider:
+        def generate(self, prompt, system):
+            return {
+                "files": {
+                    "src/sophyane/example.py": "VALUE = 1\n",
+                }
+            }
+
+    def fake_require(provider, operation):
+        authority_calls.append((provider, operation))
+
+    def factory(provider, requested_workspace, timeout):
+        return Provider()
+
+    monkeypatch.setattr(
+        coding_provider,
+        "require",
+        fake_require,
+    )
+
+    router = coding_provider.CodingRouter(
+        Store(),
+        factory,
+    )
+
+    result = router.request(
+        "Propose Sophyane source repair.",
+        workspace,
+    )
+
+    assert result.status == "SUCCESS"
+    assert authority_calls
+    assert all(
+        operation is Operation.SOPHYANE_SOURCE_MUTATION
+        for _, operation in authority_calls
+    )

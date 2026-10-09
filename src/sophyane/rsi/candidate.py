@@ -11,6 +11,12 @@ class IsolationViolation(PermissionError):
     pass
 
 
+IMMUTABLE_RSI_TRUST_ROOTS = frozenset({
+    "src/sophyane/intelligence_authority.py",
+    "src/sophyane/rsi_host_broker.py",
+})
+
+
 class Candidate:
     def __init__(self, baseline, path, identifier):
         self.baseline, self.path = baseline, Path(path).resolve()
@@ -48,6 +54,8 @@ class Candidate:
             if (name not in allowed_paths or relative.is_absolute() or '..' in relative.parts or
                 any(part.casefold() == '.git' for part in relative.parts) or not isinstance(content, str)):
                 raise IsolationViolation('Unauthorized candidate replacement path')
+            if relative.as_posix() in IMMUTABLE_RSI_TRUST_ROOTS:
+                raise IsolationViolation('Immutable RSI trust root')
             if relative.parts and relative.parts[0] == 'tests':
                 require(provider, Operation.CANDIDATE_TEST_MUTATION)
             target = self.path / relative
@@ -85,6 +93,7 @@ class Candidate:
         commit = git(self.path, 'commit-tree', tree, '-p', self.baseline.commit,
                      input=f'RSI candidate {self.record.candidate_id}\n')
         self.record.candidate_commit = commit
+        self._sealed_fingerprint = self.fingerprint()
         return commit
 
     def cleanup(self):

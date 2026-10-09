@@ -84,6 +84,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
+"sophyane.connectors.email_imap" = ["manifest.json"]
 "sophyane.browser" = ["home/*"]
 "sophyane.expert" = ["data/*.json"]
 "sophyane.continual.cpp" = ["CMakeLists.txt", "*.cpp", "include/*.hpp", "src/*.cpp"]

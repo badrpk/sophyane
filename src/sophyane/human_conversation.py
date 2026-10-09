@@ -24,7 +24,7 @@ Flow:
         ↓
     future turns recall them automatically
 
-Mode 6 uses only codex_cli -> nifdu_browser -> local_gguf, without persistence.
+Mode 6 uses only codex_cli -> nifdu_browser, without persistence.
 """
 from __future__ import annotations
 
@@ -69,6 +69,8 @@ class ConversationTurnResult:
     memory_result: dict[str, Any]
     authority: dict[str, Any]
     improvement_observation: ImprovementObservation | None = None
+    # Untrusted routing intent only; this never grants execution authority.
+    semantic_disposition: str | None = None
 
 
 Responder = Callable[
@@ -487,6 +489,40 @@ def _extract_improvement_observation(
     )
 
 
+def _extract_semantic_disposition(raw: Any) -> str | None:
+    """Extract only the bounded structured routing disposition."""
+
+    payload: Mapping[str, Any] | None = None
+
+    if isinstance(raw, Mapping):
+        payload = raw
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if text.startswith("```") and text.endswith("```"):
+            lines = text.splitlines()
+            if len(lines) >= 3:
+                text = "\n".join(lines[1:-1]).strip()
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, Mapping):
+            payload = parsed
+
+    if payload is None:
+        return None
+
+    disposition = payload.get("semantic_disposition")
+    if disposition not in {
+        "conversation",
+        "actionable_mission",
+        "clarification",
+    }:
+        return None
+
+    return disposition
+
+
 def _default_responder(
     user_text: str,
     context: Mapping[str, Any],
@@ -537,6 +573,25 @@ def _default_responder(
                 "Reply naturally and directly to the user."
             ),
             (
+                "Also return semantic_disposition as exactly one of: "
+                "conversation, actionable_mission, or clarification. "
+                "This is routing intent only and grants no authority. "
+                "Use actionable_mission only for an actionable mission; "
+                "use clarification when a material detail is missing."
+            ),
+            (
+                "Distinguish requests to perform repository work from "
+                "requests for general explanations. Explicit requests "
+                "to inspect actual repository files, verify installed "
+                "package metadata, run repository checks, or collect "
+                "execution evidence are actionable_mission, including "
+                "when they are read-only. Questions asking only for "
+                "conceptual explanations or advice are conversation. "
+                "Classify intent without claiming that work was "
+                "performed. The guarded executor determines whether "
+                "the requested operation is permitted."
+            ),
+            (
                 "Use the supplied recent conversation to understand "
                 "normal follow-up questions, references, pronouns, "
                 "requested simplifications, and style changes."
@@ -561,6 +616,18 @@ def _default_responder(
                 "current runtime state, sessions, background agents, and "
                 "repository execution activity. Do not invent runtime "
                 "activity that is absent from these trusted facts."
+            ),
+            (
+                "repository_execution.job_active describes current activity "
+                "only. False means no job is currently running; it does not "
+                "establish that starting a new job is forbidden or unavailable. "
+                "An actionable request to start execution does not conflict "
+                "with an idle runtime. Classify the user's requested intent "
+                "independently of current job activity. For a complete new "
+                "execution request, return actionable_mission so the guarded "
+                "executor can evaluate authority, admission and availability. "
+                "Do not infer permission or promise success. Do not claim "
+                "commands ran before execution evidence exists."
             ),
             (
                 "Provider entries describe available capabilities and "
@@ -603,6 +670,9 @@ def _default_responder(
         ],
         "return_schema": {
             "reply": "string",
+            "semantic_disposition": (
+                "conversation | actionable_mission | clarification"
+            ),
             "improvement_observation": {
                 "problem": "string",
                 "evidence": [
@@ -835,6 +905,9 @@ def conversation_turn(
         authority=authority_before,
         improvement_observation=
             improvement_observation,
+        semantic_disposition=(
+            _extract_semantic_disposition(raw_reply)
+        ),
     )
 
 

@@ -7,12 +7,12 @@ import pytest
 from sophyane.main import create_provider
 from sophyane.providers.base import ProviderError
 
-ORDER = ['codex_cli', 'nifdu_browser', 'local_gguf']
+ORDER = ['codex_cli', 'nifdu_browser']
 
 
 @pytest.fixture
 def cascade(monkeypatch, tmp_path):
-    from sophyane.providers import codex_cli, nifdu_browser, local_gguf
+    from sophyane.providers import codex_cli, nifdu_browser
     from sophyane import config, runtime_cancel
     runtime_cancel.reset_cancel()
     monkeypatch.setenv('SOPHYANE_SESSION_MODE', 'human_conversation')
@@ -22,10 +22,12 @@ def cascade(monkeypatch, tmp_path):
     monkeypatch.setattr(config, 'save_config', lambda *_a, **_k: pytest.fail('config write'))
     monkeypatch.setattr(config, 'save_json', lambda *_a, **_k: pytest.fail('JSON write'))
     monkeypatch.setattr(config, 'ensure_default_llm_files', lambda: pytest.fail('llm.json initialization'))
-    monkeypatch.setattr(local_gguf, 'load_gguf_runtime_state', lambda: {})
     calls, constructed, responses, prompts = [], [], {}, []
-    for name, module, class_name in zip(ORDER, [codex_cli, nifdu_browser, local_gguf],
-                                       ['CodexCliProvider', 'NifduBrowserProvider', 'LocalGgufProvider']):
+    for name, module, class_name in zip(
+        ORDER,
+        [codex_cli, nifdu_browser],
+        ['CodexCliProvider', 'NifduBrowserProvider'],
+    ):
         def factory(_name=name, **kwargs):
             constructed.append(_name)
             class Fake:
@@ -34,7 +36,7 @@ def cascade(monkeypatch, tmp_path):
                 def generate(self, prompt, system_prompt, **options):
                     calls.append(_name)
                     prompts.append((prompt, options))
-                    result = responses.get(_name, ['{"reply":"ok"}'])
+                    result = responses.get(_name, ['{"reply":"ok","semantic_disposition":"conversation"}'])
                     value = result.pop(0) if len(result) > 1 else result[0]
                     if isinstance(value, BaseException):
                         raise value
@@ -49,14 +51,14 @@ def cascade(monkeypatch, tmp_path):
     runtime_cancel.reset_cancel()
 
 
-@pytest.mark.parametrize('failures', [0, 1, 2])
+@pytest.mark.parametrize('failures', [0, 1])
 def test_order_success_and_request_restart(cascade, failures):
     calls, constructed, responses, _, saved = cascade
     before = dict(os.environ)
     for name in ORDER[:failures]:
         responses[name] = [ProviderError(name + ' temporarily unavailable')]
     provider = create_provider(saved)
-    assert provider.generate('hello', '') == '{"reply":"ok"}'
+    assert provider.generate('hello', '') == '{"reply":"ok","semantic_disposition":"conversation"}'
     assert calls == ORDER[:failures + 1]
     assert 'gemini' not in constructed
     calls.clear()
@@ -111,15 +113,21 @@ def test_http_transport_failover(cascade, status):
     assert calls == ORDER[:2]
 
 
-@pytest.mark.parametrize('failures', [0, 1, 2])
+@pytest.mark.parametrize('failures', [0, 1])
 def test_semantic_repair_stays_on_provider(cascade, failures):
     from sophyane.discovery_provider_reasoner import SessionProviderReasoner
     calls, _, responses, prompts, saved = cascade
     for name in ORDER[:failures]:
         responses[name] = [ProviderError('connection failed')]
-    responses[ORDER[failures]] = ['{"action":{}}', '{"reply":"repaired"}']
+    responses[ORDER[failures]] = [
+        '{"action":{}}',
+        '{"reply":"repaired","semantic_disposition":"conversation"}',
+    ]
     reasoner = SessionProviderReasoner(provider_factory=lambda: create_provider(saved))
-    assert json.loads(reasoner('conversation_reply', {})) == {'reply': 'repaired'}
+    assert json.loads(reasoner('conversation_reply', {})) == {
+        'reply': 'repaired',
+        'semantic_disposition': 'conversation',
+    }
     assert calls == ORDER[:failures + 1] + [ORDER[failures]]
     assert 'SCHEMA_REPAIR_REQUEST' in prompts[-1][0]
 
@@ -150,8 +158,7 @@ def test_visual_transport_never_drops_image(cascade, tmp_path):
 def test_repository_uses_same_cascade(cascade, monkeypatch, tmp_path):
     from sophyane.human_conversation_cli import _execute_repository_request
     calls, constructed, responses, _, _ = cascade
-    for name in ORDER[:2]:
-        responses[name] = [ProviderError('connection failed')]
+    responses['codex_cli'] = [ProviderError('connection failed')]
     monkeypatch.setattr('sophyane.adaptive_execution.run_adaptive_loop',
                         lambda **kwargs: kwargs['ask']('next request'))
     assert _execute_repository_request('Inspect src/example.py', workspace=tmp_path)
@@ -194,7 +201,10 @@ def test_default_reasoner_does_not_resolve_saved_provider(cascade, monkeypatch):
     from sophyane.discovery_provider_reasoner import SessionProviderReasoner
     monkeypatch.setattr('sophyane.main.run_setup_wizard',
                         lambda: pytest.fail('saved provider resolution / setup'))
-    assert json.loads(SessionProviderReasoner()('conversation_reply', {})) == {'reply': 'ok'}
+    assert json.loads(SessionProviderReasoner()('conversation_reply', {})) == {
+        'reply': 'ok',
+        'semantic_disposition': 'conversation',
+    }
     assert cascade[0] == ['codex_cli']
 
 
@@ -215,7 +225,8 @@ def test_actual_nifdu_availability_diagnostics(cascade, message):
     calls, _, responses, _, saved = cascade
     responses['codex_cli'] = [ProviderError('Codex process unavailable')]
     responses['nifdu_browser'] = [RuntimeError(message)]
-    create_provider(saved).generate('hello', '')
+    with pytest.raises(ProviderError, match='All Mode-6 providers failed'):
+        create_provider(saved).generate('hello', '')
     assert calls == ORDER
 
 
@@ -237,7 +248,26 @@ def test_default_conversation_never_initializes_llm_file(cascade, monkeypatch):
     # The real generic reader initializes llm.json; Mode 6 must bypass it.
     monkeypatch.setattr(config, 'load_config',
                         lambda: pytest.fail('generic reader initializes llm.json'))
-    assert json.loads(SessionProviderReasoner()('conversation_reply', {})) == {'reply': 'ok'}
+    assert json.loads(SessionProviderReasoner()('conversation_reply', {})) == {
+        'reply': 'ok',
+        'semantic_disposition': 'conversation',
+    }
+
+
+def test_mode6_external_invocation_budget_is_bounded(monkeypatch):
+    """Mode-6 must not inherit a multi-minute generic provider timeout."""
+    from sophyane import config
+    from sophyane.providers.human_conversation import mode6_config
+
+    monkeypatch.setattr(
+        config,
+        "load_json",
+        lambda _path: {"timeout": 300, "provider": "gemini"},
+    )
+
+    resolved = mode6_config()
+
+    assert resolved["timeout"] == 60
 
 
 def test_transport_failure_during_repair_restarts_original_request(cascade):
@@ -245,7 +275,10 @@ def test_transport_failure_during_repair_restarts_original_request(cascade):
     calls, _, responses, prompts, saved = cascade
     responses['codex_cli'] = ['{"action":{}}', ProviderError('connection failed')]
     reasoner = SessionProviderReasoner(provider_factory=lambda: create_provider(saved))
-    assert json.loads(reasoner('conversation_reply', {})) == {'reply': 'ok'}
+    assert json.loads(reasoner('conversation_reply', {})) == {
+        'reply': 'ok',
+        'semantic_disposition': 'conversation',
+    }
     assert calls == ['codex_cli', 'codex_cli', 'nifdu_browser']
     assert 'SCHEMA_REPAIR_REQUEST' in prompts[1][0]
     assert 'SCHEMA_REPAIR_REQUEST' not in prompts[2][0]
@@ -267,7 +300,8 @@ def test_nifdu_typed_connection_errors(cascade, error_name):
     calls, _, responses, _, saved = cascade
     responses['codex_cli'] = [ProviderError('connection failed')]
     responses['nifdu_browser'] = [getattr(websocket, error_name)('CDP disconnected')]
-    create_provider(saved).generate('hello', '')
+    with pytest.raises(ProviderError, match='All Mode-6 providers failed'):
+        create_provider(saved).generate('hello', '')
     assert calls == ORDER
 
 
@@ -402,19 +436,14 @@ def test_mode6_local_nonconversation_request_is_not_compacted():
 
 
 
-def test_mode6_nifdu_exit_zero_quota_text_falls_through_to_local(monkeypatch):
-    """Quota text returned with success status must fail over before repair."""
-    import json
-
-    from sophyane.discovery_provider_reasoner import (
-        SessionProviderReasoner,
-    )
+def test_mode6_nifdu_exit_zero_quota_text_terminates_after_cloud_cascade(monkeypatch):
+    """Quota text from the final cloud provider must not reach local GGUF."""
+    from sophyane.discovery_provider_reasoner import SessionProviderReasoner
     from sophyane.providers.base import ProviderError
-    from sophyane.providers.human_conversation import (
-        HumanConversationProvider,
-    )
+    from sophyane.providers.human_conversation import HumanConversationProvider
 
     calls = []
+    created = []
 
     class FakeProvider:
         def __init__(self, provider_id):
@@ -430,19 +459,14 @@ def test_mode6_nifdu_exit_zero_quota_text_falls_through_to_local(monkeypatch):
                 )
 
             if self.provider_id == "nifdu_browser":
-                # Real observed NIFDU behavior: browser/bridge may return
-                # quota state as successful text instead of raising.
                 return (
                     "ChatGPT usage limit reached; "
                     "wait for your usage to reset at 10:32 PM."
                 )
 
-            if self.provider_id == "local_gguf":
-                return '''```json
-{"reply":"local_gguf"}
-```'''
-
-            raise AssertionError(self.provider_id)
+            raise AssertionError(
+                f"Mode 6 constructed forbidden provider: {self.provider_id}"
+            )
 
     cascade = HumanConversationProvider(
         {
@@ -452,44 +476,44 @@ def test_mode6_nifdu_exit_zero_quota_text_falls_through_to_local(monkeypatch):
         }
     )
 
-    monkeypatch.setattr(
-        cascade,
-        "_create",
-        lambda name: FakeProvider(name),
-    )
+    def create(name):
+        created.append(name)
+        assert name != "local_gguf"
+        return FakeProvider(name)
 
-    result = cascade.run_request(
-        lambda candidate: SessionProviderReasoner._generate_response(
-            candidate,
-            "conversation_reply",
-            "PROMPT",
-            "SYSTEM",
-            "",
+    monkeypatch.setattr(cascade, "_create", create)
+
+    with pytest.raises(
+        ProviderError,
+        match="All Mode-6 providers failed",
+    ):
+        cascade.run_request(
+            lambda candidate: SessionProviderReasoner._generate_response(
+                candidate,
+                "conversation_reply",
+                "PROMPT",
+                "SYSTEM",
+                "",
+            )
         )
-    )
 
-    assert json.loads(result) == {
-        "reply": "local_gguf",
-    }
-
-    # NIFDU quota must be classified before semantic repair; therefore
-    # NIFDU receives exactly one generation attempt.
     assert calls == [
         "codex_cli",
         "nifdu_browser",
-        "local_gguf",
     ]
+    assert created == [
+        "codex_cli",
+        "nifdu_browser",
+    ]
+    assert cascade.last_provider == ""
 
-    assert cascade.last_provider == "local_gguf"
 
 
 
 def test_mode6_assigns_canonical_provider_id_before_request(monkeypatch):
     """Cascade identity must not depend on leaf provider implementation."""
-
-    from sophyane.providers.human_conversation import (
-        HumanConversationProvider,
-    )
+    from sophyane.providers.base import ProviderError
+    from sophyane.providers.human_conversation import HumanConversationProvider
 
     created = []
 
@@ -500,112 +524,63 @@ def test_mode6_assigns_canonical_provider_id_before_request(monkeypatch):
 
     def create(name):
         created.append(name)
+        assert name != "local_gguf"
 
-        # Simulate the real LocalGgufProvider behavior that exposed the bug:
-        # the provider object itself does not define provider_id.
+        if name == "codex_cli":
+            raise ProviderError("connection unavailable")
+
         candidate = ProviderWithoutIdentity()
-
-        assert not hasattr(
-            candidate,
-            "provider_id",
-        )
-
+        assert not hasattr(candidate, "provider_id")
         return candidate
 
-    monkeypatch.setattr(
-        cascade,
-        "_create",
-        create,
-    )
-
-    # Skip the first two candidates without touching persistent state by
-    # making their construction availability failures. The local candidate
-    # must arrive at the callback with canonical identity attached.
-    from sophyane.providers.base import ProviderError
-
-    call_count = 0
-
-    def create_with_failover(name):
-        nonlocal call_count
-        call_count += 1
-
-        if name in {
-            "codex_cli",
-            "nifdu_browser",
-        }:
-            raise ProviderError(
-                "connection unavailable"
-            )
-
-        return create(name)
-
-    monkeypatch.setattr(
-        cascade,
-        "_create",
-        create_with_failover,
-    )
+    monkeypatch.setattr(cascade, "_create", create)
 
     seen = []
 
     result = cascade.run_request(
         lambda candidate: (
-            seen.append(
-                getattr(
-                    candidate,
-                    "provider_id",
-                    None,
-                )
-            )
-            or getattr(
-                candidate,
-                "provider_id",
-                None,
-            )
+            seen.append(getattr(candidate, "provider_id", None))
+            or getattr(candidate, "provider_id", None)
         )
     )
 
-    assert result == "local_gguf"
-    assert seen == ["local_gguf"]
-    assert created == ["local_gguf"]
-    assert cascade.last_provider == "local_gguf"
+    assert result == "nifdu_browser"
+    assert seen == ["nifdu_browser"]
+    assert created == ["codex_cli", "nifdu_browser"]
+    assert cascade.last_provider == "nifdu_browser"
+
 
 
 def test_mode6_canonical_identity_overrides_wrong_leaf_identity(monkeypatch):
     """The cascade route is authoritative, not a leaf's self-reported ID."""
-
     from sophyane.providers.base import ProviderError
-    from sophyane.providers.human_conversation import (
-        HumanConversationProvider,
-    )
+    from sophyane.providers.human_conversation import HumanConversationProvider
 
     class Candidate:
         provider_id = "wrong-provider"
 
     cascade = HumanConversationProvider()
+    created = []
 
     def create(name):
-        if name in {
-            "codex_cli",
-            "nifdu_browser",
-        }:
-            raise ProviderError(
-                "connection unavailable"
-            )
+        created.append(name)
+        assert name != "local_gguf"
+
+        if name == "codex_cli":
+            raise ProviderError("connection unavailable")
 
         return Candidate()
 
-    monkeypatch.setattr(
-        cascade,
-        "_create",
-        create,
-    )
+    monkeypatch.setattr(cascade, "_create", create)
 
     result = cascade.run_request(
         lambda candidate: candidate.provider_id
     )
 
-    assert result == "local_gguf"
-    assert cascade.last_provider == "local_gguf"
+    assert result == "nifdu_browser"
+    assert created == ["codex_cli", "nifdu_browser"]
+    assert cascade.last_provider == "nifdu_browser"
+
 
 
 REPOSITORY_CAPABILITY_CASES = [
@@ -649,18 +624,67 @@ def _assert_repository_defers(cascade, tmp_path, request_text):
     assert calls == constructed == ORDER[:2]
 
 
-def test_repository_mixed_mutation_defers(cascade, tmp_path):
-    _assert_repository_defers(cascade, tmp_path,
-                             'Inspect src/example.py and fix the failing function')
+def test_repository_mixed_mutation_uses_ordinary_cascade(cascade, tmp_path):
+    from sophyane.human_conversation_cli import _execute_repository_request
+
+    calls, constructed, responses, _, _ = cascade
+
+    responses["codex_cli"] = [ProviderError("connection failed")]
+    responses["nifdu_browser"] = [ProviderError("connection failed")]
+
+    with pytest.raises(
+        ProviderError,
+        match="All Mode-6 providers failed",
+    ):
+        _execute_repository_request(
+            "Inspect src/example.py and fix the failing function",
+            workspace=tmp_path,
+        )
+
+    assert calls == [
+        "codex_cli",
+        "nifdu_browser",
+    ]
+    assert constructed == [
+        "codex_cli",
+        "nifdu_browser",
+    ]
+    assert "local_gguf" not in constructed
 
 
-def test_repository_ambiguous_defers(cascade, tmp_path):
-    _assert_repository_defers(cascade, tmp_path, 'Work on src/example.py')
+
+def test_repository_ambiguous_uses_read_only_cascade(cascade, tmp_path):
+    from sophyane.human_conversation_cli import _execute_repository_request
+
+    calls, constructed, responses, _, _ = cascade
+
+    responses["codex_cli"] = [ProviderError("connection failed")]
+    responses["nifdu_browser"] = [ProviderError("connection failed")]
+
+    with pytest.raises(
+        ProviderError,
+        match="All Mode-6 providers failed",
+    ):
+        _execute_repository_request(
+            "Work on src/example.py",
+            workspace=tmp_path,
+        )
+
+    assert calls == [
+        "codex_cli",
+        "nifdu_browser",
+    ]
+    assert constructed == [
+        "codex_cli",
+        "nifdu_browser",
+    ]
+    assert "local_gguf" not in constructed
+
 
 
 @pytest.mark.parametrize('request_text,expected_operation', [
     ('Inspect src/example.py', 'read_only'),
-    ('Modify src/example.py', 'source_mutation'),
+    ('Modify src/example.py', 'ordinary_workspace_mutation'),
 ])
 def test_repository_repair_authority_stable(cascade, monkeypatch, tmp_path,
                                             request_text, expected_operation):
@@ -680,7 +704,7 @@ def test_repository_repair_authority_stable(cascade, monkeypatch, tmp_path,
                             'Modify everything' if request_text.startswith('Inspect')
                             else 'Inspect only; do not edit'))
     assert _execute_repository_request(request_text, workspace=tmp_path)
-    assert operations == [Operation(expected_operation)] * 2
+    assert operations == [Operation.READ_ONLY_OPERATION, Operation(expected_operation)]
 
 def test_mutation_quota_cooldown_restores_codex_as_first_provider(tmp_path):
     """Codex must automatically regain mutation priority after quota expiry."""
@@ -807,3 +831,633 @@ def test_mutation_quota_cooldown_restores_codex_as_first_provider(tmp_path):
         "codex_cli",
         "nifdu_browser",
     )
+
+
+# SOPHYANE_ORDINARY_WORKSPACE_MUTATION_RED_V1
+#
+# Ordinary user workspace edits must not be granted the same authority
+# classification as Sophyane/RSI source mutation.
+def test_make_file_is_classified_as_mutation_not_ambiguous():
+    from sophyane.request_classification import (
+        RepositoryCapability,
+        classify_repository_capability,
+    )
+
+    assert (
+        classify_repository_capability("make file hey.py")
+        is RepositoryCapability.MUTATION
+    )
+
+
+def test_authority_defines_ordinary_workspace_mutation_operation():
+    from sophyane.rsi.authority import Operation
+
+    assert "ORDINARY_WORKSPACE_MUTATION" in Operation.__members__
+
+
+def test_local_gguf_is_allowed_for_ordinary_workspace_mutation():
+    from sophyane.rsi.authority import Operation, require
+
+    ordinary = Operation.__members__.get(
+        "ORDINARY_WORKSPACE_MUTATION"
+    )
+
+    assert ordinary is not None
+
+    # Must not raise.
+    require("local_gguf", ordinary)
+
+
+def test_local_gguf_remains_denied_for_sophyane_source_mutation():
+    import pytest
+
+    from sophyane.rsi.authority import (
+        AuthorityViolation,
+        Operation,
+        require,
+    )
+
+    with pytest.raises(AuthorityViolation):
+        require(
+            "local_gguf",
+            Operation.SOPHYANE_SOURCE_MUTATION,
+        )
+
+
+def test_ordinary_workspace_mutation_provider_order_includes_local_last():
+    import sophyane.rsi.authority as authority
+
+    order = getattr(
+        authority,
+        "ORDINARY_MUTATION_PROVIDER_ORDER",
+        None,
+    )
+
+    assert tuple(order or ()) == (
+        "codex_cli",
+        "nifdu_browser",
+        "local_gguf",
+    )
+
+
+def test_sophyane_source_mutation_provider_order_stays_high_authority_only():
+    from sophyane.rsi.authority import CODING_PROVIDER_ORDER
+
+    assert tuple(CODING_PROVIDER_ORDER) == (
+        "codex_cli",
+        "nifdu_browser",
+    )
+
+
+def test_mode6_codex_revoked_auth_falls_through_to_nifdu(monkeypatch):
+    """A real Codex revoked-token/401 availability failure must cascade."""
+
+    from sophyane.providers.base import ProviderError
+    from sophyane.providers.human_conversation import (
+        HumanConversationProvider,
+    )
+    from sophyane.rsi.authority import Operation
+
+    calls = []
+
+    class FakeProvider:
+        def __init__(self, provider_id):
+            self.provider_id = provider_id
+
+        def generate(self, prompt, system_prompt, **kwargs):
+            calls.append(self.provider_id)
+
+            if self.provider_id == "codex_cli":
+                raise ProviderError(
+                    "Codex CLI failed with status 1: "
+                    "Failed to refresh token: Your access token could not "
+                    "be refreshed because your refresh token was revoked. "
+                    "Please log out and sign in again. "
+                    "failed to connect to websocket: "
+                    "HTTP error: 401 Unauthorized"
+                )
+
+            if self.provider_id == "nifdu_browser":
+                return '{"type":"answer","content":"NIFDU_FALLTHROUGH_GREEN"}'
+
+            raise AssertionError(
+                f"unexpected provider: {self.provider_id}"
+            )
+
+    cascade = HumanConversationProvider(
+        {
+            "timeout": 30,
+            "temperature": 0,
+            "max_tokens": 128,
+        }
+    )
+
+    monkeypatch.setattr(
+        cascade,
+        "_create",
+        lambda name: FakeProvider(name),
+    )
+
+    result = cascade.generate(
+        "PROMPT",
+        "SYSTEM",
+        operation=Operation.SOPHYANE_SOURCE_MUTATION,
+    )
+
+    assert result == (
+        '{"type":"answer","content":"NIFDU_FALLTHROUGH_GREEN"}'
+    )
+    assert calls == [
+        "codex_cli",
+        "nifdu_browser",
+    ]
+    assert cascade.last_provider == "nifdu_browser"
+
+
+def test_mode6_codex_revoked_auth_falls_through_to_nifdu():
+    """Unavailable Codex authentication must not block the bounded Mode-6 cascade."""
+    from sophyane.providers.base import ProviderError
+    from sophyane.providers.human_conversation import HumanConversationProvider
+
+    class FakeProvider:
+        def __init__(self, name):
+            self.provider_id = name
+
+    provider = HumanConversationProvider()
+    attempted = []
+
+    def fake_create(name):
+        attempted.append(name)
+        return FakeProvider(name)
+
+    provider._create = fake_create
+
+    def request(candidate):
+        if candidate.provider_id == "codex_cli":
+            raise ProviderError(
+                "Codex CLI failed with status 1: "
+                "Failed to refresh token: Your access token could not be "
+                "refreshed because your refresh token was revoked. "
+                "HTTP error: 401 Unauthorized"
+            )
+        if candidate.provider_id == "nifdu_browser":
+            return "answered-by-nifdu"
+        raise AssertionError("local_gguf must not be reached")
+
+    result = provider.run_request(request)
+
+    assert result == "answered-by-nifdu"
+    assert attempted == ["codex_cli", "nifdu_browser"]
+    assert provider.last_provider == "nifdu_browser"
+    assert provider.last_errors
+    assert provider.last_errors[0].startswith("codex_cli:")
+
+
+def test_mode6_provider_route_sanitizes_availability_failover(
+    monkeypatch,
+):
+    """Route evidence exposes state, never provider error details."""
+
+    from sophyane.providers.base import ProviderError
+    from sophyane.providers.human_conversation import (
+        HumanConversationProvider,
+    )
+
+    provider = HumanConversationProvider()
+    attempted = []
+
+    class Candidate:
+        def __init__(self, provider_id):
+            self.provider_id = provider_id
+
+    monkeypatch.setattr(
+        provider,
+        "_create",
+        lambda name: Candidate(name),
+    )
+
+    def request(candidate):
+        attempted.append(candidate.provider_id)
+
+        if candidate.provider_id == "codex_cli":
+            raise ProviderError(
+                "Failed to refresh token: "
+                "SECRET_REFRESH_TOKEN_DIAGNOSTIC "
+                "refresh token was revoked. HTTP 401"
+            )
+
+        if candidate.provider_id == "nifdu_browser":
+            return "answered-by-nifdu"
+
+        raise AssertionError(
+            "local_gguf must not be reached"
+        )
+
+    result = provider.run_request(request)
+
+    assert result == "answered-by-nifdu"
+    assert attempted == [
+        "codex_cli",
+        "nifdu_browser",
+    ]
+
+    assert tuple(
+        provider.last_provider_route
+    ) == (
+        "codex_cli[unavailable]",
+        "nifdu_browser[success]",
+    )
+
+    rendered = " -> ".join(
+        provider.last_provider_route
+    )
+
+    assert "SECRET_REFRESH_TOKEN_DIAGNOSTIC" not in rendered
+    assert "refresh token" not in rendered.casefold()
+    assert "HTTP 401" not in rendered
+
+
+def test_mode6_mutation_provider_route_records_attempted_failover_only(
+    monkeypatch,
+):
+    """Mutation route records eligible attempted failures and success."""
+
+    from sophyane.providers.base import ProviderError
+    from sophyane.providers.human_conversation import (
+        HumanConversationProvider,
+    )
+    from sophyane.rsi.authority import Operation
+
+    provider = HumanConversationProvider()
+    attempted = []
+
+    class Candidate:
+        def __init__(self, provider_id):
+            self.provider_id = provider_id
+
+    monkeypatch.setattr(
+        provider,
+        "_create",
+        lambda name: Candidate(name),
+    )
+
+    def request(candidate):
+        attempted.append(candidate.provider_id)
+
+        if candidate.provider_id == "codex_cli":
+            raise ProviderError(
+                "quota unavailable "
+                "SECRET_MUTATION_PROVIDER_DIAGNOSTIC"
+            )
+
+        if candidate.provider_id == "nifdu_browser":
+            return "mutation-by-nifdu"
+
+        raise AssertionError(
+            "local_gguf must not be reached"
+        )
+
+    result = provider.run_request(
+        request,
+        operation=Operation.ORDINARY_WORKSPACE_MUTATION,
+    )
+
+    assert result == "mutation-by-nifdu"
+
+    assert attempted == [
+        "codex_cli",
+        "nifdu_browser",
+    ]
+
+    assert tuple(
+        provider.last_provider_route
+    ) == (
+        "codex_cli[unavailable]",
+        "nifdu_browser[success]",
+    )
+
+    rendered = " -> ".join(
+        provider.last_provider_route
+    )
+
+    assert "SECRET_MUTATION_PROVIDER_DIAGNOSTIC" not in rendered
+    assert "quota" not in rendered.casefold()
+
+
+
+def test_mode6_mutation_provider_route_omits_cooldown_skipped_provider(
+    monkeypatch,
+):
+    """A cooldown skip is not an attempted unavailable provider."""
+
+    from sophyane.providers.human_conversation import (
+        HumanConversationProvider,
+    )
+    from sophyane.rsi.authority import Operation
+
+    provider = HumanConversationProvider()
+    attempted = []
+
+    class FakeStore:
+        def blocked(self, name):
+            return name == "codex_cli"
+
+        def revalidation_due(self, name):
+            return False
+
+        def probe(self, name):
+            if name == "codex_cli":
+                raise AssertionError(
+                    "cooldown-skipped codex_cli was probed"
+                )
+            assert name == "nifdu_browser"
+
+        def failure(self, name, error):
+            raise AssertionError(
+                f"unexpected provider failure: {name}: {error}"
+            )
+
+        def success(self, name):
+            return None
+
+    class Candidate:
+        def __init__(self, provider_id):
+            self.provider_id = provider_id
+
+    provider._mutation_availability = FakeStore()
+
+    monkeypatch.setattr(
+        provider,
+        "_create",
+        lambda name: Candidate(name),
+    )
+
+    def request(candidate):
+        attempted.append(candidate.provider_id)
+
+        if candidate.provider_id == "nifdu_browser":
+            return "mutation-by-nifdu"
+
+        raise AssertionError(
+            f"unexpected provider attempt: {candidate.provider_id}"
+        )
+
+    result = provider.run_request(
+        request,
+        operation=Operation.ORDINARY_WORKSPACE_MUTATION,
+    )
+
+    assert result == "mutation-by-nifdu"
+
+    assert attempted == [
+        "nifdu_browser",
+    ]
+
+    assert tuple(
+        provider.last_provider_route
+    ) == (
+        "nifdu_browser[success]",
+    )
+
+    rendered = " -> ".join(
+        provider.last_provider_route
+    )
+
+    assert "codex_cli" not in rendered
+    assert "[unavailable]" not in rendered
+
+
+def test_mode6_conversation_direct_refusal_falls_through_to_next_provider(
+    monkeypatch,
+):
+    """
+    A transport-successful direct refusal is not a usable Mode-6
+    conversation answer. The same request must fall through to the
+    next provider.
+
+    This contract is deliberately operation-aware: refusal wording
+    appearing inside a legitimate answer must not itself trigger
+    failover.
+    """
+    from sophyane.discovery_provider_reasoner import (
+        SessionProviderReasoner,
+    )
+    from sophyane.providers.human_conversation import (
+        HumanConversationProvider,
+    )
+
+    responses = {
+        "codex_cli": [
+            "{\"reply\":\"I can\\u0027t assist with that.\",\"semantic_disposition\":\"conversation\"}",
+            "{\"reply\":\"I can\\u0027t assist with that.\",\"semantic_disposition\":\"conversation\"}",
+        ],
+        "nifdu_browser": [
+            '{"reply":"NIFDU_FALLTHROUGH_ANSWER","semantic_disposition":"conversation"}',
+        ],
+    }
+    calls = []
+
+    class Candidate:
+        def __init__(self, provider_id):
+            self.provider_id = provider_id
+
+        def generate(self, *_args, **_kwargs):
+            calls.append(self.provider_id)
+            values = responses.get(
+                self.provider_id,
+                ['{"reply":"LOCAL_FALLBACK"}'],
+            )
+            return values.pop(0)
+
+    cascade = HumanConversationProvider()
+    monkeypatch.setattr(
+        cascade,
+        "_create",
+        lambda name: Candidate(name),
+    )
+
+    reasoner = SessionProviderReasoner()
+    monkeypatch.setattr(
+        reasoner,
+        "_get_provider",
+        lambda: cascade,
+    )
+
+    result = reasoner(
+        "conversation_reply",
+        {
+            "objective": "Give me a normal conversational answer.",
+        },
+    )
+
+    assert result == '{"reply":"NIFDU_FALLTHROUGH_ANSWER","semantic_disposition":"conversation"}'
+    assert calls == [
+        "codex_cli",
+        "nifdu_browser",
+    ]
+    assert cascade.last_provider == "nifdu_browser"
+    assert cascade.last_provider_route == [
+        "codex_cli[rejected]",
+        "nifdu_browser[success]",
+    ]
+
+
+def test_mode6_conversation_refusal_phrase_inside_answer_remains_usable(
+    monkeypatch,
+):
+    """
+    Refusal vocabulary is ordinary language too. A legitimate answer
+    that quotes or discusses such wording must remain successful.
+    """
+    from sophyane.discovery_provider_reasoner import (
+        SessionProviderReasoner,
+    )
+    from sophyane.providers.human_conversation import (
+        HumanConversationProvider,
+    )
+
+    answer = (
+        "The previous assistant said \"I can\\u0027t assist with that\", "
+        "but here is the answer."
+    )
+    calls = []
+
+    class Candidate:
+        def __init__(self, provider_id):
+            self.provider_id = provider_id
+
+        def generate(self, *_args, **_kwargs):
+            calls.append(self.provider_id)
+            return (
+                '{"reply":'
+                + __import__("json").dumps(answer)
+                + ',"semantic_disposition":"conversation"}'
+            )
+
+    cascade = HumanConversationProvider()
+    monkeypatch.setattr(
+        cascade,
+        "_create",
+        lambda name: Candidate(name),
+    )
+
+    reasoner = SessionProviderReasoner()
+    monkeypatch.setattr(
+        reasoner,
+        "_get_provider",
+        lambda: cascade,
+    )
+
+    result = reasoner(
+        "conversation_reply",
+        {
+            "objective": "Explain what the previous assistant said.",
+        },
+    )
+
+    assert __import__("json").loads(result) == {
+        "reply": answer,
+        "semantic_disposition": "conversation",
+    }
+    assert calls == ["codex_cli"]
+    assert cascade.last_provider == "codex_cli"
+    assert cascade.last_provider_route == [
+        "codex_cli[success]",
+    ]
+
+
+def test_mode6_candidate_rejection_does_not_record_availability_failure(
+    monkeypatch,
+):
+    """
+    Semantic candidate rejection may advance the request-local cascade,
+    but must not poison persistent provider availability/cooldown state.
+    """
+    from sophyane.providers.base import ProviderCandidateRejected
+    from sophyane.providers.human_conversation import (
+        HumanConversationProvider,
+    )
+    import sophyane.providers.provider_availability as availability
+
+    calls = []
+    recorded_failures = []
+
+    class Candidate:
+        def __init__(self, provider_id):
+            self.provider_id = provider_id
+
+    cascade = HumanConversationProvider()
+
+    monkeypatch.setattr(
+        cascade,
+        "_create",
+        lambda name: Candidate(name),
+    )
+
+    # Keep this contract request-local. Persistent cooldown state from a
+    # developer machine must not suppress either candidate.
+    monkeypatch.setattr(
+        availability,
+        "provider_block_info",
+        lambda _name: None,
+    )
+
+    monkeypatch.setattr(
+        availability,
+        "record_availability_failure",
+        lambda name, error: recorded_failures.append(
+            (name, type(error).__name__, str(error))
+        ),
+    )
+
+    monkeypatch.setattr(
+        availability,
+        "record_provider_success",
+        lambda _name: None,
+    )
+
+    def request(candidate):
+        calls.append(candidate.provider_id)
+
+        if candidate.provider_id == "codex_cli":
+            raise ProviderCandidateRejected(
+                "MODE6_PROVIDER_DIRECT_CONVERSATION_REFUSAL"
+            )
+
+        if candidate.provider_id == "nifdu_browser":
+            return "NIFDU_AFTER_REJECTION"
+
+        raise AssertionError(
+            "local_gguf must not be reached"
+        )
+
+    result = cascade.run_request(request)
+
+    assert result == "NIFDU_AFTER_REJECTION"
+    assert calls == [
+        "codex_cli",
+        "nifdu_browser",
+    ]
+
+    assert recorded_failures == []
+
+    assert cascade.last_provider == "nifdu_browser"
+    assert cascade.last_provider_route == [
+        "codex_cli[rejected]",
+        "nifdu_browser[success]",
+    ]
+
+
+# SOPHYANE_MODE6_STRICT_EXTERNAL_CREATE_SURFACE_V1
+def test_mode6_provider_factory_rejects_local_gguf_constructor():
+    from sophyane.providers.human_conversation import (
+        HumanConversationProvider,
+    )
+
+    provider = HumanConversationProvider()
+
+    with pytest.raises(
+        PermissionError,
+        match="Mode-6 provider is not authorized",
+    ):
+        provider._create("local_gguf")

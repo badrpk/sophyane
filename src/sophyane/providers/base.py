@@ -6,6 +6,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 
+class ProviderCandidateRejected(RuntimeError):
+    """Candidate completed transport but its response is unusable for this request."""
+
+
 class ProviderError(RuntimeError):
     """Raised for provider request or configuration failures."""
 

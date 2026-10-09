@@ -234,7 +234,8 @@ def test_session_reasoner_forwards_image_only_to_locked_nifdu(
 
             return json.dumps(
                 {
-                    "reply": "seen"
+                    "reply": "seen",
+                    "semantic_disposition": "conversation",
                 }
             )
 

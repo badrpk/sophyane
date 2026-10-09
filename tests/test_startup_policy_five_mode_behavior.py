@@ -88,12 +88,15 @@ def _invoke(monkeypatch, answer: str):
         lambda: True,
     )
 
-    # Mode 4 has a second-stage external-intelligence selector.
-    # Existing startup-policy tests that ask for generic Mode 4 mean
-    # Cloud API, so explicitly answer 4 -> 1 rather than replaying
-    # "4" into both prompts (which would select Antigravity).
+    # Mode 4 uses a transport-family selector followed by a
+    # provider selector.  Generic Mode-4 tests mean the first
+    # configured API provider:
+    #
+    #   4 -> External LLM
+    #   1 -> APIs
+    #   1 -> first configured API provider
     answers = iter(
-        ("4", "1")
+        ("4", "1", "1")
         if answer == "4"
         else (
             ("3", "1")

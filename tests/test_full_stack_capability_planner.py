@@ -97,3 +97,50 @@ def test_explicit_language_is_preserved() -> None:
     )
 
     assert plan.language == "Node.js"
+
+
+def test_natural_backend_frontend_persistent_data_request_is_full_stack() -> None:
+    plan = classify(
+        "Build a backend and frontend application with persistent data, "
+        "REST API, automated tests, run the application, verify an API "
+        "endpoint, and open it in the browser."
+    )
+
+    assert plan.project_type == "full_stack_web_application"
+    assert plan.builder == "FULL_STACK_PROVIDER_BOUNDED"
+    assert "responsive_web_frontend" in plan.capabilities
+    assert "rest_api" in plan.capabilities
+    assert "persistent_database" in plan.capabilities
+    assert "automated_tests" in plan.capabilities
+
+
+def test_natural_steel_plant_full_stack_request_is_full_stack() -> None:
+    plan = classify(
+        "Build a steel plant management application with backend, frontend, "
+        "persistent database, API, tests, start it, verify it, and open it "
+        "in the browser."
+    )
+
+    assert plan.project_type == "full_stack_web_application"
+    assert plan.builder == "FULL_STACK_PROVIDER_BOUNDED"
+    assert "responsive_web_frontend" in plan.capabilities
+    assert "rest_api" in plan.capabilities
+    assert "persistent_database" in plan.capabilities
+    assert "automated_tests" in plan.capabilities
+
+
+def test_backend_database_without_browser_ui_is_not_forced_full_stack() -> None:
+    plan = classify(
+        "Build a backend service with an API, persistent database and tests."
+    )
+
+    assert plan.project_type != "full_stack_web_application"
+
+
+def test_frontend_api_without_persistence_is_not_forced_full_stack() -> None:
+    plan = classify(
+        "Build a frontend application that displays information from an API "
+        "and include tests."
+    )
+
+    assert plan.project_type != "full_stack_web_application"

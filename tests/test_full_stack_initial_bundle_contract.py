@@ -239,3 +239,68 @@ def test_normal_non_full_stack_does_not_force_bundle(
         in prompt.lower()
         for prompt in calls
     )
+
+
+def test_initial_full_stack_prompt_preserves_steel_plant_domain() -> None:
+    request = (
+        "Build a steel plant production management system where I can "
+        "manage heats, billets, rebar production and inventory. It needs "
+        "a responsive frontend, REST API, persistent SQLite database, "
+        "automated tests, then run and open it in the browser."
+    )
+
+    prompt = adaptive._full_stack_initial_bundle_prompt(request)
+    lowered = prompt.lower()
+
+    # The user's actual product semantics must remain authoritative.
+    assert "steel plant" in lowered
+    assert "heats" in lowered
+    assert "billets" in lowered
+    assert "rebar" in lowered
+    assert "inventory" in lowered
+
+    # Generic full-stack decomposition must not substitute the historical
+    # project/task-manager demo domain for the user's requested domain.
+    assert "/api/projects" not in lowered
+    assert "/api/tasks" not in lowered
+    assert "task-management" not in lowered
+
+
+def test_next_full_stack_increment_preserves_steel_plant_domain() -> None:
+    request = (
+        "Build a steel plant production management system where I can "
+        "manage heats, billets, rebar production and inventory. It needs "
+        "a responsive frontend, REST API, persistent SQLite database, "
+        "automated tests."
+    )
+
+    prompt = adaptive._full_stack_next_increment_prompt(
+        request,
+        ["backend/app.py"],
+    )
+
+    assert prompt is not None
+    lowered = prompt.lower()
+
+    assert "steel plant" in lowered
+    assert "heats" in lowered
+    assert "billets" in lowered
+    assert "rebar" in lowered
+    assert "inventory" in lowered
+
+    assert "task-management" not in lowered
+    assert "project/task controls" not in lowered
+
+
+def test_generic_full_stack_prompt_does_not_invent_task_manager_domain() -> None:
+    request = (
+        "Build a backend and frontend application with persistent data, "
+        "REST API and automated tests."
+    )
+
+    prompt = adaptive._full_stack_initial_bundle_prompt(request)
+    lowered = prompt.lower()
+
+    assert "/api/projects" not in lowered
+    assert "/api/tasks" not in lowered
+    assert "status and priority" not in lowered

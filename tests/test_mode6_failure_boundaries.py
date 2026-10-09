@@ -44,7 +44,7 @@ def test_mode6_runtime_config_reads_without_initialization(monkeypatch, tmp_path
     monkeypatch.setattr(main, 'load_config', lambda: pytest.fail('generic reader'))
     result = main.load_runtime_config()
     assert result['provider'] == 'codex_cli'
-    assert result['provider_failover_order'] == ['codex_cli', 'nifdu_browser', 'local_gguf']
+    assert result['provider_failover_order'] == ['codex_cli', 'nifdu_browser']
     assert list(tmp_path.iterdir()) == []
 
 

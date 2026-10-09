@@ -39,3 +39,12 @@ Only report what you find.
         _explicit_no_edit_request(request)
         is True
     )
+
+
+def test_global_do_not_modify_anything_remains_no_edit():
+    request = (
+        "Diagnose why index.html was created. "
+        "Do not modify anything."
+    )
+
+    assert _explicit_no_edit_request(request) is True

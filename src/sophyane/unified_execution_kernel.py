@@ -411,6 +411,22 @@ def _direct_local_reasoning_handler(
     # no long monolithic local inference.
     lower_request = request.text.lower()
 
+    # SOPHYANE_DIRECT_LOCAL_CHAT_FALLTHROUGH_V1
+    #
+    # The execution kernel must not turn trivial conversation into a
+    # successful local-model execution result. Ordinary greetings belong to
+    # the normal conversational provider path.
+    trivial_conversation = bool(
+        re.fullmatch(
+            r"\s*(?:hello|hi|hey|good\s+morning|good\s+afternoon|"
+            r"good\s+evening)\s*[!.?]*\s*",
+            lower_request,
+        )
+    )
+
+    if trivial_conversation:
+        return None
+
     bounded_engineering = any(
         marker in lower_request
         for marker in (
@@ -473,6 +489,35 @@ def _direct_local_reasoning_handler(
             evidence={
                 "difficulty": difficulty,
                 "source": "BOUNDED_DETERMINISTIC_EXPLANATION",
+            },
+            started_at=started,
+            finished_at=finished,
+        )
+
+    # SOPHYANE_DIRECT_LOCAL_OWNERSHIP_GATE_V1
+    #
+    # Stochastic local generation is an execution-kernel capability only for
+    # explicitly bounded engineering requests. Other low-difficulty text may
+    # still be satisfied by Sophyane's deterministic bounded reasoning, but
+    # arbitrary conversation must fall through to the conversational provider.
+    if not bounded_engineering:
+        fallback = _bounded_deterministic_reasoning(
+            request.text
+        )
+
+        if fallback is None:
+            return None
+
+        finished = time.time()
+
+        return ExecutionResult(
+            handled=True,
+            ok=True,
+            capability="reasoning.direct_local",
+            output=fallback,
+            evidence={
+                "difficulty": difficulty,
+                "source": "BOUNDED_DETERMINISTIC_REASONING",
             },
             started_at=started,
             finished_at=finished,
@@ -836,6 +881,44 @@ def execute_request(
     if not request.text:
         return None
 
+    # SOPHYANE_FAILURE_DRIVEN_CAPABILITY_REUSE_V1
+    #
+    # Reuse is an explicit, already-authorized capability path.  It is checked
+    # only after the selected intelligence authority has produced this
+    # execution request; it cannot consume a genuine Mode 4/6 semantic request
+    # ahead of its LLM.
+    development_config = request.metadata.get("failure_driven_capability")
+    if isinstance(development_config, dict):
+        controller = development_config.get("controller")
+        capability_class = str(
+            development_config.get("capability_class") or ""
+        ).strip()
+        executor = development_config.get("execute")
+        if controller is not None and capability_class and callable(executor):
+            try:
+                reused = controller.execute_or_reuse(
+                    request=request.text,
+                    capability_class=capability_class,
+                    execute=executor,
+                )
+            except Exception:
+                reused = None
+            if reused is not None and reused.reused:
+                now = time.time()
+                return ExecutionResult(
+                    handled=True,
+                    ok=bool(reused.original_outcome_verified),
+                    capability="capability.reused",
+                    output=(
+                        "Verified reusable capability executed."
+                        if reused.original_outcome_verified
+                        else "Reusable capability failed original outcome verification."
+                    ),
+                    evidence={"capability_reuse": reused.evidence},
+                    started_at=now,
+                    finished_at=now,
+                )
+
     # Snapshot before execution so successes and failures can become
     # structured experience without inventing artifact evidence.
     try:
@@ -849,9 +932,369 @@ def execute_request(
     except Exception:
         workspace_before = {}
 
-    result = initialize_registry().execute(
-        request
+    # SOPHYANE_UNIFIED_EXECUTION_SPINE_PHASE1_V1
+    #
+    # Phase 1 establishes one inspectable execution lifecycle without changing
+    # capability selection or handler semantics. Intelligence selection remains
+    # upstream: in explicit external/Mode-6 sessions the genuine user request
+    # must already have reached the authorized LLM before an executable action
+    # enters this kernel.
+    #
+    # Policy admission and graph-backed execution are deliberately recorded as
+    # pending rather than falsely claimed here. Later phases may replace those
+    # pending stages with proven CapabilityChainGuard and graph_runtime evidence.
+    spine_trace = [
+        "authority",
+        "goal_plan",
+        "capability_policy",
+        "execution_kernel",
+    ]
+
+    authority_snapshot = request.metadata.get(
+        "intelligence_authority",
+        {},
     )
+    if not isinstance(authority_snapshot, dict):
+        authority_snapshot = {}
+
+    goal_envelope = {
+        "objective": request.text,
+        "request_id": request.request_id,
+    }
+
+    # SOPHYANE_UNIFIED_EXECUTION_SPINE_PHASE3_READONLY_DAG_V1
+    #
+    # Parallel execution is opt-in and accepts only an already-validated,
+    # explicitly read-only task graph supplied by trusted upstream code.
+    # Ordinary requests and every mutation continue through the canonical
+    # sequential StateGraph/CapabilityRegistry path below.
+    readonly_dag_result = None
+    readonly_dag_nodes = request.metadata.get(
+        "validated_readonly_graph_nodes"
+    )
+
+    if readonly_dag_nodes is not None:
+        from sophyane.readonly_task_graph import (
+            ReadonlyGraphNode,
+            execute_readonly_task_graph,
+        )
+
+        if (
+            not isinstance(readonly_dag_nodes, (list, tuple))
+            or not readonly_dag_nodes
+            or not all(
+                isinstance(node, ReadonlyGraphNode)
+                and node.read_only is True
+                for node in readonly_dag_nodes
+            )
+        ):
+            raise ValueError(
+                "validated_readonly_graph_nodes must contain only "
+                "ReadonlyGraphNode(read_only=True) instances"
+            )
+
+        readonly_dag_result = execute_readonly_task_graph(
+            readonly_dag_nodes,
+            max_workers=int(
+                request.metadata.get(
+                    "validated_readonly_graph_max_workers",
+                    4,
+                )
+            ),
+            deadline_seconds=float(
+                request.metadata.get(
+                    "validated_readonly_graph_deadline_seconds",
+                    30.0,
+                )
+            ),
+        )
+
+    # SOPHYANE_UNIFIED_EXECUTION_SPINE_PHASE2_GRAPH_V1
+    #
+    # The canonical sequential execution boundary is graph_runtime.StateGraph.
+    # CapabilityRegistry.execute remains the concrete capability-selection
+    # operation inside the graph node so its ordering, fallthrough and
+    # fail-closed semantics remain unchanged.
+    #
+    # SOPHYANE_UNIFIED_EXECUTION_SPINE_NONPERSISTENT_STORE_V1
+    #
+    # The unified spine currently supplies no checkpoint ID. Preserve canonical
+    # StateGraph execution without mutating the target workspace merely to
+    # construct the graph. DurableStore remains available to consumers that
+    # explicitly require persistent checkpoint/resume semantics.
+    from sophyane.graph_runtime import (
+        GraphResult,
+        MemoryStore,
+        StateGraph,
+    )
+
+    graph_store = MemoryStore()
+
+    execution_graph = StateGraph(
+        graph_store
+    )
+
+    def _execute_registry_node(
+        state: dict[str, Any],
+    ) -> dict[str, Any]:
+        if readonly_dag_result is not None:
+            now = time.time()
+            return {
+                "registry_result": ExecutionResult(
+                    handled=True,
+                    ok=bool(readonly_dag_result.get("ok")),
+                    capability="execution.readonly_task_graph",
+                    output=readonly_dag_result,
+                    evidence={
+                        "readonly_task_graph": dict(
+                            readonly_dag_result
+                        ),
+                    },
+                    started_at=now,
+                    finished_at=now,
+                ),
+            }
+
+        return {
+            "registry_result": initialize_registry().execute(
+                request
+            ),
+        }
+
+    execution_graph.add_node(
+        "registry_execute",
+        _execute_registry_node,
+    )
+    execution_graph.add_edge(
+        StateGraph.START,
+        "registry_execute",
+    )
+    execution_graph.add_edge(
+        "registry_execute",
+        StateGraph.END,
+    )
+
+    graph_result = execution_graph.invoke(
+        {
+            "request_id": request.request_id,
+        },
+        recursion_limit=4,
+        return_result=True,
+    )
+
+    assert isinstance(
+        graph_result,
+        GraphResult,
+    )
+
+    result = graph_result.state.get(
+        "registry_result"
+    )
+
+    spine_trace.extend(
+        [
+            "evidence",
+            "validation",
+            "result",
+        ]
+    )
+
+    if result is not None:
+        existing_evidence = (
+            dict(result.evidence)
+            if isinstance(result.evidence, dict)
+            else {}
+        )
+        # SOPHYANE_UNIFIED_EXECUTION_SPINE_PHASE4_COMPLETION_VALIDATION_V1
+        #
+        # Tangible project completion is opt-in. Trusted upstream code may
+        # require it explicitly; ordinary reasoning, read-only work and
+        # non-project capabilities preserve their existing result semantics.
+        completion_required = (
+            request.metadata.get("require_project_completion")
+            is True
+        )
+        completion_validation = None
+
+        if completion_required:
+            from sophyane.post_build_menu import verify_completion
+
+            completion_evidence = verify_completion(root)
+            completion_validation = {
+                "required": True,
+                "complete": bool(completion_evidence.complete),
+                "entry": (
+                    str(completion_evidence.entry)
+                    if completion_evidence.entry is not None
+                    else None
+                ),
+                "project_type": str(
+                    completion_evidence.project_type
+                ),
+                "errors": tuple(completion_evidence.errors),
+            }
+
+            if result.ok and not completion_evidence.complete:
+                result = ExecutionResult(
+                    handled=result.handled,
+                    ok=False,
+                    capability=result.capability,
+                    output=result.output,
+                    evidence=existing_evidence,
+                    started_at=result.started_at,
+                    finished_at=result.finished_at,
+                )
+
+        existing_evidence["execution_spine"] = {
+            "version": 1,
+            "trace": tuple(spine_trace),
+            "authority": dict(authority_snapshot),
+            "goal": goal_envelope,
+            "policy": {
+                "status": "pending",
+                "enforced": False,
+            },
+            "execution": {
+                "status": "completed",
+                "capability": str(result.capability or ""),
+                "registry_semantics_preserved": True,
+                "engine": "graph_runtime.StateGraph",
+                "readonly_parallel_graph": (
+                    {
+                        "selected": True,
+                        "engine": "readonly_task_graph",
+                        "ok": bool(
+                            readonly_dag_result.get("ok")
+                        ),
+                        "completed": int(
+                            readonly_dag_result.get(
+                                "completed",
+                                0,
+                            )
+                        ),
+                        "total": int(
+                            readonly_dag_result.get(
+                                "total",
+                                0,
+                            )
+                        ),
+                    }
+                    if readonly_dag_result is not None
+                    else {
+                        "selected": False,
+                    }
+                ),
+                "graph_trace": tuple(
+                    graph_result.trace
+                ),
+                "graph_completed": bool(
+                    graph_result.completed
+                ),
+                "graph_next_node": str(
+                    graph_result.next_node
+                ),
+                "graph_events": tuple(
+                    {
+                        "sequence": event.sequence,
+                        "node": event.node,
+                        "status": event.status,
+                        "attempt": event.attempt,
+                    }
+                    for event in graph_result.events
+                ),
+            },
+            "validation": {
+                "status": (
+                    "passed"
+                    if result.ok
+                    else "failed"
+                ),
+                "structural_only": not completion_required,
+                "completion": (
+                    completion_validation
+                    if completion_validation is not None
+                    else {
+                        "required": False,
+                    }
+                ),
+            },
+        }
+
+        result = ExecutionResult(
+            handled=result.handled,
+            ok=result.ok,
+            capability=result.capability,
+            output=result.output,
+            evidence=existing_evidence,
+            started_at=result.started_at,
+            finished_at=result.finished_at,
+        )
+
+        # SOPHYANE_FAILURE_DRIVEN_CAPABILITY_DEVELOPMENT_V1
+        #
+        # A failed normal capability may enter RSI only when an authoritative
+        # upstream classifier labels it as a reusable capability gap.  The
+        # controller owns the graph, verification and promotion decision;
+        # workers supplied through metadata never promote themselves.
+        if (
+            not result.ok
+            and isinstance(development_config, dict)
+            and development_config.get("controller") is not None
+        ):
+            try:
+                from sophyane.failure_driven_capability import FailureClassification
+
+                controller = development_config["controller"]
+                raw_classification = (
+                    development_config.get("classification")
+                    or existing_evidence.get("failure_classification")
+                )
+                capability_class = str(
+                    development_config.get("capability_class")
+                    or existing_evidence.get("capability_class")
+                    or ""
+                ).strip()
+                classification = FailureClassification(str(raw_classification))
+                executor = development_config.get("execute")
+                development = controller.handle_failure(
+                    request=request.text,
+                    failure={
+                        "capability": result.capability,
+                        "output": result.output,
+                        "evidence": existing_evidence,
+                    },
+                    classification=classification,
+                    capability_class=capability_class,
+                    execute_original=executor if callable(executor) else None,
+                )
+                development_evidence = dict(development.evidence)
+                existing_evidence["failure_driven_capability"] = development_evidence
+                if (
+                    development.accepted
+                    and development.evidence.get("retry_result") is True
+                ):
+                    result = ExecutionResult(
+                        handled=True,
+                        ok=True,
+                        capability="capability.developed_and_retried",
+                        output="Verified capability developed and original request completed.",
+                        evidence=existing_evidence,
+                        started_at=result.started_at,
+                        finished_at=time.time(),
+                    )
+                else:
+                    result = ExecutionResult(
+                        handled=result.handled,
+                        ok=result.ok,
+                        capability=result.capability,
+                        output=result.output,
+                        evidence=existing_evidence,
+                        started_at=result.started_at,
+                        finished_at=result.finished_at,
+                    )
+            except (ValueError, TypeError):
+                # Invalid classifier metadata is not permission to self-repair.
+                pass
 
     # SOPHYANE_ECOSYSTEM_EXPERIENCE_V1
     #

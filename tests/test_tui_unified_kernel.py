@@ -81,3 +81,115 @@ def test_tui_reads_previous_deterministic_file_followup(
     )
 
     assert result == "Contents of " + str(target) + ":\nprint('red')\n"
+
+
+def test_tui_remembers_file_from_real_human_readable_creation_reply(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "kunlun.py"
+    target.write_text("", encoding="utf-8")
+
+    reply = (
+        "Created kunlun.py directly through Sophyane's guarded "
+        "filesystem authority.\n\n"
+        f"Path: {target}"
+    )
+
+    remembered = tui_v2._written_file_from_reply(reply)
+
+    assert remembered == target
+
+    result = tui_v2._read_followup_file(
+        "what is content of this file?",
+        remembered,
+    )
+
+    assert result == f"Contents of {target}:\n"
+
+
+# SOPHYANE_MODE4_GROUNDED_FILE_FOLLOWUP_SHARP_RED_V1
+
+
+def test_written_file_parser_accepts_real_coding_result_files(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "yring.py"
+    target.write_text(
+        "print('yring')\n",
+        encoding="utf-8",
+    )
+
+    reply = json.dumps(
+        {
+            "handled": True,
+            "ok": True,
+            "capability": "development.python_create_validate",
+            "summary": "Created and syntax-validated yring.py.",
+            "workspace": str(tmp_path),
+            "files": ["yring.py"],
+            "evidence": [],
+            "error": "",
+        }
+    )
+
+    remembered = tui_v2._written_file_from_reply(reply)
+
+    assert remembered == target
+
+
+def test_file_content_followup_tolerates_observed_minor_typos() -> None:
+    assert tui_v2._file_content_followup(
+        "what ia content if this file?"
+    )
+
+
+def test_real_coding_result_can_drive_typoed_grounded_followup(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "yring.py"
+    target.write_text(
+        "print('yring')\n",
+        encoding="utf-8",
+    )
+
+    reply = json.dumps(
+        {
+            "handled": True,
+            "ok": True,
+            "capability": "development.python_create_validate",
+            "summary": "Created and syntax-validated yring.py.",
+            "workspace": str(tmp_path),
+            "files": ["yring.py"],
+            "evidence": [],
+            "error": "",
+        }
+    )
+
+    remembered = tui_v2._written_file_from_reply(reply)
+
+    result = tui_v2._read_followup_file(
+        "what ia content if this file?",
+        remembered,
+    )
+
+    assert result == (
+        f"Contents of {target}:\n"
+        "print('yring')\n"
+    )
+
+
+# SOPHYANE_MODE4_ACTIVE_FILE_PRONOUN_SHARP_RED_V1
+
+def test_file_content_followup_accepts_active_file_pronouns() -> None:
+    assert tui_v2._file_content_followup(
+        "what is its content"
+    )
+    assert tui_v2._file_content_followup(
+        "what's its content"
+    )
+    assert tui_v2._file_content_followup(
+        "show its content"
+    )
+    assert tui_v2._file_content_followup(
+        "read it"
+    )

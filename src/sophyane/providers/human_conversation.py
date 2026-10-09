@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import re
 import subprocess
+import time
 from typing import Any, Callable, TypeVar
 from urllib.error import HTTPError, URLError
 
-from sophyane.providers.base import Provider, ProviderError, ProviderMetadata
+from sophyane.providers.base import Provider, ProviderCandidateRejected, ProviderError, ProviderMetadata
 from sophyane.runtime_cancel import cancelled
-from sophyane.rsi.authority import CODING_PROVIDER_ORDER, Operation, require
+from sophyane.rsi.authority import CODING_PROVIDER_ORDER, ORDINARY_MUTATION_PROVIDER_ORDER, Operation, require
 
 # websocket-client is optional for Codex/text-only installations.
 try:
@@ -28,8 +29,38 @@ _REQUEST_ERRORS = (ProviderError, RuntimeError, OSError, subprocess.TimeoutExpir
 
 from sophyane.intelligence_authority import ACTIVE_INTELLIGENCE_PROVIDERS
 
-MODE6_PROVIDER_ORDER = ACTIVE_INTELLIGENCE_PROVIDERS
+# Mode 6 has a deliberately bounded conversational failover contract.
+# Global operational-provider activation does not implicitly extend this
+# cascade. AGY remains independently selectable as an external provider.
+MODE6_PROVIDER_ORDER = (
+    "codex_cli",
+    "nifdu_browser",
+)
+# One interactive Mode-6 request must reach a truthful bounded failure or
+# failover before the terminal can be mistaken for a hung session.  This is
+# the provider-invocation boundary used by both the initial conversation
+# turn and the post-objective repository handoff.
+MODE6_PROVIDER_TIMEOUT = 60
 _T = TypeVar('_T')
+
+
+class ProviderResponse(str):
+    """Response text carrying immutable trusted runtime provider provenance."""
+
+    def __setattr__(self, name, value):
+        if hasattr(self, name):
+            raise AttributeError("provider provenance is immutable")
+        object.__setattr__(self, name, value)
+
+    def __new__(cls, text, provider_id):
+        value = super().__new__(cls, str(text))
+        value.provider_id = str(provider_id)
+        value.authorized_operations = frozenset(
+            {"read_only", "ordinary_workspace_mutation"}
+            | ({"source_mutation"} if value.provider_id in {"codex_cli", "nifdu_browser"} else set())
+        )
+        return value
+
 
 
 def mode6_config() -> dict[str, Any]:
@@ -37,7 +68,13 @@ def mode6_config() -> dict[str, Any]:
     from sophyane.config import CONFIG_FILE, load_json
 
     config = load_json(CONFIG_FILE)
+    configured_timeout = config.get('timeout', MODE6_PROVIDER_TIMEOUT)
+    try:
+        configured_timeout = int(configured_timeout)
+    except (TypeError, ValueError):
+        configured_timeout = MODE6_PROVIDER_TIMEOUT
     return {**config, 'provider': 'codex_cli', 'model': 'codex-default',
+            'timeout': min(MODE6_PROVIDER_TIMEOUT, max(1, configured_timeout)),
             **mode6_status()}
 
 
@@ -97,6 +134,8 @@ def availability_failure(error: BaseException) -> bool:
             "you've hit your usage limit",
             'you have hit your usage limit',
             'usage limit reached',
+            'failed to refresh token',
+            'refresh token was revoked',
         )
     )
 
@@ -113,12 +152,38 @@ class HumanConversationProvider(Provider):
 
     def __init__(self, config: dict[str, Any] | None = None):
         config = config or {}
-        super().__init__('', 'codex-default', int(config.get('timeout', 300)),
+        configured_timeout = config.get('timeout', MODE6_PROVIDER_TIMEOUT)
+        try:
+            configured_timeout = int(configured_timeout)
+        except (TypeError, ValueError):
+            configured_timeout = MODE6_PROVIDER_TIMEOUT
+        super().__init__('', 'codex-default',
+                         min(MODE6_PROVIDER_TIMEOUT, max(1, configured_timeout)),
                          float(config.get('temperature', 0.3)),
                          int(config.get('max_tokens', 4096)))
         self.last_provider = ''
         self.last_errors: list[str] = []
+        # Sanitized per-request provider route. Entries contain only
+        # canonical provider identity and normalized state.
+        self.last_provider_route: list[str] = []
         self._mutation_availability = None
+        self.observer = None
+        try:
+            from sophyane.intelligence_observer import (
+                default_intelligence_observer,
+            )
+            self.observer = default_intelligence_observer()
+        except Exception:
+            pass
+
+    def _observe(self, **row: Any) -> None:
+        observer = self.observer
+        if observer is None:
+            return
+        try:
+            observer.record_attempt(**row)
+        except Exception:
+            pass
 
     @property
     def chain(self) -> tuple[str, ...]:
@@ -127,7 +192,6 @@ class HumanConversationProvider(Provider):
     def _create(self, name: str) -> Provider:
         from sophyane.providers.codex_cli import CodexCliProvider
         from sophyane.providers.nifdu_browser import NifduBrowserProvider
-        from sophyane.providers.local_gguf import LocalGgufProvider, load_gguf_runtime_state
 
         from sophyane.intelligence_authority import assert_provider_allowed
 
@@ -138,20 +202,13 @@ class HumanConversationProvider(Provider):
             return CodexCliProvider(model='codex-default', **options)
         if name == 'nifdu_browser':
             return NifduBrowserProvider(model='chatgpt-browser', **options)
-        if name == 'local_gguf':
-            state = load_gguf_runtime_state()
-            return LocalGgufProvider(
-                model=str(state.get('model') or 'local-gguf'),
-                endpoint=str(state.get('endpoint') or ''),
-                gguf_path=str(state.get('gguf_path') or ''),
-                cli_path=str(state.get('cli') or ''), **options,
-            )
         raise PermissionError(f'Mode-6 provider is not authorized: {name}')
 
     def run_request(self, request: Callable[[Provider], _T], *, image_path: str = '',
                     operation: Operation = Operation.READ_ONLY_OPERATION) -> _T:
         self.last_provider = ''
         self.last_errors = []
+        self.last_provider_route = []
         errors: list[str] = []
         require('codex_cli', operation)
         mutation = operation is not Operation.READ_ONLY_OPERATION
@@ -196,6 +253,7 @@ class HumanConversationProvider(Provider):
 
                     continue
 
+            attempt_started = time.perf_counter()
             try:
                 provider = self._create(name)
 
@@ -217,14 +275,48 @@ class HumanConversationProvider(Provider):
             except _REQUEST_ERRORS as error:
                 if cancelled():
                     raise ProviderError('Mode-6 request cancelled') from error
-                if not availability_failure(error):
+
+                self._observe(
+                    provider=name,
+                    transport=name,
+                    model=str(getattr(locals().get('provider'), 'model', '') or ''),
+                    operation=str(getattr(operation, 'value', operation)),
+                    outcome='failure',
+                    latency_seconds=time.perf_counter() - attempt_started,
+                    failure_category=type(error).__name__,
+                    diagnostic=str(error),
+                )
+
+                # SOPHYANE_MODE6_CANDIDATE_REJECTION_FAILOVER_V1
+                #
+                # A candidate rejection means transport succeeded but this
+                # response is unusable for the current request. It may fall
+                # through without changing persistent provider availability.
+                candidate_rejected = isinstance(
+                    error,
+                    ProviderCandidateRejected,
+                )
+
+                if not candidate_rejected and not availability_failure(error):
                     raise
+
+                route_state = (
+                    'rejected'
+                    if candidate_rejected
+                    else 'unavailable'
+                )
+                self.last_provider_route.append(
+                    f'{name}[{route_state}]'
+                )
                 errors.append(f'{name}: {type(error).__name__}: {error}')
 
-                if name in {
-                    'codex_cli',
-                    'nifdu_browser',
-                }:
+                if (
+                    not candidate_rejected
+                    and name in {
+                        'codex_cli',
+                        'nifdu_browser',
+                    }
+                ):
                     from sophyane.providers.provider_availability import (
                         record_availability_failure,
                     )
@@ -233,7 +325,6 @@ class HumanConversationProvider(Provider):
                         name,
                         error,
                     )
-
                 continue
 
             if name in {
@@ -250,6 +341,17 @@ class HumanConversationProvider(Provider):
 
             self.last_provider = name
             self.last_errors = errors
+            self.last_provider_route.append(
+                f'{name}[success]'
+            )
+            self._observe(
+                provider=name,
+                transport=name,
+                model=str(getattr(provider, 'model', '') or ''),
+                operation=str(getattr(operation, 'value', operation)),
+                outcome='success',
+                latency_seconds=time.perf_counter() - attempt_started,
+            )
             return result
         self.last_errors = errors
         message = 'DEFERRED_NO_CODING_PROVIDER' if mutation else 'All Mode-6 providers failed'
@@ -264,11 +366,29 @@ class HumanConversationProvider(Provider):
         if self._mutation_availability is None:
             self._mutation_availability = AvailabilityStore(state_path())
         store = self._mutation_availability
-        for name in CODING_PROVIDER_ORDER:
+
+        # SOPHYANE_MODE6_OPERATION_SCOPED_MUTATION_ORDER_V1
+        # Mode 6 is cloud-only even when the lower-level RSI authority
+        # permits local_gguf for ordinary workspace mutation in other contexts.
+        # Keep that reusable RSI policy separate from this session policy.
+        order = (
+            tuple(
+                name
+                for name in ORDINARY_MUTATION_PROVIDER_ORDER
+                if name in MODE6_PROVIDER_ORDER
+            )
+            if operation is Operation.ORDINARY_WORKSPACE_MUTATION
+            else CODING_PROVIDER_ORDER
+        )
+
+        for name in order:
             require(name, operation)
             if cancelled():
                 raise ProviderError('Mode-6 request cancelled')
-            if store.blocked(name):
+
+            external_observation = name in CODING_PROVIDER_ORDER
+
+            if external_observation and store.blocked(name):
                 if (
                     name != "nifdu_browser"
                     or not store.revalidation_due(name)
@@ -276,7 +396,8 @@ class HumanConversationProvider(Provider):
                     self.last_errors.append(f'{name}: cooldown')
                     continue
             try:
-                store.probe(name)
+                if external_observation:
+                    store.probe(name)
                 provider = self._create(name)
                 provider.provider_id = name
                 if image_path and name != 'nifdu_browser':
@@ -296,11 +417,19 @@ class HumanConversationProvider(Provider):
             except Exception as error:
                 if cancelled() or not eligible_failure(error):
                     raise
-                store.failure(name, error)
+                self.last_provider_route.append(
+                    f'{name}[unavailable]'
+                )
+                if external_observation:
+                    store.failure(name, error)
                 self.last_errors.append(f'{name}: availability failure')
                 continue
-            store.success(name)
+            if external_observation:
+                store.success(name)
             self.last_provider = name
+            self.last_provider_route.append(
+                f'{name}[success]'
+            )
             return result
         raise ProviderError('DEFERRED_NO_CODING_PROVIDER: ' + '; '.join(self.last_errors))
 
@@ -310,4 +439,5 @@ class HumanConversationProvider(Provider):
             if image_path:
                 return provider.generate(prompt, system_prompt, image_path=image_path)
             return provider.generate(prompt, system_prompt)
-        return self.run_request(request, image_path=image_path or '', operation=operation)
+        result = self.run_request(request, image_path=image_path or '', operation=operation)
+        return ProviderResponse(result, self.last_provider)

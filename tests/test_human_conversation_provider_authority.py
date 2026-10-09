@@ -11,7 +11,7 @@ def test_mode6_authority_ignores_previous_provider(monkeypatch, previous):
     monkeypatch.setenv("SOPHYANE_SESSION_PROVIDER", previous)
     monkeypatch.setenv("SOPHYANE_SESSION_MODEL", "previous-model")
     provider = create_provider({"provider": "gemini", "model": "saved-model"})
-    assert provider.chain == ("codex_cli", "nifdu_browser", "local_gguf")
+    assert provider.chain == ("codex_cli", "nifdu_browser")
     authority = current_intelligence_authority()
     assert authority.session_provider == "codex_cli"
     assert authority.session_model == "codex-default"

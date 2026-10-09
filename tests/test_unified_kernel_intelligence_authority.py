@@ -89,3 +89,45 @@ def test_direct_local_handler_is_blocked_in_codex_mode(
         )
         is None
     )
+
+# SOPHYANE_MODE6_LLM_ONLY_KERNEL_GATE_V1
+def test_direct_local_handler_is_blocked_in_mode6(
+    monkeypatch,
+    tmp_path,
+):
+    import sophyane.race_orchestrator as race
+
+    from sophyane.unified_execution_kernel import (
+        _direct_local_reasoning_handler,
+    )
+
+    monkeypatch.setenv(
+        "SOPHYANE_SESSION_MODE",
+        "human_conversation",
+    )
+    monkeypatch.setenv(
+        "SOPHYANE_SESSION_PROVIDER",
+        "codex_cli",
+    )
+    monkeypatch.setenv(
+        "SOPHYANE_SESSION_MODEL",
+        "codex-default",
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError(
+            "Mode 6 must not construct an independent local reasoning provider"
+        )
+
+    monkeypatch.setattr(
+        race,
+        "_single_provider",
+        forbidden,
+    )
+
+    assert (
+        _direct_local_reasoning_handler(
+            _request(tmp_path)
+        )
+        is None
+    )

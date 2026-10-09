@@ -31,23 +31,42 @@ def test_untrusted_preview_is_only_isolated_data_until_cloud_authorization(tmp_p
 
 
 def test_promotion_second_snapshot_must_match_verified_bytes(tmp_path, monkeypatch):
-    from sophyane.rsi import candidate_workspace as module
+    import sophyane.rsi_host_broker as broker
     from sophyane.rsi.pre_verifier import VerificationEvidence
-    repo = tmp_path / 'repo'; repo.mkdir(); (repo / 'engine.py').write_text('original')
+
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    (repo / 'engine.py').write_text('original')
+
     candidate = CandidateWorkspace(repo, tmp_path / 'scratch').create()
     candidate.preview({'engine.py': 'verified'}, {'engine.py'})
+
+    # Evidence binds promotion to these independently verified candidate bytes.
     evidence = VerificationEvidence(True, candidate.diff().fingerprint)
-    original = module.snapshot
+
+    original = broker._load_live_candidate_snapshot
     calls = 0
-    def racing(path, **kwargs):
+
+    def racing(candidate_source):
         nonlocal calls
-        if path == candidate.path:
-            calls += 1
-            if calls == 2:
-                (path / 'engine.py').write_text('unverified')
-        return original(path, **kwargs)
-    monkeypatch.setattr(module, 'snapshot', racing)
+        calls += 1
+
+        # Mutation occurs immediately before the trusted-host broker acquires
+        # the live candidate snapshot used for promotion.
+        if calls == 1:
+            (candidate.path / 'engine.py').write_text('unverified')
+
+        return original(candidate_source)
+
+    monkeypatch.setattr(
+        broker,
+        '_load_live_candidate_snapshot',
+        racing,
+    )
+
     with pytest.raises(PermissionError):
         candidate.promote('codex_cli', evidence, {'engine.py'})
+
+    assert calls == 1
     assert (repo / 'engine.py').read_text() == 'original'
     candidate.close()

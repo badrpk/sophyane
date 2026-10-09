@@ -368,7 +368,7 @@ def test_conversation_reply_usable_accepts_nonempty_reply():
     assert (
         _operation_response_usable(
             "conversation_reply",
-            '{"reply":"Hello."}',
+            '{"reply":"Hello.","semantic_disposition":"conversation"}',
         )
         is True
     )

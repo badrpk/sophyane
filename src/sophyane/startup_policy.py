@@ -320,6 +320,253 @@ def _human_conversation_session(config: dict[str, Any]) -> dict[str, Any]:
             "company": "Human Conversation", "timeout": 300, **mode6_status()}
 
 
+def mode4_transport_families() -> tuple[str, str, str]:
+    return ("APIs", "NIFDU Browser", "Harnesses / CLI")
+
+
+def mode4_api_choices(config: dict[str, Any], llm: dict[str, Any]) -> list[tuple[str, str, str]]:
+    return [
+        (provider_id, label, _cloud_model(provider_id, config, llm))
+        for provider_id, label in _configured_clouds()[:10]
+    ]
+
+
+def _mode4_nifdu_transport_available() -> bool:
+    bridge = (
+        Path.home()
+        / "nifdu"
+        / "tools"
+        / "nifdu_browser_bridge.py"
+    )
+    return bridge.is_file()
+
+
+def mode4_nifdu_choices() -> list[tuple[str, str, str]]:
+    if not _mode4_nifdu_transport_available():
+        return []
+
+    return [
+        ("browser_chatgpt", "ChatGPT", "chatgpt-browser"),
+        ("browser_claude", "Claude", "claude-browser"),
+        ("browser_gemini", "Gemini", "gemini-browser"),
+        ("browser_grok", "Grok", "grok-browser"),
+        ("browser_perplexity", "Perplexity", "perplexity-browser"),
+        ("browser_poe", "Poe", "poe-browser"),
+        ("browser_copilot", "Copilot", "copilot-browser"),
+        ("browser_mistral", "Mistral", "mistral-browser"),
+        ("browser_qwen", "Qwen", "qwen-browser"),
+        ("browser_kimi", "Kimi", "kimi-browser"),
+    ][:10]
+
+
+def _configure_mode4_nifdu_leaf_callable() -> str:
+    import json
+
+    adapter = (
+        Path(__file__).resolve().parent
+        / "providers"
+        / "nifdu_leaf_adapter.py"
+    )
+
+    if not adapter.is_file():
+        raise RuntimeError(
+            "Mode-4 NIFDU leaf adapter is missing: "
+            f"{adapter}"
+        )
+
+    directory = (
+        Path.home()
+        / ".cache"
+        / "sophyane"
+        / "mode4"
+    )
+    directory.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    selection_file = (
+        directory
+        / "nifdu-leaf-callable.json"
+    )
+
+    payload = {
+        "kind": "function",
+        "module": str(adapter),
+        "name": "ask",
+        "args": [
+            "prompt",
+            "image",
+        ],
+        "async": False,
+        "score": 1000,
+    }
+
+    selection_file.write_text(
+        json.dumps(
+            payload,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    return str(selection_file)
+
+
+def _mode4_codex_available() -> bool:
+    import shutil
+    return shutil.which("codex") is not None
+
+
+def _mode4_agy_available() -> bool:
+    from sophyane.providers.codex_cli import agy_available
+    return bool(agy_available())
+
+
+def mode4_harness_choices() -> list[tuple[str, str, str]]:
+    choices: list[tuple[str, str, str]] = []
+    if _mode4_codex_available():
+        choices.append(("codex_cli", "Codex CLI", "codex-default"))
+    if _mode4_agy_available():
+        choices.append(("agy", "Antigravity (AGY)", "agy-default"))
+    return choices[:10]
+
+
+def apply_mode4_selection(family: str, provider: str, model: str | None = None, *, config: dict[str, Any] | None = None, llm: dict[str, Any] | None = None) -> dict[str, str]:
+    cfg = config if isinstance(config, dict) else load_config()
+    llm_cfg = llm if isinstance(llm, dict) else _load_llm()
+    family_key = str(family or "").strip().casefold()
+    provider_key = str(provider or "").strip().casefold()
+    if family_key == "apis":
+        choices = {item[0]: item for item in mode4_api_choices(cfg, llm_cfg)}
+        if provider_key not in choices:
+            raise ValueError("Unknown Mode-4 API provider")
+        selected = choices[provider_key]
+        mode, selected_model = "cloud_llm", model or selected[2]
+    elif family_key in {"nifdu browser", "nifdu", "nifdu_browser"}:
+        choices = {item[0]: item for item in mode4_nifdu_choices()}
+        if provider_key not in choices:
+            raise ValueError("Unavailable Mode-4 NIFDU provider")
+
+        selected = choices[provider_key]
+        leaf_provider = selected[0]
+        selected_model = model or selected[2]
+
+        site = leaf_provider.removeprefix("browser_")
+        callable_file = _configure_mode4_nifdu_leaf_callable()
+
+        os.environ["SOPHYANE_NIFDU_PROVIDER"] = leaf_provider
+        os.environ["SOPHYANE_NIFDU_SITE"] = site
+        os.environ["SOPHYANE_NIFDU_CALLABLE_FILE"] = callable_file
+
+        mode = "nifdu_llm"
+        provider_key = "nifdu_browser"
+    elif family_key in {"harnesses / cli", "harnesses", "cli"}:
+        choices = {item[0]: item for item in mode4_harness_choices()}
+        if provider_key not in choices:
+            raise ValueError("Unavailable Mode-4 harness")
+        mode, selected_model = provider_key, model or choices[provider_key][2]
+    else:
+        raise ValueError("Unknown Mode-4 transport family")
+    os.environ["SOPHYANE_SESSION_MODE"] = mode
+    os.environ["SOPHYANE_SESSION_PROVIDER"] = provider_key
+    os.environ["SOPHYANE_SESSION_MODEL"] = selected_model
+    os.environ["SOPHYANE_SESSION_TIMEOUT"] = "300"
+    return {"mode": mode, "provider": provider_key, "model": selected_model}
+
+
+def _choose_mode4_transport(
+    config: dict[str, Any],
+    llm: dict[str, Any],
+) -> dict[str, Any]:
+    while True:
+        print("External LLM transport:", file=sys.stderr)
+        print("1. APIs", file=sys.stderr)
+        print("2. NIFDU Browser", file=sys.stderr)
+        print("3. Harnesses / CLI", file=sys.stderr)
+
+        family = input("Select transport [1-3]: ").strip()
+
+        if family not in {"1", "2", "3"}:
+            print(
+                "Invalid transport selection. Choose 1, 2, or 3.",
+                file=sys.stderr,
+            )
+            continue
+
+        if family == "1":
+            family_name = "APIs"
+            choices = mode4_api_choices(config, llm)
+        elif family == "2":
+            family_name = "NIFDU Browser"
+            choices = mode4_nifdu_choices()
+        else:
+            family_name = "Harnesses / CLI"
+            choices = mode4_harness_choices()
+
+        choices = choices[:10]
+
+        if not choices:
+            print(
+                f"{family_name} is unavailable.",
+                file=sys.stderr,
+            )
+            continue
+
+        for number, (_, label, model) in enumerate(choices, 1):
+            print(
+                f"{number}. {label} — {model}",
+                file=sys.stderr,
+            )
+
+        while True:
+            raw = input(
+                f"Select provider [1-{len(choices)}]: "
+            ).strip()
+
+            try:
+                selected_number = int(raw)
+            except ValueError:
+                selected_number = 0
+
+            if not 1 <= selected_number <= len(choices):
+                print(
+                    "Invalid provider selection. Choose a listed number.",
+                    file=sys.stderr,
+                )
+                continue
+
+            provider, label, model = choices[selected_number - 1]
+            break
+
+        selection = apply_mode4_selection(
+            family_name,
+            provider,
+            model,
+            config=config,
+            llm=llm,
+        )
+
+        for key in (
+            "SOPHYANE_SLI_GRAPH",
+            "SOPHYANE_SLI_ONLY",
+            "SOPHYANE_SLI_CONTINUOUS",
+            "SOPHYANE_TOPIC_LEARNING",
+            "SOPHYANE_LOCAL_ONLY",
+            "SOPHYANE_DISABLE_CLOUD_FALLBACK",
+        ):
+            os.environ.pop(key, None)
+
+        return {
+            **config,
+            "provider": selection["provider"],
+            "model": selection["model"],
+            "company": label,
+            "timeout": 300,
+        }
+
+
 def choose_startup_provider() -> dict[str, Any]:
     # Startup selection must not initialize llm.json before the user can
     # choose a transient mode. Keep the existing injectable config reader.
@@ -535,8 +782,13 @@ def choose_startup_provider() -> dict[str, Any]:
                 continue
 
             if answer == "4":
-                if clouds or codex_cli_available or antigravity_available:
-                    break
+                if (
+                    clouds
+                    or mode4_nifdu_choices()
+                    or codex_cli_available
+                    or antigravity_available
+                ):
+                    return _choose_mode4_transport(config, llm)
 
                 print(
                     "External LLM unavailable. Configure a cloud "
@@ -591,7 +843,7 @@ def choose_startup_provider() -> dict[str, Any]:
 
         if answer == "6":
             print(
-                "Mode: Human Conversation (codex_cli -> nifdu_browser -> local_gguf)",
+                "Mode: Human Conversation (codex_cli -> nifdu_browser)",
                 file=sys.stderr,
             )
             return _human_conversation_session(config)

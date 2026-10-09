@@ -227,7 +227,7 @@ def test_six_does_not_persist_provider(
 
     assert result["provider"] == "codex_cli"
     assert result["model"] == "codex-default"
-    assert result["provider_failover_order"] == ["codex_cli", "nifdu_browser", "local_gguf"]
+    assert result["provider_failover_order"] == ["codex_cli", "nifdu_browser"]
     assert config["provider"] == "local_gguf"
     assert writes == []
 
@@ -276,7 +276,7 @@ def test_noninteractive_human_mode_preserved(
 
     assert result["provider"] == "codex_cli"
     assert result["model"] == "codex-default"
-    assert result["provider_failover_order"] == ["codex_cli", "nifdu_browser", "local_gguf"]
+    assert result["provider_failover_order"] == ["codex_cli", "nifdu_browser"]
     assert config["provider"] == "local_gguf"
     assert (
         os.environ[

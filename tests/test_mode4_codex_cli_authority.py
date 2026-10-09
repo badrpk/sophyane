@@ -173,28 +173,15 @@ def test_v13_resolves_codex_alias(
     )
 
 
-def test_mode4_menu_contains_ordered_choices():
-    text = Path(
-        "src/sophyane/startup_policy.py"
-    ).read_text(encoding="utf-8")
-
-    api = text.index(
-        "1. Cloud API"
-    )
-    browser = text.index(
-        "2. NIFDU Browser"
-    )
-    codex = text.index(
-        "3. Codex CLI"
-    )
-    agy = text.index(
-        "4. Antigravity (AGY)"
+def test_mode4_menu_contains_exact_transport_families():
+    assert startup_policy.mode4_transport_families() == (
+        "APIs",
+        "NIFDU Browser",
+        "Harnesses / CLI",
     )
 
-    assert api < browser < codex < agy
 
-
-def _choose_mode4(monkeypatch, intelligence):
+def _choose_mode4(monkeypatch, *selections):
     # choose_startup_provider() intentionally writes session policy directly
     # through os.environ. Register every startup-session key with MonkeyPatch
     # first so those production writes cannot escape this test.
@@ -225,13 +212,13 @@ def _choose_mode4(monkeypatch, intelligence):
     monkeypatch.setattr(startup_policy, "save_json", lambda *args, **kwargs: None)
     monkeypatch.setattr(startup_policy.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(codex_cli, "agy_available", lambda: True)
-    answers = iter(["4", intelligence])
+    answers = iter(["4", *selections])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     return startup_policy.choose_startup_provider()
 
 
 def test_mode4_antigravity_selection_routes_exact_config(monkeypatch):
-    result = _choose_mode4(monkeypatch, "4")
+    result = _choose_mode4(monkeypatch, "3", "2")
 
     assert result == {
         "provider": "agy",
@@ -278,8 +265,16 @@ def test_antigravity_provider_uses_discovered_read_only_contract(tmp_path, monke
 
 def test_create_provider_honors_antigravity_session(monkeypatch):
     monkeypatch.setenv("SOPHYANE_SESSION_MODE", "agy")
-    with pytest.raises(PermissionError, match="PROVIDER_DISABLED: agy"):
-        create_provider({})
+    monkeypatch.setenv("SOPHYANE_SESSION_PROVIDER", "agy")
+    monkeypatch.setenv("SOPHYANE_SESSION_MODEL", "agy-default")
+
+    monkeypatch.setattr(codex_cli, "agy_available", lambda: True)
+
+    provider = create_provider({})
+
+    assert isinstance(provider, AntigravityProvider)
+    assert provider.provider_id == "agy"
+    assert provider.model == "agy-default"
 
 
 def test_antigravity_session_bypasses_race_and_reaches_normal_runtime(
@@ -347,13 +342,18 @@ def test_mode1_auto_still_uses_adaptive_race(monkeypatch):
     assert cli._should_use_adaptive_race() is True
 
 
-def test_mode4_invalid_external_selection_still_falls_back_to_cloud(monkeypatch):
-    result = _choose_mode4(monkeypatch, "invalid")
+def test_mode4_invalid_external_selection_reprompts_without_fallback(monkeypatch):
+    result = _choose_mode4(
+        monkeypatch,
+        "invalid",
+        "1",
+        "1",
+    )
 
     assert result["provider"] == "gemini"
     assert result["model"] == "gemini-model"
-    assert result["timeout"] == 180
     assert startup_policy.os.environ["SOPHYANE_SESSION_MODE"] == "cloud_llm"
+    assert startup_policy.os.environ["SOPHYANE_SESSION_PROVIDER"] == "gemini"
 
 
 def test_antigravity_failure_reports_real_status(tmp_path, monkeypatch):
@@ -451,3 +451,520 @@ def test_antigravity_nonzero_exit_preserves_stdout_json_diagnostic(
     assert "agy_status='FAILED'" in message
     assert "response_present=False" in message
     assert "proot warning" in message
+
+
+# SOPHYANE_CODEX_EXHAUSTED_THREAD_RECOVERY_SHARP_RED_V1
+
+def test_codex_exhausted_resumed_thread_retries_once_fresh(
+    tmp_path,
+    monkeypatch,
+):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import sophyane.providers.codex_cli as codex_cli
+
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+
+    old_thread = "11111111-1111-1111-1111-111111111111"
+    new_thread = "22222222-2222-2222-2222-222222222222"
+
+    monkeypatch.setattr(
+        codex_cli,
+        "_load_session",
+        lambda workspace_arg: old_thread,
+    )
+
+    saved = []
+
+    monkeypatch.setattr(
+        codex_cli,
+        "_save_session",
+        lambda workspace_arg, thread_id: saved.append(
+            (Path(workspace_arg), thread_id)
+        ),
+    )
+
+    calls = []
+
+    def fake_run(
+        command,
+        *,
+        input,
+        text,
+        stdout,
+        stderr,
+        cwd,
+        timeout,
+        check,
+    ):
+        calls.append(list(command))
+
+        output_path = Path(
+            command[
+                command.index("--output-last-message")
+                + 1
+            ]
+        )
+
+        if len(calls) == 1:
+            assert "resume" in command
+            assert old_thread in command
+
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr=(
+                    "Failed to run pre-sampling compact: "
+                    "Error running remote compact task: "
+                    "Codex ran out of room in the model's "
+                    "context window. Start a new thread or "
+                    "clear earlier history before retrying. "
+                    '"codex_error_info":'
+                    '"context_window_exceeded"'
+                ),
+            )
+
+        assert len(calls) == 2
+        assert "resume" not in command
+        assert old_thread not in command
+        assert "--sandbox" in command
+        assert "read-only" in command
+
+        output_path.write_text(
+            "fresh-thread-success",
+            encoding="utf-8",
+        )
+
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                json.dumps(
+                    {
+                        "type": "thread.started",
+                        "thread_id": new_thread,
+                    }
+                )
+                + "\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        codex_cli.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = codex_cli.CodexCliProvider(
+        workspace=workspace,
+    )
+
+    result = provider.generate(
+        "what is its content",
+        "test-system",
+    )
+
+    assert result == "fresh-thread-success"
+
+    assert len(calls) == 2
+
+    assert saved == [
+        (workspace.resolve(), new_thread),
+    ]
+
+
+def test_codex_unrelated_resume_failure_never_retries_fresh(
+    tmp_path,
+    monkeypatch,
+):
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import pytest
+    import sophyane.providers.codex_cli as codex_cli
+    from sophyane.providers.base import ProviderError
+
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+
+    old_thread = "33333333-3333-3333-3333-333333333333"
+
+    monkeypatch.setattr(
+        codex_cli,
+        "_load_session",
+        lambda workspace_arg: old_thread,
+    )
+
+    saved = []
+
+    monkeypatch.setattr(
+        codex_cli,
+        "_save_session",
+        lambda workspace_arg, thread_id: saved.append(
+            (Path(workspace_arg), thread_id)
+        ),
+    )
+
+    calls = []
+
+    def fake_run(
+        command,
+        *,
+        input,
+        text,
+        stdout,
+        stderr,
+        cwd,
+        timeout,
+        check,
+    ):
+        calls.append(list(command))
+
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="authentication failed",
+        )
+
+    monkeypatch.setattr(
+        codex_cli.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = codex_cli.CodexCliProvider(
+        workspace=workspace,
+    )
+
+    with pytest.raises(
+        ProviderError,
+        match="authentication failed",
+    ):
+        provider.generate(
+            "hello",
+            "test-system",
+        )
+
+    assert len(calls) == 1
+    assert "resume" in calls[0]
+    assert old_thread in calls[0]
+    assert saved == []
+
+
+def test_codex_fresh_thread_failure_is_not_recursively_retried(
+    tmp_path,
+    monkeypatch,
+):
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import pytest
+    import sophyane.providers.codex_cli as codex_cli
+    from sophyane.providers.base import ProviderError
+
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+
+    old_thread = "44444444-4444-4444-4444-444444444444"
+
+    monkeypatch.setattr(
+        codex_cli,
+        "_load_session",
+        lambda workspace_arg: old_thread,
+    )
+
+    saved = []
+
+    monkeypatch.setattr(
+        codex_cli,
+        "_save_session",
+        lambda workspace_arg, thread_id: saved.append(
+            (Path(workspace_arg), thread_id)
+        ),
+    )
+
+    calls = []
+
+    exhausted = (
+        "Failed to run pre-sampling compact: "
+        "Codex ran out of room in the model's context window. "
+        '"codex_error_info":"context_window_exceeded"'
+    )
+
+    def fake_run(
+        command,
+        *,
+        input,
+        text,
+        stdout,
+        stderr,
+        cwd,
+        timeout,
+        check,
+    ):
+        calls.append(list(command))
+
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr=exhausted,
+        )
+
+    monkeypatch.setattr(
+        codex_cli.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = codex_cli.CodexCliProvider(
+        workspace=workspace,
+    )
+
+    with pytest.raises(
+        ProviderError,
+        match="context_window_exceeded",
+    ):
+        provider.generate(
+            "hello",
+            "test-system",
+        )
+
+    # One poisoned resume + exactly one fresh recovery attempt.
+    assert len(calls) == 2
+
+    assert "resume" in calls[0]
+    assert old_thread in calls[0]
+
+    assert "resume" not in calls[1]
+
+    assert saved == []
+
+
+def test_codex_short_presampling_compact_resume_retries_once_fresh(
+    tmp_path,
+    monkeypatch,
+):
+    """Codex 0.156.1 may expose only the top-level compact failure."""
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import sophyane.providers.codex_cli as codex_cli
+
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+
+    old_thread = "55555555-5555-5555-5555-555555555555"
+    new_thread = "66666666-6666-6666-6666-666666666666"
+
+    monkeypatch.setattr(
+        codex_cli,
+        "_load_session",
+        lambda workspace_arg: old_thread,
+    )
+
+    saved = []
+    monkeypatch.setattr(
+        codex_cli,
+        "_save_session",
+        lambda workspace_arg, thread_id: saved.append(
+            (Path(workspace_arg), thread_id)
+        ),
+    )
+
+    calls = []
+
+    def fake_run(
+        command,
+        *,
+        input,
+        text,
+        stdout,
+        stderr,
+        cwd,
+        timeout,
+        check,
+    ):
+        calls.append(list(command))
+
+        output_path = Path(
+            command[
+                command.index("--output-last-message") + 1
+            ]
+        )
+
+        if len(calls) == 1:
+            assert "resume" in command
+            assert old_thread in command
+
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr=(
+                    "2026-09-28T09:01:03.281366Z "
+                    "ERROR codex_core::session::turn: "
+                    "Failed to run pre-sampling compact"
+                ),
+            )
+
+        assert len(calls) == 2
+        assert "resume" not in command
+        assert old_thread not in command
+        assert "--sandbox" in command
+        assert "read-only" in command
+
+        output_path.write_text(
+            "fresh-short-compact-success",
+            encoding="utf-8",
+        )
+
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "type": "thread.started",
+                    "thread_id": new_thread,
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        codex_cli.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = codex_cli.CodexCliProvider(
+        workspace=workspace,
+    )
+
+    result = provider.generate(
+        "hello",
+        "test-system",
+    )
+
+    assert result == "fresh-short-compact-success"
+    assert len(calls) == 2
+    assert saved == [(workspace.resolve(), new_thread)]
+
+
+# SOPHYANE_CODEX_INPUT_TOO_LARGE_RESUME_RECOVERY_V1
+
+def test_codex_input_too_large_resumed_thread_retries_once_fresh(
+    tmp_path,
+    monkeypatch,
+):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import sophyane.providers.codex_cli as codex_cli
+
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+
+    old_thread = "77777777-7777-7777-7777-777777777777"
+    new_thread = "88888888-8888-8888-8888-888888888888"
+
+    monkeypatch.setattr(
+        codex_cli,
+        "_load_session",
+        lambda workspace_arg: old_thread,
+    )
+
+    saved = []
+
+    monkeypatch.setattr(
+        codex_cli,
+        "_save_session",
+        lambda workspace_arg, thread_id: saved.append(
+            (Path(workspace_arg), thread_id)
+        ),
+    )
+
+    calls = []
+
+    def fake_run(
+        command,
+        *,
+        input,
+        text,
+        stdout,
+        stderr,
+        cwd,
+        timeout,
+        check,
+    ):
+        calls.append(list(command))
+
+        output_path = Path(
+            command[
+                command.index("--output-last-message") + 1
+            ]
+        )
+
+        if len(calls) == 1:
+            assert "resume" in command
+            assert old_thread in command
+
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr=(
+                    "turn/start failed: "
+                    "Input exceeds the maximum length of "
+                    "1048576 characters. "
+                    "input_error_code: input_too_large "
+                    "actual_chars: 1283486"
+                ),
+            )
+
+        assert len(calls) == 2
+        assert "resume" not in command
+        assert old_thread not in command
+        assert "--sandbox" in command
+        assert "read-only" in command
+
+        output_path.write_text(
+            "fresh-input-size-success",
+            encoding="utf-8",
+        )
+
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                json.dumps(
+                    {
+                        "type": "thread.started",
+                        "thread_id": new_thread,
+                    }
+                )
+                + "\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        codex_cli.subprocess,
+        "run",
+        fake_run,
+    )
+
+    provider = codex_cli.CodexCliProvider(
+        workspace=workspace,
+    )
+
+    result = provider.generate(
+        "current request remains unchanged",
+        "test-system",
+    )
+
+    assert result == "fresh-input-size-success"
+    assert len(calls) == 2
+    assert saved == [
+        (workspace.resolve(), new_thread),
+    ]

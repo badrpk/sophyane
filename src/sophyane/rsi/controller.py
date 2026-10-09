@@ -12,7 +12,7 @@ from .candidate import Candidate
 from .coding_provider import CodingCancelled
 from .models import IterationResult, IterationState, VerificationResult
 from .promotion import promote
-from .rollback import recover_pending, transaction_lock
+from .rollback import recover_pending
 from .verification import confirm_red, gates, passed, run_command
 from .weakness import detect
 
@@ -31,7 +31,10 @@ def protects_verification(editable_paths, commands):
             any(part.casefold() in ('.git', 'tests', 'test', '.github') for part in path.parts) or
             path.name in ('conftest.py', 'pytest.ini', 'pyproject.toml', 'setup.cfg', 'tox.ini') or
             normalized.startswith(('src/sophyane/rsi/', 'src/sophyane/providers/')) or
-            normalized == 'src/sophyane/intelligence_authority.py'):
+            normalized in {
+                'src/sophyane/intelligence_authority.py',
+                'src/sophyane/rsi_host_broker.py',
+            }):
             return False
     return True
 
@@ -77,10 +80,9 @@ class Controller:
         common = Path(git(self.repository, 'rev-parse', '--git-common-dir'))
         if not common.is_absolute():
             common = self.repository / common
-        with transaction_lock(common.resolve(), name='sophyane-rsi-lifecycle.lock'):
-            if not self.cancelled():
-                recover_pending(self.journal, common.resolve())
-            return self._run_once(weakness, parent_iteration=parent_iteration)
+        if not self.cancelled():
+            recover_pending(self.journal, common.resolve())
+        return self._run_once(weakness, parent_iteration=parent_iteration)
 
     def _run_once(self, weakness, *, parent_iteration=None):
         identifier = uuid.uuid4().hex
@@ -174,6 +176,7 @@ class Controller:
             metrics = measure(candidate.path)
             if candidate.fingerprint() != verified_tree:
                 raise PermissionError('Candidate changed during verification or benchmark')
+            candidate.record.verified_fingerprint = verified_tree
             decision = compare(weakness, baseline.metrics, metrics)
             verification = VerificationResult(red, green, self.policy.expected_failure,
                 targeted, subsystem, full, static, True, True, decision.promote, decision.promote)

@@ -44,3 +44,34 @@ class ExecutionRoutingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_mode6_repository_program_creation_is_execution():
+    """
+    A repository mutation request must enter execution even when its wording
+    describes a missing capability. Provider prose must not be allowed to
+    satisfy this request without filesystem/execution evidence.
+    """
+    from sophyane.tui_v2 import _execution_requested
+
+    request = """Work in ~/mode6_rsi_capability_test.
+
+Read README.md and telemetry.sphy.
+
+I need this repository to support SPHY-Telemetry files, but there is
+currently no parser or implementation for that capability.
+
+Create a reusable Python program named sphy_telemetry.py that reads a
+SPHY-Telemetry file and writes CSV records to stdout in this exact form:
+
+name,temp,load,status
+
+Follow the classification rules in README.md.
+
+Then run it against telemetry.sphy and verify that its output exactly
+matches EXPECTED.txt.
+
+Do not merely describe the solution. Complete the repository operation
+and verify the result."""
+
+    assert _execution_requested(request) is True

@@ -20,10 +20,8 @@ def _run(
     values = iter(inputs)
 
     monkeypatch.setattr(
-        cli,
-        "input",
+        "builtins.input",
         lambda prompt="": next(values),
-        raising=False,
     )
 
     monkeypatch.setattr(

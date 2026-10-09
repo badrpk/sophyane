@@ -8,7 +8,33 @@ from sophyane import startup_policy
 def test_option_two_disables_all_cloud_fallbacks(
     tmp_path,
     monkeypatch,
+    request,
 ) -> None:
+    # Startup selection mutates additional SOPHYANE_* environment
+    # variables beyond the five explicitly asserted below.
+    # Restore the complete session-policy namespace after this test.
+    import os
+
+    original_session_env = {
+        key: value
+        for key, value in os.environ.items()
+        if key.startswith("SOPHYANE_")
+    }
+
+    def restore_session_env() -> None:
+        for key in tuple(os.environ):
+            if (
+                key.startswith("SOPHYANE_")
+                and key not in original_session_env
+            ):
+                os.environ.pop(key, None)
+
+        for key, value in original_session_env.items():
+            if os.environ.get(key) != value:
+                os.environ[key] = value
+
+    request.addfinalizer(restore_session_env)
+
     llm_file = tmp_path / "llm.json"
 
     llm_file.write_text(

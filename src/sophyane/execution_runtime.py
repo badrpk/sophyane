@@ -658,6 +658,82 @@ def _open_browser(workspace: Path, url: str, progress: Progress) -> str:
         return "Browser launch blocked: external URLs do not verify the current project workspace."
 
     progress(f"Opening browser: {url}")
+
+    if os.environ.get("SOPHYANE_SESSION_MODE") == "nifdu_llm":
+        from sophyane.browser import launcher
+
+        opened = launcher.open_nifdu_target(url)
+
+        if not opened.get("ok"):
+            reason = opened.get(
+                "reason",
+                "target_creation_failed",
+            )
+            error = opened.get("error", "")
+
+            return (
+                f"Browser file: {candidate}\\n"
+                f"Browser URL: {url}\\n"
+                f"HTTP verification: {verification}\\n"
+                "NIFDU browser target creation failed: "
+                f"{reason}"
+                + (f": {error}" if error else "")
+            )
+
+        target = opened.get("target")
+
+        if not isinstance(target, dict):
+            return (
+                f"Browser file: {candidate}\\n"
+                f"Browser URL: {url}\\n"
+                f"HTTP verification: {verification}\\n"
+                "NIFDU browser target creation failed: "
+                "missing target payload"
+            )
+
+        target_id = str(
+            target.get("id") or ""
+        ).strip()
+
+        if not target_id:
+            return (
+                f"Browser file: {candidate}\\n"
+                f"Browser URL: {url}\\n"
+                f"HTTP verification: {verification}\\n"
+                "NIFDU browser target creation failed: "
+                "missing target id"
+            )
+
+        presented = launcher.present_nifdu_browser(
+            target_id
+        )
+
+        if not presented.get("ok"):
+            reason = presented.get(
+                "reason",
+                "browser_presentation_failed",
+            )
+            error = presented.get("error", "")
+
+            return (
+                f"Browser file: {candidate}\\n"
+                f"Browser URL: {url}\\n"
+                f"HTTP verification: {verification}\\n"
+                f"NIFDU target: {target_id}\\n"
+                "NIFDU browser presentation failed: "
+                f"{reason}"
+                + (f": {error}" if error else "")
+            )
+
+        return (
+            f"Browser file: {candidate}\\n"
+            f"Browser URL: {url}\\n"
+            f"HTTP verification: {verification}\\n"
+            f"NIFDU target: {target_id}\\n"
+            "Browser command: NIFDU CDP target\\n"
+            "Presented in existing NIFDU Chromium session."
+        )
+
     if shutil.which("termux-open-url"):
         completed = subprocess.run(["termux-open-url", url], text=True, capture_output=True)
         return (
@@ -1061,10 +1137,40 @@ def execute_action(action: dict[str, Any], workspace: Path, progress: Progress) 
         # adaptive_execution classifies grep-family commands as read-only
         # inspection, so they cannot prove that a requested mutation or build
         # completed.
-        return _command_exit_code_is_accepted(
+        accepted = _command_exit_code_is_accepted(
             command,
             exit_code,
-        ), result
+        )
+
+        # SOPHYANE_MASKED_COMMAND_FAILURE_V1
+        #
+        # A compound shell command can return zero even when an
+        # earlier command could not be executed. Examples:
+        #
+        #     missing_tool | sort
+        #     missing_tool; printf "later"
+        #
+        # In both cases /bin/sh may report the missing executable
+        # on STDERR while the compound command's final status is 0.
+        # Such evidence must not be promoted as successful execution.
+        #
+        # Do not reject arbitrary STDERR: successful tools commonly
+        # emit warnings there. This guard is intentionally limited to
+        # shell diagnostics that establish command-launch failure.
+        if accepted:
+            lowered_result = result.casefold()
+            missing_executable_markers = (
+                ": not found",
+                "command not found",
+                "no such file or directory",
+            )
+            if any(
+                marker in lowered_result
+                for marker in missing_executable_markers
+            ):
+                accepted = False
+
+        return accepted, result
     if kind in {"run_interactive", "interactive", "play_demo"}:
         command = str(action.get("command") or action.get("content") or action.get("cmd") or "").strip()
         if not command:

@@ -157,13 +157,16 @@ def test_mode6_skips_known_blocked_external_providers(
         ),
     )
 
-    result = provider.run_request(
-        lambda candidate: candidate.provider_id
-    )
+    with pytest.raises(
+        ProviderError,
+        match="All Mode-6 providers failed",
+    ):
+        provider.run_request(
+            lambda candidate: candidate.provider_id
+        )
 
-    assert result == "local_gguf"
-    assert attempted == ["local_gguf"]
-    assert provider.last_provider == "local_gguf"
+    assert attempted == []
+    assert provider.last_provider == ""
 
 
 def test_mutation_nifdu_stale_quota_gets_one_bounded_live_revalidation(

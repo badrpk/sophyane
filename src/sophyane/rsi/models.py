@@ -44,6 +44,7 @@ class CandidateRecord:
     provider_used: str = ''
     source_mutation_authority: bool = False
     candidate_commit: str | None = None
+    verified_fingerprint: dict | None = None
 
 
 @dataclass(frozen=True)

@@ -42,7 +42,15 @@ def _parse_refinement(raw: str, original: str, *, has_project: bool, tui_v2: Any
         refined = raw.strip() or original.strip()
 
     if "continue_project" in reason:
-        route = "continue_project" if has_project else "execution"
+        # SOPHYANE_CONTINUATION_ROUTE_AUTHORITY_V1
+        # Refinement may improve wording, but it must not invent project
+        # continuation merely because an unrelated active workspace exists.
+        # Continuation authority remains grounded in the original request.
+        continuing = tui_v2._project_continuation(
+            original,
+            has_project,
+        )
+        route = "continue_project" if continuing else "execution"
     elif "execution" in reason:
         route = "execution"
     elif "chat" in reason:
@@ -248,6 +256,14 @@ def install_intent_refinement() -> None:
                 continue
             message = command_message
 
+            # SOPHYANE_EFFECTIVE_SEMANTIC_TASK_RESET_V1
+            # A completed prompt begins a new semantic steering
+            # scope. Preserve project continuation state separately.
+            from sophyane.runtime_semantic_instruction import (
+                reset_semantic_request,
+            )
+            reset_semantic_request(self)
+
             # SOPHYANE_EFFECTIVE_CONVERSATIONAL_AUTHORITY_V9
             #
             # install_intent_refinement() replaces ObservableTUI.run,
@@ -429,6 +445,228 @@ def install_intent_refinement() -> None:
                 self.active_workspace = _SophyaneActivePath(
                     self.active_workspace
                 )
+
+            # SOPHYANE_MODE4_LLM_FIRST_AUTHORITY_V1
+            #
+            # In explicit external-LLM sessions the selected LLM is the
+            # first semantic interface for every genuine user request.
+            # Local semantic dispatch, interpretation and execution may
+            # occur only after that first provider turn. Already-known runtime
+            # state may be attached mechanically as provider context.
+            _sophyane_explicit_external_provider = str(
+                getattr(self, "config", {}).get("provider", "")
+                if isinstance(
+                    getattr(self, "config", {}),
+                    dict,
+                )
+                else getattr(
+                    getattr(self, "config", None),
+                    "provider",
+                    "",
+                )
+            ).strip().casefold()
+
+            _sophyane_explicit_external_mode = str(
+                __import__("os").environ.get(
+                    "SOPHYANE_SESSION_MODE",
+                    "",
+                )
+            ).strip().casefold()
+
+            _sophyane_mode4_llm_first = (
+                _sophyane_explicit_external_provider
+                in {
+                    "cloud_llm",
+                    "nifdu_llm",
+                    "codex_cli",
+                    "nifdu_browser",
+                    "agy",
+                }
+                or _sophyane_explicit_external_mode
+                in {
+                    "cloud_llm",
+                    "nifdu_llm",
+                    "codex_cli",
+                    "agy",
+                }
+            )
+
+            if _sophyane_mode4_llm_first:
+                try:
+                    # Mechanical context enrichment is allowed here because
+                    # it does not classify, interpret, search for, or execute
+                    # the request. It only exposes an already-known runtime
+                    # file to the selected LLM, which remains the first
+                    # semantic consumer.
+                    _sophyane_provider_message = message
+                    _sophyane_known_file = getattr(
+                        self,
+                        "_last_deterministic_file",
+                        None,
+                    )
+
+                    if _sophyane_known_file is not None:
+                        try:
+                            _sophyane_known_file = (
+                                _SophyaneActivePath(
+                                    _sophyane_known_file
+                                ).resolve()
+                            )
+
+                            if _sophyane_known_file.is_file():
+                                _sophyane_known_content = (
+                                    _sophyane_known_file.read_text(
+                                        encoding="utf-8",
+                                        errors="replace",
+                                    )
+                                )
+
+                                _sophyane_provider_message = (
+                                    message
+                                    + "\n\n"
+                                    + "[Sophyane grounded runtime context]\n"
+                                    + "Active file: "
+                                    + str(_sophyane_known_file)
+                                    + "\n"
+                                    + "Contents:\n"
+                                    + _sophyane_known_content
+                                )
+                        except OSError:
+                            pass
+
+                    _sophyane_first_response = (
+                        self.call_provider(
+                            _sophyane_provider_message
+                        )
+                    )
+                    _sophyane_first_text = getattr(
+                        _sophyane_first_response,
+                        "text",
+                        str(_sophyane_first_response),
+                    )
+                except Exception as error:  # noqa: BLE001
+                    self.emit(
+                        "system",
+                        f"Error: {error}",
+                    )
+                    continue
+
+                # SOPHYANE_MODE4_POST_LLM_EXECUTION_V1
+                #
+                # The provider has already been the first semantic consumer
+                # of the untouched user request.  From this point onward,
+                # Sophyane may provide deterministic execution and
+                # verification support for an action selected by that LLM.
+                #
+                # Crucially, execution authority comes from the provider
+                # response itself.  Do not re-classify the original request
+                # locally to decide whether it should execute.
+                _sophyane_first_plan = (
+                    tui_v2.extract_plan(
+                        _sophyane_first_text
+                    )
+                )
+
+                _sophyane_first_action = (
+                    tui_v2.selected_action(
+                        _sophyane_first_plan
+                    )
+                    if _sophyane_first_plan
+                    else None
+                )
+
+                # SOPHYANE_MODE4_BROWSER_PROSE_EXECUTION_HANDOFF_V1
+                #
+                # The external LLM has already consumed the genuine user
+                # request above, preserving Mode-4 LLM-first authority.
+                # Browser/software artifact intent may now enter the existing
+                # adaptive browser runtime even when that first provider turn
+                # was prose instead of a structured action.
+                _sophyane_browser_execution = (
+                    tui_v2._browser_request(message)
+                )
+
+                if (
+                    _sophyane_first_action is not None
+                    or _sophyane_browser_execution
+                ):
+                    self.last_mode = "execution"
+
+                    _sophyane_workspace = (
+                        getattr(
+                            self,
+                            "active_workspace",
+                            None,
+                        )
+                    )
+
+                    try:
+                        _sophyane_first_text = (
+                            tui_v2.run_structured_loop(
+                                initial_text=(
+                                    _sophyane_first_text
+                                ),
+                                original_request=message,
+                                ask=lambda prompt: (
+                                    self.call_provider(
+                                        prompt
+                                    )
+                                ),
+                                workspace=(
+                                    _sophyane_workspace
+                                ),
+                                max_steps=(
+                                    8
+                                    if self.small_local
+                                    else 16
+                                ),
+                            )
+                        )
+                    except Exception as error:  # noqa: BLE001
+                        self.emit(
+                            "system",
+                            (
+                                "Execution failed safely: "
+                                f"{type(error).__name__}: "
+                                f"{error}"
+                            ),
+                        )
+                        continue
+                else:
+                    self.last_mode = "chat"
+
+                self.last_raw = _sophyane_first_text
+
+                _sophyane_written_file = (
+                    tui_v2._written_file_from_reply(
+                        _sophyane_first_text
+                    )
+                )
+
+                if _sophyane_written_file is not None:
+                    self._last_deterministic_file = (
+                        _sophyane_written_file
+                    )
+                    self.active_workspace = (
+                        _sophyane_written_file.parent
+                    )
+
+                self.history.extend(
+                    [
+                        ("user", message[:300]),
+                        (
+                            "assistant",
+                            _sophyane_first_text[:500],
+                        ),
+                    ]
+                )
+                self.history = self.history[-4:]
+
+                self.emit(
+                    "Sophyane",
+                    _sophyane_first_text,
+                )
+                continue
 
             # SOPHYANE_NIFDU_EFFECTIVE_LOCAL_GROUNDING_V1
             #
@@ -663,8 +901,13 @@ def install_intent_refinement() -> None:
 
 
             # SOPHYANE_AUTHORITATIVE_OBJECTIVE_PREFLIGHT
-            # Consume the ORIGINAL user request before adaptive dispatch,
-            # intent refinement, SLI acquisition, races or provider calls.
+            # For paths that reach local semantic routing, consume the
+            # ORIGINAL user request before adaptive dispatch, intent
+            # refinement, SLI acquisition, races or mutation/execution.
+            #
+            # Explicit external-LLM sessions are handled above: their
+            # selected provider is intentionally the first semantic consumer
+            # and that branch terminates with continue.
             from sophyane.objective_preflight import (
                 preflight_original_request,
             )
@@ -1519,6 +1762,106 @@ def install_intent_refinement() -> None:
 
                         continue
 
+            # SOPHYANE_EFFECTIVE_GROUNDED_FILE_READ_V1
+            #
+            # A deterministic file created by Sophyane is already grounded
+            # runtime state. Read-only follow-ups targeting that exact file
+            # must be answered locally before Auto/refinement/provider
+            # routing. This is provider-independent and performs no search.
+            _sophyane_grounded_active_file = (
+                getattr(
+                    self,
+                    "_nifdu_active_file",
+                    None,
+                )
+                or getattr(
+                    self,
+                    "_last_deterministic_file",
+                    None,
+                )
+            )
+
+            if _sophyane_grounded_active_file is not None:
+                from pathlib import Path as _SophyaneGroundedPath
+
+                _sophyane_grounded_active_file = (
+                    _SophyaneGroundedPath(
+                        _sophyane_grounded_active_file
+                    ).expanduser().resolve()
+                )
+
+                _sophyane_grounded_message = " ".join(
+                    str(message or "").casefold().split()
+                )
+
+                _sophyane_grounded_name = (
+                    _sophyane_grounded_active_file.name.casefold()
+                )
+
+                _sophyane_grounded_pronoun_read = (
+                    tui_v2._file_content_followup(
+                        message
+                    )
+                )
+
+                _sophyane_grounded_named_read = (
+                    _sophyane_grounded_name
+                    in _sophyane_grounded_message
+                    and any(
+                        phrase
+                        in _sophyane_grounded_message
+                        for phrase in (
+                            "content of",
+                            "contents of",
+                            "read ",
+                            "show ",
+                            "what is in",
+                        )
+                    )
+                )
+
+                if (
+                    (
+                        _sophyane_grounded_pronoun_read
+                        or _sophyane_grounded_named_read
+                    )
+                    and _sophyane_grounded_active_file.is_file()
+                ):
+                    _sophyane_grounded_read = (
+                        tui_v2._read_followup_file(
+                            "what is content of this file?",
+                            _sophyane_grounded_active_file,
+                        )
+                    )
+
+                    if _sophyane_grounded_read is not None:
+                        self.last_mode = "chat"
+                        self.last_raw = (
+                            _sophyane_grounded_read
+                        )
+
+                        self.history.extend(
+                            [
+                                (
+                                    "user",
+                                    message[:300],
+                                ),
+                                (
+                                    "assistant",
+                                    _sophyane_grounded_read[:500],
+                                ),
+                            ]
+                        )
+
+                        self.history = self.history[-4:]
+
+                        self.emit(
+                            "Sophyane",
+                            _sophyane_grounded_read,
+                        )
+
+                        continue
+
             # SOPHYANE_AUTO_EFFECTIVE_TUI_AUTHORITY_V1
             #
             # install_intent_refinement() replaces ObservableTUI.run at
@@ -1546,6 +1889,20 @@ def install_intent_refinement() -> None:
                     )
 
                     self.last_raw = text
+
+                    _sophyane_written_file = (
+                        tui_v2._written_file_from_reply(
+                            text
+                        )
+                    )
+
+                    if _sophyane_written_file is not None:
+                        self._last_deterministic_file = (
+                            _sophyane_written_file
+                        )
+                        self.active_workspace = (
+                            _sophyane_written_file.parent
+                        )
 
                     self.history.extend([
                         ("user", message[:300]),
@@ -1958,8 +2315,8 @@ def install_intent_refinement() -> None:
                         "Return one compact JSON action using relative paths. Modify existing files; do not start over."
                     )
                 else:
-                    self.active_request = refined_message
-                    self.project_requirements = [refined_message]
+                    self.active_request = message
+                    self.project_requirements = [message]
                     request_for_model = (
                         f"Execute: {context_message}\n"
                         "Return one compact JSON action or artifact. Use relative paths and verify real output."
@@ -1983,41 +2340,11 @@ def install_intent_refinement() -> None:
             if executable:
                 self.progress("Approved request received; entering adaptive runtime")
                 try:
-                    workspace = self._workspace_for(continuing)
+                    workspace = self._workspace_for(continuing, request=message)
                     # SOPHYANE_CANONICAL_REQUEST_IN_INTENT_WRAPPER
-                    snapshot = str(
-                        getattr(
-                            self,
-                            "_sophyane_canonical_request_snapshot",
-                            "",
-                        )
-                        or ""
-                    ).strip()
-
-                    active_request = str(
-                        getattr(
-                            self,
-                            "active_request",
-                            "",
-                        )
-                        or ""
-                    ).strip()
-
-                    if (
-                        snapshot
-                        and refined_message.casefold()
-                        in snapshot.casefold()
-                    ):
-                        canonical_request = snapshot
-                    elif (
-                        active_request
-                        and refined_message.casefold()
-                        in active_request.casefold()
-                    ):
-                        canonical_request = active_request
-                    else:
-                        canonical_request = refined_message
-
+                    # Refinement may guide the provider, but the original
+                    # user request remains the execution contract.
+                    canonical_request = message
 
                     text = tui_v2.run_structured_loop(
                         initial_text=text,

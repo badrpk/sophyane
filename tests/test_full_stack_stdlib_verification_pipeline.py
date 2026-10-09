@@ -131,3 +131,62 @@ def test_service_fabric_cleanup_is_finally_guarded() -> None:
 
     assert "finally:" in source
     assert "supervisor.stop_all()" in source
+
+
+def test_successful_full_stack_verification_phases_advance_without_provider_turn() -> None:
+    source = Path(
+        "src/sophyane/adaptive_execution.py"
+    ).read_text(encoding="utf-8")
+
+    syntax_transition = '''        if (
+            verification_phase == "full_stack_syntax"
+            and ok
+        ):
+            deterministic_verification_stage = (
+                "full_stack_test"
+            )
+            progress(
+                "SLI Full-Stack Verification: "
+                "syntax passed"
+            )
+'''
+
+    test_transition = '''        elif (
+            verification_phase == "full_stack_test"
+            and ok
+        ):
+            deterministic_verification_stage = (
+                "full_stack_fabric"
+            )
+            progress(
+                "SLI Full-Stack Verification: "
+                "tests passed; Service Fabric owns runtime verification"
+            )
+'''
+
+    assert syntax_transition in source
+    assert test_transition in source
+
+    # Successful deterministic phases must immediately advance the state
+    # machine. Falling through reaches the generic provider continuation at
+    # the bottom of the iteration and wastes an intelligence turn.
+    syntax_tail = source[
+        source.index(syntax_transition)
+        + len(syntax_transition):
+    ]
+    syntax_before_next_branch = syntax_tail.split(
+        "        elif (",
+        1,
+    )[0]
+
+    test_tail = source[
+        source.index(test_transition)
+        + len(test_transition):
+    ]
+    test_before_next_branch = test_tail.split(
+        '        elif verification_phase == "prepare":',
+        1,
+    )[0]
+
+    assert "continue" in syntax_before_next_branch
+    assert "continue" in test_before_next_branch

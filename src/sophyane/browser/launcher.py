@@ -9,6 +9,7 @@ import socket
 import subprocess
 import threading
 import time
+import urllib.parse
 import urllib.request
 import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -268,6 +269,181 @@ def _detect_termux_x11_display() -> str | None:
     return None
 
 
+# SOPHYANE_NIFDU_CDP_TARGET_CONTROL_V1
+def activate_nifdu_target(
+    target_id: str,
+) -> dict[str, Any]:
+    """Activate one existing target in the tracked NIFDU Chromium."""
+
+    target_id = str(target_id or "").strip()
+    if not target_id:
+        return {
+            "ok": False,
+            "reason": "target_id_required",
+        }
+
+    host, port = _nifdu_cdp_endpoint()
+    url = (
+        f"http://{host}:{port}/json/activate/"
+        + urllib.parse.quote(
+            target_id,
+            safe="",
+        )
+    )
+
+    try:
+        request = urllib.request.Request(
+            url,
+            method="GET",
+        )
+        with urllib.request.urlopen(
+            request,
+            timeout=5,
+        ) as response:
+            response.read()
+
+        return {
+            "ok": True,
+            "target_id": target_id,
+        }
+    except Exception as error:  # noqa: BLE001
+        return {
+            "ok": False,
+            "reason": "target_activation_failed",
+            "error": str(error),
+        }
+
+
+def open_nifdu_target(
+    url: str,
+) -> dict[str, Any]:
+    """Open a URL as a new target without replacing the LLM conversation."""
+
+    url = str(url or "").strip()
+    if not url:
+        return {
+            "ok": False,
+            "reason": "url_required",
+        }
+
+    host, port = _nifdu_cdp_endpoint()
+    endpoint = (
+        f"http://{host}:{port}/json/new?"
+        + urllib.parse.quote(
+            url,
+            safe=":/?=&",
+        )
+    )
+
+    try:
+        request = urllib.request.Request(
+            endpoint,
+            method="PUT",
+        )
+        with urllib.request.urlopen(
+            request,
+            timeout=5,
+        ) as response:
+            payload = json.loads(
+                response.read().decode("utf-8")
+                or "{}"
+            )
+
+        return {
+            "ok": True,
+            "target": payload,
+        }
+    except Exception as error:  # noqa: BLE001
+        return {
+            "ok": False,
+            "reason": "target_creation_failed",
+            "error": str(error),
+        }
+
+
+def present_nifdu_browser(
+    target_id: str,
+) -> dict[str, Any]:
+    """Present an existing NIFDU Chromium target for human interaction.
+
+    Authentication and browser verification remain manual. This activates
+    the existing Chromium target and foregrounds the existing Termux:X11
+    Android viewer. It does not start another X server or Chromium profile.
+    """
+
+    if not (
+        os.environ.get("DISPLAY")
+        or os.environ.get("WAYLAND_DISPLAY")
+    ):
+        return {
+            "ok": False,
+            "reason": "visible_display_unavailable",
+        }
+
+    activated = activate_nifdu_target(
+        target_id
+    )
+
+    if not activated.get("ok"):
+        return activated
+
+    am = shutil.which("am")
+    if not am:
+        return {
+            "ok": False,
+            "reason": "android_activity_launcher_unavailable",
+            "target_id": target_id,
+            "activated": True,
+        }
+
+    try:
+        result = subprocess.run(
+            [
+                am,
+                "start",
+                "--user",
+                "0",
+                "-n",
+                "com.termux.x11/.MainActivity",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception as error:  # noqa: BLE001
+        return {
+            "ok": False,
+            "reason": "termux_x11_presentation_failed",
+            "target_id": target_id,
+            "activated": True,
+            "error": str(error),
+        }
+
+    if result.returncode != 0:
+        detail = (
+            result.stderr
+            or result.stdout
+            or ""
+        ).strip()
+
+        return {
+            "ok": False,
+            "reason": "termux_x11_presentation_failed",
+            "target_id": target_id,
+            "activated": True,
+            "error": detail,
+        }
+
+    return {
+        "ok": True,
+        "target_id": target_id,
+        "activated": True,
+        "presented": True,
+    }
+
+
+
 def launch_nifdu_browser(
     *,
     open_chatgpt: bool = True,
@@ -386,56 +562,37 @@ def launch_nifdu_browser(
             ]
         )
 
-    # SOPHYANE_NIFDU_TERMUX_NETWORK_SERVICE_IN_PROCESS_V2
+    # SOPHYANE_NIFDU_TERMUX_BROWSER_SUBPROCESS_AUTHORITY_V1
     #
     # Play-store Termux injects libtermux-exec through LD_PRELOAD.
-    # A Chromium network-service child launched through /proc/self/exe
-    # cannot load that library inside Android's restricted linker namespace.
+    # Chromium normally launches some utility children through
+    # /proc/self/exe; on Android's restricted linker namespace that
+    # can prevent libtermux-exec.so from loading and repeatedly kill
+    # the network service.
     #
-    # Historical mitigation used --single-process / --no-zygote. Live
-    # Android evidence proved that configuration can make CDP briefly ready
-    # and then terminate Chromium with SIGSEGV.
-    #
-    # Preserve normal Chromium renderer/zygote process isolation. Only keep
-    # the network service inside the browser process. This eliminates the
-    # failing /proc/self/exe network-service child while retaining a stable
-    # multiprocess Chromium/CDP runtime.
-    termux_exec_preload = (
-        "libtermux-exec.so"
-        in os.environ.get(
-            "LD_PRELOAD",
-            "",
-        )
+    # Keep Chromium's normal multiprocess model, but give it the real
+    # Chromium executable as its browser subprocess path. Live Termux
+    # evidence verifies this avoids the /proc/self/exe failure while
+    # preserving a stable Chromium/CDP network service.
+    termux_prefix = os.environ.get(
+        "PREFIX",
+        "",
     )
 
-    termux_prefix = (
-        os.environ.get(
-            "PREFIX",
-            "",
-        ).startswith(
-            "/data/data/com.termux/files/"
-        )
-    )
-
-    termux_network_service_in_process = (
-        termux_exec_preload
-        and termux_prefix
-    )
-
-    if termux_network_service_in_process:
-        feature_flag = (
-            "--enable-features="
-            "NetworkServiceInProcess2"
+    if termux_prefix.startswith(
+        "/data/data/com.termux/files/"
+    ):
+        chromium_subprocess = (
+            Path(termux_prefix)
+            / "lib"
+            / "chromium"
+            / "chrome"
         )
 
-        if feature_flag not in args:
+        if chromium_subprocess.is_file():
             args.append(
-                feature_flag
-            )
-
-        if "--no-sandbox" not in args:
-            args.append(
-                "--no-sandbox"
+                "--browser-subprocess-path="
+                + str(chromium_subprocess)
             )
 
     if (

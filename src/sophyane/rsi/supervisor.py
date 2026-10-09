@@ -48,6 +48,17 @@ def foreground(function):
             if isinstance(result, tuple) and result and result[0] is False:
                 autonomous_bus.submit(ImprovementObservation(ImprovementSource.RUNTIME,
                     str(result[1])[:1000], function.__module__, (function.__qualname__,)))
+            # SOPHYANE_RSI_STRUCTURED_UNRESOLVED_V1
+            if getattr(result, "execution_failed", False) is True:
+                diagnostic_evidence = tuple(
+                    getattr(result, "execution_failure_evidence", ())
+                )
+                autonomous_bus.submit(ImprovementObservation(
+                    ImprovementSource.RUNTIME,
+                    "Bounded execution ended without a verified outcome",
+                    function.__module__,
+                    (function.__qualname__,) + diagnostic_evidence,
+                ))
             return result
     return wrapped
 

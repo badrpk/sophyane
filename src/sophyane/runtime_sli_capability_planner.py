@@ -139,6 +139,7 @@ def classify(request: str) -> CapabilityPlan:
             "browser frontend",
             "responsive frontend",
             "responsive web",
+            "frontend",
         )
     )
 
@@ -150,6 +151,7 @@ def classify(request: str) -> CapabilityPlan:
             "api endpoint",
             "api endpoints",
             "backend api",
+            "api",
         )
     )
 
@@ -157,6 +159,7 @@ def classify(request: str) -> CapabilityPlan:
         marker in text
         for marker in (
             "persistent database",
+            "persistent data",
             "database",
             "sqlite",
             "postgres",
@@ -174,6 +177,7 @@ def classify(request: str) -> CapabilityPlan:
             "pytest",
             "unit tests",
             "integration tests",
+            "tests",
         )
     )
 
@@ -197,9 +201,21 @@ def classify(request: str) -> CapabilityPlan:
         )
     )
 
+    # SOPHYANE_FULL_STACK_STRUCTURAL_CLASSIFIER_V2
+    #
+    # A full-stack web product requires all three architectural layers:
+    # browser-facing UI, API, and persistent storage. Tests and CRUD are
+    # capabilities of that product; they must not substitute for a missing
+    # architectural layer. Explicit SaaS intent retains the existing shortcut.
+    full_stack_architecture = (
+        web_surface
+        and api_surface
+        and persistent_surface
+    )
+
     if (
         "saas" in text
-        or full_stack_score >= 3
+        or full_stack_architecture
     ):
         full_stack_caps: list[str] = []
 
@@ -410,7 +426,7 @@ def install_sli_capability_planner() -> None:
     original = adaptive_execution.run_adaptive_loop
 
     def run(*, initial_text: str, original_request: str, ask: Any, workspace: Path | None = None,
-            max_steps: int = 12, progress: Any = None) -> str:
+            max_steps: int = 12, progress: Any = None, operation: Any = None) -> str:
         plan = classify(original_request)
         progress = progress or (lambda _message: None)
 
@@ -643,6 +659,7 @@ def install_sli_capability_planner() -> None:
                 workspace=workspace_path,
                 max_steps=max(max_steps, 32),
                 progress=progress,
+                operation=operation,
             )
 
         if plan.builder != "CPP_ANDROID_SCAFFOLD":
@@ -653,6 +670,7 @@ def install_sli_capability_planner() -> None:
                 workspace=workspace_path,
                 max_steps=max_steps,
                 progress=progress,
+                operation=operation,
             )
 
         files = _cpp_android_files(plan)

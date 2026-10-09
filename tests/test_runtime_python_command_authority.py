@@ -137,3 +137,50 @@ def test_quasi_run_command_does_not_recover_unknown_action():
         runtime.extract_plan(raw)
         is None
     )
+
+
+def test_execute_action_runs_bare_python_with_sophyane_interpreter(
+    tmp_path,
+):
+    marker = tmp_path / "interpreter.txt"
+
+    command = (
+        "python -c "
+        + shlex.quote(
+            "import pathlib,sys; "
+            f"pathlib.Path({str(marker)!r}).write_text("
+            "sys.executable, encoding='utf-8')"
+        )
+    )
+
+    ok, result = runtime.execute_action(
+        {
+            "type": "run_command",
+            "command": command,
+            "timeout": 30,
+        },
+        tmp_path,
+        lambda _message: None,
+    )
+
+    assert ok is True, result
+    assert marker.read_text(encoding="utf-8") == sys.executable
+    assert f"Command: {shlex.quote(sys.executable)} " in result
+
+
+def test_execute_action_preserves_non_python_command(
+    tmp_path,
+):
+    ok, result = runtime.execute_action(
+        {
+            "type": "run_command",
+            "command": "printf hello",
+            "timeout": 30,
+        },
+        tmp_path,
+        lambda _message: None,
+    )
+
+    assert ok is True, result
+    assert "Command: printf hello" in result
+    assert "hello" in result

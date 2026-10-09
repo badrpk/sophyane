@@ -179,10 +179,23 @@ def install_workspace_attachment() -> None:
 
     original_workspace_for = tui_v2.ObservableTUI._workspace_for
     if not getattr(original_workspace_for, "_sophyane_workspace_attachment", False):
-        def workspace_for(self: Any, continuing: bool) -> Path:
-            if self.active_workspace and self.active_workspace.exists():
+        def workspace_for(
+            self: Any,
+            continuing: bool,
+            *,
+            request: str = "",
+        ) -> Path:
+            if (
+                continuing
+                and self.active_workspace
+                and self.active_workspace.exists()
+            ):
                 self.progress(f"Reusing workspace: {self.active_workspace}")
                 return self.active_workspace
-            return original_workspace_for(self, continuing)
+            return original_workspace_for(
+                self,
+                continuing,
+                request=request,
+            )
         setattr(workspace_for, "_sophyane_workspace_attachment", True)
         tui_v2.ObservableTUI._workspace_for = workspace_for

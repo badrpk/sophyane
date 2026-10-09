@@ -50,8 +50,21 @@ class LocalIntelligenceRouter:
             raw = self.models[name](prompt, selected_role)
             payload = raw if isinstance(raw, dict) else None
             if isinstance(raw, str):
+                candidate = raw.strip()
+                lines = candidate.splitlines()
+                if (
+                    len(lines) >= 3
+                    and lines[0].strip().casefold()
+                    in {'```', '```json'}
+                    and lines[-1].strip() == '```'
+                    and not any(
+                        line.strip().startswith('```')
+                        for line in lines[1:-1]
+                    )
+                ):
+                    candidate = '\n'.join(lines[1:-1])
                 try:
-                    payload = json.loads(raw)
+                    payload = json.loads(candidate)
                 except ValueError:
                     pass
             files = {}

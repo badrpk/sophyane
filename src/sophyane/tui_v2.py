@@ -8,6 +8,7 @@ except Exception:
 from sophyane.local_inspection import inspect_local_request
 
 import json
+import os
 import queue
 import re
 import sys
@@ -22,6 +23,7 @@ from typing import Any
 from sophyane.runtime_semantic_instruction import reset_semantic_request
 
 from sophyane.execution_runtime import extract_plan, run_structured_loop, selected_action
+from sophyane.adaptive_execution import _browser_request
 from sophyane.version import __version__
 
 
@@ -36,6 +38,15 @@ _sophyane_install_input_capture()
 _sophyane_print_startup_ontology_once()
 
 _PENDING_TERMINAL_SUBMISSIONS: list[str] = []
+
+
+def _is_explicit_mode4_external_session() -> bool:
+    return os.environ.get("SOPHYANE_SESSION_MODE") in {
+        "cloud_llm",
+        "nifdu_llm",
+        "codex_cli",
+        "agy",
+    }
 
 def _file_uri(path: Path) -> str:
     return "file://" + quote(str(path), safe="/:@-._~")
@@ -250,25 +261,57 @@ def _file_content_followup(message: str) -> bool:
         phrase in text
         for phrase in (
             "content of this file",
+            "content if this file",
             "contents of this file",
             "read this file",
             "what is in this file",
             "show this file",
+            "its content",
+            "its contents",
+            "read it",
         )
     )
 
 
 def _written_file_from_reply(reply: str) -> Path | None:
+    raw = str(reply)
+
     try:
-        payload = json.loads(str(reply))
+        payload = json.loads(raw)
     except (TypeError, ValueError, json.JSONDecodeError):
-        return None
+        payload = None
+
     evidence = payload.get("evidence") if isinstance(payload, dict) else None
     data = evidence.get("data") if isinstance(evidence, dict) else None
     path = data.get("path") if isinstance(data, dict) else None
+
     if not path and isinstance(payload, dict):
         data = payload.get("data")
         path = data.get("path") if isinstance(data, dict) else None
+
+    if not path and isinstance(payload, dict):
+        files = payload.get("files")
+        workspace = payload.get("workspace")
+
+        if (
+            isinstance(files, list)
+            and len(files) == 1
+            and isinstance(files[0], str)
+            and files[0].strip()
+        ):
+            file_path = Path(files[0]).expanduser()
+
+            if file_path.is_absolute():
+                path = file_path
+            elif isinstance(workspace, str) and workspace.strip():
+                path = Path(workspace).expanduser() / file_path
+
+    if not path:
+        for line in raw.splitlines():
+            if line.startswith("Path: "):
+                path = line.removeprefix("Path: ").strip()
+                break
+
     candidate = Path(str(path)).expanduser() if path else None
     return candidate if candidate and candidate.is_file() else None
 
@@ -1624,10 +1667,51 @@ class ObservableTUI:
         self.progress(f"Workspace: {workspace}")
         return workspace
 
-    def _workspace_for(self, continuing: bool) -> Path:
+    def _workspace_for(self, continuing: bool, *, request: str = "") -> Path:
         if continuing and self.active_workspace:
             self.progress(f"Reusing workspace: {self.active_workspace}")
             return self.active_workspace
+        match = re.search(r"workspace\s+directory\s+`?(/[^\s`]+)", str(request or ""), flags=re.IGNORECASE)
+        if match:
+            workspace = Path(match.group(1)).expanduser().resolve()
+            workspace.mkdir(parents=True, exist_ok=True)
+            self.active_workspace = workspace
+            self.progress(f"Workspace: {workspace}")
+            return workspace
+
+        work_in = re.search(
+            r"\bwork\s+in\s+`?((?:~|/)[^\s`]+)",
+            str(request or ""),
+            flags=re.IGNORECASE,
+        )
+        if work_in:
+            requested = work_in.group(1).rstrip(".,;:")
+            if requested == "~":
+                workspace = Path.home().resolve()
+            elif requested.startswith("~/"):
+                workspace = (
+                    Path.home() / requested[2:]
+                ).resolve()
+            else:
+                workspace = Path(requested).resolve()
+            workspace.mkdir(parents=True, exist_ok=True)
+            self.active_workspace = workspace
+            self.progress(f"Workspace: {workspace}")
+            return workspace
+
+        artifact = re.search(
+            r"(?:script|file)\s+`?(/[^\s`]+)",
+            str(request or ""),
+            flags=re.IGNORECASE,
+        )
+        if artifact:
+            target = Path(artifact.group(1)).expanduser().resolve()
+            workspace = target.parent
+            workspace.mkdir(parents=True, exist_ok=True)
+            self.active_workspace = workspace
+            self.progress(f"Workspace: {workspace}")
+            return workspace
+
         return self._new_workspace()
 
     def _context_prompt(self, message: str, *, continuing: bool) -> str:
@@ -1823,6 +1907,74 @@ class ObservableTUI:
             except (EOFError, KeyboardInterrupt):
                 print()
                 return 0
+            # SOPHYANE_MODE4_EXTERNAL_LLM_FIRST_BOUNDARY_V1
+            # The untouched genuine request is the first semantic input for
+            # explicit external sessions. Control-plane commands have already
+            # returned from _handle_command above.
+            if _is_explicit_mode4_external_session() and message:
+                original_request = message
+                provider_prompt = original_request
+
+                grounded_file = self._last_deterministic_file
+                if grounded_file is not None:
+                    try:
+                        grounded_contents = grounded_file.read_text(encoding="utf-8")
+                    except (OSError, UnicodeError):
+                        grounded_contents = ""
+                    if grounded_contents:
+                        provider_prompt = (
+                            "[Sophyane grounded runtime context]\n"
+                            f"Active file: {grounded_file}\n"
+                            f"Contents:\n{grounded_contents}\n\n"
+                            "Original user request:\n"
+                            f"{original_request}"
+                        )
+
+                self.progress("Contacting selected external provider first")
+                try:
+                    response = self.call_provider(provider_prompt)
+                    text = getattr(response, "text", str(response))
+                    self.last_raw = text
+                except Exception as error:  # noqa: BLE001
+                    self.emit("system", f"Error: {error}")
+                    continue
+
+                plan = extract_plan(text)
+
+                # SOPHYANE_MODE4_BROWSER_PROSE_EXECUTION_HANDOFF_V1
+                #
+                # The selected external LLM remains the first semantic
+                # interface.  A browser/software request must nevertheless
+                # enter the existing adaptive browser runtime even when that
+                # mandatory first LLM response is ordinary prose rather than
+                # a structured action.  run_structured_loop() owns browser
+                # artifact generation, validation, writing, and preview.
+                browser_execution = _browser_request(original_request)
+
+                if plan is not None or browser_execution:
+                    self.last_mode = "execution"
+                    try:
+                        workspace = self.active_workspace or self._new_workspace()
+                        text = run_structured_loop(
+                            initial_text=text,
+                            original_request=original_request,
+                            ask=lambda prompt: self.call_provider(prompt),
+                            workspace=workspace,
+                            max_steps=8 if self.small_local else 16,
+                        )
+                    except Exception as error:  # noqa: BLE001
+                        text = f"Execution loop failed safely: {error}"
+                else:
+                    self.last_mode = "chat"
+
+                self.history.extend([
+                    ("user", original_request[:300]),
+                    ("assistant", str(text)[:500]),
+                ])
+                self.history = self.history[-4:]
+                self.emit("Sophyane", text)
+                continue
+
             # SOPHYANE_EARLY_CONVERSATIONAL_INTENT_AUTHORITY_V8_1
             # Resolve retained graph and systematic capability intent
             # before quick-chat or any direct provider surface.
@@ -2493,7 +2645,7 @@ validate the returned filesystem evidence.
             if executable:
                 self.progress("Execution request received; entering adaptive runtime")
                 try:
-                    workspace = self._workspace_for(continuing)
+                    workspace = self._workspace_for(continuing, request=message)
                     # SOPHYANE_CANONICAL_ACTIVE_REQUEST
                     # SOPHYANE_USE_CANONICAL_REQUEST_SNAPSHOT
                     # The semantic layer preserves live keyboard instructions

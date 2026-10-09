@@ -946,9 +946,13 @@ def test_mode1_uses_startup_readiness_inventory(monkeypatch, tmp_path):
         config={"provider": "codex_cli"},
         progress=lambda _: None,
     )
-    assert {"local", "harness:codex_cli", "browser:nifdu_browser"} <= set(workers)
+    assert {
+        "local",
+        "harness:codex_cli",
+        "harness:agy",
+        "browser:nifdu_browser",
+    } <= set(workers)
     assert "api:gemini" not in workers
-    assert "harness:agy" not in workers
     assert "sli" not in workers
 
 

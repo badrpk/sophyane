@@ -63,6 +63,11 @@ def test_cli_main_does_not_leave_current_generation_cancelled(
         ("sophyane.runtime_quality_escalation", "install_quality_escalation"),
         ("sophyane.runtime_safety", "install_runtime_safety"),
         ("sophyane.runtime_filesystem_capabilities_v20", "install_filesystem_capabilities_v20"),
+        # CLI_CANCELLATION_SLI_PLANNER_ISOLATION_V1
+        # cli_entry.main() installs this wrapper too.  Neutralize it in this
+        # cancellation-hygiene test so it cannot mutate adaptive_execution
+        # for tests that run later in the same pytest process.
+        ("sophyane.runtime_sli_capability_planner", "install_sli_capability_planner"),
         ("sophyane.runtime_software_routing_guard", "install_software_routing_guard"),
         ("sophyane.runtime_stagnation_patch", "install_stagnation_patch"),
         ("sophyane.runtime_cursor_tab_patch", "install_cursor_tab_patch"),

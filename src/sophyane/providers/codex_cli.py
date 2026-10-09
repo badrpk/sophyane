@@ -303,31 +303,73 @@ class CodexCliProvider(Provider):
                     / "last-message.txt"
                 )
 
-                command = self._command(
-                    output_file=output_file,
-                    thread_id=thread_id,
-                )
-
-                try:
-                    completed = subprocess.run(
-                        command,
-                        input=request,
-                        text=True,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        cwd=self.workspace,
-                        timeout=self.timeout,
-                        check=False,
+                def run_codex(
+                    active_thread_id: str,
+                ) -> subprocess.CompletedProcess[str]:
+                    command = self._command(
+                        output_file=output_file,
+                        thread_id=active_thread_id,
                     )
-                except subprocess.TimeoutExpired as error:
-                    raise ProviderError(
-                        "Codex CLI timed out after "
-                        f"{self.timeout} seconds"
-                    ) from error
-                except OSError as error:
-                    raise ProviderError(
-                        f"Codex CLI could not start: {error}"
-                    ) from error
+
+                    try:
+                        return subprocess.run(
+                            command,
+                            input=request,
+                            text=True,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            cwd=self.workspace,
+                            timeout=self.timeout,
+                            check=False,
+                        )
+                    except subprocess.TimeoutExpired as error:
+                        raise ProviderError(
+                            "Codex CLI timed out after "
+                            f"{self.timeout} seconds"
+                        ) from error
+                    except OSError as error:
+                        raise ProviderError(
+                            f"Codex CLI could not start: {error}"
+                        ) from error
+
+                completed = run_codex(thread_id)
+
+                if (
+                    completed.returncode != 0
+                    and thread_id
+                ):
+                    detail = (
+                        completed.stderr.strip()
+                        or completed.stdout.strip()
+                        or ""
+                    )
+                    lowered_detail = detail.lower()
+
+                    # A resumed Codex thread can fail during automatic
+                    # pre-sampling compaction before the CLI exposes the
+                    # underlying context-window diagnostic. Because this
+                    # branch is reachable only for an existing thread,
+                    # retry that failure exactly once on a fresh thread.
+                    exhausted_resume = (
+                        "pre-sampling compact" in lowered_detail
+                        or (
+                            "context_window_exceeded" in lowered_detail
+                            and "compact" in lowered_detail
+                        )
+                        or (
+                            "ran out of room" in lowered_detail
+                            and "context window" in lowered_detail
+                        )
+                        or (
+                            "input_too_large" in lowered_detail
+                            and "input exceeds" in lowered_detail
+                            and "maximum length" in lowered_detail
+                        )
+                    )
+
+                    if exhausted_resume:
+                        thread_id = ""
+                        completed = run_codex(thread_id)
 
                 if completed.returncode != 0:
                     detail = (

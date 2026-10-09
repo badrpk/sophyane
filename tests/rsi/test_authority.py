@@ -3,14 +3,53 @@ import pytest
 
 def test_only_canonical_external_providers_can_mutate():
     from sophyane.rsi.authority import Operation, require
+
     for operation in Operation:
-        for name in ('codex_cli', 'nifdu_browser'):
+        for name in ("codex_cli", "nifdu_browser"):
             require(name, operation)
-        if operation != Operation.READ_ONLY_OPERATION:
-            for name in ('local_gguf', 'LOCAL_GGUF', ' local_gguf ', 'local-gguf',
-                         'gguf', 'gemini', 'Codex_Cli', 'codex', '', 'unknown'):
+
+        if operation is Operation.READ_ONLY_OPERATION:
+            require("local_gguf", operation)
+            continue
+
+        if operation is Operation.ORDINARY_WORKSPACE_MUTATION:
+            # Exact local provider identity is intentionally permitted for
+            # ordinary workspace mutation, but aliases/unknown providers are
+            # never granted authority.
+            require("local_gguf", operation)
+
+            denied = (
+                "LOCAL_GGUF",
+                " local_gguf ",
+                "local-gguf",
+                "gguf",
+                "gemini",
+                "Codex_Cli",
+                "codex",
+                "",
+                "unknown",
+            )
+
+            for name in denied:
                 with pytest.raises(PermissionError):
                     require(name, operation)
+
+            continue
+
+        for name in (
+            "local_gguf",
+            "LOCAL_GGUF",
+            " local_gguf ",
+            "local-gguf",
+            "gguf",
+            "gemini",
+            "Codex_Cli",
+            "codex",
+            "",
+            "unknown",
+        ):
+            with pytest.raises(PermissionError):
+                require(name, operation)
 
 
 def test_local_read_only_remains_permitted():
@@ -55,9 +94,20 @@ def test_repository_execution_declares_source_capability(monkeypatch,tmp_path):
     monkeypatch.setattr(main,'load_runtime_config',lambda: {})
     monkeypatch.setenv('SOPHYANE_SESSION_MODE','human_conversation')
     monkeypatch.setattr(adaptive_execution,'run_adaptive_loop',lambda *a,**k: pytest.fail('Unauthorized action reached executor'))
-    with pytest.raises(ProviderError,match='DEFERRED_NO_CODING_PROVIDER'):
-        cli._execute_repository_request('fix source in this repository',workspace=tmp_path)
-    assert calls == ['codex_cli','nifdu_browser']
+    with pytest.raises(
+        ProviderError,
+        match='All Mode-6 providers failed',
+    ):
+        cli._execute_repository_request(
+            'fix source in this repository',
+            workspace=tmp_path,
+        )
+
+    # The initial intelligence turn is deliberately non-mutating. If both
+    # high-authority cloud providers are unavailable, execution stops here:
+    # local GGUF must not receive the protected source mission and the
+    # adaptive mutation executor must not run.
+    assert calls == ['codex_cli', 'nifdu_browser']
 
 
 def test_mode6_mutation_semantic_quota_and_persistent_probe(monkeypatch):

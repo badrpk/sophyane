@@ -90,6 +90,7 @@ class FallbackProvider(Provider):
         providers: list[tuple[str, Provider]],
         *,
         primary: str = "",
+        observer: Any | None = None,
     ) -> None:
         if not providers:
             raise ValueError("FallbackProvider requires at least one provider")
@@ -105,6 +106,16 @@ class FallbackProvider(Provider):
         self.primary = primary or first_name
         self.last_provider = ""
         self.last_errors: list[str] = []
+        self.observer = observer
+
+    def _observe(self, **row: Any) -> None:
+        observer = self.observer
+        if observer is None:
+            return
+        try:
+            observer.record_attempt(**row)
+        except Exception:
+            LOGGER.debug("Intelligence observer failed", exc_info=True)
 
     @property
     def chain(self) -> tuple[str, ...]:
@@ -457,6 +468,16 @@ class FallbackProvider(Provider):
                 latency_ms = (time.perf_counter() - started) * 1000
                 message = f"{name}: {type(error).__name__}: {error}"
                 errors.append(message)
+                self._observe(
+                    provider=name,
+                    transport=name,
+                    model=str(getattr(provider, "model", "") or ""),
+                    operation="generate",
+                    outcome="failure",
+                    latency_seconds=max(0.0, latency_ms / 1000.0),
+                    failure_category=type(error).__name__,
+                    diagnostic=str(error),
+                )
                 LOGGER.warning(
                     "Provider %s failed in %.0fms: %s",
                     name,
@@ -473,18 +494,34 @@ class FallbackProvider(Provider):
                 continue
 
             finally:
+                attempt_finished = None
                 if (
                     local_started is not None
                     and local_rescue_budget is not None
                 ):
+                    attempt_finished = time.perf_counter()
                     local_rescue_budget.consume(
-                        time.perf_counter()
+                        attempt_finished
                         - local_started
                     )
 
                 if bounded_local_rescue:
                     provider.timeout = original_timeout
 
+            if attempt_finished is None:
+                attempt_finished = time.perf_counter()
+
+            self._observe(
+                provider=name,
+                transport=name,
+                model=str(getattr(provider, "model", "") or ""),
+                operation="generate",
+                outcome="success",
+                latency_seconds=max(
+                    0.0,
+                    attempt_finished - started,
+                ),
+            )
             self.last_provider = name
             self.last_errors = errors
             self.model = provider.model
@@ -802,7 +839,14 @@ def build_fallback_provider(
         in {"1", "true", "yes", "on"}
     )
 
-    if session_mode in {
+    if session_mode == "local_llm":
+        # SOPHYANE_STRICT_LOCAL_PROVIDER_CHAIN_V1
+        #
+        # Explicit Mode-3 local authority is terminal: persisted fallback
+        # configuration must not append cloud, browser, CLI, or harness
+        # providers behind local_gguf.
+        order = [primary] if primary else []
+    elif session_mode in {
         "cloud_llm",
         "nifdu_llm",
     }:
@@ -891,4 +935,20 @@ def build_fallback_provider(
             "No usable LLM providers are configured. Run `sophyane --setup` or `sophyane /local`."
         )
 
-    return FallbackProvider(chain, primary=primary or chain[0][0])
+    observer = None
+    try:
+        from sophyane.intelligence_observer import (
+            default_intelligence_observer,
+        )
+        observer = default_intelligence_observer()
+    except Exception:
+        LOGGER.debug(
+            "Intelligence observer construction failed",
+            exc_info=True,
+        )
+
+    return FallbackProvider(
+        chain,
+        primary=primary or chain[0][0],
+        observer=observer,
+    )

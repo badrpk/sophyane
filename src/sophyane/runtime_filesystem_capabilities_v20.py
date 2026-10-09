@@ -290,9 +290,13 @@ def classify_request(request: str) -> dict[str, Any] | None:
     if (
         (
             "list folders" in text
+            or "list the folders" in text
             or "show folders" in text
+            or "show the folders" in text
             or "list directories" in text
+            or "list the directories" in text
             or "show directories" in text
+            or "show the directories" in text
         )
         and not (
             "count" in text
@@ -302,30 +306,26 @@ def classify_request(request: str) -> dict[str, Any] | None:
     ):
         return {"type": "filesystem.list_folders"}
 
-    if (
-        (
-            "count" in text
-            or "how many" in text
-            or "number of" in text
-        )
-        and (
-            "folder" in text
-            or "folders" in text
-            or "directory" in text
-            or "directories" in text
-        )
-    ):
-        return {"type": "filesystem.folder_count"}
+    # A count capability requires explicit count intent and an
+    # explicit target. Mentions inside code are not instructions.
+    count_target = None
 
-    if (
-        (
-            "count" in text
-            or "how many" in text
-            or "number of" in text
-        )
-        and ("file" in text or "files" in text)
-    ):
-        return {"type": "filesystem.file_count"}
+    count_match = re.search(
+        r"\b(?:count|how many|number of)\s+"
+        r"(?:the\s+)?"
+        r"(files?|folders?|directories|directory)\b",
+        text,
+    )
+
+    if count_match:
+        target = count_match.group(1)
+        if target.startswith("file"):
+            count_target = "filesystem.file_count"
+        else:
+            count_target = "filesystem.folder_count"
+
+    if count_target is not None:
+        return {"type": count_target}
 
     if (
         any(

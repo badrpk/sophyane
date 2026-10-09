@@ -5120,6 +5120,24 @@ def _python_existing_pytest_repair_action(
     )
 
 
+def recognizes_coding_request(request: str) -> bool:
+    """Return whether try_coding_request owns this request.
+
+    This is the pure recognition frontier only. It performs no workspace,
+    filesystem, subprocess, model, or execution operation.
+    """
+    text = " ".join(str(request or "").strip().split())
+
+    if not text or _EXPLANATION_CUES.search(text):
+        return False
+
+    return bool(
+        _CPP_REQUEST.search(text)
+        or _PY_REPAIR_REQUEST.search(text)
+        or _PY_REQUEST.search(text)
+    )
+
+
 def try_coding_request(
     request: str,
     *,
@@ -5128,7 +5146,7 @@ def try_coding_request(
 ) -> CodingResult | None:
     text = " ".join(str(request or "").strip().split())
 
-    if not text or _EXPLANATION_CUES.search(text):
+    if not recognizes_coding_request(text):
         return None
 
     root = _workspace(workspace)

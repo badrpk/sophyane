@@ -23,7 +23,7 @@ def test_human_conversation_runtime_identity_describes_bounded_cascade(
 
     identity = cli_entry._runtime_identity()
 
-    assert "codex_cli -> nifdu_browser -> local_gguf" in identity
+    assert "codex_cli -> nifdu_browser" in identity
     assert "gemini" not in identity.casefold()
 
 
@@ -73,9 +73,9 @@ def test_human_conversation_explicit_codex_provider_is_authoritative(
         }
     )
 
-    assert provider.chain == ("codex_cli", "nifdu_browser", "local_gguf")
+    assert provider.chain == ("codex_cli", "nifdu_browser")
     assert provider.model == "codex-default"
-    assert provider.timeout == 600
+    assert provider.timeout == 60
 
 
 def test_human_conversation_without_explicit_provider_ignores_persisted_provider(
@@ -130,6 +130,6 @@ def test_human_conversation_without_explicit_provider_ignores_persisted_provider
 
     provider = main.create_provider(original)
 
-    assert provider.chain == ("codex_cli", "nifdu_browser", "local_gguf")
+    assert provider.chain == ("codex_cli", "nifdu_browser")
     assert captured == {}
     assert original == {"provider": "gemini", "model": "gemini-3.7-flash", "timeout": 600}

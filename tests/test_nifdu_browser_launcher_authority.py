@@ -806,6 +806,15 @@ def test_termux_exec_environment_uses_single_process_containment(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.delenv("SOPHYANE_BROWSER_NO_SANDBOX", raising=False)
+    subprocess_path = Path(
+        "/data/data/com.termux/files/usr/lib/chromium/chrome"
+    )
+    monkeypatch.setattr(
+        launcher.Path, "is_file",
+        lambda candidate: candidate == subprocess_path,
+    )
+
     monkeypatch.delenv(
         "DISPLAY",
         raising=False,
@@ -888,9 +897,13 @@ def test_termux_exec_environment_uses_single_process_containment(
 
     assert "--headless=new" in argv
     assert "--single-process" not in argv
-    assert "--enable-features=NetworkServiceInProcess2" in argv
+    assert (
+        "--browser-subprocess-path=" + str(subprocess_path)
+        in argv
+    )
+    assert "--enable-features=NetworkServiceInProcess2" not in argv
     assert "--no-zygote" not in argv
-    assert "--no-sandbox" in argv
+    assert "--no-sandbox" not in argv
 
 
 def test_non_termux_environment_does_not_force_single_process(
@@ -986,6 +999,15 @@ def test_termux_live_x0_socket_without_exported_display_stays_headless(
     monkeypatch,
     tmp_path,
 ):
+    monkeypatch.delenv("SOPHYANE_BROWSER_NO_SANDBOX", raising=False)
+    subprocess_path = Path(
+        "/data/data/com.termux/files/usr/lib/chromium/chrome"
+    )
+    monkeypatch.setattr(
+        launcher.Path, "is_file",
+        lambda candidate: candidate == subprocess_path,
+    )
+
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     monkeypatch.setenv(
@@ -1058,10 +1080,11 @@ def test_termux_live_x0_socket_without_exported_display_stays_headless(
     assert "--new-window" not in argv
 
     assert (
-        "--enable-features=NetworkServiceInProcess2"
+        "--browser-subprocess-path=" + str(subprocess_path)
         in argv
     )
-    assert "--no-sandbox" in argv
+    assert "--enable-features=NetworkServiceInProcess2" not in argv
+    assert "--no-sandbox" not in argv
 
     # A stale/live-looking X0 socket alone is not display authority.
     assert "env" not in captured["kwargs"]

@@ -223,7 +223,28 @@ def test_unavailable_cloud_selection_reprompts(
         lambda: [],
     )
 
-    answers = iter(["4", "1"])
+    # Mode 4 now selects a transport family first.  An unavailable
+    # family keeps the user inside the transport selector, where they
+    # can recover through another available family.
+    import shutil
+    import sophyane.providers.codex_cli as codex_provider
+
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: "/fake/codex" if name == "codex" else None,
+    )
+    monkeypatch.setattr(
+        codex_provider,
+        "agy_available",
+        lambda: False,
+    )
+
+    # 4 = External LLM
+    # 1 = APIs (unavailable)
+    # 3 = Harnesses / CLI
+    # 1 = Codex CLI
+    answers = iter(["4", "1", "3", "1"])
 
     monkeypatch.setattr(
         "builtins.input",
@@ -239,11 +260,11 @@ def test_unavailable_cloud_selection_reprompts(
     ):
         result = policy.choose_startup_provider()
 
-    assert result == {}
+    assert result["provider"] == "codex_cli"
 
     assert (
-        "External LLM unavailable"
-        in stdout.getvalue()
+        "APIs is unavailable."
+        in stderr.getvalue()
     )
 
 
@@ -481,18 +502,23 @@ def test_unavailable_cloud_api_reprompts_external_provider_choice(
     # 4 = External LLM
     # 1 = unavailable Cloud API
     # 3 = recover by choosing available Codex CLI
-    answers = iter(["4", "1", "3"])
+    answers = iter(["4", "1", "3", "1"])
     monkeypatch.setattr(
         "builtins.input",
         lambda prompt="": next(answers),
     )
 
     stdout = io.StringIO()
-    with redirect_stdout(stdout):
+    stderr = io.StringIO()
+
+    with (
+        redirect_stdout(stdout),
+        redirect_stderr(stderr),
+    ):
         result = policy.choose_startup_provider()
 
     assert result["provider"] == "codex_cli"
     assert (
-        "Cloud API unavailable"
-        in stdout.getvalue()
+        "APIs is unavailable."
+        in stderr.getvalue()
     )

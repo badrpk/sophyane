@@ -80,6 +80,11 @@ def test_ensure_nifdu_invalidates_discovery_after_build(monkeypatch, tmp_path):
         lambda: SimpleNamespace(available=False, path=None),
     )
     monkeypatch.setattr(
+        workers.Path,
+        "home",
+        classmethod(lambda cls: tmp_path / "home"),
+    )
+    monkeypatch.setattr(
         workers,
         "ensure_source_checkout",
         lambda *args, **kwargs: {
@@ -122,4 +127,52 @@ def test_ensure_nifdu_invalidates_discovery_after_build(monkeypatch, tmp_path):
 
     assert result["available"] is True
     assert Path(result["path"]).is_file()
+    assert invalidations == [True]
+
+def test_ensure_nifdu_invalidates_discovery_after_local_candidate_install(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(
+        workers,
+        "probe_nifdu",
+        lambda: SimpleNamespace(
+            available=False,
+            path=None,
+        ),
+    )
+
+    home = tmp_path / "home"
+    candidate = home / "nifdu" / "build" / "nifdu"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text(
+        "#!/bin/sh\nexit 0\n",
+        encoding="utf-8",
+    )
+    candidate.chmod(0o755)
+
+    monkeypatch.setattr(
+        workers.Path,
+        "home",
+        classmethod(lambda cls: home),
+    )
+    monkeypatch.setattr(
+        workers,
+        "BIN_DIR",
+        tmp_path / "bin",
+    )
+
+    invalidations = []
+    monkeypatch.setattr(
+        workers,
+        "invalidate_discovery",
+        lambda: invalidations.append(True),
+    )
+
+    result = workers.ensure_nifdu()
+
+    assert result["available"] is True
+    assert result["fetched"] is False
+    assert result["linked"] == str(candidate)
+    assert Path(result["path"]).exists()
     assert invalidations == [True]

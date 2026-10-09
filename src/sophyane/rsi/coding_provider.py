@@ -14,7 +14,7 @@ class CodingCancelled(RuntimeError):
     pass
 
 
-def eligible_failure(error):
+def _eligible_failure_before_codex_presampling_failover(error):
     pending, seen = [error], set()
     while pending:
         item = pending.pop()
@@ -28,11 +28,33 @@ def eligible_failure(error):
                ('cancel', 'schema', 'malformed', 'authority', 'isolation', 'test failure', 'programming')):
             return False
         pending.extend(x for x in (item.__cause__, item.__context__) if x is not None)
-    return availability_failure(error) or (isinstance(error, RuntimeError) and bool(QUOTA.search(str(error))))
+    message = str(error).lower()
+    credential_availability_failure = any(
+        signal in message
+        for signal in (
+            "401 unauthorized",
+            "refresh token was revoked",
+            "failed to refresh token",
+        )
+    )
+    return (
+        availability_failure(error)
+        or credential_availability_failure
+        or (
+            isinstance(error, RuntimeError)
+            and bool(QUOTA.search(str(error)))
+        )
+    )
 
 
-def create_provider(name, workspace, timeout):
-    require(name, Operation.SOPHYANE_SOURCE_MUTATION)
+def create_provider(
+    name,
+    workspace,
+    timeout,
+    *,
+    operation=Operation.SOPHYANE_SOURCE_MUTATION,
+):
+    require(name, operation)
     if name == 'codex_cli':
         from sophyane.providers.codex_cli import CodexCliProvider
         return CodexCliProvider(workspace=workspace, timeout=timeout)
@@ -49,8 +71,18 @@ class CodingResult:
 
 
 class CodingRouter:
-    def __init__(self, store, factory=create_provider):
-        self.store, self.factory = store, factory
+    def __init__(
+        self,
+        store,
+        factory=create_provider,
+        *,
+        operation=Operation.SOPHYANE_SOURCE_MUTATION,
+    ):
+        if not isinstance(operation, Operation):
+            raise ValueError("operation must be an Operation")
+        self.store = store
+        self.factory = factory
+        self.operation = operation
 
     def request(self, prompt, workspace, *, cancelled=lambda: False, timeout=300):
         self.store.assert_external(workspace)
@@ -58,13 +90,28 @@ class CodingRouter:
         for name in CODING_PROVIDER_ORDER:
             if cancelled():
                 raise CodingCancelled('Coding request cancelled')
-            require(name, Operation.SOPHYANE_SOURCE_MUTATION)
+            require(name, self.operation)
             if self.store.blocked(name):
                 failovers.append({'provider': name, 'reason': 'cooldown'})
                 continue
             try:
                 self.store.probe(name)
-                provider = self.factory(name, Path(workspace), timeout)
+                if self.factory is create_provider:
+                    provider = self.factory(
+                        name,
+                        Path(workspace),
+                        timeout,
+                        operation=self.operation,
+                    )
+                else:
+                    # Existing injected/test factories use the historical
+                    # three-argument proposal-provider contract. Authority
+                    # has already been checked immediately above.
+                    provider = self.factory(
+                        name,
+                        Path(workspace),
+                        timeout,
+                    )
                 response = provider.generate(prompt, 'Return only JSON {"files": {"relative/path": "complete replacement"}}. '
                     'Propose edits only; do not execute commands or mutate files. No authority or approval decisions.')
                 if cancelled():
@@ -104,3 +151,16 @@ class CodingRouter:
             self.store.success(name)
             return CodingResult('SUCCESS', name, payload['files'], tuple(failovers))
         return CodingResult('DEFERRED_NO_CODING_PROVIDER', failovers=tuple(failovers))
+
+# SOPHYANE_CODEX_PRESAMPLING_FAILOVER_V1
+# Codex may fail inside its own pre-sampling compaction before producing
+# a candidate. This is a provider/runtime failure, not a candidate,
+# schema, contract, authority, cancellation, or programming failure.
+#
+# Keep this recognition deliberately narrow: a generic Codex status 1
+# remains subject to the existing fail-closed classifier.
+def eligible_failure(error):
+    message = str(error).casefold()
+    if "failed to run pre-sampling compact" in message:
+        return True
+    return _eligible_failure_before_codex_presampling_failover(error)
