@@ -11,10 +11,6 @@ name: RSI Isolated Worker Probe
 permissions:
   contents: read
 
-concurrency:
-  group: rsi-isolated-worker-probe
-  cancel-in-progress: false
-
 jobs:
   sandbox-probe:
     runs-on: ubuntu-24.04
@@ -28,9 +24,7 @@ jobs:
           uname -a
           id
           python3 --version
-          git --version
-          echo "RUNNER_OS=$RUNNER_OS"
-          echo "GITHUB_EVENT_NAME=$GITHUB_EVENT_NAME"
+          echo "CANDIDATE_CODE_EXECUTED=NO"
 
       - name: Install Bubblewrap on ephemeral runner
         shell: bash
@@ -38,57 +32,95 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends bubblewrap
+
       - name: Inspect Bubblewrap
         shell: bash
         run: |
           set -euo pipefail
-          if ! command -v bwrap >/dev/null 2>&1; then
-            echo "SANDBOX_UNAVAILABLE=BWRAP_MISSING"
-            exit 1
-          fi
           bwrap --version
+          command -v unshare
+          command -v timeout
 
-      - name: Verify isolated namespace execution
+      - name: Diagnose namespace isolation
         shell: bash
         run: |
           set -euo pipefail
 
-          BWRAP="$(command -v bwrap)"
+          # Fixed diagnostic commands only.
+          # Never execute repository or RSI candidate code.
 
-          "$BWRAP" \
-            --die-with-parent \
-            --new-session \
-            --unshare-user \
-            --unshare-pid \
-            --unshare-net \
-            --unshare-ipc \
-            --unshare-uts \
-            --unshare-cgroup \
-            --ro-bind /usr /usr \
-            --dir /etc \
-            --ro-bind-try /etc/ld.so.cache /etc/ld.so.cache \
-            --proc /proc \
-            --dev /dev \
-            --tmpfs /tmp \
-            --chdir / \
-            -- \
-            /usr/bin/python3 -c '
-          import os
-          from pathlib import Path
+          run_probe() {
+            name="$1"
+            shift
 
-          assert not Path("/home/runner").exists()
-          assert not Path("/etc/passwd").exists()
-          assert not Path("/tmp/host-sentinel").exists()
+            echo "=== PROBE:$name ==="
 
-          print("SANDBOX_FILESYSTEM_ISOLATION=PASS")
-          print("SANDBOX_UID=" + str(os.getuid()))
-          '
+            if timeout 15s "$@" >"/tmp/rsi-$name.out" 2>&1; then
+              echo "PROBE_${name}=PASS"
+            else
+              rc="$?"
+              echo "PROBE_${name}=FAIL_RC_$rc"
+            fi
 
-          echo "SANDBOX_NAMESPACE_PROBE=PASS"
+            cat "/tmp/rsi-$name.out"
+          }
+
+          run_probe USER_MOUNT \
+            bwrap \
+              --die-with-parent \
+              --new-session \
+              --unshare-user \
+              --ro-bind /usr /usr \
+              --proc /proc \
+              --dev /dev \
+              --tmpfs /tmp \
+              --chdir / \
+              -- /usr/bin/python3 -c \
+              'from pathlib import Path; assert not Path("/home/runner").exists(); print("USER_MOUNT_FILESYSTEM=PASS")'
+
+          run_probe PID_IPC \
+            bwrap \
+              --die-with-parent \
+              --new-session \
+              --unshare-user \
+              --unshare-pid \
+              --unshare-ipc \
+              --ro-bind /usr /usr \
+              --proc /proc \
+              --dev /dev \
+              --tmpfs /tmp \
+              --chdir / \
+              -- /usr/bin/python3 -c \
+              'import os; print("PID_IPC_CHILD_PID=" + str(os.getpid()))'
+
+          run_probe NETWORK_BWRAP \
+            bwrap \
+              --die-with-parent \
+              --new-session \
+              --unshare-user \
+              --unshare-net \
+              --ro-bind /usr /usr \
+              --proc /proc \
+              --dev /dev \
+              --tmpfs /tmp \
+              --chdir / \
+              -- /usr/bin/python3 -c \
+              'print("NETWORK_BWRAP_PROCESS_STARTED=YES")'
+
+          run_probe NETWORK_UNSHARE \
+            unshare --user --map-root-user --net \
+              /usr/bin/python3 -c \
+              'from pathlib import Path; print("NETWORK_UNSHARE_PROCESS_STARTED=YES"); print(Path("/proc/self/ns/net").readlink())'
+
+          echo "DIAGNOSTICS_COMPLETED=YES"
+          echo "SANDBOX_SECURITY_APPROVED=NO"
+          echo "RSI_CANDIDATE_EXECUTION=NO"
 
       - name: Final result
         shell: bash
         run: |
+          set -euo pipefail
+          echo "NAMESPACE_DIAGNOSTIC_ONLY=YES"
+          echo "SANDBOX_SECURITY_APPROVED=NO"
           echo "CANDIDATE_CODE_EXECUTED=NO"
           echo "PRODUCTION_PROMOTION=NO"
-          echo "SANDBOX_PROBE=PASS"
