@@ -2,6 +2,11 @@ name: RSI Isolated Worker Probe
 
 'on':
   workflow_dispatch:
+  push:
+    branches:
+      - rsi-verification/clean-worker-20261011-134523
+    paths:
+      - .github/workflows/rsi-isolated-worker.yml
 
 permissions:
   contents: read
