@@ -1,0 +1,83 @@
+name: RSI Isolated Worker Probe
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rsi-isolated-worker-probe
+  cancel-in-progress: false
+
+jobs:
+  sandbox-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Inspect worker environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -a
+          id
+          python3 --version
+          git --version
+          echo "RUNNER_OS=$RUNNER_OS"
+          echo "GITHUB_EVENT_NAME=$GITHUB_EVENT_NAME"
+
+      - name: Inspect Bubblewrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v bwrap >/dev/null 2>&1; then
+            echo "SANDBOX_UNAVAILABLE=BWRAP_MISSING"
+            exit 1
+          fi
+          bwrap --version
+
+      - name: Verify isolated namespace execution
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BWRAP="$(command -v bwrap)"
+
+          "$BWRAP" \
+            --die-with-parent \
+            --new-session \
+            --unshare-user \
+            --unshare-pid \
+            --unshare-net \
+            --unshare-ipc \
+            --unshare-uts \
+            --unshare-cgroup \
+            --ro-bind /usr /usr \
+            --dir /etc \
+            --ro-bind-try /etc/ld.so.cache /etc/ld.so.cache \
+            --proc /proc \
+            --dev /dev \
+            --tmpfs /tmp \
+            --chdir / \
+            -- \
+            /usr/bin/python3 -c '
+          import os
+          from pathlib import Path
+
+          assert not Path("/home/runner").exists()
+          assert not Path("/etc/passwd").exists()
+          assert not Path("/tmp/host-sentinel").exists()
+
+          print("SANDBOX_FILESYSTEM_ISOLATION=PASS")
+          print("SANDBOX_UID=" + str(os.getuid()))
+          '
+
+          echo "SANDBOX_NAMESPACE_PROBE=PASS"
+
+      - name: Final result
+        shell: bash
+        run: |
+          echo "CANDIDATE_CODE_EXECUTED=NO"
+          echo "PRODUCTION_PROMOTION=NO"
+          echo "SANDBOX_PROBE=PASS"
