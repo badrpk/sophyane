@@ -90,3 +90,4 @@ executable patches into `main`.
 - 2026-10-12: 1 proposals · merkle `a1febfa396333e2e…` · device `runnervmmprz5-7ed8dca7`
 - 2026-10-13: 1 proposals · merkle `6df57df6f62373ee…` · device `runnervmmprz5-7ed8dca7`
 - 2026-10-14: 1 proposals · merkle `bb8261e556dba9d0…` · device `runnervmmprz5-7ed8dca7`
+- 2026-10-15: 1 proposals · merkle `916262f23d5ead11…` · device `runnervm8k3b6-85c697ae`
