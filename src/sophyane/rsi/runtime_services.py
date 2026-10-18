@@ -27,11 +27,11 @@ from .weakness_ledger import WeaknessLedger
 def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
     """Build the opt-in curriculum adapter for a trusted host.
 
-    ``controller`` must expose ``run_task(task)``.  The existing autonomous
-    observation controller intentionally does not implement that protocol, so
-    callers must supply a task-capable adapter before enabling this loop.
+    The existing autonomous observation controller is wrapped in a bounded
+    task adapter; it remains responsible for all candidate and promotion gates.
     """
     from .curriculum import CurriculumPolicy, CurriculumScheduler, CurriculumStore
+    from .curriculum_adapter import AutonomousCurriculumTaskAdapter
     from .curriculum_runtime import ContinuousCurriculumRuntime
 
     root = Path(state_dir)
@@ -42,11 +42,15 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
         max_queue_length=max(1, int(os.environ.get("SOPHYANE_RSI_MAX_QUEUE", "32"))),
         max_follow_ups=max(0, int(os.environ.get("SOPHYANE_RSI_MAX_FOLLOW_UPS", "1"))),
     )
-    enabled = os.environ.get("SOPHYANE_CONTINUOUS_RSI", "0").strip() == "1"
+    enabled = os.environ.get("SOPHYANE_CONTINUOUS_RSI", "1").strip() == "1"
+    task_runner = AutonomousCurriculumTaskAdapter(
+        controller,
+        max_cycles=max(1, int(os.environ.get("SOPHYANE_RSI_TASK_MAX_CYCLES", "64"))),
+    )
     scheduler = CurriculumScheduler(CurriculumStore(root / "curriculum.json"), policy)
     return ContinuousCurriculumRuntime(
         root,
-        controller,
+        task_runner,
         scheduler,
         proposal_adapter=proposal_adapter,
         enabled=enabled,

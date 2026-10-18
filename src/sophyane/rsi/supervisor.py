@@ -97,10 +97,16 @@ def start_supervisor(*, controller=None, state_dir=None):
                 if controller is not None:
                     selected.run(stop_event=stop)
                 else:
+                    curriculum = None
+                    if os.environ.get('SOPHYANE_CONTINUOUS_RSI', '1').strip() == '1':
+                        from .runtime_services import build_curriculum_runtime
+                        curriculum = build_curriculum_runtime(root, selected)
+                        curriculum.start()
                     while not stop.is_set():
                         started = time.monotonic()
                         try:
-                            selected.tick()
+                            if curriculum is None or curriculum.tick().get('status') == 'idle':
+                                selected.tick()
                         except Exception:
                             pass  # Background diagnostics must not crash foreground runtime.
                         wake.wait(max(1, 30 - (time.monotonic() - started)))

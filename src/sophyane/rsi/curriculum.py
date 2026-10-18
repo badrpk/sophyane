@@ -54,6 +54,7 @@ class CurriculumTask:
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
     completed_at: float | None = None
+    component: str = ""
 
 
 @dataclass(frozen=True)
@@ -108,6 +109,7 @@ def _task_from_dict(raw: dict[str, Any]) -> CurriculumTask:
         created_at=float(raw.get("created_at", time.time())),
         started_at=raw.get("started_at"),
         completed_at=raw.get("completed_at"),
+        component=str(raw.get("component", "")),
     )
 
 

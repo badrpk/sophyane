@@ -103,5 +103,6 @@ class CurriculumProposalAdapter:
             editable_paths=tuple(normalized),
             verification=tuple(str(item) for item in verification),
             source=TaskSource.LLM_FOLLOW_UP,
+            component=str(payload.get("component", "")).strip(),
         )
         return ProposalResult(True, task, "accepted")
