@@ -319,7 +319,9 @@ sophyane --rsi-curriculum stop --rsi-state-dir ~/.local/state/sophyane/continuou
 The supervisor loop is enabled explicitly with `SOPHYANE_CONTINUOUS_RSI=1`.
 Use `SOPHYANE_RSI_MAX_ITERATIONS`, `SOPHYANE_RSI_MAX_WALL_SECONDS`,
 `SOPHYANE_RSI_COOLDOWN_SECONDS`, and `SOPHYANE_RSI_MAX_FOLLOW_UPS` to bound
-continuous operation. The default is disabled.
+continuous operation. The default is disabled. A host integration must provide
+a task-capable controller implementing `run_task(task)`; the built-in
+observation controller fails closed until that adapter is supplied.
 
 ## Provider modes
 

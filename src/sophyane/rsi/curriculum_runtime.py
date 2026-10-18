@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +25,8 @@ class ContinuousCurriculumRuntime:
 
     def start(self) -> bool:
         if not self.enabled:
+            return False
+        if self.scheduler.status()["stopped"]:
             return False
         self.scheduler.resume()
         self.started = True
@@ -76,12 +77,16 @@ class ContinuousCurriculumRuntime:
         if not self.enabled:
             return {"status": "disabled"}
         if not self.started:
-            self.start()
+            if not self.start():
+                return {"status": "idle", **self.scheduler.status()}
         task = self.scheduler.next_task()
         if task is None:
             return {"status": "idle", **self.scheduler.status()}
         try:
-            raw = self.controller.run_task(task)
+            runner = getattr(self.controller, "run_task", None)
+            if not callable(runner):
+                raise RuntimeError("curriculum task runner unavailable")
+            raw = runner(task)
             result = dict(raw) if isinstance(raw, dict) else {"status": str(raw)}
         except Exception as error:  # scheduler remains durable on controller failure
             self.scheduler.record_failure(task.task_id, TaskStatus.PAUSED, str(error))

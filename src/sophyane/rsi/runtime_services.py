@@ -25,7 +25,12 @@ from .weakness_ledger import WeaknessLedger
 
 
 def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
-    """Build the opt-in continuous curriculum adapter for a trusted host."""
+    """Build the opt-in curriculum adapter for a trusted host.
+
+    ``controller`` must expose ``run_task(task)``.  The existing autonomous
+    observation controller intentionally does not implement that protocol, so
+    callers must supply a task-capable adapter before enabling this loop.
+    """
     from .curriculum import CurriculumPolicy, CurriculumScheduler, CurriculumStore
     from .curriculum_runtime import ContinuousCurriculumRuntime
 

@@ -89,3 +89,25 @@ def test_restart_recovers_running_task_and_stop_is_durable(tmp_path: Path):
     assert runtime.scheduler._state().queue[0].status is TaskStatus.PAUSED
     assert runtime.stop("operator") is True
     assert runtime.status()["stopped"] is True
+
+
+def test_stop_does_not_restart_on_later_tick(tmp_path: Path):
+    controller = FakeController([{"status": "VERIFIED", "evidence": ["ok"]}])
+    runtime = build(tmp_path, controller)
+    runtime.scheduler.enqueue(make_task("task-1"))
+
+    runtime.stop("operator")
+
+    assert runtime.tick()["status"] == "idle"
+    assert controller.calls == []
+    assert runtime.status()["stopped"] is True
+
+
+def test_missing_production_task_runner_is_explicitly_paused(tmp_path: Path):
+    runtime = build(tmp_path, object())
+    runtime.scheduler.enqueue(make_task("task-1"))
+
+    result = runtime.tick()
+
+    assert result["status"] == "paused"
+    assert "task runner" in result["reason"]
