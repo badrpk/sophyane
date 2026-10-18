@@ -472,6 +472,14 @@ def run_curriculum_command(
     )
     def result_with_heartbeat():
         result = scheduler.status()
+        promotion_path = Path(state_dir) / "promotion.json"
+        if promotion_path.exists():
+            try:
+                result["promotion"] = json.loads(promotion_path.read_text(encoding="utf-8"))
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                result["promotion"] = {"error": "promotion state unreadable"}
+        else:
+            result["promotion"] = {}
         heartbeat_path = Path(state_dir) / "heartbeat.json"
         if heartbeat_path.exists():
             record = HeartbeatStore(heartbeat_path).load()

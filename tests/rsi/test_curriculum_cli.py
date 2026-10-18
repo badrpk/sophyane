@@ -24,3 +24,13 @@ def test_status_is_json_serializable(tmp_path: Path):
 def test_invalid_policy_values_are_rejected(tmp_path: Path):
     with pytest.raises(ValueError, match="max_iterations"):
         run_curriculum_command("status", tmp_path, max_iterations=0)
+
+
+def test_status_includes_source_promotion_state(tmp_path: Path):
+    (tmp_path / "promotion.json").write_text(
+        '{"promoted":true,"active_commit":"live123"}', encoding="utf-8"
+    )
+
+    result = run_curriculum_command("status", tmp_path)
+
+    assert result["promotion"]["active_commit"] == "live123"
