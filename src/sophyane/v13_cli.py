@@ -26,6 +26,46 @@ from sophyane.memory import MemoryStore
 from sophyane.multiagent import MultiAgentRuntime, MultiAgentStore
 from sophyane.setup_wizard import run_setup_wizard
 from sophyane.strict_interactive_doer import StrictInteractiveCodingDoerRuntime
+
+
+def request_looks_like_execution(prompt: str) -> bool:
+    """Return whether a prompt asks Sophyane to perform workspace work."""
+    lower_prompt = str(prompt or "").lower()
+    execution_intent = re.search(
+        r"^\s*(?:\d+[.)]\s+)?"
+        r"(?:build|make|create|design|develop|implement|write|fix|repair|"
+        r"patch|compile|run|test|deploy|open|continue|resume|convert|"
+        r"install|integrate|optimi[sz]e|audit|profile|monitor|simulate|"
+        r"demonstrate|execute|add|remove|change|update|improve|style|"
+        r"reopen|replace|modify)\b",
+        lower_prompt,
+    )
+    coding_markers = (
+        "implement",
+        "refactor",
+        "apply patch",
+        "write a function",
+        "write a class",
+        "create a file",
+        "create files",
+        "edit the file",
+        "write the file",
+        "build and run",
+        "run the tests",
+        "execute the tests",
+        "python project",
+        "pytest",
+        "unit test",
+        "test suite",
+        "debug this",
+        "repository",
+        "codebase",
+        "pull request",
+        "git commit",
+    )
+    return bool(execution_intent) or any(
+        marker in lower_prompt for marker in coding_markers
+    )
 from sophyane.structured_output import (
     StructuredOutputError,
     render_strict_json,
@@ -45,6 +85,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("prompt", nargs="*", help="prompt to process")
     parser.add_argument("--setup", action="store_true")
     parser.add_argument("--status", action="store_true")
+    parser.add_argument(
+        "--rsi-curriculum",
+        choices=("start", "pause", "stop", "status"),
+        help="control the opt-in continuous RSI curriculum",
+    )
+    parser.add_argument(
+        "--rsi-state-dir",
+        default="",
+        help="state directory for continuous RSI curriculum",
+    )
+    parser.add_argument("--rsi-max-iterations", type=int, default=100)
+    parser.add_argument("--rsi-max-wall-seconds", type=float, default=86400.0)
+    parser.add_argument("--rsi-cooldown-seconds", type=float, default=30.0)
     parser.add_argument("--providers", action="store_true")
     parser.add_argument("--doctor", action="store_true")
     parser.add_argument(
@@ -382,6 +435,46 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def run_curriculum_command(
+    command: str,
+    state_dir,
+    *,
+    max_iterations: int = 100,
+    max_wall_seconds: float = 86400.0,
+    cooldown_seconds: float = 30.0,
+) -> dict[str, object]:
+    """Apply one durable RSI curriculum lifecycle command."""
+    from pathlib import Path
+    from sophyane.rsi.curriculum import CurriculumPolicy, CurriculumScheduler, CurriculumStore
+
+    if max_iterations < 1:
+        raise ValueError("max_iterations must be positive")
+    if max_wall_seconds <= 0:
+        raise ValueError("max_wall_seconds must be positive")
+    if cooldown_seconds < 0:
+        raise ValueError("cooldown_seconds must be non-negative")
+    scheduler = CurriculumScheduler(
+        CurriculumStore(Path(state_dir) / "curriculum.json"),
+        CurriculumPolicy(
+            max_iterations=max_iterations,
+            max_wall_seconds=max_wall_seconds,
+            cooldown_seconds=cooldown_seconds,
+        ),
+    )
+    if command == "start":
+        scheduler.resume()
+        return {"status": "started", **scheduler.status()}
+    if command == "pause":
+        scheduler.pause("operator requested pause")
+        return {"status": "paused", **scheduler.status()}
+    if command == "stop":
+        scheduler.stop("operator requested stop")
+        return {"status": "stopped", **scheduler.status()}
+    if command == "status":
+        return scheduler.status()
+    raise ValueError(f"unknown curriculum command: {command}")
+
+
 def _execution_policy(timeout: float, enabled: bool) -> str:
     if not enabled:
         return (
@@ -688,6 +781,21 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     logger = configure_logging(args.verbose)
+
+    if args.rsi_curriculum:
+        try:
+            result = run_curriculum_command(
+                args.rsi_curriculum,
+                args.rsi_state_dir or (Path.home() / ".local/state/sophyane/continuous-rsi"),
+                max_iterations=args.rsi_max_iterations,
+                max_wall_seconds=args.rsi_max_wall_seconds,
+                cooldown_seconds=args.rsi_cooldown_seconds,
+            )
+        except ValueError as error:
+            print(json.dumps({"status": "error", "error": str(error)}))
+            return 2
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
 
     # One-shot/non-progress invocations must not inherit a stale persistent
     # Codex thread. A dead thread can block the planner indefinitely; forcing
@@ -1359,9 +1467,7 @@ def main() -> int:
         "git commit",
     )
 
-    looks_like_coding = bool(execution_intent) or any(
-        token in lower_prompt for token in coding_markers
-    )
+    looks_like_coding = request_looks_like_execution(original_prompt)
 
     # SOPHYANE_MODE3_COMPARE_DIRECT_BENCHMARK_V1
     #
@@ -1551,6 +1657,29 @@ def main() -> int:
         "generate_for_capabilities",
         backend_for_capabilities,
     )
+
+    # Handle narrowly specified local tasks before orchestration shortcuts.
+    # This keeps --single-agent from turning an objectively executable task
+    # into an answer-only worker response.
+    if str(config.get("provider") or "").lower() == "local_gguf":
+        from sophyane.fast_local_coding import run_deterministic_python_task
+
+        deterministic_result = run_deterministic_python_task(
+            original_prompt,
+            Path(args.workspace),
+        )
+        if deterministic_result is not None:
+            if deterministic_result.success:
+                print(
+                    "Objective completed with verified deterministic "
+                    "Python execution evidence."
+                )
+                return 0
+            print(
+                "Objective failed deterministic Python verification: "
+                + deterministic_result.reason
+            )
+            return 2
 
     if args.single_agent or args.multi_agent:
         mode = "multi" if args.multi_agent else "single"

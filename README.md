@@ -302,6 +302,25 @@ mobile support at 320 px width, and verify the final page over HTTP.
 
 See [Prompt guide](docs/PROMPT_GUIDE.md).
 
+## Continuous RSI curriculum
+
+Sophyane includes an opt-in, bounded curriculum loop that can schedule one
+verified improvement after another. Tasks run through the existing candidate,
+verification, promotion, and rollback gates; an LLM may suggest a follow-up,
+but it cannot directly edit or promote code.
+
+```bash
+sophyane --rsi-curriculum status --rsi-state-dir ~/.local/state/sophyane/continuous-rsi
+sophyane --rsi-curriculum start --rsi-state-dir ~/.local/state/sophyane/continuous-rsi
+sophyane --rsi-curriculum pause --rsi-state-dir ~/.local/state/sophyane/continuous-rsi
+sophyane --rsi-curriculum stop --rsi-state-dir ~/.local/state/sophyane/continuous-rsi
+```
+
+The supervisor loop is enabled explicitly with `SOPHYANE_CONTINUOUS_RSI=1`.
+Use `SOPHYANE_RSI_MAX_ITERATIONS`, `SOPHYANE_RSI_MAX_WALL_SECONDS`,
+`SOPHYANE_RSI_COOLDOWN_SECONDS`, and `SOPHYANE_RSI_MAX_FOLLOW_UPS` to bound
+continuous operation. The default is disabled.
+
 ## Provider modes
 
 At startup Sophyane can run:
