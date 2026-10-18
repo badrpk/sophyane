@@ -28,6 +28,7 @@ class NativeEvolutionTaskAdapter:
             factory = EvolutionEngine
         config = EvolutionConfig(
             repo=self.repository,
+            initial_capability=str(getattr(task, "component", "") or ""),
             cycles=1,
             timeout_seconds=self.timeout_seconds,
             allow_cloud_analysis=True,

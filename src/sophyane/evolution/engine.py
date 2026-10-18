@@ -3412,7 +3412,8 @@ Return:
             or self._focus_remaining <= 0
         ):
             self._focus_capability = (
-                focused_capability(
+                self.config.initial_capability.strip()
+                or focused_capability(
                     self.repo,
                     threshold=(
                         self.config.mastery_threshold

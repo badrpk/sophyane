@@ -72,6 +72,7 @@ def test_native_adapter_reports_native_promotion():
     def factory(config):
         assert config.allow_candidate_patches is True
         assert config.allow_promotion is True
+        assert config.initial_capability == "example"
         return SimpleNamespace(run=lambda: [SimpleNamespace(
             run_id="native-1",
             status="candidate_promotable",

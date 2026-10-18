@@ -140,6 +140,7 @@ class EvolutionRecord:
 class EvolutionConfig:
     repo: Path
     target_name: str = "sophyane"
+    initial_capability: str = ""
     target_repo: Path | None = None
     badrpk_root: Path | None = None
     cycles: int = 1
