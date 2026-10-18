@@ -12,6 +12,7 @@ from .observation_bus import autonomous_bus, ImprovementObservation, Improvement
 
 _lock = threading.RLock()
 _instance = None
+_curriculum_instance = None
 _active = 0
 _last_activity = 0.0
 
@@ -130,6 +131,44 @@ def stop_supervisor(timeout=2):
         if current and not current.thread.is_alive() and _instance is current:
             _instance = None
             autonomous_bus.wake = lambda: None
+
+
+def start_continuous_curriculum(runtime, *, interval=30.0):
+    """Start an opt-in durable curriculum loop around a runtime adapter."""
+    global _curriculum_instance
+    if not runtime.enabled or not runtime.start():
+        return None
+    with _lock:
+        if _curriculum_instance and _curriculum_instance.thread.is_alive():
+            return _curriculum_instance
+        stop = threading.Event()
+
+        def run():
+            while not stop.is_set():
+                try:
+                    runtime.tick()
+                except Exception:
+                    pass
+                stop.wait(max(0.1, float(interval)))
+
+        thread = threading.Thread(target=run, name="sophyane-continuous-rsi", daemon=True)
+        _curriculum_instance = Supervisor(thread, stop, stop)
+        thread.start()
+        return _curriculum_instance
+
+
+def stop_continuous_curriculum(timeout=2):
+    global _curriculum_instance
+    with _lock:
+        current = _curriculum_instance
+        if current:
+            current.stop_event.set()
+            current.wake_event.set()
+    if current and current.thread is not threading.current_thread():
+        current.thread.join(max(0, min(timeout, 5)))
+    with _lock:
+        if current and not current.thread.is_alive() and _curriculum_instance is current:
+            _curriculum_instance = None
 
 atexit.register(stop_supervisor)
 

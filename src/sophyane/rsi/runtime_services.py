@@ -24,6 +24,30 @@ from .resource_governor import ResourceGovernor, ResourceDecision
 from .weakness_ledger import WeaknessLedger
 
 
+def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
+    """Build the opt-in continuous curriculum adapter for a trusted host."""
+    from .curriculum import CurriculumPolicy, CurriculumScheduler, CurriculumStore
+    from .curriculum_runtime import ContinuousCurriculumRuntime
+
+    root = Path(state_dir)
+    policy = CurriculumPolicy(
+        max_iterations=max(1, int(os.environ.get("SOPHYANE_RSI_MAX_ITERATIONS", "100"))),
+        max_wall_seconds=max(1.0, float(os.environ.get("SOPHYANE_RSI_MAX_WALL_SECONDS", "86400"))),
+        cooldown_seconds=max(0.0, float(os.environ.get("SOPHYANE_RSI_COOLDOWN_SECONDS", "30"))),
+        max_queue_length=max(1, int(os.environ.get("SOPHYANE_RSI_MAX_QUEUE", "32"))),
+        max_follow_ups=max(0, int(os.environ.get("SOPHYANE_RSI_MAX_FOLLOW_UPS", "1"))),
+    )
+    enabled = os.environ.get("SOPHYANE_CONTINUOUS_RSI", "0").strip() == "1"
+    scheduler = CurriculumScheduler(CurriculumStore(root / "curriculum.json"), policy)
+    return ContinuousCurriculumRuntime(
+        root,
+        controller,
+        scheduler,
+        proposal_adapter=proposal_adapter,
+        enabled=enabled,
+    )
+
+
 def local_request(name, context, role):
     from sophyane.local_model_profiles import qwen_profile, spark_profile
     from sophyane.providers.http import post_json
