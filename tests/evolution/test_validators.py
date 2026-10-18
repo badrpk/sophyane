@@ -103,3 +103,27 @@ def test_native_evolution_uses_deterministic_shell_executor(tmp_path: Path) -> N
         TaskSpec("shell", "", "shell", "shell"),
         trace,
     ).passed is True
+
+
+def test_native_evolution_uses_local_python_executor(tmp_path: Path) -> None:
+    engine = EvolutionEngine.__new__(EvolutionEngine)
+    repository = Path.cwd()
+    engine.repo = repository
+    engine.config = EvolutionConfig(repo=repository, timeout_seconds=30)
+
+    trace = engine._run_sli(
+        TaskSpec(
+            task_id="python-focused-00001",
+            prompt=(
+                "Create calc.py with add(a, b). Create and run a pytest "
+                "test proving add(20, 22) equals 42."
+            ),
+            capability="python",
+            validator="python",
+        )
+    )
+
+    assert validate(
+        TaskSpec("python", "", "python", "python"),
+        trace,
+    ).passed is True

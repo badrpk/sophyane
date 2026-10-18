@@ -203,6 +203,44 @@ class EvolutionEngine:
         except Exception:
             deterministic = None
 
+        if task.capability == "python" and deterministic is None:
+            try:
+                from sophyane.local_coding_capability import (
+                    try_coding_request,
+                )
+
+                coding = try_coding_request(
+                    task.prompt,
+                    workspace=workspace,
+                )
+            except Exception:
+                coding = None
+            if coding is not None:
+                files = [
+                    str(path.relative_to(workspace))
+                    for path in workspace.rglob("*")
+                    if path.is_file()
+                ]
+                evidence = "\n".join(
+                    [
+                        str(getattr(coding, "summary", "")),
+                        *[
+                            f"exit_code={item.exit_code}\n{item.stdout}\n{item.stderr}"
+                            for item in getattr(coding, "evidence", ())
+                        ],
+                    ]
+                )
+                return ExecutionTrace(
+                    task_id=task.task_id,
+                    workspace=str(workspace),
+                    command=["local_coding_capability", task.capability],
+                    exit_code=0 if coding.ok else 1,
+                    stdout=evidence,
+                    stderr=str(getattr(coding, "error", "") or ""),
+                    elapsed_seconds=0.0,
+                    files=files,
+                )
+
         if deterministic is not None:
             files = [
                 str(path.relative_to(workspace))
