@@ -6,7 +6,71 @@ from sophyane.failure_driven_capability import (
     CapabilityDevelopmentController,
     FailureClassification,
     InMemoryCapabilityStore,
+    PersistentCapabilityStore,
 )
+
+
+def _trusted_capability():
+    return {
+        "status": "TRUSTED_PROMOTED",
+        "provider": "codex_cli",
+        "capability_class": "document.transform",
+        "files": {"transform.py": "print('ok')\n"},
+        "fingerprint": "verified-fingerprint",
+    }
+
+
+def test_persistent_capability_store_survives_new_instance(tmp_path):
+    path = tmp_path / "capabilities.json"
+    first = PersistentCapabilityStore(path, workspace=tmp_path)
+    candidate = _trusted_capability()
+
+    first.put("document.transform", candidate)
+
+    second = PersistentCapabilityStore(path, workspace=tmp_path)
+    assert second.get("document.transform") == candidate
+
+
+def test_persistent_capability_store_is_workspace_scoped(tmp_path):
+    path = tmp_path / "capabilities.json"
+    workspace_a = tmp_path / "workspace-a"
+    workspace_b = tmp_path / "workspace-b"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+
+    PersistentCapabilityStore(path, workspace=workspace_a).put(
+        "document.transform",
+        _trusted_capability(),
+    )
+
+    assert PersistentCapabilityStore(path, workspace=workspace_b).get(
+        "document.transform"
+    ) is None
+
+
+def test_persistent_capability_store_fails_closed_for_corrupt_state(tmp_path):
+    path = tmp_path / "capabilities.json"
+    path.write_text("{not-json", encoding="utf-8")
+
+    store = PersistentCapabilityStore(path, workspace=tmp_path)
+
+    assert store.get("document.transform") is None
+
+
+def test_persistent_capability_store_rejects_untrusted_candidate(tmp_path):
+    store = PersistentCapabilityStore(
+        tmp_path / "capabilities.json",
+        workspace=tmp_path,
+    )
+    candidate = _trusted_capability()
+    candidate["status"] = "SUCCESS"
+
+    try:
+        store.put("document.transform", candidate)
+    except ValueError as error:
+        assert "trusted" in str(error).lower()
+    else:
+        raise AssertionError("untrusted capability was persisted")
 
 
 @dataclass
