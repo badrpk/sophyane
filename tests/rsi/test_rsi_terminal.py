@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from sophyane.rsi.observation_bus import autonomous_bus
-from sophyane.rsi_terminal import handle_command, runtime_root
+from sophyane.rsi_terminal import handle_command, needs_live_relaunch, runtime_root
 
 
 def test_status_command_returns_progress_json(tmp_path: Path):
@@ -43,3 +43,12 @@ def test_runtime_root_switches_to_promoted_live_worktree(tmp_path: Path):
 
 def test_runtime_root_falls_back_to_repository_root_without_promotion(tmp_path: Path):
     assert runtime_root(tmp_path) == Path(__file__).resolve().parents[2]
+
+
+def test_live_promotion_requests_relaunch_only_for_a_new_commit(tmp_path: Path):
+    (tmp_path / "promotion.json").write_text(
+        '{"promoted":true,"active_commit":"new"}', encoding="utf-8"
+    )
+
+    assert needs_live_relaunch(tmp_path, "old") is True
+    assert needs_live_relaunch(tmp_path, "new") is False
