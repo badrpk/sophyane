@@ -80,6 +80,10 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
         )
 
     runtime.heartbeat = HeartbeatStore(root / "heartbeat.json")
+    runtime.heartbeat_interval = max(0.5, float(os.environ.get("SOPHYANE_RSI_HEARTBEAT_SECONDS", "5")))
+    runtime.stale_seconds = max(runtime.heartbeat_interval * 2, float(os.environ.get("SOPHYANE_RSI_STALE_SECONDS", "30")))
+    runtime.watchdog_enabled = os.environ.get("SOPHYANE_RSI_WATCHDOG", "1").strip() == "1"
+    runtime.task_source_name = os.environ.get("SOPHYANE_RSI_TASK_SOURCE", "qwen").strip() or "qwen"
     runtime.task_source = CurriculumTaskSource(
         proposal_adapter.generate, proposal_adapter
     )

@@ -320,9 +320,12 @@ The supervisor loop is enabled by default; set `SOPHYANE_CONTINUOUS_RSI=0`
 to disable it.
 Use `SOPHYANE_RSI_MAX_ITERATIONS`, `SOPHYANE_RSI_MAX_WALL_SECONDS`,
 `SOPHYANE_RSI_COOLDOWN_SECONDS`, and `SOPHYANE_RSI_MAX_FOLLOW_UPS` to bound
-continuous operation. The built-in autonomous controller is wrapped by a
-bounded task adapter, and all existing candidate, verification, promotion,
-and rollback gates remain authoritative.
+continuous operation. `SOPHYANE_RSI_HEARTBEAT_SECONDS`,
+`SOPHYANE_RSI_STALE_SECONDS`, and `SOPHYANE_RSI_WATCHDOG=0` control liveness
+monitoring. Heartbeat state is visible through the curriculum status command.
+The built-in autonomous controller is wrapped by a bounded task adapter, and
+all existing candidate, verification, promotion, and rollback gates remain
+authoritative.
 
 ## Provider modes
 

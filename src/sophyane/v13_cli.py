@@ -442,10 +442,15 @@ def run_curriculum_command(
     max_iterations: int = 100,
     max_wall_seconds: float = 86400.0,
     cooldown_seconds: float = 30.0,
+    heartbeat_interval: float = 5.0,
+    stale_seconds: float = 30.0,
+    now: float | None = None,
 ) -> dict[str, object]:
     """Apply one durable RSI curriculum lifecycle command."""
     from pathlib import Path
+    import time
     from sophyane.rsi.curriculum import CurriculumPolicy, CurriculumScheduler, CurriculumStore
+    from sophyane.rsi.heartbeat import HeartbeatStore
 
     if max_iterations < 1:
         raise ValueError("max_iterations must be positive")
@@ -453,6 +458,10 @@ def run_curriculum_command(
         raise ValueError("max_wall_seconds must be positive")
     if cooldown_seconds < 0:
         raise ValueError("cooldown_seconds must be non-negative")
+    if heartbeat_interval <= 0:
+        raise ValueError("heartbeat_interval must be positive")
+    if stale_seconds <= heartbeat_interval:
+        raise ValueError("stale_seconds must be greater than heartbeat_interval")
     scheduler = CurriculumScheduler(
         CurriculumStore(Path(state_dir) / "curriculum.json"),
         CurriculumPolicy(
@@ -461,17 +470,37 @@ def run_curriculum_command(
             cooldown_seconds=cooldown_seconds,
         ),
     )
+    def result_with_heartbeat():
+        result = scheduler.status()
+        heartbeat_path = Path(state_dir) / "heartbeat.json"
+        if heartbeat_path.exists():
+            record = HeartbeatStore(heartbeat_path).load()
+            current = time.time() if now is None else float(now)
+            result["heartbeat"] = {
+                "worker_id": record.worker_id,
+                "pid": record.pid,
+                "state": record.state,
+                "current_task_id": record.current_task_id,
+                "age_seconds": max(0.0, current - record.last_tick_at),
+                "stale": record.is_stale(current, stale_seconds),
+                "restart_count": record.restart_count,
+                "last_error": record.last_error,
+            }
+        else:
+            result["heartbeat"] = None
+        return result
+
     if command == "start":
         scheduler.resume()
-        return {"status": "started", **scheduler.status()}
+        return {"status": "started", **result_with_heartbeat()}
     if command == "pause":
         scheduler.pause("operator requested pause")
-        return {"status": "paused", **scheduler.status()}
+        return {"status": "paused", **result_with_heartbeat()}
     if command == "stop":
         scheduler.stop("operator requested stop")
-        return {"status": "stopped", **scheduler.status()}
+        return {"status": "stopped", **result_with_heartbeat()}
     if command == "status":
-        return scheduler.status()
+        return result_with_heartbeat()
     raise ValueError(f"unknown curriculum command: {command}")
 
 
