@@ -39,3 +39,7 @@ def test_runtime_root_switches_to_promoted_live_worktree(tmp_path: Path):
     )
 
     assert runtime_root(tmp_path) == live
+
+
+def test_runtime_root_falls_back_to_repository_root_without_promotion(tmp_path: Path):
+    assert runtime_root(tmp_path) == Path(__file__).resolve().parents[2]

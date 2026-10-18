@@ -173,7 +173,7 @@ def runtime_root(state_dir: Path) -> Path:
                 return live
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             pass
-    return Path(__file__).resolve().parents[1]
+    return Path(__file__).resolve().parents[2]
 
 
 def start(state_dir: Path | None = None) -> int:
