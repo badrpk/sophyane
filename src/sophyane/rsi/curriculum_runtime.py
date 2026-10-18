@@ -105,7 +105,10 @@ class ContinuousCurriculumRuntime:
             "rolled_back": TaskStatus.ROLLED_BACK,
             "paused": TaskStatus.PAUSED,
         }.get(status, TaskStatus.REJECTED)
-        self.scheduler.record_failure(task.task_id, failure_status, str(result.get("reason", "task did not verify")))
+        reason = str(result.get("reason", "task did not verify"))
+        self.scheduler.record_failure(task.task_id, failure_status, reason)
+        if self.scheduler.retry(task.task_id, reason):
+            return {"status": "retrying", "task_id": task.task_id, "reason": reason}
         return {"status": failure_status.value, "task_id": task.task_id, "reason": result.get("reason", "")}
 
     def status(self) -> dict[str, object]:

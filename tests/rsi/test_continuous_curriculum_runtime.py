@@ -70,7 +70,7 @@ def test_verified_ability_enqueues_one_follow_up_and_progresses(tmp_path: Path):
 
 
 def test_failure_is_recorded_without_claiming_ability(tmp_path: Path):
-    runtime = build(tmp_path, FakeController([{"status": "ROLLED_BACK", "reason": "verification failed"}]))
+    runtime = build(tmp_path, FakeController([{"status": "ROLLED_BACK", "reason": "verification failed"}]), max_task_attempts=1)
     runtime.scheduler.enqueue(make_task("task-1"))
 
     result = runtime.tick()
@@ -78,6 +78,20 @@ def test_failure_is_recorded_without_claiming_ability(tmp_path: Path):
     assert result["status"] == "rolled_back"
     assert runtime.status()["iteration"] == 0
     assert runtime.scheduler._state().queue[0].status is TaskStatus.ROLLED_BACK
+
+
+def test_rejected_attempt_is_retried_before_final_failure(tmp_path: Path):
+    controller = FakeController([
+        {"status": "REJECTED", "reason": "selected task did not validate"},
+        {"status": "VERIFIED", "evidence": ["validator passed"], "ability": "a1"},
+    ])
+    runtime = build(tmp_path, controller, max_task_attempts=2)
+    runtime.scheduler.enqueue(make_task("task-1"))
+
+    assert runtime.tick()["status"] == "retrying"
+    assert runtime.tick()["status"] == "verified"
+    assert controller.calls == ["task-1", "task-1"]
+    assert runtime.status()["iteration"] == 1
 
 
 def test_restart_recovers_running_task_and_stop_is_durable(tmp_path: Path):

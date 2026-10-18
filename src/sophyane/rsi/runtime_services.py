@@ -47,6 +47,7 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
         cooldown_seconds=max(0.0, float(os.environ.get("SOPHYANE_RSI_COOLDOWN_SECONDS", "30"))),
         max_queue_length=max(1, int(os.environ.get("SOPHYANE_RSI_MAX_QUEUE", "32"))),
         max_follow_ups=max(0, int(os.environ.get("SOPHYANE_RSI_MAX_FOLLOW_UPS", "1"))),
+        max_task_attempts=max(1, int(os.environ.get("SOPHYANE_RSI_MAX_TASK_ATTEMPTS", "3"))),
     )
     enabled = os.environ.get("SOPHYANE_CONTINUOUS_RSI", "1").strip() == "1"
     if proposal_adapter is None:

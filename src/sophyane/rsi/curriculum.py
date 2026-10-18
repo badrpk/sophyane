@@ -55,6 +55,7 @@ class CurriculumTask:
     started_at: float | None = None
     completed_at: float | None = None
     component: str = ""
+    attempts: int = 0
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,7 @@ def _task_from_dict(raw: dict[str, Any]) -> CurriculumTask:
         started_at=raw.get("started_at"),
         completed_at=raw.get("completed_at"),
         component=str(raw.get("component", "")),
+        attempts=int(raw.get("attempts", 0)),
     )
 
 
@@ -196,6 +198,7 @@ class CurriculumPolicy:
     cooldown_seconds: float = 30.0
     max_queue_length: int = 32
     max_follow_ups: int = 1
+    max_task_attempts: int = 3
 
 
 class CurriculumScheduler:
@@ -262,6 +265,7 @@ class CurriculumScheduler:
         state.current_task_id = selected.task_id
         selected.status = TaskStatus.RUNNING
         selected.started_at = self.clock()
+        selected.attempts += 1
         self._save(state, {"event": "task_started", "task_id": selected.task_id})
         return selected
 
@@ -296,6 +300,20 @@ class CurriculumScheduler:
         state.current_task_id = None
         state.last_result = {"task_id": task_id, "status": status.value, "reason": str(reason)}
         self._save(state, {"event": "task_failed", "task_id": task_id, "status": status.value, "reason": str(reason)})
+
+    def retry(self, task_id: str, reason: str) -> bool:
+        state = self._state()
+        task = next(item for item in state.queue if item.task_id == task_id)
+        if task.status not in {TaskStatus.REJECTED, TaskStatus.ROLLED_BACK, TaskStatus.PAUSED}:
+            return False
+        if task.attempts >= self.policy.max_task_attempts:
+            return False
+        task.status = TaskStatus.QUEUED
+        task.completed_at = None
+        task.failure_reason = str(reason)
+        state.current_task_id = None
+        self._save(state, {"event": "task_retry_queued", "task_id": task_id, "attempt": task.attempts, "reason": str(reason)})
+        return True
 
     def can_enqueue_follow_up(self) -> bool:
         return self._state().follow_ups_enqueued < self.policy.max_follow_ups
