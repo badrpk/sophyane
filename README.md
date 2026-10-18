@@ -316,6 +316,19 @@ sophyane --rsi-curriculum pause --rsi-state-dir ~/.local/state/sophyane/continuo
 sophyane --rsi-curriculum stop --rsi-state-dir ~/.local/state/sophyane/continuous-rsi
 ```
 
+For a persistent Termux session with progress and HITL input:
+
+```bash
+sophyanersistart
+sophyanersistatus
+sophyane-rsi          # type bounded instructions; use exit to leave
+sophyanersistop
+```
+
+The daemon keeps working after the interactive shell exits. HITL lines are
+submitted as bounded observations; they do not bypass the existing validation
+or promotion gates.
+
 The supervisor loop is enabled by default; set `SOPHYANE_CONTINUOUS_RSI=0`
 to disable it.
 Use `SOPHYANE_RSI_MAX_ITERATIONS`, `SOPHYANE_RSI_MAX_WALL_SECONDS`,

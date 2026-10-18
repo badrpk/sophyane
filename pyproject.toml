@@ -56,6 +56,10 @@ Issues = "https://github.com/badrpk/sophyane/issues"
 
 [project.scripts]
 sophyane = "sophyane.cli_entry:main"
+sophyanersistart = "sophyane.rsi_terminal:cli_start"
+sophyanersistop = "sophyane.rsi_terminal:cli_stop"
+sophyanersistatus = "sophyane.rsi_terminal:cli_status"
+sophyane-rsi = "sophyane.rsi_terminal:main"
 sophyane-web = "sophyane.web:main"
 sophyane-doctor = "sophyane.diagnostics:main"
 sophyane-browser = "sophyane.browser.launcher:main"
