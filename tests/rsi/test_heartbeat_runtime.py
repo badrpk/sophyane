@@ -103,3 +103,29 @@ def test_runtime_services_wires_heartbeat_and_llm_source(tmp_path: Path, monkeyp
     assert runtime.enabled is True
     assert runtime.heartbeat.path == tmp_path / "heartbeat.json"
     assert runtime.task_source is not None
+
+
+def test_worker_does_not_overwrite_corrupt_heartbeat(tmp_path: Path):
+    path = tmp_path / "heartbeat.json"
+    path.write_text("corrupt", encoding="utf-8")
+    store = HeartbeatStore(path)
+    runtime = FakeRuntime(queue_length=1)
+
+    result = ContinuousRSIWorker(runtime, store).run_once()
+
+    assert result["status"] == "paused"
+    assert path.read_text(encoding="utf-8") == "corrupt"
+
+
+def test_watchdog_records_restart_failure(tmp_path: Path):
+    store = heartbeat(tmp_path, last_tick_at=10.0)
+    scheduler = SimpleNamespace(status=lambda: {"paused": False, "stopped": False})
+
+    def fail_start():
+        raise RuntimeError("worker unavailable")
+
+    result = RSIWatchdog(store, fail_start, scheduler, stale_seconds=5.0, clock=lambda: 20.0).check()
+
+    assert result["status"] == "error"
+    assert "worker unavailable" in result["reason"]
+    assert "worker unavailable" in store.load().last_error

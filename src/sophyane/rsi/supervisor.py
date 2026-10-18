@@ -100,7 +100,7 @@ def start_supervisor(*, controller=None, state_dir=None):
                     curriculum = None
                     if os.environ.get('SOPHYANE_CONTINUOUS_RSI', '1').strip() == '1':
                         from .runtime_services import build_curriculum_runtime
-                        from .heartbeat_runtime import ContinuousRSIWorker
+                        from .heartbeat_runtime import ContinuousRSIWorker, RSIWatchdog
                         curriculum = build_curriculum_runtime(root, selected)
                         curriculum.start()
                         worker = ContinuousRSIWorker(
@@ -109,11 +109,19 @@ def start_supervisor(*, controller=None, state_dir=None):
                             curriculum.task_source,
                             context_factory=curriculum.context_factory,
                         )
+                        watchdog = RSIWatchdog(
+                            curriculum.heartbeat,
+                            worker.run_once,
+                            curriculum.scheduler,
+                            curriculum.stale_seconds,
+                        ) if curriculum.watchdog_enabled else None
                     while not stop.is_set():
                         started = time.monotonic()
                         try:
                             if curriculum is None:
                                 selected.tick()
+                            elif watchdog is not None and watchdog.check().get('status') == 'error':
+                                worker.run_once()
                             elif worker.run_once().get('status') == 'idle':
                                 selected.tick()
                         except Exception:
@@ -153,6 +161,24 @@ def start_continuous_curriculum(runtime, *, interval=30.0):
     global _curriculum_instance
     if not runtime.enabled or not runtime.start():
         return None
+    from .heartbeat_runtime import ContinuousRSIWorker, RSIWatchdog
+    worker = getattr(runtime, "worker", None)
+    if worker is None and hasattr(runtime, "heartbeat"):
+        worker = ContinuousRSIWorker(
+            runtime,
+            runtime.heartbeat,
+            getattr(runtime, "task_source", None),
+            context_factory=getattr(runtime, "context_factory", None),
+        )
+        runtime.worker = worker
+    watchdog = None
+    if worker is not None and getattr(runtime, "watchdog_enabled", False):
+        watchdog = RSIWatchdog(
+            runtime.heartbeat,
+            worker.run_once,
+            runtime.scheduler,
+            getattr(runtime, "stale_seconds", max(2.0, float(interval) * 2)),
+        )
     with _lock:
         if _curriculum_instance and _curriculum_instance.thread.is_alive():
             return _curriculum_instance
@@ -161,7 +187,12 @@ def start_continuous_curriculum(runtime, *, interval=30.0):
         def run():
             while not stop.is_set():
                 try:
-                    runtime.tick()
+                    if watchdog is not None:
+                        watchdog.check()
+                    if worker is not None:
+                        worker.run_once()
+                    else:
+                        runtime.tick()
                 except Exception:
                     pass
                 stop.wait(max(0.1, float(interval)))

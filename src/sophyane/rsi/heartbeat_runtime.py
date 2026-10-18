@@ -22,6 +22,8 @@ class ContinuousRSIWorker:
         try:
             return self.heartbeat.touch(last_tick_at=self.clock(), **updates)
         except ValueError:
+            if self.heartbeat.path.exists():
+                raise
             now = self.clock()
             record = HeartbeatRecord(
                 worker_id=f"rsi-{uuid.uuid4().hex}",
@@ -40,7 +42,10 @@ class ContinuousRSIWorker:
             state = "stopped" if status.get("stopped") else "paused"
             self._touch(state=state)
             return {"status": state}
-        self._touch(state="running", last_error="")
+        try:
+            self._touch(state="running", last_error="")
+        except Exception as error:
+            return {"status": "paused", "reason": f"heartbeat unavailable: {error}"}
         try:
             if status.get("queue_length", 0) == 0 and self.source is not None and self.context_factory is not None:
                 proposal = self.source.propose(self.context_factory())
@@ -80,5 +85,9 @@ class RSIWatchdog:
             last_error="stale heartbeat; restarting worker",
             restart_count=record.restart_count + 1,
         )
-        self.start_worker()
+        try:
+            self.start_worker()
+        except Exception as error:
+            self.heartbeat.touch(state="error", last_error=str(error)[:1000])
+            return {"status": "error", "reason": str(error)}
         return {"status": "restarted", "restart_count": updated.restart_count}
