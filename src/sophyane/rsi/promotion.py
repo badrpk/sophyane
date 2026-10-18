@@ -102,9 +102,14 @@ class PromotionManager:
         if state.is_file():
             payload = json.loads(state.read_text(encoding="utf-8"))
         checkpoint = str(payload.get("checkpoint_commit") or "")
+        recorded_active = str(payload.get("active_commit") or "")
         active = self._branch_commit() or ""
         if not checkpoint:
             result = LivePromotionResult(False, active, "", "no recorded promotion checkpoint")
+            self._record("rollback_refused", result)
+            return result
+        if active not in {checkpoint, recorded_active}:
+            result = LivePromotionResult(False, active, checkpoint, "rollback refused: live branch diverged")
             self._record("rollback_refused", result)
             return result
         if active != checkpoint:

@@ -96,3 +96,21 @@ def test_rollback_is_idempotent(tmp_path: Path):
     assert first.active_commit == base
     assert second.active_commit == base
     assert git(repo, "rev-parse", "sophyane-rsi-live") == base
+
+
+def test_rollback_refuses_unrelated_live_commit(tmp_path: Path):
+    repo, base, candidate = make_repo(tmp_path)
+    manager = PromotionManager(
+        repo,
+        tmp_path / "state",
+        health_command=(sys.executable, "-c", "raise SystemExit(0)"),
+    )
+    assert manager.promote(candidate, expected_base=base).promoted
+    live = tmp_path / "state" / "live-worktree"
+    (live / "value.txt").write_text("unrelated-live\n")
+    git(live, "commit", "-am", "unrelated-live")
+
+    result = manager.rollback()
+
+    assert result.promoted is False
+    assert "diverged" in result.reason
