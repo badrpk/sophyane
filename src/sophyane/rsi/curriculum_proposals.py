@@ -33,8 +33,8 @@ class CurriculumProposalAdapter:
     def _reject(self, reason: str) -> ProposalResult:
         return ProposalResult(False, None, reason)
 
-    def propose(self, context: ProposalContext) -> ProposalResult:
-        prompt = json.dumps(
+    def _prompt(self, context: ProposalContext) -> str:
+        return json.dumps(
             {
                 "ability": context.ability.name,
                 "capability_summary": context.capability_summary,
@@ -44,10 +44,18 @@ class CurriculumProposalAdapter:
             },
             sort_keys=True,
         )
+
+    def propose(self, context: ProposalContext) -> ProposalResult:
         try:
-            raw = self.generate(prompt)
-            payload: Any = json.loads(raw)
+            raw = self.generate(self._prompt(context))
         except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+            return self._reject(f"invalid JSON proposal: {error}")
+        return self.validate(raw, context)
+
+    def validate(self, raw: str, context: ProposalContext) -> ProposalResult:
+        try:
+            payload: Any = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
             return self._reject(f"invalid JSON proposal: {error}")
 
         if not isinstance(payload, dict) or "tasks" in payload:
