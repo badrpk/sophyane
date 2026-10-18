@@ -50,6 +50,15 @@ def handle_command(command: str, state_dir: Path) -> str:
 
 def _serve(state_dir: Path) -> int:
     state_dir.mkdir(parents=True, exist_ok=True)
+    runtime_source_root = Path(__file__).resolve().parents[2]
+    current_commit_result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=runtime_source_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    current_commit = current_commit_result.stdout.strip()
     sock_path = socket_path(state_dir)
     if sock_path.exists():
         sock_path.unlink()
@@ -101,6 +110,16 @@ def _serve(state_dir: Path) -> int:
                 if watchdog is not None:
                     watchdog.check()
                 result = worker.run_once()
+                if result.get("status") == "verified" and needs_live_relaunch(state_dir, current_commit):
+                    live_root = runtime_root(state_dir)
+                    environment = os.environ.copy()
+                    environment["PYTHONPATH"] = str(live_root / "src") + os.pathsep + environment.get("PYTHONPATH", "")
+                    os.chdir(live_root)
+                    os.execve(
+                        sys.executable,
+                        [sys.executable, "-m", "sophyane.rsi_terminal", "--daemon", "--state-dir", str(state_dir)],
+                        environment,
+                    )
                 if result.get("status") == "idle" and runtime.status().get("queue_length", 0) == 0:
                     controller.tick()
             except Exception as error:
@@ -164,6 +183,27 @@ def _default_state_dir() -> Path:
     return Path(os.environ.get("SOPHYANE_RSI_STATE", Path.home() / ".local/state/sophyane/continuous-rsi"))
 
 
+def runtime_root(state_dir: Path) -> Path:
+    live = Path(state_dir) / "live-worktree"
+    promotion = Path(state_dir) / "promotion.json"
+    if live.is_dir() and promotion.is_file():
+        try:
+            if bool(json.loads(promotion.read_text(encoding="utf-8")).get("promoted")):
+                return live
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            pass
+    return Path(__file__).resolve().parents[2]
+
+
+def needs_live_relaunch(state_dir: Path, current_commit: str) -> bool:
+    try:
+        payload = json.loads((Path(state_dir) / "promotion.json").read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+    active = str(payload.get("active_commit") or "")
+    return bool(payload.get("promoted")) and bool(active) and active != str(current_commit)
+
+
 def start(state_dir: Path | None = None) -> int:
     state_dir = Path(state_dir or _default_state_dir())
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -177,8 +217,14 @@ def start(state_dir: Path | None = None) -> int:
         except (OSError, ValueError):
             pid_path.unlink(missing_ok=True)
     log = (state_dir / "rsi.log").open("a", encoding="utf-8")
+    root = runtime_root(state_dir)
+    environment = os.environ.copy()
+    source_root = str(root / "src")
+    environment["PYTHONPATH"] = source_root + os.pathsep + environment.get("PYTHONPATH", "")
     subprocess.Popen(
         [sys.executable, "-m", "sophyane.rsi_terminal", "--daemon", "--state-dir", str(state_dir)],
+        cwd=str(root),
+        env=environment,
         stdin=subprocess.DEVNULL,
         stdout=log,
         stderr=log,

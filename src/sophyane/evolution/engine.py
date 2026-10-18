@@ -3065,6 +3065,21 @@ Return:
             "promotion_stage"
         ] = "post_trusted_probe_veto"
 
+        details["candidate_commit"] = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=worktree,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        details["base_commit"] = subprocess.run(
+            ["git", "rev-parse", "HEAD^"],
+            cwd=worktree,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
         details[
             "promotion_committed"
         ] = True

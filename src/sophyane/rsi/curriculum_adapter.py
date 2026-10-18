@@ -13,10 +13,11 @@ from .weakness_ledger import WeaknessRecord, WeaknessStatus
 class NativeEvolutionTaskAdapter:
     """Run one bounded cycle of Sophyane's native promotion engine."""
 
-    def __init__(self, repository, *, timeout_seconds: int = 300, engine_factory=None):
+    def __init__(self, repository, *, timeout_seconds: int = 300, engine_factory=None, promotion_manager=None):
         self.repository = repository
         self.timeout_seconds = max(1, int(timeout_seconds))
         self.engine_factory = engine_factory
+        self.promotion_manager = promotion_manager
 
     def run_task(self, task: CurriculumTask) -> dict[str, object]:
         from sophyane.evolution.models import EvolutionConfig
@@ -43,14 +44,25 @@ class NativeEvolutionTaskAdapter:
         gate = getattr(record, "gate", None)
         details = dict(getattr(gate, "details", {}) or {}) if gate else {}
         promoted = bool(details.get("promotion_committed"))
+        native_status = str(getattr(record, "status", ""))
         evidence = (
-            f"native_status={getattr(record, 'status', '')}; "
+            f"native_status={native_status}; "
             f"promotion_committed={promoted}; "
             f"run_id={getattr(record, 'run_id', '')}"
         )
-        if promoted:
-            return {"status": "verified", "evidence": (evidence,), "ability": task.task_id}
-        return {"status": "rejected", "reason": evidence}
+        if not promoted:
+            return {"status": "rejected", "reason": evidence}
+        if self.promotion_manager is None:
+            return {"status": "rejected", "reason": evidence + "; live promotion manager unavailable"}
+        candidate_commit = str(details.get("candidate_commit") or "")
+        expected_base = str(details.get("base_commit") or "")
+        if not candidate_commit or not expected_base:
+            return {"status": "rejected", "reason": evidence + "; native commit evidence unavailable"}
+        live = self.promotion_manager.promote(candidate_commit, expected_base=expected_base)
+        live_evidence = f"live_promoted={bool(getattr(live, 'promoted', False))}; active_commit={getattr(live, 'active_commit', '')}"
+        if getattr(live, "promoted", False):
+            return {"status": "verified", "evidence": (evidence, live_evidence), "ability": task.task_id, "checkpoint": expected_base}
+        return {"status": "rejected", "reason": evidence + "; " + live_evidence + "; " + str(getattr(live, "reason", "promotion rejected"))}
 
 
 class AutonomousCurriculumTaskAdapter:

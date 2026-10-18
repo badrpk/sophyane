@@ -75,10 +75,27 @@ def test_native_adapter_reports_native_promotion():
         return SimpleNamespace(run=lambda: [SimpleNamespace(
             run_id="native-1",
             status="candidate_promotable",
+            gate=SimpleNamespace(details={"promotion_committed": True, "candidate_commit": "candidate", "base_commit": "base"}),
+        )])
+
+    manager = SimpleNamespace(promote=lambda _candidate, expected_base: SimpleNamespace(
+        promoted=True, active_commit="candidate", reason="ok"
+    ))
+    result = NativeEvolutionTaskAdapter(".", engine_factory=factory, promotion_manager=manager).run_task(task())
+
+    assert result["status"] == "verified"
+    assert "native_status=candidate_promotable" in result["evidence"][0]
+
+
+def test_native_adapter_rejects_candidate_without_live_promotion():
+    def factory(_config):
+        return SimpleNamespace(run=lambda: [SimpleNamespace(
+            run_id="native-no-live",
+            status="candidate_promotable",
             gate=SimpleNamespace(details={"promotion_committed": True}),
         )])
 
     result = NativeEvolutionTaskAdapter(".", engine_factory=factory).run_task(task())
 
-    assert result["status"] == "verified"
-    assert "native_status=candidate_promotable" in result["evidence"][0]
+    assert result["status"] == "rejected"
+    assert "live promotion" in result["reason"]

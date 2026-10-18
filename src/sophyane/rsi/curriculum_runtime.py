@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 from typing import Any
 
 from .curriculum import AbilityRecord, CurriculumScheduler, CurriculumStore, TaskStatus
@@ -108,4 +109,11 @@ class ContinuousCurriculumRuntime:
         return {"status": failure_status.value, "task_id": task.task_id, "reason": result.get("reason", "")}
 
     def status(self) -> dict[str, object]:
-        return {"enabled": self.enabled, "started": self.started, **self.scheduler.status()}
+        promotion = {}
+        promotion_path = self.state_dir / "promotion.json"
+        if promotion_path.is_file():
+            try:
+                promotion = json.loads(promotion_path.read_text(encoding="utf-8"))
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                promotion = {"error": "promotion state unreadable"}
+        return {"enabled": self.enabled, "started": self.started, "promotion": promotion, **self.scheduler.status()}
