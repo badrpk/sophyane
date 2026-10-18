@@ -32,7 +32,11 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
     """
     from .curriculum import CurriculumPolicy, CurriculumScheduler, CurriculumStore
     from .curriculum_adapter import AutonomousCurriculumTaskAdapter
+    from .curriculum_proposals import CurriculumProposalAdapter, ProposalContext
+    from .curriculum_source import CurriculumTaskSource
     from .curriculum_runtime import ContinuousCurriculumRuntime
+    from .heartbeat import HeartbeatStore
+    from .local_intelligence import LocalRole
 
     root = Path(state_dir)
     policy = CurriculumPolicy(
@@ -43,18 +47,44 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
         max_follow_ups=max(0, int(os.environ.get("SOPHYANE_RSI_MAX_FOLLOW_UPS", "1"))),
     )
     enabled = os.environ.get("SOPHYANE_CONTINUOUS_RSI", "1").strip() == "1"
+    if proposal_adapter is None:
+        proposal_adapter = CurriculumProposalAdapter(
+            lambda prompt: local_request("qwen", prompt, LocalRole.TINY_PROPOSAL)
+        )
     task_runner = AutonomousCurriculumTaskAdapter(
         controller,
         max_cycles=max(1, int(os.environ.get("SOPHYANE_RSI_TASK_MAX_CYCLES", "64"))),
     )
     scheduler = CurriculumScheduler(CurriculumStore(root / "curriculum.json"), policy)
-    return ContinuousCurriculumRuntime(
+    runtime = ContinuousCurriculumRuntime(
         root,
         task_runner,
         scheduler,
         proposal_adapter=proposal_adapter,
         enabled=enabled,
     )
+
+    def context_factory():
+        state = scheduler.store.load()
+        ability = state.abilities[-1] if state.abilities else None
+        if ability is None:
+            from .curriculum import AbilityRecord
+            ability = AbilityRecord("seed", "initial bounded RSI ability", ("host policy",))
+        allowed = tuple(sorted({path for plan in getattr(controller, "plans", {}).values()
+                                for path in getattr(plan, "allowed_paths", ())})[:8])
+        return ProposalContext(
+            ability=ability,
+            allowed_paths=allowed,
+            existing_task_ids=tuple(task.task_id for task in state.queue),
+            capability_summary="request one bounded, measurable RSI follow-up",
+        )
+
+    runtime.heartbeat = HeartbeatStore(root / "heartbeat.json")
+    runtime.task_source = CurriculumTaskSource(
+        proposal_adapter.generate, proposal_adapter
+    )
+    runtime.context_factory = context_factory
+    return runtime
 
 
 def local_request(name, context, role):

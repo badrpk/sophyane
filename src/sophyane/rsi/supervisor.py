@@ -100,12 +100,21 @@ def start_supervisor(*, controller=None, state_dir=None):
                     curriculum = None
                     if os.environ.get('SOPHYANE_CONTINUOUS_RSI', '1').strip() == '1':
                         from .runtime_services import build_curriculum_runtime
+                        from .heartbeat_runtime import ContinuousRSIWorker
                         curriculum = build_curriculum_runtime(root, selected)
                         curriculum.start()
+                        worker = ContinuousRSIWorker(
+                            curriculum,
+                            curriculum.heartbeat,
+                            curriculum.task_source,
+                            context_factory=curriculum.context_factory,
+                        )
                     while not stop.is_set():
                         started = time.monotonic()
                         try:
-                            if curriculum is None or curriculum.tick().get('status') == 'idle':
+                            if curriculum is None:
+                                selected.tick()
+                            elif worker.run_once().get('status') == 'idle':
                                 selected.tick()
                         except Exception:
                             pass  # Background diagnostics must not crash foreground runtime.
