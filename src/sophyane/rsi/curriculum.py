@@ -78,6 +78,8 @@ class CurriculumState:
     stopped: bool = False
     stop_reason: str = ""
     last_result: dict[str, Any] = field(default_factory=dict)
+    follow_ups_enqueued: int = 0
+    last_verified_at: float | None = None
 
 
 def _enum_value(value: Any) -> Any:
@@ -148,6 +150,8 @@ class CurriculumStore:
                 stopped=bool(raw.get("stopped", False)),
                 stop_reason=str(raw.get("stop_reason", "")),
                 last_result=dict(raw.get("last_result", {})),
+                follow_ups_enqueued=int(raw.get("follow_ups_enqueued", 0)),
+                last_verified_at=raw.get("last_verified_at"),
             )
         except (OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as error:
             raise ValueError(f"invalid curriculum state: {error}") from error
@@ -181,3 +185,157 @@ class CurriculumStore:
         record = {"recorded_at": time.time(), **_enum_value(event)}
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+@dataclass(frozen=True)
+class CurriculumPolicy:
+    max_iterations: int = 100
+    max_wall_seconds: float = 86_400.0
+    cooldown_seconds: float = 30.0
+    max_queue_length: int = 32
+    max_follow_ups: int = 1
+
+
+class CurriculumScheduler:
+    """Deterministic, durable lifecycle for one bounded task at a time."""
+
+    _SOURCE_PRIORITY = {
+        TaskSource.REGRESSION: 0,
+        TaskSource.WEAKNESS: 1,
+        TaskSource.CAPABILITY_GAP: 2,
+        TaskSource.CURRICULUM: 3,
+        TaskSource.LLM_FOLLOW_UP: 4,
+    }
+
+    def __init__(self, store: CurriculumStore, policy: CurriculumPolicy, clock=time.time):
+        self.store = store
+        self.policy = policy
+        self.clock = clock
+
+    def _state(self) -> CurriculumState:
+        return self.store.load()
+
+    def _save(self, state: CurriculumState, event: dict[str, object] | None = None) -> None:
+        self.store.save(state)
+        if event:
+            self.store.append_event(event)
+
+    def choose_next(self, candidates: list[CurriculumTask]) -> CurriculumTask | None:
+        queued = [task for task in candidates if task.status is TaskStatus.QUEUED]
+        if not queued:
+            return None
+        return min(queued, key=lambda item: (self._SOURCE_PRIORITY[item.source], item.created_at, item.task_id))
+
+    def enqueue(self, task: CurriculumTask) -> bool:
+        state = self._state()
+        if len(state.queue) >= self.policy.max_queue_length:
+            return False
+        if any(item.task_id == task.task_id for item in state.queue):
+            return False
+        if not task.objective.strip() or not task.editable_paths or not task.verification:
+            return False
+        state.queue.append(task)
+        self._save(state, {"event": "task_queued", "task_id": task.task_id})
+        return True
+
+    def _budget_exhausted(self, state: CurriculumState) -> bool:
+        if state.iteration >= self.policy.max_iterations:
+            return True
+        if state.started_at is not None and self.clock() - state.started_at >= self.policy.max_wall_seconds:
+            return True
+        return False
+
+    def next_task(self) -> CurriculumTask | None:
+        state = self._state()
+        if state.stopped or state.paused or state.current_task_id or self._budget_exhausted(state):
+            if self._budget_exhausted(state) and not state.paused:
+                state.paused = True
+                self._save(state, {"event": "budget_paused"})
+            return None
+        if state.last_verified_at is not None and self.clock() - state.last_verified_at < self.policy.cooldown_seconds:
+            return None
+        selected = self.choose_next(state.queue)
+        if selected is None:
+            return None
+        state.current_task_id = selected.task_id
+        selected.status = TaskStatus.RUNNING
+        selected.started_at = self.clock()
+        self._save(state, {"event": "task_started", "task_id": selected.task_id})
+        return selected
+
+    def mark_running(self, task_id: str) -> None:
+        state = self._state()
+        task = next(item for item in state.queue if item.task_id == task_id)
+        task.status = TaskStatus.RUNNING
+        task.started_at = task.started_at or self.clock()
+        state.current_task_id = task_id
+        state.started_at = state.started_at or self.clock()
+        self._save(state, {"event": "task_running", "task_id": task_id})
+
+    def record_verified(self, task_id: str, evidence: tuple[str, ...]) -> None:
+        state = self._state()
+        task = next(item for item in state.queue if item.task_id == task_id)
+        task.status = TaskStatus.VERIFIED
+        task.completed_at = self.clock()
+        state.current_task_id = None
+        state.iteration += 1
+        state.last_verified_at = self.clock()
+        state.last_result = {"task_id": task_id, "status": TaskStatus.VERIFIED.value, "evidence": list(evidence)}
+        self._save(state, {"event": "task_verified", "task_id": task_id, "evidence": list(evidence)})
+
+    def record_failure(self, task_id: str, status: TaskStatus, reason: str) -> None:
+        if status not in {TaskStatus.REJECTED, TaskStatus.ROLLED_BACK, TaskStatus.PAUSED}:
+            raise ValueError("failure status must be rejected, rolled_back, or paused")
+        state = self._state()
+        task = next(item for item in state.queue if item.task_id == task_id)
+        task.status = status
+        task.failure_reason = str(reason)
+        task.completed_at = self.clock()
+        state.current_task_id = None
+        state.last_result = {"task_id": task_id, "status": status.value, "reason": str(reason)}
+        self._save(state, {"event": "task_failed", "task_id": task_id, "status": status.value, "reason": str(reason)})
+
+    def can_enqueue_follow_up(self) -> bool:
+        return self._state().follow_ups_enqueued < self.policy.max_follow_ups
+
+    def mark_follow_up_enqueued(self) -> None:
+        state = self._state()
+        if state.follow_ups_enqueued >= self.policy.max_follow_ups:
+            raise RuntimeError("follow-up task budget exhausted")
+        state.follow_ups_enqueued += 1
+        self._save(state, {"event": "follow_up_reserved"})
+
+    def pause(self, reason: str) -> None:
+        state = self._state()
+        state.paused = True
+        state.last_result = {"status": TaskStatus.PAUSED.value, "reason": str(reason)}
+        self._save(state, {"event": "paused", "reason": str(reason)})
+
+    def resume(self) -> None:
+        state = self._state()
+        state.paused = False
+        state.stopped = False
+        state.stop_reason = ""
+        self._save(state, {"event": "resumed"})
+
+    def stop(self, reason: str) -> None:
+        state = self._state()
+        state.stopped = True
+        state.stop_reason = str(reason)
+        self._save(state, {"event": "stopped", "reason": str(reason)})
+
+    def status(self) -> dict[str, object]:
+        state = self._state()
+        if self._budget_exhausted(state) and not state.paused:
+            state.paused = True
+            self._save(state, {"event": "budget_paused"})
+        return {
+            "paused": state.paused,
+            "stopped": state.stopped,
+            "stop_reason": state.stop_reason,
+            "current_task_id": state.current_task_id,
+            "queue_length": sum(item.status is TaskStatus.QUEUED for item in state.queue),
+            "iteration": state.iteration,
+            "follow_ups_enqueued": state.follow_ups_enqueued,
+            "last_result": state.last_result,
+        }
