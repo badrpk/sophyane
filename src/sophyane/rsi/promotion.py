@@ -9,9 +9,11 @@ import subprocess
 import sys
 import time
 
+from sophyane.rsi_host_broker import PromotionResult, promote
+
 
 @dataclass(frozen=True)
-class PromotionResult:
+class LivePromotionResult:
     promoted: bool
     active_commit: str
     checkpoint_commit: str
@@ -56,7 +58,7 @@ class PromotionManager:
             self._git("worktree", "add", str(self.live_worktree), self.branch)
         return current
 
-    def _record(self, event: str, result: PromotionResult) -> None:
+    def _record(self, event: str, result: LivePromotionResult) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         payload = {"event": event, "recorded_at": time.time(), **asdict(result)}
         with self.ledger.open("a", encoding="utf-8") as stream:
@@ -67,30 +69,30 @@ class PromotionManager:
         self._git("reset", "--hard", commit, cwd=self.live_worktree)
         self._git("update-ref", self.branch, commit)
 
-    def promote(self, candidate_commit: str, *, expected_base: str) -> PromotionResult:
+    def promote(self, candidate_commit: str, *, expected_base: str) -> LivePromotionResult:
         candidate_commit = str(candidate_commit).strip()
         expected_base = str(expected_base).strip()
         if not candidate_commit or not expected_base or not self._commit_exists(candidate_commit):
-            return PromotionResult(False, self._branch_commit() or "", expected_base, "candidate commit unavailable")
+            return LivePromotionResult(False, self._branch_commit() or "", expected_base, "candidate commit unavailable")
         active = self._ensure_live_worktree(expected_base)
         if active != expected_base:
-            result = PromotionResult(False, active, expected_base, "live branch diverged from expected base")
+            result = LivePromotionResult(False, active, expected_base, "live branch diverged from expected base")
             self._record("promotion_refused", result)
             return result
         try:
             self._git("merge-base", "--is-ancestor", expected_base, candidate_commit)
         except subprocess.CalledProcessError:
-            result = PromotionResult(False, active, expected_base, "candidate is not based on expected base")
+            result = LivePromotionResult(False, active, expected_base, "candidate is not based on expected base")
             self._record("promotion_refused", result)
             return result
         self._git("merge", "--ff-only", candidate_commit, cwd=self.live_worktree)
         health = subprocess.run(list(self.health_command), cwd=self.live_worktree, capture_output=True, text=True, check=False)
         if health.returncode != 0:
             self._reset_live(expected_base)
-            result = PromotionResult(False, expected_base, expected_base, "live health check failed; rolled back", health.returncode)
+            result = LivePromotionResult(False, expected_base, expected_base, "live health check failed; rolled back", health.returncode)
             self._record("promotion_rolled_back", result)
             return result
-        result = PromotionResult(True, candidate_commit, expected_base, "live health check passed", 0)
+        result = LivePromotionResult(True, candidate_commit, expected_base, "live health check passed", 0)
         self._record("promotion_verified", result)
         return result
 
@@ -102,14 +104,14 @@ class PromotionManager:
         checkpoint = str(payload.get("checkpoint_commit") or "")
         active = self._branch_commit() or ""
         if not checkpoint:
-            result = PromotionResult(False, active, "", "no recorded promotion checkpoint")
+            result = LivePromotionResult(False, active, "", "no recorded promotion checkpoint")
             self._record("rollback_refused", result)
             return result
         if active != checkpoint:
             self._reset_live(checkpoint)
-        result = PromotionResult(True, checkpoint, checkpoint, "rollback complete", 0)
+        result = LivePromotionResult(True, checkpoint, checkpoint, "rollback complete", 0)
         self._record("rollback_complete", result)
         return result
 
 
-__all__ = ["PromotionManager", "PromotionResult"]
+__all__ = ["PromotionManager", "LivePromotionResult", "PromotionResult", "promote"]
