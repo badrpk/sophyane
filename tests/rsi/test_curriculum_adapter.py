@@ -1,7 +1,10 @@
 from types import SimpleNamespace
 
 from sophyane.rsi.curriculum import CurriculumTask, ResourceClass, TaskSource
-from sophyane.rsi.curriculum_adapter import AutonomousCurriculumTaskAdapter
+from sophyane.rsi.curriculum_adapter import (
+    AutonomousCurriculumTaskAdapter,
+    NativeEvolutionTaskAdapter,
+)
 from sophyane.rsi.weakness_ledger import WeaknessLedger, WeaknessStatus
 
 
@@ -63,3 +66,19 @@ def test_adapter_pauses_when_existing_pipeline_does_not_finish():
     assert result["status"] == "paused"
     assert "cycle" in result["reason"]
     assert controller.ticks == 2
+
+
+def test_native_adapter_reports_native_promotion():
+    def factory(config):
+        assert config.allow_candidate_patches is True
+        assert config.allow_promotion is True
+        return SimpleNamespace(run=lambda: [SimpleNamespace(
+            run_id="native-1",
+            status="candidate_promotable",
+            gate=SimpleNamespace(details={"promotion_committed": True}),
+        )])
+
+    result = NativeEvolutionTaskAdapter(".", engine_factory=factory).run_task(task())
+
+    assert result["status"] == "verified"
+    assert "native_status=candidate_promotable" in result["evidence"][0]

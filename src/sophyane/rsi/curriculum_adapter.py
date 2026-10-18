@@ -10,6 +10,49 @@ from .curriculum import CurriculumTask
 from .weakness_ledger import WeaknessRecord, WeaknessStatus
 
 
+class NativeEvolutionTaskAdapter:
+    """Run one bounded cycle of Sophyane's native promotion engine."""
+
+    def __init__(self, repository, *, timeout_seconds: int = 300, engine_factory=None):
+        self.repository = repository
+        self.timeout_seconds = max(1, int(timeout_seconds))
+        self.engine_factory = engine_factory
+
+    def run_task(self, task: CurriculumTask) -> dict[str, object]:
+        from sophyane.evolution.models import EvolutionConfig
+
+        factory = self.engine_factory
+        if factory is None:
+            from sophyane.evolution.engine import EvolutionEngine
+            factory = EvolutionEngine
+        config = EvolutionConfig(
+            repo=self.repository,
+            cycles=1,
+            timeout_seconds=self.timeout_seconds,
+            allow_cloud_analysis=True,
+            allow_candidate_patches=True,
+            allow_promotion=True,
+        )
+        try:
+            records = factory(config).run()
+        except Exception as error:
+            return {"status": "paused", "reason": f"native evolution failed: {error}"}
+        if not records:
+            return {"status": "rejected", "reason": "native evolution returned no record"}
+        record = records[-1]
+        gate = getattr(record, "gate", None)
+        details = dict(getattr(gate, "details", {}) or {}) if gate else {}
+        promoted = bool(details.get("promotion_committed"))
+        evidence = (
+            f"native_status={getattr(record, 'status', '')}; "
+            f"promotion_committed={promoted}; "
+            f"run_id={getattr(record, 'run_id', '')}"
+        )
+        if promoted:
+            return {"status": "verified", "evidence": (evidence,), "ability": task.task_id}
+        return {"status": "rejected", "reason": evidence}
+
+
 class AutonomousCurriculumTaskAdapter:
     """Run curriculum tasks using the controller's existing RSI gates.
 

@@ -64,7 +64,10 @@ def _serve(state_dir: Path) -> int:
     heartbeat.save(HeartbeatRecord(f"rsi-{os.getpid()}", os.getpid(), "starting", now, now))
     from .rsi.heartbeat_runtime import ContinuousRSIWorker, RSIWatchdog
     from .rsi.runtime_services import build_controller, build_curriculum_runtime
-    controller = build_controller(state_dir)
+    # The daemon is a background worker. Treating it as user-active forces the
+    # resource governor into OBSERVE_ONLY forever and prevents queued tasks
+    # from progressing.
+    controller = build_controller(state_dir, active=lambda: False)
     runtime = build_curriculum_runtime(state_dir, controller)
     runtime.start()
     worker = ContinuousRSIWorker(
@@ -80,6 +83,17 @@ def _serve(state_dir: Path) -> int:
         runtime.stale_seconds,
     ) if runtime.watchdog_enabled else None
     stop_event = threading.Event()
+
+    def pulse_heartbeat():
+        while not stop_event.is_set():
+            try:
+                runtime.heartbeat.touch(
+                    state="running",
+                    last_tick_at=time.time(),
+                )
+            except Exception:
+                pass
+            stop_event.wait(min(1.0, runtime.heartbeat_interval))
 
     def run_worker():
         while not stop_event.is_set():
@@ -97,6 +111,8 @@ def _serve(state_dir: Path) -> int:
             stop_event.wait(runtime.heartbeat_interval)
 
     worker_thread = threading.Thread(target=run_worker, name="sophyane-rsi-worker", daemon=True)
+    heartbeat_thread = threading.Thread(target=pulse_heartbeat, name="sophyane-rsi-heartbeat", daemon=True)
+    heartbeat_thread.start()
     worker_thread.start()
     try:
         while True:
@@ -120,6 +136,7 @@ def _serve(state_dir: Path) -> int:
     finally:
         stop_event.set()
         worker_thread.join(timeout=2.0)
+        heartbeat_thread.join(timeout=2.0)
         if getattr(controller, "candidate", None):
             controller.candidate.close()
         server.close()

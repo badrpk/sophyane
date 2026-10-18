@@ -31,7 +31,7 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
     task adapter; it remains responsible for all candidate and promotion gates.
     """
     from .curriculum import CurriculumPolicy, CurriculumScheduler, CurriculumStore
-    from .curriculum_adapter import AutonomousCurriculumTaskAdapter
+    from .curriculum_adapter import NativeEvolutionTaskAdapter
     from .curriculum_proposals import CurriculumProposalAdapter, ProposalContext
     from .curriculum_source import CurriculumTaskSource
     from .curriculum_runtime import ContinuousCurriculumRuntime
@@ -51,9 +51,9 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
         proposal_adapter = CurriculumProposalAdapter(
             lambda prompt: local_request("qwen", prompt, LocalRole.TINY_PROPOSAL)
         )
-    task_runner = AutonomousCurriculumTaskAdapter(
-        controller,
-        max_cycles=max(1, int(os.environ.get("SOPHYANE_RSI_TASK_MAX_CYCLES", "64"))),
+    task_runner = NativeEvolutionTaskAdapter(
+        Path(__file__).resolve().parents[3],
+        timeout_seconds=max(1, int(os.environ.get("SOPHYANE_RSI_TASK_TIMEOUT", "300"))),
     )
     scheduler = CurriculumScheduler(CurriculumStore(root / "curriculum.json"), policy)
     runtime = ContinuousCurriculumRuntime(
