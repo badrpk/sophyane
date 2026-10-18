@@ -104,6 +104,7 @@ def _default_state_dir() -> Path:
 def start(state_dir: Path | None = None) -> int:
     state_dir = Path(state_dir or _default_state_dir())
     state_dir.mkdir(parents=True, exist_ok=True)
+    run_curriculum_command("start", state_dir)
     pid_path = state_dir / "rsi.pid"
     if pid_path.exists():
         try:

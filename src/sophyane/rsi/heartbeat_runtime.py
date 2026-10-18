@@ -53,8 +53,11 @@ class ContinuousRSIWorker:
                     queued = self.runtime.scheduler.enqueue(proposal.task)
                     if not queued:
                         self._touch(state="waiting", last_error="scheduler rejected proposed task")
+                elif not proposal.accepted:
+                    self._touch(state="waiting", last_error=f"task proposal rejected: {proposal.reason}")
             result = self.runtime.tick()
-            self._touch(state="waiting", current_task_id=result.get("task_id"), last_error="")
+            current_error = self.heartbeat.load().last_error
+            self._touch(state="waiting", current_task_id=result.get("task_id"), last_error=current_error)
             return result
         except Exception as error:
             self._touch(state="error", last_error=str(error)[:1000])

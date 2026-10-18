@@ -77,6 +77,17 @@ def test_worker_requests_one_task_when_queue_is_empty(tmp_path: Path):
     assert [item.task_id for item in runtime.enqueued] == ["task-2"]
 
 
+def test_worker_reports_rejected_proposal_in_heartbeat(tmp_path: Path):
+    store = heartbeat(tmp_path)
+    runtime = FakeRuntime()
+    source = SimpleNamespace(propose=lambda _context: ProposalResult(False, reason="no frozen experiment plan"))
+    worker = ContinuousRSIWorker(runtime, store, source, context_factory=lambda: "context")
+
+    worker.run_once()
+
+    assert "no frozen experiment plan" in store.load().last_error
+
+
 def test_watchdog_restarts_stale_worker_but_not_paused_or_stopped(tmp_path: Path):
     store = heartbeat(tmp_path, last_tick_at=10.0)
     starts = []
