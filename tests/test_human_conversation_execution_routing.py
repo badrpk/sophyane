@@ -1974,6 +1974,41 @@ def test_mode6_repository_executor_hands_authoritative_capability_gap_to_failure
     assert result is not None
 
 
+def test_mode6_capability_store_survives_controller_restart(
+    monkeypatch,
+    tmp_path,
+):
+    import sophyane.human_conversation_cli as cli
+
+    store_path = tmp_path / "mode6-capabilities.json"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv(
+        "SOPHYANE_MODE6_CAPABILITY_STORE",
+        str(store_path),
+    )
+    monkeypatch.setattr(cli, "_mode6_failure_driven_controller", None)
+
+    first = cli._mode6_capability_development_controller(
+        workspace=workspace,
+    )
+    candidate = {
+        "status": "TRUSTED_PROMOTED",
+        "provider": "codex_cli",
+        "capability_class": "document.transform",
+        "files": {"transform.py": "print('ok')\n"},
+        "fingerprint": "verified",
+    }
+    first.store.put("document.transform", candidate)
+
+    monkeypatch.setattr(cli, "_mode6_failure_driven_controller", None)
+    second = cli._mode6_capability_development_controller(
+        workspace=workspace,
+    )
+
+    assert second.store.get("document.transform") == candidate
+
+
 def test_mode6_failure_driven_controller_has_real_worker_and_independent_verifier(
     monkeypatch,
 ):

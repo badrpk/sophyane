@@ -495,6 +495,15 @@ class _CompletedRepositoryExecution(str):
 _mode6_failure_driven_controller = None
 
 
+def _mode6_capability_store_path() -> Path:
+    return Path(
+        os.environ.get(
+            "SOPHYANE_MODE6_CAPABILITY_STORE",
+            Path.home() / ".local/state/sophyane/mode6/capabilities.json",
+        )
+    ).expanduser()
+
+
 def _mode6_reusable_executable_capability_class(
     request,
 ) -> str | None:
@@ -734,9 +743,24 @@ def _mode6_capability_development_controller(
         else None
     )
 
-    if _mode6_failure_driven_controller is None:
+    if (
+        _mode6_failure_driven_controller is None
+        or getattr(_mode6_failure_driven_controller, "mode6_workspace", None)
+        != resolved_workspace
+    ):
         from sophyane.failure_driven_capability import (
             CapabilityDevelopmentController,
+            InMemoryCapabilityStore,
+            PersistentCapabilityStore,
+        )
+
+        capability_store = (
+            PersistentCapabilityStore(
+                _mode6_capability_store_path(),
+                workspace=resolved_workspace,
+            )
+            if resolved_workspace is not None
+            else InMemoryCapabilityStore()
         )
 
         # Host-owned bridge between independent verification and the
@@ -1145,6 +1169,7 @@ def _mode6_capability_development_controller(
 
         _mode6_failure_driven_controller = (
             CapabilityDevelopmentController(
+                store=capability_store,
                 worker=mode6_worker,
                 verifier=mode6_verifier,
                 promoter=mode6_promoter,
