@@ -24,6 +24,14 @@ def test_local_analyst_uses_separate_endpoint() -> None:
     assert "/v1/chat/completions" in source
 
 
+def test_json_object_is_callable_through_engine_instance() -> None:
+    engine = EvolutionEngine.__new__(EvolutionEngine)
+
+    assert engine._json_object('{"summary": "ok"}') == {
+        "summary": "ok"
+    }
+
+
 def test_quota_failure_allows_local_fallback() -> None:
     error = RuntimeError(
         "Gemini daily quota is exhausted: "

@@ -1017,6 +1017,7 @@ Trace:
 
         return output
 
+    @staticmethod
     def _json_object(
         text: str,
     ) -> dict[str, Any]:
