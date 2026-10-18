@@ -1,9 +1,11 @@
 from pathlib import Path
 
 from sophyane.evolution.models import (
+    EvolutionConfig,
     ExecutionTrace,
     TaskSpec,
 )
+from sophyane.evolution.engine import EvolutionEngine
 from sophyane.evolution.validators import (
     validate,
 )
@@ -76,3 +78,28 @@ def test_semantic_validator_blocks_public_route(
     )
 
     assert result.passed is True
+
+
+def test_native_evolution_uses_deterministic_shell_executor(tmp_path: Path) -> None:
+    engine = EvolutionEngine.__new__(EvolutionEngine)
+    repository = Path.cwd()
+    engine.repo = repository
+    engine.config = EvolutionConfig(repo=repository, timeout_seconds=30)
+
+    trace = engine._run_sli(
+        TaskSpec(
+            task_id="shell-focused-00001",
+            prompt=(
+                "Create exit_probe.sh that prints STDOUT_OK to stdout, "
+                "STDERR_OK to stderr, exits with code 7, runs it, and "
+                "reports the real stdout, stderr and exit code."
+            ),
+            capability="shell",
+            validator="shell",
+        )
+    )
+
+    assert validate(
+        TaskSpec("shell", "", "shell", "shell"),
+        trace,
+    ).passed is True

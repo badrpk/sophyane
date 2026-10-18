@@ -187,6 +187,39 @@ class EvolutionEngine:
             )
         )
 
+        # Use the same bounded deterministic capability executors as the
+        # normal runtime before invoking the SLI subprocess. This keeps
+        # native evolution aligned with the production execution path and
+        # gives objective probes a real artifact/result to validate.
+        try:
+            from sophyane.capability_executors import (
+                execute_deterministic_capability,
+            )
+
+            deterministic = execute_deterministic_capability(
+                task.prompt,
+                workspace=workspace,
+            )
+        except Exception:
+            deterministic = None
+
+        if deterministic is not None:
+            files = [
+                str(path.relative_to(workspace))
+                for path in workspace.rglob("*")
+                if path.is_file()
+            ]
+            return ExecutionTrace(
+                task_id=task.task_id,
+                workspace=str(workspace),
+                command=["deterministic_capability", deterministic.capability_id],
+                exit_code=0,
+                stdout=deterministic.text,
+                stderr="",
+                elapsed_seconds=0.0,
+                files=files,
+            )
+
         command = [
             str(
                 self.repo
