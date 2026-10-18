@@ -72,6 +72,8 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
             ability = AbilityRecord("seed", "initial bounded RSI ability", ("host policy",))
         allowed = tuple(sorted({path for plan in getattr(controller, "plans", {}).values()
                                 for path in getattr(plan, "allowed_paths", ())})[:8])
+        if not allowed:
+            return None
         return ProposalContext(
             ability=ability,
             allowed_paths=allowed,

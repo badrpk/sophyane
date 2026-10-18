@@ -10,6 +10,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 
 from .rsi.observation_bus import ImprovementObservation, ImprovementSource, autonomous_bus
@@ -57,8 +58,46 @@ def _serve(state_dir: Path) -> int:
     server.listen(4)
     server.settimeout(0.5)
     (state_dir / "rsi.pid").write_text(str(os.getpid()), encoding="utf-8")
-    from .rsi.supervisor import start_supervisor, stop_supervisor
-    start_supervisor(state_dir=state_dir)
+    from .rsi.heartbeat import HeartbeatRecord, HeartbeatStore
+    heartbeat = HeartbeatStore(state_dir / "heartbeat.json")
+    now = time.time()
+    heartbeat.save(HeartbeatRecord(f"rsi-{os.getpid()}", os.getpid(), "starting", now, now))
+    from .rsi.heartbeat_runtime import ContinuousRSIWorker, RSIWatchdog
+    from .rsi.runtime_services import build_controller, build_curriculum_runtime
+    controller = build_controller(state_dir)
+    runtime = build_curriculum_runtime(state_dir, controller)
+    runtime.start()
+    worker = ContinuousRSIWorker(
+        runtime,
+        runtime.heartbeat,
+        runtime.task_source,
+        context_factory=runtime.context_factory,
+    )
+    watchdog = RSIWatchdog(
+        runtime.heartbeat,
+        worker.run_once,
+        runtime.scheduler,
+        runtime.stale_seconds,
+    ) if runtime.watchdog_enabled else None
+    stop_event = threading.Event()
+
+    def run_worker():
+        while not stop_event.is_set():
+            try:
+                if watchdog is not None:
+                    watchdog.check()
+                result = worker.run_once()
+                if result.get("status") == "idle" and runtime.status().get("queue_length", 0) == 0:
+                    controller.tick()
+            except Exception as error:
+                try:
+                    runtime.heartbeat.touch(state="error", last_error=str(error)[:1000])
+                except Exception:
+                    pass
+            stop_event.wait(runtime.heartbeat_interval)
+
+    worker_thread = threading.Thread(target=run_worker, name="sophyane-rsi-worker", daemon=True)
+    worker_thread.start()
     try:
         while True:
             try:
@@ -67,15 +106,22 @@ def _serve(state_dir: Path) -> int:
                 status = json.loads(handle_command("status", state_dir))
                 if status.get("stopped"):
                     break
-                continue
-            with connection:
-                command = connection.recv(8192).decode("utf-8", "replace")
-                reply = handle_command(command, state_dir)
-                connection.sendall(reply.encode("utf-8"))
-                if command.strip() == "stop":
-                    break
+                connection = None
+            if connection is not None:
+                with connection:
+                    command = connection.recv(8192).decode("utf-8", "replace")
+                    reply = handle_command(command, state_dir)
+                    try:
+                        connection.sendall(reply.encode("utf-8"))
+                    except BrokenPipeError:
+                        pass
+                    if command.strip() == "stop":
+                        break
     finally:
-        stop_supervisor()
+        stop_event.set()
+        worker_thread.join(timeout=2.0)
+        if getattr(controller, "candidate", None):
+            controller.candidate.close()
         server.close()
         if sock_path.exists():
             sock_path.unlink()

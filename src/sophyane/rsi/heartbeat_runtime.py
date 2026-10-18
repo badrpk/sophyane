@@ -48,13 +48,17 @@ class ContinuousRSIWorker:
             return {"status": "paused", "reason": f"heartbeat unavailable: {error}"}
         try:
             if status.get("queue_length", 0) == 0 and self.source is not None and self.context_factory is not None:
-                proposal = self.source.propose(self.context_factory())
-                if proposal.accepted and proposal.task is not None:
-                    queued = self.runtime.scheduler.enqueue(proposal.task)
-                    if not queued:
-                        self._touch(state="waiting", last_error="scheduler rejected proposed task")
-                elif not proposal.accepted:
-                    self._touch(state="waiting", last_error=f"task proposal rejected: {proposal.reason}")
+                context = self.context_factory()
+                if context is None:
+                    self._touch(state="waiting", last_error="no frozen experiment plan configured")
+                else:
+                    proposal = self.source.propose(context)
+                    if proposal.accepted and proposal.task is not None:
+                        queued = self.runtime.scheduler.enqueue(proposal.task)
+                        if not queued:
+                            self._touch(state="waiting", last_error="scheduler rejected proposed task")
+                    elif not proposal.accepted:
+                        self._touch(state="waiting", last_error=f"task proposal rejected: {proposal.reason}")
             result = self.runtime.tick()
             current_error = self.heartbeat.load().last_error
             self._touch(state="waiting", current_task_id=result.get("task_id"), last_error=current_error)
