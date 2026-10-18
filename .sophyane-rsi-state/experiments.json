@@ -1,0 +1,15 @@
+{
+  "demo_score": {
+    "identifier": "demo-score-improvement",
+    "version": "1",
+    "focused": [["python", "tools/rsi_demo_red.py"]],
+    "holdout": [["python", "tools/rsi_demo_holdout.py"]],
+    "regression": [["python", "tools/rsi_demo_regression.py"]],
+    "expected_failure": "RSI_WEAKNESS_demo_score",
+    "allowed_paths": ["src/sophyane/rsi_demo_target.py"],
+    "benchmark_command": ["python", "tools/rsi_demo_benchmark.py"],
+    "meta_command": ["python", "tools/rsi_demo_meta.py"],
+    "resource_policy": {"maximum_load_per_cpu": 4.0},
+    "timeout": 60
+  }
+}

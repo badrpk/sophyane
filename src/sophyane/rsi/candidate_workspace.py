@@ -8,7 +8,12 @@ import tempfile
 
 from .authority import Operation, require
 
-_EXCLUDED = {".git", ".venv", "__pycache__", ".pytest_cache", "node_modules"}
+_EXCLUDED = {
+    ".git", ".venv", "__pycache__", ".pytest_cache", "node_modules",
+    # Large unrelated Android build checkout; it is outside the configured RSI
+    # experiment scope and would otherwise consume the whole snapshot budget.
+    "termux-x11",
+}
 _IMMUTABLE_RSI_TRUST_ROOTS = frozenset({
     "src/sophyane/intelligence_authority.py",
     "src/sophyane/rsi_host_broker.py",
@@ -33,12 +38,18 @@ def snapshot(path, *, max_bytes=64 * 1024**2, max_files=10000):
     path = Path(path)
     files, size = {}, 0
     for directory, dirs, names in os.walk(path, followlinks=False):
-        dirs[:] = sorted(d for d in dirs if d not in _EXCLUDED)
-        for name in (*dirs, *sorted(names)):
-            target = Path(directory) / name
-            if target.is_symlink():
-                raise PermissionError("Linked snapshot paths are forbidden")
-        for name in sorted(names):
+        # Symlinked baseline artifacts are outside the candidate snapshot. They
+        # must not block an otherwise isolated run, and they are never eligible
+        # for promotion because replacement validation still rejects links.
+        dirs[:] = sorted(
+            d for d in dirs
+            if d not in _EXCLUDED and not (Path(directory) / d).is_symlink()
+        )
+        regular_names = [
+            name for name in sorted(names)
+            if not (Path(directory) / name).is_symlink()
+        ]
+        for name in regular_names:
             target = Path(directory) / name
             if not target.is_file():
                 raise PermissionError("Nonregular snapshot file")

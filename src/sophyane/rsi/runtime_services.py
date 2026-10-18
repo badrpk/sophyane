@@ -20,7 +20,7 @@ from .experiment import ExperimentPlan
 from .local_intelligence import LocalIntelligenceRouter
 from .observation_bus import autonomous_bus
 from .research import TargetedSLIResearch
-from .resource_governor import ResourceGovernor, ResourceDecision
+from .resource_governor import ResourceGovernor, ResourceDecision, ResourcePolicy
 from .weakness_ledger import WeaknessLedger
 
 
@@ -134,7 +134,16 @@ def build_controller(state_dir, *, active=lambda: True):
             tuple(tuple(c) for c in spec['focused']), tuple(tuple(c) for c in spec['holdout']),
             tuple(tuple(c) for c in spec['regression']), spec['expected_failure'],
             frozenset(spec['allowed_paths']), spec['version'], min(60, spec.get('timeout', 60)))
-    sensor = ResourceGovernor()
+    resource_spec = {}
+    if len(specs) == 1:
+        resource_spec = next(iter(specs.values())).get("resource_policy", {})
+    try:
+        maximum_load = float(resource_spec.get("maximum_load_per_cpu", 0.75))
+    except (TypeError, ValueError):
+        raise ValueError("invalid resource policy load threshold")
+    if not 0 < maximum_load <= 4:
+        raise ValueError("resource policy load threshold is out of bounds")
+    sensor = ResourceGovernor(policy=ResourcePolicy(maximum_load_per_cpu=maximum_load))
     profiles, cached, sampled = {}, None, 0
     budget = max(0, min(20, int(os.environ.get('SOPHYANE_RSI_CLOUD_REVIEWS', '2'))))
     used = 0
@@ -206,7 +215,7 @@ def build_controller(state_dir, *, active=lambda: True):
         return {'weakness': asdict(record), 'source_files': files}
 
     controller = AutonomousRSIController(autonomous_bus, WeaknessLedger(state_dir / 'weaknesses.json'),
-        ResourceGovernor(sampler=sample),
+        ResourceGovernor(policy=ResourcePolicy(maximum_load_per_cpu=maximum_load), sampler=sample),
         local=LocalIntelligenceRouter({name: lambda context, role, name=name: local_request(name, context, role)
                                        for name in ('qwen', 'spark')}),
         research=TargetedSLIResearch(),

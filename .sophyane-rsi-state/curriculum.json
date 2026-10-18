@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "queue": [
+    {
+      "task_id": "demo-score-first-improvement",
+      "parent_ability_id": "seed",
+      "objective": "Improve the demo score from 1 to 2 while preserving the frozen regression and meta checks.",
+      "editable_paths": ["src/sophyane/rsi_demo_target.py"],
+      "verification": ["frozen demo score benchmark"],
+      "source": "capability_gap",
+      "resource_class": "normal",
+      "status": "queued",
+      "failure_reason": "",
+      "created_at": 0,
+      "started_at": null,
+      "completed_at": null,
+      "component": "demo_score"
+    }
+  ],
+  "abilities": [],
+  "current_task_id": null,
+  "iteration": 0,
+  "started_at": null,
+  "paused": false,
+  "stopped": false,
+  "stop_reason": "",
+  "last_result": {},
+  "follow_ups_enqueued": 0,
+  "last_verified_at": null
+}
