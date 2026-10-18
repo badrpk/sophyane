@@ -164,6 +164,18 @@ def _default_state_dir() -> Path:
     return Path(os.environ.get("SOPHYANE_RSI_STATE", Path.home() / ".local/state/sophyane/continuous-rsi"))
 
 
+def runtime_root(state_dir: Path) -> Path:
+    live = Path(state_dir) / "live-worktree"
+    promotion = Path(state_dir) / "promotion.json"
+    if live.is_dir() and promotion.is_file():
+        try:
+            if bool(json.loads(promotion.read_text(encoding="utf-8")).get("promoted")):
+                return live
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            pass
+    return Path(__file__).resolve().parents[1]
+
+
 def start(state_dir: Path | None = None) -> int:
     state_dir = Path(state_dir or _default_state_dir())
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -177,8 +189,14 @@ def start(state_dir: Path | None = None) -> int:
         except (OSError, ValueError):
             pid_path.unlink(missing_ok=True)
     log = (state_dir / "rsi.log").open("a", encoding="utf-8")
+    root = runtime_root(state_dir)
+    environment = os.environ.copy()
+    source_root = str(root / "src")
+    environment["PYTHONPATH"] = source_root + os.pathsep + environment.get("PYTHONPATH", "")
     subprocess.Popen(
         [sys.executable, "-m", "sophyane.rsi_terminal", "--daemon", "--state-dir", str(state_dir)],
+        cwd=str(root),
+        env=environment,
         stdin=subprocess.DEVNULL,
         stdout=log,
         stderr=log,

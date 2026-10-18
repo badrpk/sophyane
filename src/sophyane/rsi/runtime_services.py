@@ -7,8 +7,10 @@ from dataclasses import asdict, replace
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import socket
+import sys
 import tempfile
 import time
 from urllib.parse import urlparse
@@ -51,9 +53,19 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
         proposal_adapter = CurriculumProposalAdapter(
             lambda prompt: local_request("qwen", prompt, LocalRole.TINY_PROPOSAL)
         )
+    repository = Path(__file__).resolve().parents[3]
+    health_text = os.environ.get("SOPHYANE_RSI_LIVE_HEALTH_COMMAND", "")
+    health_command = tuple(shlex.split(health_text)) if health_text.strip() else (
+        sys.executable,
+        "-c",
+        "import sophyane",
+    )
+    from .promotion import PromotionManager
+    promotion_manager = PromotionManager(repository, root, health_command=health_command)
     task_runner = NativeEvolutionTaskAdapter(
-        Path(__file__).resolve().parents[3],
+        repository,
         timeout_seconds=max(1, int(os.environ.get("SOPHYANE_RSI_TASK_TIMEOUT", "300"))),
+        promotion_manager=promotion_manager,
     )
     scheduler = CurriculumScheduler(CurriculumStore(root / "curriculum.json"), policy)
     runtime = ContinuousCurriculumRuntime(
