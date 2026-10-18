@@ -105,6 +105,16 @@ def test_runtime_services_wires_heartbeat_and_llm_source(tmp_path: Path, monkeyp
     assert runtime.task_source is not None
 
 
+def test_runtime_services_accepts_proposal_only_adapter(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("SOPHYANE_CONTINUOUS_RSI", raising=False)
+    controller = SimpleNamespace(ledger=WeaknessLedger(), plans={})
+    adapter = SimpleNamespace(propose=lambda _context: ProposalResult(False, reason="deferred"))
+
+    runtime = build_curriculum_runtime(tmp_path, controller, proposal_adapter=adapter)
+
+    assert runtime.task_source is None
+
+
 def test_worker_does_not_overwrite_corrupt_heartbeat(tmp_path: Path):
     path = tmp_path / "heartbeat.json"
     path.write_text("corrupt", encoding="utf-8")

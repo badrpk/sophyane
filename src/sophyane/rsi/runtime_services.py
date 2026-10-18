@@ -84,8 +84,10 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
     runtime.stale_seconds = max(runtime.heartbeat_interval * 2, float(os.environ.get("SOPHYANE_RSI_STALE_SECONDS", "30")))
     runtime.watchdog_enabled = os.environ.get("SOPHYANE_RSI_WATCHDOG", "1").strip() == "1"
     runtime.task_source_name = os.environ.get("SOPHYANE_RSI_TASK_SOURCE", "qwen").strip() or "qwen"
-    runtime.task_source = CurriculumTaskSource(
-        proposal_adapter.generate, proposal_adapter
+    generator = getattr(proposal_adapter, "generate", None)
+    runtime.task_source = (
+        CurriculumTaskSource(generator, proposal_adapter)
+        if callable(generator) else None
     )
     runtime.context_factory = context_factory
     return runtime

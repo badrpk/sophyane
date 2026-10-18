@@ -126,7 +126,8 @@ def start_supervisor(*, controller=None, state_dir=None):
                                 selected.tick()
                         except Exception:
                             pass  # Background diagnostics must not crash foreground runtime.
-                        wake.wait(max(1, 30 - (time.monotonic() - started)))
+                        interval = getattr(curriculum, 'heartbeat_interval', 30) if curriculum else 30
+                        wake.wait(max(0.5, interval - (time.monotonic() - started)))
                         wake.clear()
                         # Wake storms may not turn into an unbounded busy loop.
                         stop.wait(max(0, 1 - (time.monotonic() - started)))
