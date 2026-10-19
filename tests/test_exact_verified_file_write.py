@@ -24,6 +24,20 @@ def test_exact_verified_write_bypasses_folder_classifier(
     assert result.data["newline_added"] is False
 
 
+def test_exact_verified_write_ignores_sentence_period_after_literal(
+    tmp_path: Path,
+) -> None:
+    result = execute_deterministic_capability(
+        "Create a file named harness_probe.txt containing exactly "
+        "HARNESS_OK. Verify its exact bytes.",
+        workspace=tmp_path,
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert (tmp_path / "harness_probe.txt").read_bytes() == b"HARNESS_OK"
+
+
 def test_ordinary_folder_listing_is_unchanged(
     tmp_path: Path,
 ) -> None:

@@ -333,6 +333,19 @@ def _parse_exact_file_write(
     filename = match.group("filename").strip()
     content = match.group("content").strip()
 
+    # A natural-language sentence may place its period immediately after an
+    # exact literal ("containing exactly HARNESS_OK. Verify ...").  Treat that
+    # punctuation as prose only when the remaining sentence clearly contains
+    # the requested post-write verification, preserving punctuation in actual
+    # payloads that have no such boundary.
+    suffix = text[match.end():]
+    if content.endswith((".", ",", ";", "!", "?")) and re.search(
+        r"\b(?:verify|read)\b",
+        suffix,
+        re.IGNORECASE,
+    ):
+        content = content[:-1].rstrip()
+
     if (
         not filename
         or not content
@@ -879,4 +892,3 @@ def _execute_judge_validation(message: str, workspace: Path) -> CapabilityExecut
         text=text_out,
         data=payload,
     )
-
