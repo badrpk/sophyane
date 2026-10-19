@@ -1,7 +1,8 @@
 name: Sophyane daily improvement epoch
 
-# Blockchain-style daily catalog: commits improvement epoch files from CI.
-# Does NOT auto-merge untrusted executable code into the agent runtime.
+# Blockchain-style daily catalog: exports improvement epoch files from CI.
+# Daily automation MUST NOT push directly to main. It publishes a dated
+# automation branch for review/integration instead.
 on:
   schedule:
     - cron: "0 3 * * *"   # every day 03:00 UTC
@@ -15,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -45,14 +48,29 @@ jobs:
           print("verify", verify_chain())
           PY
 
-      - name: Commit improvement catalog
+      - name: Commit improvement catalog to dated automation branch
+        shell: bash
         run: |
+          set -euo pipefail
+
+          DAY="$(date -u +%F)"
+          BRANCH="automation/daily-epoch-${DAY}"
+
           git config user.name "sophyane-daily-bot"
           git config user.email "sophyane-bot@users.noreply.github.com"
+
           git add improvements || true
+
           if git diff --cached --quiet; then
             echo "No improvement catalog changes"
-          else
-            git commit -m "chore(improvements): daily epoch $(date -u +%F)"
-            git push
+            exit 0
           fi
+
+          git switch -c "$BRANCH"
+          git commit -m "chore(improvements): daily epoch ${DAY}"
+
+          # Publish only the automation branch. Never mutate refs/heads/main.
+          git push origin "HEAD:refs/heads/${BRANCH}"
+
+          echo "DAILY_EPOCH_BRANCH=${BRANCH}"
+          echo "DIRECT_MAIN_PUSH=false"
