@@ -1094,7 +1094,29 @@ def _no_edit_shell_syntax_safe(command: str) -> bool:
         return False
     if any(ord(char) < 32 or ord(char) == 127 for char in value):
         return False
-    if any(char in value for char in ';|&<>$`'):
+    # Search for operators only outside quoted arguments.  A read-only
+    # regular expression such as ``'PLANT_NAME|FURNACES'`` is data, not a
+    # shell pipeline; rejecting it prevents the provider's safe grep/rg
+    # recovery path from ever reaching execution.
+    quote = None
+    escaped = False
+    for char in value:
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char in ';|&<>$`':
+            return False
+    if quote is not None or escaped:
         return False
     return True
 
@@ -1415,6 +1437,9 @@ def _command_problem(action: dict[str, Any], workspace: Path) -> str:
 
     executable = Path(first)
     exists = executable.is_file() if executable.is_absolute() else (workspace / executable).is_file()
+    # `shutil.which` is the execution authority for PATH commands.  Do not
+    # second-guess it by requiring the returned path to be visible as a local
+    # file: callers and tests may provide a virtual/container PATH resolver.
     if not exists and shutil.which(first) is None:
         return f"executable does not exist: {first}"
     return ""
