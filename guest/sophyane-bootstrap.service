@@ -1,0 +1,22 @@
+[Unit]
+Description=Sophyane one-shot RSI guest task
+After=local-fs.target
+Wants=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/sophyane/sophyane-bootstrap.sh /mnt/sophyane-input /mnt/sophyane-output
+NoNewPrivileges=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/mnt/sophyane-input
+ReadWritePaths=/mnt/sophyane-output /run
+MemoryMax=512M
+TasksMax=128
+TimeoutStartSec=305
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
