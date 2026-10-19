@@ -80,6 +80,20 @@ def test_failure_is_recorded_without_claiming_ability(tmp_path: Path):
     assert runtime.scheduler._state().queue[0].status is TaskStatus.ROLLED_BACK
 
 
+def test_restart_paused_task_is_retried_by_continuous_scheduler(tmp_path: Path):
+    store = CurriculumStore(tmp_path / "curriculum.json")
+    task = make_task("restart-task")
+    task.status = TaskStatus.PAUSED
+    task.failure_reason = "paused after process restart"
+    store.save(__import__("sophyane.rsi.curriculum", fromlist=["CurriculumState"]).CurriculumState(queue=[task]))
+    scheduler = CurriculumScheduler(store, CurriculumPolicy(cooldown_seconds=0))
+
+    resumed = scheduler.next_task()
+
+    assert resumed is not None
+    assert resumed.task_id == "restart-task"
+
+
 def test_rejected_attempt_is_retried_before_final_failure(tmp_path: Path):
     controller = FakeController([
         {"status": "REJECTED", "reason": "selected task did not validate"},

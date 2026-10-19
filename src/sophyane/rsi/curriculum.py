@@ -226,7 +226,14 @@ class CurriculumScheduler:
             self.store.append_event(event)
 
     def choose_next(self, candidates: list[CurriculumTask]) -> CurriculumTask | None:
-        queued = [task for task in candidates if task.status is TaskStatus.QUEUED]
+        queued = [
+            task for task in candidates
+            if task.status is TaskStatus.QUEUED
+            or (
+                task.status is TaskStatus.PAUSED
+                and task.failure_reason == "paused after process restart"
+            )
+        ]
         if not queued:
             return None
         return min(queued, key=lambda item: (self._SOURCE_PRIORITY[item.source], item.created_at, item.task_id))
