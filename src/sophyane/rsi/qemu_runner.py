@@ -11,6 +11,7 @@ import subprocess
 import uuid
 
 from .coding_provider import CodingCancelled
+from .guest_protocol import GuestProtocolError, validate_manifest, validate_result
 from .models import CommandResult
 
 
@@ -54,6 +55,7 @@ class ExchangePaths:
     input_dir: Path
     output_dir: Path
     result_path: Path
+    task_id: str | None = None
 
 
 def _inside(path: Path, root: Path) -> bool:
@@ -128,6 +130,10 @@ class QemuRsiRunner:
 
     def prepare_exchange(self, candidate_dir: Path, manifest: dict[str, Any]) -> ExchangePaths:
         self.validate()
+        try:
+            validated_manifest = validate_manifest(manifest)
+        except GuestProtocolError as error:
+            raise QemuRunnerConfigurationError(f"guest manifest rejected: {error}") from error
         candidate = Path(candidate_dir).resolve()
         if not candidate.is_dir():
             raise QemuRunnerConfigurationError("QEMU candidate workspace must be a directory")
@@ -142,13 +148,23 @@ class QemuRsiRunner:
         output_dir.mkdir()
         shutil.copytree(candidate, input_dir / "candidate")
         (input_dir / "task.json").write_text(
-            json.dumps(manifest, sort_keys=True, separators=(",", ":")), encoding="utf-8"
+            json.dumps(
+                {
+                    "schema_version": validated_manifest.schema_version,
+                    "task_id": validated_manifest.task_id,
+                    "command": list(validated_manifest.command),
+                    "cwd": validated_manifest.cwd,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            encoding="utf-8",
         )
         for path in (input_dir / "candidate").rglob("*"):
             if path.is_file():
                 path.chmod(path.stat().st_mode & ~0o222)
         (input_dir / "task.json").chmod(0o444)
-        return ExchangePaths(input_dir, output_dir, output_dir / "result.json")
+        return ExchangePaths(input_dir, output_dir, output_dir / "result.json", validated_manifest.task_id)
 
     def parse_result(
         self,
@@ -167,14 +183,37 @@ class QemuRsiRunner:
         if exit_code != 0:
             return QemuRunResult(run_id, exit_code, stdout, stderr, False, "failed")
         try:
+            output_entries = tuple(exchange.output_dir.iterdir())
+            unexpected = [path.name for path in output_entries if path.name != "result.json"]
+            if unexpected:
+                raise ValueError(f"unexpected guest output files: {sorted(unexpected)}")
             if exchange.result_path.stat().st_size > self.config.max_output_bytes:
                 raise ValueError("result output limit exceeded")
             result = json.loads(exchange.result_path.read_text(encoding="utf-8"))
-            if not isinstance(result, dict) or result.get("status") != "passed":
-                raise ValueError("guest result must be a passed object")
-        except (OSError, ValueError, json.JSONDecodeError) as error:
+            validated_result = validate_result(result)
+            if exchange.task_id is not None and validated_result.task_id != exchange.task_id:
+                raise ValueError("guest result task_id does not match manifest")
+            if validated_result.status != "passed" or validated_result.exit_code != 0:
+                return QemuRunResult(
+                    run_id,
+                    validated_result.exit_code,
+                    validated_result.stdout,
+                    validated_result.stderr,
+                    False,
+                    "failed",
+                    result,
+                )
+        except (OSError, ValueError, json.JSONDecodeError, GuestProtocolError) as error:
             return QemuRunResult(run_id, exit_code, stdout, str(error), False, "invalid")
-        return QemuRunResult(run_id, exit_code, stdout, stderr, False, "passed", result)
+        return QemuRunResult(
+            run_id,
+            exit_code,
+            validated_result.stdout,
+            validated_result.stderr,
+            False,
+            "passed",
+            result,
+        )
 
     def run(self, candidate_dir: Path, manifest: dict[str, Any]) -> QemuRunResult:
         self.validate()

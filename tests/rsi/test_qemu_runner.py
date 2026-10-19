@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import subprocess
 
 import pytest
@@ -10,6 +11,26 @@ from sophyane.rsi.qemu_runner import (
     QemuRsiRunner,
     build_qemu_command,
 )
+
+
+def _manifest(task_id="task-1"):
+    return {
+        "schema_version": 1,
+        "task_id": task_id,
+        "command": ["pytest", "-q"],
+        "cwd": "/sophyane-input/candidate",
+    }
+
+
+def _guest_result(task_id="task-1", *, status="passed", exit_code=0):
+    return {
+        "schema_version": 1,
+        "task_id": task_id,
+        "status": status,
+        "exit_code": exit_code,
+        "stdout": "guest stdout",
+        "stderr": "guest stderr",
+    }
 
 
 def _config(tmp_path: Path, *, enabled: bool = True, image: Path | None = None) -> QemuRunnerConfig:
@@ -117,7 +138,7 @@ def test_prepare_exchange_copies_candidate_read_only_and_separates_output(tmp_pa
     (candidate / "answer.py").write_text("answer = 42\n")
     runner = QemuRsiRunner(config)
 
-    exchange = runner.prepare_exchange(candidate, {"task_id": "task-1", "command": ["pytest"]})
+    exchange = runner.prepare_exchange(candidate, _manifest())
 
     assert isinstance(exchange, ExchangePaths)
     assert (exchange.input_dir / "candidate" / "answer.py").read_text() == "answer = 42\n"
@@ -125,6 +146,64 @@ def test_prepare_exchange_copies_candidate_read_only_and_separates_output(tmp_pa
     assert exchange.input_dir != exchange.output_dir
     assert not (exchange.output_dir / "result.json").exists()
     assert not (exchange.input_dir / "candidate" / "answer.py").stat().st_mode & 0o222
+
+
+def test_prepare_exchange_rejects_invalid_guest_manifest(tmp_path):
+    config = _config(tmp_path)
+    config.guest_image.write_bytes(b"guest")
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+
+    with pytest.raises(QemuRunnerConfigurationError, match="manifest"):
+        QemuRsiRunner(config).prepare_exchange(candidate, {**_manifest(), "task_id": ""})
+
+
+def test_parse_result_rejects_missing_guest_result(tmp_path):
+    config = _config(tmp_path)
+    config.guest_image.write_bytes(b"guest")
+    runner = QemuRsiRunner(config)
+    exchange = ExchangePaths(tmp_path / "input", tmp_path / "output", tmp_path / "output" / "result.json", "task-1")
+    exchange.output_dir.mkdir()
+
+    result = runner.parse_result(exchange, "stdout", "", 0, False)
+
+    assert result.status == "invalid"
+    assert "result.json" in result.stderr
+
+
+def test_parse_result_rejects_duplicate_or_unexpected_guest_output(tmp_path):
+    config = _config(tmp_path)
+    config.guest_image.write_bytes(b"guest")
+    runner = QemuRsiRunner(config)
+    exchange = ExchangePaths(tmp_path / "input", tmp_path / "output", tmp_path / "output" / "result.json", "task-1")
+    exchange.output_dir.mkdir()
+    exchange.result_path.write_text(json.dumps(_guest_result()))
+    (exchange.output_dir / "result.json.tmp").write_text("partial")
+
+    result = runner.parse_result(exchange, "stdout", "", 0, False)
+
+    assert result.status == "invalid"
+    assert "unexpected" in result.stderr or "duplicate" in result.stderr
+
+
+def test_parse_result_converts_protocol_result_and_checks_task_id(tmp_path):
+    config = _config(tmp_path)
+    config.guest_image.write_bytes(b"guest")
+    runner = QemuRsiRunner(config)
+    exchange = ExchangePaths(tmp_path / "input", tmp_path / "output", tmp_path / "output" / "result.json", "task-1")
+    exchange.output_dir.mkdir()
+    exchange.result_path.write_text(json.dumps(_guest_result()))
+
+    result = runner.parse_result(exchange, "host stdout", "", 0, False)
+
+    assert result.status == "passed"
+    assert result.result == _guest_result()
+    assert result.stdout == "guest stdout"
+
+    exchange.result_path.write_text(json.dumps(_guest_result("other-task")))
+    mismatch = runner.parse_result(exchange, "", "", 0, False)
+    assert mismatch.status == "invalid"
+    assert "task_id" in mismatch.stderr
 
 
 def test_prepare_exchange_rejects_candidate_symlink_escape(tmp_path):
@@ -137,7 +216,7 @@ def test_prepare_exchange_rejects_candidate_symlink_escape(tmp_path):
     (candidate / "escape.txt").symlink_to(outside)
 
     with pytest.raises(QemuRunnerConfigurationError, match="symlink"):
-        QemuRsiRunner(config).prepare_exchange(candidate, {})
+        QemuRsiRunner(config).prepare_exchange(candidate, _manifest())
 
 
 def test_parse_result_accepts_valid_guest_result(tmp_path):
@@ -146,12 +225,12 @@ def test_parse_result_accepts_valid_guest_result(tmp_path):
     runner = QemuRsiRunner(config)
     exchange = ExchangePaths(tmp_path / "input", tmp_path / "output", tmp_path / "output" / "result.json")
     exchange.output_dir.mkdir()
-    exchange.result_path.write_text('{"status":"passed","task_id":"task-1","metrics":{"quality":2}}')
+    exchange.result_path.write_text(json.dumps(_guest_result()))
 
     result = runner.parse_result(exchange, "guest stdout", "", 0, False)
 
     assert result.status == "passed"
-    assert result.result == {"status": "passed", "task_id": "task-1", "metrics": {"quality": 2}}
+    assert result.result == _guest_result()
     assert result.exit_code == 0
 
 
@@ -203,7 +282,7 @@ class _FakeProcess:
             return "", "timed out"
         output = next(token.split("path=", 1)[1].split(",", 1)[0]
                       for token in self.command if token.startswith("local,path=") and "sophyane-output" in token)
-        Path(output, "result.json").write_text('{"status":"passed","task_id":"task-1"}')
+        Path(output, "result.json").write_text(json.dumps(_guest_result()))
         return "guest stdout", "guest stderr"
 
     def kill(self):
@@ -229,7 +308,7 @@ def test_run_executes_without_shell_and_cleans_exchange(tmp_path):
         calls.append((command, kwargs))
         return process
 
-    result = QemuRsiRunner(config, popen_factory=popen).run(candidate, {"task_id": "task-1"})
+    result = QemuRsiRunner(config, popen_factory=popen).run(candidate, _manifest())
 
     assert result.status == "passed"
     assert calls[0][1]["shell"] is False
@@ -244,7 +323,7 @@ def test_run_terminates_timed_out_qemu_and_cleans_exchange(tmp_path):
     process = _FakeProcess((), outcome="timeout")
 
     result = QemuRsiRunner(config, popen_factory=lambda command, **kwargs: process).run(
-        candidate, {"task_id": "task-1"}
+        candidate, _manifest()
     )
 
     assert result.status == "timeout"
@@ -261,7 +340,7 @@ def test_run_reports_qemu_startup_failure_and_cleans_exchange(tmp_path):
     def popen(command, **kwargs):
         raise OSError("qemu missing")
 
-    result = QemuRsiRunner(config, popen_factory=popen).run(candidate, {"task_id": "task-1"})
+    result = QemuRsiRunner(config, popen_factory=popen).run(candidate, _manifest())
 
     assert result.status == "failed"
     assert "qemu missing" in result.stderr
