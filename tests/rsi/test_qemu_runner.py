@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -165,3 +166,81 @@ def test_parse_result_rejects_oversized_diagnostics(tmp_path):
 
     assert result.status == "invalid"
     assert "output limit" in result.stderr
+
+
+class _FakeProcess:
+    def __init__(self, command, *, outcome="success"):
+        self.command = command
+        self.outcome = outcome
+        self.killed = False
+
+    def communicate(self, timeout=None):
+        if self.outcome == "timeout" and not self.killed:
+            raise subprocess.TimeoutExpired(self.command, timeout)
+        if self.outcome == "timeout":
+            return "", "timed out"
+        output = next(token.split("path=", 1)[1].split(",", 1)[0]
+                      for token in self.command if token.startswith("local,path=") and "sophyane-output" in token)
+        Path(output, "result.json").write_text('{"status":"passed","task_id":"task-1"}')
+        return "guest stdout", "guest stderr"
+
+    def kill(self):
+        self.killed = True
+
+    returncode = 0
+
+    def wait(self, timeout=None):
+        return None
+
+
+def test_run_executes_without_shell_and_cleans_exchange(tmp_path):
+    config = _config(tmp_path)
+    config.guest_image.write_bytes(b"guest")
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    (candidate / "answer.py").write_text("answer = 42\n")
+    calls = []
+    process = _FakeProcess(())
+
+    def popen(command, **kwargs):
+        process.command = command
+        calls.append((command, kwargs))
+        return process
+
+    result = QemuRsiRunner(config, popen_factory=popen).run(candidate, {"task_id": "task-1"})
+
+    assert result.status == "passed"
+    assert calls[0][1]["shell"] is False
+    assert not list(config.scratch_root.glob("*"))
+
+
+def test_run_terminates_timed_out_qemu_and_cleans_exchange(tmp_path):
+    config = _config(tmp_path)
+    config.guest_image.write_bytes(b"guest")
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    process = _FakeProcess((), outcome="timeout")
+
+    result = QemuRsiRunner(config, popen_factory=lambda command, **kwargs: process).run(
+        candidate, {"task_id": "task-1"}
+    )
+
+    assert result.status == "timeout"
+    assert process.killed is True
+    assert not list(config.scratch_root.glob("*"))
+
+
+def test_run_reports_qemu_startup_failure_and_cleans_exchange(tmp_path):
+    config = _config(tmp_path)
+    config.guest_image.write_bytes(b"guest")
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+
+    def popen(command, **kwargs):
+        raise OSError("qemu missing")
+
+    result = QemuRsiRunner(config, popen_factory=popen).run(candidate, {"task_id": "task-1"})
+
+    assert result.status == "failed"
+    assert "qemu missing" in result.stderr
+    assert not list(config.scratch_root.glob("*"))

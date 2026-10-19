@@ -7,6 +7,7 @@ import json
 import shutil
 from pathlib import Path
 from typing import Any
+import subprocess
 import uuid
 
 
@@ -100,8 +101,9 @@ def build_qemu_command(
 
 
 class QemuRsiRunner:
-    def __init__(self, config: QemuRunnerConfig):
+    def __init__(self, config: QemuRunnerConfig, *, popen_factory=None):
         self.config = config
+        self._popen_factory = popen_factory or subprocess.Popen
 
     def validate(self) -> None:
         if not self.config.enabled:
@@ -166,3 +168,30 @@ class QemuRsiRunner:
         except (OSError, ValueError, json.JSONDecodeError) as error:
             return QemuRunResult(run_id, exit_code, stdout, str(error), False, "invalid")
         return QemuRunResult(run_id, exit_code, stdout, stderr, False, "passed", result)
+
+    def run(self, candidate_dir: Path, manifest: dict[str, Any]) -> QemuRunResult:
+        self.validate()
+        exchange = self.prepare_exchange(candidate_dir, manifest)
+        run_id = exchange.output_dir.parent.name
+        process = None
+        try:
+            command = build_qemu_command(self.config, exchange.input_dir, exchange.output_dir, manifest)
+            process = self._popen_factory(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                shell=False,
+            )
+            try:
+                stdout, stderr = process.communicate(timeout=self.config.timeout_seconds)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                stdout, stderr = process.communicate()
+                return QemuRunResult(run_id, getattr(process, "returncode", None), stdout, stderr, True, "timeout")
+            return self.parse_result(exchange, stdout, stderr, process.returncode, False)
+        except OSError as error:
+            return QemuRunResult(run_id, None, "", str(error), False, "failed")
+        finally:
+            shutil.rmtree(exchange.output_dir.parent, ignore_errors=True)
