@@ -118,6 +118,10 @@ def build_qemu_runner(state_dir):
     root = Path(state_dir)
     image = Path(os.environ.get("SOPHYANE_RSI_QEMU_IMAGE", ""))
     executable = os.environ.get("SOPHYANE_RSI_QEMU_EXECUTABLE", "qemu-system-aarch64")
+    firmware_text = os.environ.get(
+        "SOPHYANE_RSI_QEMU_FIRMWARE",
+        "/data/data/com.termux/files/usr/share/qemu/edk2-aarch64-code.fd",
+    ).strip()
     scratch = Path(os.environ.get("SOPHYANE_RSI_QEMU_SCRATCH", str(root / "qemu-scratch")))
     config = QemuRunnerConfig(
         executable=executable,
@@ -127,6 +131,7 @@ def build_qemu_runner(state_dir):
         timeout_seconds=max(1.0, float(os.environ.get("SOPHYANE_RSI_QEMU_TIMEOUT", "300"))),
         max_output_bytes=max(1024, int(os.environ.get("SOPHYANE_RSI_QEMU_OUTPUT_LIMIT", "1048576"))),
         enabled=True,
+        firmware=Path(firmware_text) if firmware_text else None,
     )
     return QemuRsiRunner(config)
 

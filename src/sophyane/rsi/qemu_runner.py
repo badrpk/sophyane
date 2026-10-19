@@ -27,6 +27,7 @@ class QemuRunnerConfig:
     timeout_seconds: float
     max_output_bytes: int
     enabled: bool = False
+    firmware: Path | None = None
 
     def __post_init__(self) -> None:
         if self.architecture != "aarch64":
@@ -82,7 +83,7 @@ def build_qemu_command(
     _validate_exchange_paths(config, Path(input_dir), Path(output_dir))
     executable = str(config.executable)
     image = str(config.guest_image.resolve())
-    return (
+    command = [
         executable,
         "-machine",
         "virt",
@@ -91,16 +92,17 @@ def build_qemu_command(
         "-nographic",
         "-no-reboot",
         "-drive",
-        f"if=none,format=raw,readonly=on,file={image},id=drive0",
+        f"if=none,format={'qcow2' if config.guest_image.suffix.lower() in ('.qcow2', '.qcow') else 'raw'},readonly=on,file={image},id=drive0",
         "-device",
         "virtio-blk-device,drive=drive0",
         "-virtfs",
         f"local,path={Path(input_dir).resolve()},mount_tag=sophyane-input,security_model=none,readonly=on",
         "-virtfs",
         f"local,path={Path(output_dir).resolve()},mount_tag=sophyane-output,security_model=none",
-        "-append",
-        "sophyane.input=/sophyane-input/task.json sophyane.output=/sophyane-output/result.json",
-    )
+    ]
+    if config.firmware is not None:
+        command[1:1] = ["-bios", str(config.firmware.resolve())]
+    return tuple(command)
 
 
 class QemuRsiRunner:
@@ -116,6 +118,8 @@ class QemuRsiRunner:
             raise QemuRunnerConfigurationError(f"QEMU guest image does not exist: {image}")
         if not image.is_file():
             raise QemuRunnerConfigurationError("QEMU guest image must be a regular file")
+        if self.config.firmware is not None and not self.config.firmware.is_file():
+            raise QemuRunnerConfigurationError("QEMU firmware must be a regular file")
         if not str(self.config.executable).strip():
             raise QemuRunnerConfigurationError("QEMU executable is required")
 
@@ -210,7 +214,7 @@ class QemuRsiRunner:
                 executable=config.executable, guest_image=config.guest_image,
                 architecture=config.architecture, scratch_root=config.scratch_root,
                 timeout_seconds=bounded_timeout, max_output_bytes=config.max_output_bytes,
-                enabled=config.enabled,
+                enabled=config.enabled, firmware=config.firmware,
             )
         result = QemuRsiRunner(config, popen_factory=self._popen_factory).run(
             cwd, {"task_id": self.new_run_id(), "command": list(command), "cwd": "/sophyane-input/candidate"}

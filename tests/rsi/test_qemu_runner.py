@@ -52,9 +52,31 @@ def test_build_qemu_command_is_deterministic_tcg_and_uses_separate_9p_shares(tmp
         f"local,path={input_dir},mount_tag=sophyane-input,security_model=none,readonly=on",
         "-virtfs",
         f"local,path={output_dir},mount_tag=sophyane-output,security_model=none",
-        "-append",
-        "sophyane.input=/sophyane-input/task.json sophyane.output=/sophyane-output/result.json",
     )
+
+
+def test_qcow2_guest_uses_qcow2_format_and_explicit_firmware(tmp_path):
+    firmware = tmp_path / "firmware.fd"
+    firmware.write_bytes(b"firmware")
+    image = tmp_path / "guest.qcow2"
+    image.write_bytes(b"guest")
+    config = QemuRunnerConfig(
+        executable="qemu-system-aarch64", guest_image=image, architecture="aarch64",
+        scratch_root=tmp_path / "scratch", timeout_seconds=30, max_output_bytes=4096,
+        enabled=True, firmware=firmware,
+    )
+    config.scratch_root.mkdir()
+    input_dir = config.scratch_root / "input"
+    output_dir = config.scratch_root / "output"
+    input_dir.mkdir()
+    output_dir.mkdir()
+
+    command = build_qemu_command(config, input_dir, output_dir, {})
+
+    assert "-bios" in command
+    assert str(firmware) in command
+    assert "if=none,format=qcow2,readonly=on,file=" + str(image.resolve()) + ",id=drive0" in command
+    assert "-append" not in command
 
 
 def test_disabled_runner_fails_closed_before_execution(tmp_path):
