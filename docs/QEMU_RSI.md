@@ -31,8 +31,8 @@ Prepare a derived guest image without modifying the source image:
 
 ```sh
 ./.venv/bin/python tools/build_sophyane_guest.py \
-  --source /path/to/debian-arm64.qcow2 \
-  --output /path/to/sophyane-debian-arm64.qcow2 \
+  /path/to/debian-arm64.qcow2 \
+  /path/to/sophyane-debian-arm64.qcow2 \
   --tool virt-customize
 export SOPHYANE_RSI_QEMU_IMAGE=/path/to/sophyane-debian-arm64.qcow2
 ```
