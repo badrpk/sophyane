@@ -127,3 +127,4 @@ def test_native_evolution_uses_local_python_executor(tmp_path: Path) -> None:
         TaskSpec("python", "", "python", "python"),
         trace,
     ).passed is True
+    assert trace.elapsed_seconds > 0.0

@@ -204,6 +204,7 @@ class EvolutionEngine:
             deterministic = None
 
         if task.capability == "python" and deterministic is None:
+            started = time.monotonic()
             try:
                 from sophyane.local_coding_capability import (
                     try_coding_request,
@@ -237,7 +238,7 @@ class EvolutionEngine:
                     exit_code=0 if coding.ok else 1,
                     stdout=evidence,
                     stderr=str(getattr(coding, "error", "") or ""),
-                    elapsed_seconds=0.0,
+                    elapsed_seconds=time.monotonic() - started,
                     files=files,
                 )
 
