@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import shutil
 from pathlib import Path
 from typing import Any
 import uuid
@@ -40,6 +42,13 @@ class QemuRunResult:
     timed_out: bool
     status: str
     result: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ExchangePaths:
+    input_dir: Path
+    output_dir: Path
+    result_path: Path
 
 
 def _inside(path: Path, root: Path) -> bool:
@@ -107,3 +116,53 @@ class QemuRsiRunner:
 
     def new_run_id(self) -> str:
         return uuid.uuid4().hex
+
+    def prepare_exchange(self, candidate_dir: Path, manifest: dict[str, Any]) -> ExchangePaths:
+        self.validate()
+        candidate = Path(candidate_dir).resolve()
+        if not candidate.is_dir():
+            raise QemuRunnerConfigurationError("QEMU candidate workspace must be a directory")
+        for path in candidate.rglob("*"):
+            if path.is_symlink():
+                raise QemuRunnerConfigurationError("QEMU candidate workspace cannot contain symlinks")
+
+        run_root = self.config.scratch_root.resolve() / self.new_run_id()
+        input_dir = run_root / "input"
+        output_dir = run_root / "output"
+        input_dir.mkdir(parents=True)
+        output_dir.mkdir()
+        shutil.copytree(candidate, input_dir / "candidate")
+        (input_dir / "task.json").write_text(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")), encoding="utf-8"
+        )
+        for path in (input_dir / "candidate").rglob("*"):
+            if path.is_file():
+                path.chmod(path.stat().st_mode & ~0o222)
+        (input_dir / "task.json").chmod(0o444)
+        return ExchangePaths(input_dir, output_dir, output_dir / "result.json")
+
+    def parse_result(
+        self,
+        exchange: ExchangePaths,
+        stdout: str,
+        stderr: str,
+        exit_code: int | None,
+        timed_out: bool,
+    ) -> QemuRunResult:
+        run_id = exchange.output_dir.parent.name
+        combined_size = len(stdout.encode()) + len(stderr.encode())
+        if combined_size > self.config.max_output_bytes:
+            return QemuRunResult(run_id, exit_code, stdout[:1024], "output limit exceeded", False, "invalid")
+        if timed_out:
+            return QemuRunResult(run_id, exit_code, stdout, stderr, True, "timeout")
+        if exit_code != 0:
+            return QemuRunResult(run_id, exit_code, stdout, stderr, False, "failed")
+        try:
+            if exchange.result_path.stat().st_size > self.config.max_output_bytes:
+                raise ValueError("result output limit exceeded")
+            result = json.loads(exchange.result_path.read_text(encoding="utf-8"))
+            if not isinstance(result, dict) or result.get("status") != "passed":
+                raise ValueError("guest result must be a passed object")
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            return QemuRunResult(run_id, exit_code, stdout, str(error), False, "invalid")
+        return QemuRunResult(run_id, exit_code, stdout, stderr, False, "passed", result)
