@@ -779,6 +779,11 @@ def _mode6_capability_development_controller(
         #
         # Candidate/provider fields cannot populate or modify this mapping.
         trusted_capability_workspaces = {}
+        if resolved_workspace is not None:
+            trusted_capability_workspaces.update({
+                capability: resolved_workspace
+                for capability in capability_store.capability_classes()
+            })
 
         def mode6_worker(role, context):
             # Only implementation requires a coding proposal.  The remaining

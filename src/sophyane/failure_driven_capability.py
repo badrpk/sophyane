@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 import json
+import hashlib
 import os
 from pathlib import Path
 import tempfile
@@ -61,7 +62,16 @@ class PersistentCapabilityStore:
         return value if isinstance(value, dict) else {}
 
     @staticmethod
-    def _trusted_candidate(capability_class: str, candidate: Any) -> dict[str, Any]:
+    def _files_fingerprint(files: dict[str, str]) -> str:
+        digest = hashlib.sha256()
+        for name, content in sorted(files.items()):
+            digest.update(name.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(hashlib.sha256(content.encode("utf-8")).digest())
+        return digest.hexdigest()
+
+    @classmethod
+    def _trusted_candidate(cls, capability_class: str, candidate: Any) -> dict[str, Any]:
         if not isinstance(candidate, dict) or candidate.get("status") != "TRUSTED_PROMOTED":
             raise ValueError("only trusted promoted capabilities may be persisted")
         if str(candidate.get("capability_class") or "") != str(capability_class):
@@ -74,12 +84,16 @@ class PersistentCapabilityStore:
             raise ValueError("trusted capability files are invalid")
         if not str(candidate.get("provider") or "") or not str(candidate.get("fingerprint") or ""):
             raise ValueError("trusted capability provenance is incomplete")
+        artifact_fingerprint = str(candidate.get("artifact_fingerprint") or "")
+        if artifact_fingerprint and artifact_fingerprint != cls._files_fingerprint(files):
+            raise ValueError("trusted capability bytes do not match fingerprint")
         return {
             "status": "TRUSTED_PROMOTED",
             "provider": str(candidate["provider"]),
             "capability_class": str(candidate["capability_class"]),
             "files": dict(files),
             "fingerprint": str(candidate["fingerprint"]),
+            "artifact_fingerprint": artifact_fingerprint or cls._files_fingerprint(files),
         }
 
     def get(self, capability_class: str) -> Any | None:
@@ -93,6 +107,12 @@ class PersistentCapabilityStore:
             )
         except ValueError:
             return None
+
+    def capability_classes(self) -> tuple[str, ...]:
+        return tuple(
+            name for name in sorted(self._records)
+            if self.get(name) is not None
+        )
 
     def put(self, capability_class: str, candidate: Any) -> None:
         trusted = self._trusted_candidate(str(capability_class), candidate)

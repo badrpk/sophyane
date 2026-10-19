@@ -2006,7 +2006,13 @@ def test_mode6_capability_store_survives_controller_restart(
         workspace=workspace,
     )
 
-    assert second.store.get("document.transform") == candidate
+    loaded = second.store.get("document.transform")
+    assert loaded is not None
+    assert loaded["files"] == candidate["files"]
+    assert loaded["artifact_fingerprint"]
+    assert second.mode6_trusted_workspaces == {
+        "document.transform": workspace.resolve(),
+    }
 
 
 def test_mode6_failure_driven_controller_has_real_worker_and_independent_verifier(

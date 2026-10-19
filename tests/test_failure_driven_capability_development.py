@@ -28,7 +28,10 @@ def test_persistent_capability_store_survives_new_instance(tmp_path):
     first.put("document.transform", candidate)
 
     second = PersistentCapabilityStore(path, workspace=tmp_path)
-    assert second.get("document.transform") == candidate
+    loaded = second.get("document.transform")
+    assert loaded is not None
+    assert loaded["files"] == candidate["files"]
+    assert loaded["artifact_fingerprint"]
 
 
 def test_persistent_capability_store_is_workspace_scoped(tmp_path):
@@ -71,6 +74,20 @@ def test_persistent_capability_store_rejects_untrusted_candidate(tmp_path):
         assert "trusted" in str(error).lower()
     else:
         raise AssertionError("untrusted capability was persisted")
+
+
+def test_persistent_capability_store_rejects_tampered_artifact_bytes(tmp_path):
+    path = tmp_path / "capabilities.json"
+    store = PersistentCapabilityStore(path, workspace=tmp_path)
+    candidate = _trusted_capability()
+    store.put("document.transform", candidate)
+
+    payload = path.read_text(encoding="utf-8").replace("print('ok')", "print('tampered')")
+    path.write_text(payload, encoding="utf-8")
+
+    assert PersistentCapabilityStore(path, workspace=tmp_path).get(
+        "document.transform"
+    ) is None
 
 
 @dataclass
