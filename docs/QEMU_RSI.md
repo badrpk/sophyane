@@ -48,4 +48,3 @@ to unrestricted host execution.
 These statuses are evidence only. Existing RSI red/green, holdout, regression,
 benchmark, smoke, health, authority, and isolation gates still decide whether
 source promotion is allowed.
-

@@ -107,4 +107,3 @@
 - [ ] **Step 3: Run** the full project test command and record unrelated failures without weakening safety behavior.
 - [ ] **Step 4: Run** a non-mutating command-construction smoke check against the installed `qemu-system-aarch64`.
 - [ ] **Step 5: Commit** `docs: document qemu rsi execution`.
-
