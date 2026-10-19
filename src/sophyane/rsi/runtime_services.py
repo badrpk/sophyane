@@ -163,8 +163,13 @@ def _deterministic_curriculum_proposal(prompt: str) -> str:
 
 def _curriculum_proposal_with_fallback(prompt: str, role) -> str:
     try:
-        return local_request("qwen", prompt, role)
-    except (OSError, TimeoutError, ConnectionError, RuntimeError):
+        raw = local_request("qwen", prompt, role)
+        payload = json.loads(raw)
+        required = {"task_id", "parent_ability_id", "objective", "editable_paths", "verification"}
+        if not isinstance(payload, dict) or not required.issubset(payload):
+            raise ValueError("local proposal schema is incomplete")
+        return raw
+    except (OSError, TimeoutError, ConnectionError, RuntimeError, TypeError, ValueError):
         return _deterministic_curriculum_proposal(prompt)
 
 

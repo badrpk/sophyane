@@ -143,6 +143,27 @@ def test_runtime_services_falls_back_to_bounded_task_when_local_llm_times_out(
     assert proposal.task.component == "filesystem"
 
 
+def test_runtime_services_falls_back_when_local_llm_returns_malformed_json(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.delenv("SOPHYANE_CONTINUOUS_RSI", raising=False)
+    controller = SimpleNamespace(
+        ledger=WeaknessLedger(),
+        plans={"demo_score": SimpleNamespace(allowed_paths=("src/sophyane/rsi_demo_target.py",))},
+    )
+    monkeypatch.setattr(
+        "sophyane.rsi.runtime_services.local_request",
+        lambda *_args, **_kwargs: "not-json",
+    )
+
+    runtime = build_curriculum_runtime(tmp_path, controller)
+    proposal = runtime.task_source.propose(runtime.context_factory())
+
+    assert proposal.accepted is True
+    assert proposal.task is not None
+
+
 def test_runtime_services_accepts_proposal_only_adapter(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("SOPHYANE_CONTINUOUS_RSI", raising=False)
     controller = SimpleNamespace(ledger=WeaknessLedger(), plans={})
