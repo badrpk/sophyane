@@ -13,6 +13,9 @@ hosts such as Termux Android where Bubblewrap cannot create Linux namespaces.
 - The guest kernel/initrd must support QEMU 9P mounts and the Sophyane guest
   bootstrap protocol. The input share is mounted read-only; the output share
   contains `result.json`.
+- The active image must be a derived image prepared with the copy-only builder;
+  the stock Debian image is not sufficient because it lacks the bootstrap
+  service and 9P mount configuration.
 - `/dev/kvm` is optional. Without it QEMU uses TCG and will be substantially
   slower.
 
@@ -23,6 +26,20 @@ export SOPHYANE_RSI_EXECUTION_BACKEND=qemu
 export SOPHYANE_RSI_QEMU_IMAGE=/path/to/aarch64-guest.img
 export SOPHYANE_RSI_QEMU_EXECUTABLE=qemu-system-aarch64
 ```
+
+Prepare a derived guest image without modifying the source image:
+
+```sh
+./.venv/bin/python tools/build_sophyane_guest.py \
+  --source /path/to/debian-arm64.qcow2 \
+  --output /path/to/sophyane-debian-arm64.qcow2 \
+  --tool virt-customize
+export SOPHYANE_RSI_QEMU_IMAGE=/path/to/sophyane-debian-arm64.qcow2
+```
+
+The builder installs the one-shot service and both 9P mounts, then writes a
+SHA-256 manifest beside the derived image. The host runner keeps the image
+read-only and uses separate exchange directories for each task.
 
 Optional limits:
 

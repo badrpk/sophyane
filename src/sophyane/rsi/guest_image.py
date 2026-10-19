@@ -39,7 +39,7 @@ class GuestImageBuilder:
             raise GuestImageError(f"output image already exists: {self.output_image}")
         if not self.tool.is_file() or not self.tool.stat().st_mode & 0o111:
             raise GuestImageError(f"image tool is unavailable or not executable: {self.tool}")
-        for name in ("sophyane-bootstrap.sh", "sophyane-bootstrap.service"):
+        for name in ("sophyane-bootstrap.sh", "sophyane-bootstrap.service", "sophyane-fstab"):
             if not (self.asset_root / name).is_file():
                 raise GuestImageError(f"guest asset is missing: {name}")
 
@@ -59,7 +59,9 @@ class GuestImageBuilder:
                 str(self.tool), "-a", str(self.output_image),
                 "--upload", f"{self.asset_root / 'sophyane-bootstrap.sh'}:/usr/local/lib/sophyane/sophyane-bootstrap.sh",
                 "--upload", f"{self.asset_root / 'sophyane-bootstrap.service'}:/etc/systemd/system/sophyane-bootstrap.service",
+                "--upload", f"{self.asset_root / 'sophyane-fstab'}:/etc/fstab.d/sophyane.conf",
                 "--run-command", "chmod 0755 /usr/local/lib/sophyane/sophyane-bootstrap.sh",
+                "--run-command", "mkdir -p /mnt/sophyane-input /mnt/sophyane-output",
                 "--run-command", "systemctl enable sophyane-bootstrap.service",
             )
             subprocess.run(self.last_command, check=True, capture_output=True, text=True)
