@@ -142,8 +142,14 @@ def _deterministic_curriculum_proposal(prompt: str) -> str:
     # artifact task is handled by the filesystem capability validator.
     component = "filesystem"
     digest = hashlib.sha256(f"{parent_id}:{path}".encode()).hexdigest()[:12]
+    existing = {str(item) for item in payload.get("existing_task_ids", ())}
+    task_id = f"autonomous-fallback-{digest}"
+    retry = 1
+    while task_id in existing:
+        task_id = f"autonomous-fallback-{digest}-retry{retry}"
+        retry += 1
     return json.dumps({
-        "task_id": f"autonomous-fallback-{digest}",
+        "task_id": task_id,
         "parent_ability_id": parent_id,
         "objective": (
             "Run one bounded native RSI cycle for the frozen capability, "
