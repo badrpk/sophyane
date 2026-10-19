@@ -100,3 +100,23 @@ def test_native_adapter_rejects_candidate_without_live_promotion():
 
     assert result["status"] == "rejected"
     assert "live promotion" in result["reason"]
+
+
+def test_native_adapter_maps_demo_experiment_identifier_to_capability():
+    seen = []
+
+    def factory(config):
+        seen.append(config.initial_capability)
+        return SimpleNamespace(run=lambda: [])
+
+    result = NativeEvolutionTaskAdapter(
+        ".",
+        engine_factory=factory,
+    ).run_task(task(
+        task_id="demo-fallback",
+        component="demo_score",
+        editable_paths=("src/sophyane/rsi_demo_target.py",),
+    ))
+
+    assert result["status"] == "rejected"
+    assert seen == ["filesystem"]

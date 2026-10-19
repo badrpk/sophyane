@@ -136,7 +136,11 @@ def _deterministic_curriculum_proposal(prompt: str) -> str:
         raise ValueError("fallback proposal requires host-approved allowed paths")
     parent_id = ability_id
     path = allowed_paths[0]
-    component = "demo_score" if path == "src/sophyane/rsi_demo_target.py" else Path(path).stem
+    # Native EvolutionEngine consumes capability names (filesystem/python/
+    # shell/...), not experiment identifiers such as ``demo_score``.
+    # A deterministic fallback is deliberately conservative: its bounded
+    # artifact task is handled by the filesystem capability validator.
+    component = "filesystem"
     digest = hashlib.sha256(f"{parent_id}:{path}".encode()).hexdigest()[:12]
     return json.dumps({
         "task_id": f"autonomous-fallback-{digest}",

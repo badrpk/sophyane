@@ -26,9 +26,15 @@ class NativeEvolutionTaskAdapter:
         if factory is None:
             from sophyane.evolution.engine import EvolutionEngine
             factory = EvolutionEngine
+        capability = str(getattr(task, "component", "") or "")
+        # Curriculum components may be experiment identifiers (for example
+        # ``demo_score``), while EvolutionEngine consumes validator capability
+        # names. Keep the durable task compatible with both contracts.
+        if capability == "demo_score":
+            capability = "filesystem"
         config = EvolutionConfig(
             repo=self.repository,
-            initial_capability=str(getattr(task, "component", "") or ""),
+            initial_capability=capability,
             cycles=1,
             timeout_seconds=self.timeout_seconds,
             allow_cloud_analysis=True,

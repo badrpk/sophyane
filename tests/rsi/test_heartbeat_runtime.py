@@ -140,7 +140,7 @@ def test_runtime_services_falls_back_to_bounded_task_when_local_llm_times_out(
     assert proposal.accepted is True
     assert proposal.task is not None
     assert proposal.task.editable_paths == ("src/sophyane/rsi_demo_target.py",)
-    assert proposal.task.component == "demo_score"
+    assert proposal.task.component == "filesystem"
 
 
 def test_runtime_services_accepts_proposal_only_adapter(tmp_path: Path, monkeypatch):
