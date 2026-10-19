@@ -10,6 +10,9 @@ from typing import Any
 import subprocess
 import uuid
 
+from .coding_provider import CodingCancelled
+from .models import CommandResult
+
 
 class QemuRunnerConfigurationError(PermissionError):
     """QEMU RSI cannot run with the supplied isolated configuration."""
@@ -195,3 +198,30 @@ class QemuRsiRunner:
             return QemuRunResult(run_id, None, "", str(error), False, "failed")
         finally:
             shutil.rmtree(exchange.output_dir.parent, ignore_errors=True)
+
+    def run_command(self, command, cwd, *, timeout=300, cancelled=lambda: False) -> CommandResult:
+        if cancelled():
+            raise CodingCancelled("QEMU verification cancelled")
+        original_timeout = self.config.timeout_seconds
+        bounded_timeout = min(original_timeout, float(timeout))
+        config = self.config
+        if bounded_timeout != original_timeout:
+            config = QemuRunnerConfig(
+                executable=config.executable, guest_image=config.guest_image,
+                architecture=config.architecture, scratch_root=config.scratch_root,
+                timeout_seconds=bounded_timeout, max_output_bytes=config.max_output_bytes,
+                enabled=config.enabled,
+            )
+        result = QemuRsiRunner(config, popen_factory=self._popen_factory).run(
+            cwd, {"task_id": self.new_run_id(), "command": list(command), "cwd": "/sophyane-input/candidate"}
+        )
+        if result.status == "timeout":
+            exit_code = 124
+        elif result.status == "passed":
+            exit_code = 0
+        else:
+            exit_code = 1
+        output = result.stdout
+        if result.stderr:
+            output = f"{output}\n{result.stderr}" if output else result.stderr
+        return CommandResult(tuple(command), exit_code, output, str(cwd))

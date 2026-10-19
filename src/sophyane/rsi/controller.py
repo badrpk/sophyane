@@ -69,10 +69,12 @@ class Controller:
     No background loop, live provider initialization, or repository mutation on
     construction. Every invocation creates at most one detached candidate.
     """
-    def __init__(self, repository, candidate_root, router, journal, policy, *, cancelled=lambda: False):
+    def __init__(self, repository, candidate_root, router, journal, policy, *, cancelled=lambda: False,
+                 execution_runner=None):
         self.repository = Path(repository).resolve()
         self.candidate_root = Path(candidate_root).resolve()
         self.router, self.journal, self.policy, self.cancelled = router, journal, policy, cancelled
+        self.execution_runner = execution_runner
         router.store.assert_external(self.repository)
         router.store.assert_external(self.candidate_root)
 
@@ -107,6 +109,9 @@ class Controller:
         def run(command, path):
             check()
             remaining = self.policy.max_lifecycle_seconds - (time.monotonic() - started)
+            if self.execution_runner is not None:
+                return self.execution_runner(command, path, timeout=min(self.policy.command_timeout, remaining),
+                    cancelled=stopped)
             return run_command(command, path, timeout=min(self.policy.command_timeout, remaining), cancelled=stopped)
 
         def measure(path):
