@@ -9,6 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import json
+import hashlib
+import os
+from pathlib import Path
+import tempfile
 from typing import Any, Callable, Protocol
 
 from sophyane.graph_runtime import MemoryStore, StateGraph
@@ -35,6 +40,107 @@ class InMemoryCapabilityStore:
 
     def put(self, capability_class: str, candidate: Any) -> None:
         self._items[str(capability_class)] = candidate
+
+
+class PersistentCapabilityStore:
+    """Bounded, workspace-scoped store for host-trusted capabilities."""
+
+    MAX_BYTES = 256 * 1024
+
+    def __init__(self, path: str | Path, *, workspace: str | Path) -> None:
+        self.path = Path(path).expanduser()
+        self.workspace = Path(workspace).expanduser().resolve()
+        self._records = self._load()
+
+    def _load(self) -> dict[str, Any]:
+        try:
+            if not self.path.is_file() or self.path.stat().st_size > self.MAX_BYTES:
+                return {}
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _files_fingerprint(files: dict[str, str]) -> str:
+        digest = hashlib.sha256()
+        for name, content in sorted(files.items()):
+            digest.update(name.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(hashlib.sha256(content.encode("utf-8")).digest())
+        return digest.hexdigest()
+
+    @classmethod
+    def _trusted_candidate(cls, capability_class: str, candidate: Any) -> dict[str, Any]:
+        if not isinstance(candidate, dict) or candidate.get("status") != "TRUSTED_PROMOTED":
+            raise ValueError("only trusted promoted capabilities may be persisted")
+        if str(candidate.get("capability_class") or "") != str(capability_class):
+            raise ValueError("capability class does not match trusted candidate")
+        files = candidate.get("files")
+        if not isinstance(files, dict) or not files or any(
+            not isinstance(name, str) or not isinstance(content, str)
+            for name, content in files.items()
+        ):
+            raise ValueError("trusted capability files are invalid")
+        if not str(candidate.get("provider") or "") or not str(candidate.get("fingerprint") or ""):
+            raise ValueError("trusted capability provenance is incomplete")
+        artifact_fingerprint = str(candidate.get("artifact_fingerprint") or "")
+        if artifact_fingerprint and artifact_fingerprint != cls._files_fingerprint(files):
+            raise ValueError("trusted capability bytes do not match fingerprint")
+        return {
+            "status": "TRUSTED_PROMOTED",
+            "provider": str(candidate["provider"]),
+            "capability_class": str(candidate["capability_class"]),
+            "files": dict(files),
+            "fingerprint": str(candidate["fingerprint"]),
+            "artifact_fingerprint": artifact_fingerprint or cls._files_fingerprint(files),
+        }
+
+    def get(self, capability_class: str) -> Any | None:
+        record = self._records.get(str(capability_class))
+        if not isinstance(record, dict) or record.get("workspace") != str(self.workspace):
+            return None
+        try:
+            return self._trusted_candidate(
+                str(capability_class),
+                record.get("candidate"),
+            )
+        except ValueError:
+            return None
+
+    def capability_classes(self) -> tuple[str, ...]:
+        return tuple(
+            name for name in sorted(self._records)
+            if self.get(name) is not None
+        )
+
+    def put(self, capability_class: str, candidate: Any) -> None:
+        trusted = self._trusted_candidate(str(capability_class), candidate)
+        records = dict(self._records)
+        records[str(capability_class)] = {
+            "workspace": str(self.workspace),
+            "candidate": trusted,
+        }
+        payload = json.dumps(records, sort_keys=True, separators=(",", ":")) + "\n"
+        if len(payload.encode("utf-8")) > self.MAX_BYTES:
+            raise ValueError("persistent capability state exceeds size limit")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{self.path.name}.",
+            dir=str(self.path.parent),
+            text=True,
+        )
+        temporary = Path(temporary_name)
+        try:
+            os.chmod(temporary, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.path)
+            self._records = records
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 @dataclass
