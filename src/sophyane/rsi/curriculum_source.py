@@ -18,6 +18,7 @@ class CurriculumTaskSource:
             context = ProposalContext(**context)
         prompt = json.dumps(
             {
+                "ability_id": context.ability.ability_id,
                 "ability": context.ability.name,
                 "capability_summary": context.capability_summary,
                 "allowed_paths": list(context.allowed_paths),

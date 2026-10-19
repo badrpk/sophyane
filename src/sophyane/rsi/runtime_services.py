@@ -5,6 +5,7 @@ Models and research cannot add policies, commands or editable paths to it.
 """
 from dataclasses import asdict, replace
 import json
+import hashlib
 import os
 from pathlib import Path
 import shlex
@@ -52,7 +53,7 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
     enabled = os.environ.get("SOPHYANE_CONTINUOUS_RSI", "1").strip() == "1"
     if proposal_adapter is None:
         proposal_adapter = CurriculumProposalAdapter(
-            lambda prompt: local_request("qwen", prompt, LocalRole.TINY_PROPOSAL)
+            lambda prompt: _curriculum_proposal_with_fallback(prompt, LocalRole.TINY_PROPOSAL)
         )
     repository = Path(__file__).resolve().parents[3]
     health_text = os.environ.get("SOPHYANE_RSI_LIVE_HEALTH_COMMAND", "")
@@ -119,6 +120,42 @@ def local_request(name, context, role):
             {'role': 'user', 'content': context[:12000]}],
         'max_tokens': 512, 'temperature': 0}, timeout=30)
     return response['choices'][0]['message']['content']
+
+
+def _deterministic_curriculum_proposal(prompt: str) -> str:
+    """Create one safe task from host-frozen proposal context.
+
+    This is only a liveness fallback when proposal intelligence is unavailable;
+    the normal CurriculumProposalAdapter still validates every field and path.
+    It never invents editable paths or commands outside the supplied context.
+    """
+    payload = json.loads(prompt)
+    ability_id = str(payload.get("ability_id") or "seed")
+    allowed_paths = tuple(str(item) for item in payload.get("allowed_paths", ()))
+    if not allowed_paths:
+        raise ValueError("fallback proposal requires host-approved allowed paths")
+    parent_id = ability_id
+    path = allowed_paths[0]
+    component = "demo_score" if path == "src/sophyane/rsi_demo_target.py" else Path(path).stem
+    digest = hashlib.sha256(f"{parent_id}:{path}".encode()).hexdigest()[:12]
+    return json.dumps({
+        "task_id": f"autonomous-fallback-{digest}",
+        "parent_ability_id": parent_id,
+        "objective": (
+            "Run one bounded native RSI cycle for the frozen capability, "
+            "preserve all protected checks, and accept only a verified promotion."
+        ),
+        "editable_paths": [path],
+        "verification": ["native RSI promotion gate passes"],
+        "component": component,
+    })
+
+
+def _curriculum_proposal_with_fallback(prompt: str, role) -> str:
+    try:
+        return local_request("qwen", prompt, role)
+    except (OSError, TimeoutError, ConnectionError, RuntimeError):
+        return _deterministic_curriculum_proposal(prompt)
 
 
 def _reachable(endpoint):
