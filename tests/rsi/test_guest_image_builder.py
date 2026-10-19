@@ -61,6 +61,9 @@ def test_build_copies_source_invokes_tool_and_writes_digest_manifest(tmp_path):
     assert "/etc/systemd/system/sophyane-bootstrap.service" in " ".join(builder.last_command)
     assert "/etc/fstab" in " ".join(builder.last_command)
     assert "mkdir -p /mnt/sophyane-input /mnt/sophyane-output" in " ".join(builder.last_command)
+    assert "--mkdir" in builder.last_command
+    assert "/usr/local/lib/sophyane" in builder.last_command
+    assert "/etc/fstab.d" in builder.last_command
 
 
 def test_build_failure_removes_partial_output_and_preserves_source(tmp_path):

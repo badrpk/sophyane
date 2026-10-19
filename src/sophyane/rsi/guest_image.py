@@ -57,6 +57,8 @@ class GuestImageBuilder:
             shutil.copy2(self.source_image, self.output_image)
             self.last_command = (
                 str(self.tool), "-a", str(self.output_image),
+                "--mkdir", "/usr/local/lib/sophyane",
+                "--mkdir", "/etc/fstab.d",
                 "--upload", f"{self.asset_root / 'sophyane-bootstrap.sh'}:/usr/local/lib/sophyane/sophyane-bootstrap.sh",
                 "--upload", f"{self.asset_root / 'sophyane-bootstrap.service'}:/etc/systemd/system/sophyane-bootstrap.service",
                 "--upload", f"{self.asset_root / 'sophyane-fstab'}:/etc/fstab.d/sophyane.conf",

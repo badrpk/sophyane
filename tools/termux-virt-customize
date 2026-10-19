@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+export LIBGUESTFS_BACKEND=direct
+exec proot-distro login debian -- /usr/bin/virt-customize "$@"

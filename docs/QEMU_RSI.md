@@ -30,12 +30,19 @@ export SOPHYANE_RSI_QEMU_EXECUTABLE=qemu-system-aarch64
 Prepare a derived guest image without modifying the source image:
 
 ```sh
+proot-distro login debian -- apt-get update
+proot-distro login debian -- apt-get install -y libguestfs-tools
+
 ./.venv/bin/python tools/build_sophyane_guest.py \
   /path/to/debian-arm64.qcow2 \
   /path/to/sophyane-debian-arm64.qcow2 \
-  --tool virt-customize
+  --tool ./tools/termux-virt-customize
 export SOPHYANE_RSI_QEMU_IMAGE=/path/to/sophyane-debian-arm64.qcow2
 ```
+
+On Termux this uses libguestfs inside the existing Debian proot container and
+QEMU TCG; `/dev/kvm`, loop mounts, and host root are not required. The package
+is large, but image editing is fully offline after installation.
 
 The builder installs the one-shot service and both 9P mounts, then writes a
 SHA-256 manifest beside the derived image. The host runner keeps the image
