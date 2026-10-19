@@ -22,6 +22,19 @@ def test_qemu_backend_is_explicitly_opt_in(monkeypatch, tmp_path):
     assert runner.config.guest_image == image
 
 
+def test_continuous_controller_wires_opted_in_qemu_runner(monkeypatch, tmp_path):
+    from sophyane.rsi.runtime_services import build_controller
+
+    image = tmp_path / "guest.img"
+    image.write_bytes(b"guest")
+    monkeypatch.setenv("SOPHYANE_RSI_EXECUTION_BACKEND", "qemu")
+    monkeypatch.setenv("SOPHYANE_RSI_QEMU_IMAGE", str(image))
+
+    controller = build_controller(tmp_path / "state")
+
+    assert controller.runner.command_runner.__self__.__class__.__name__ == "QemuRsiRunner"
+
+
 def test_failed_qemu_execution_rejects_without_changing_active_commit(repo, tmp_path):
     from test_end_to_end_rsi_cycle import build_controller
     from conftest import git

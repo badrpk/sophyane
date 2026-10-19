@@ -207,6 +207,7 @@ def _reachable(endpoint):
 def build_controller(state_dir, *, active=lambda: True):
     state_dir = Path(state_dir)
     repository = Path(__file__).resolve().parents[3]
+    qemu_runner = build_qemu_runner(state_dir)
     specs = {}
     policy_file = state_dir / 'experiments.json'
     if policy_file.exists():
@@ -301,6 +302,10 @@ def build_controller(state_dir, *, active=lambda: True):
                     files[name] = target.read_text()[:12000]
         return {'weakness': asdict(record), 'source_files': files}
 
+    from .experiment import DeterministicExperimentRunner
+    experiment_runner = DeterministicExperimentRunner()
+    if qemu_runner is not None:
+        experiment_runner = DeterministicExperimentRunner(command_runner=qemu_runner.run_command)
     controller = AutonomousRSIController(autonomous_bus, WeaknessLedger(state_dir / 'weaknesses.json'),
         ResourceGovernor(policy=ResourcePolicy(maximum_load_per_cpu=maximum_load), sampler=sample),
         local=LocalIntelligenceRouter({name: lambda context, role, name=name: local_request(name, context, role)
@@ -308,7 +313,8 @@ def build_controller(state_dir, *, active=lambda: True):
         research=TargetedSLIResearch(),
         cloud=CloudReviewer({name: lambda package, name=name: review(name, package)
                             for name in ('codex_cli', 'nifdu_browser')}),
-        plans=plans, workspace_factory=lambda: CandidateWorkspace(repository, state_dir / 'candidates').create(),
+        plans=plans, runner=experiment_runner,
+        workspace_factory=lambda: CandidateWorkspace(repository, state_dir / 'candidates').create(),
         prepare=prepare, measure=measure, context=context)
     # No meta benchmark is invented from operational counters. A policy must
     # supply a frozen external command before promotion can be admitted.
