@@ -69,6 +69,37 @@ def test_verified_ability_enqueues_one_follow_up_and_progresses(tmp_path: Path):
     assert runtime.status()["queue_length"] == 0
 
 
+def test_verified_ability_routes_follow_up_through_intelligence(tmp_path: Path):
+    controller = FakeController([{"status": "VERIFIED", "evidence": ["pytest passed"], "ability": "a1"}])
+    runtime = build(tmp_path, controller, FakeProposal(make_task("task-2", "a1")))
+    calls = []
+
+    class Review:
+        def review(self, context, proposal):
+            calls.append((context.ability.ability_id, proposal.task.task_id))
+            return proposal
+
+    runtime.intelligence = Review()
+    runtime.scheduler.enqueue(make_task("task-1"))
+
+    assert runtime.tick()["status"] == "verified"
+    assert calls == [("a1", "task-2")]
+
+
+def test_rejected_follow_up_does_not_consume_follow_up_budget(tmp_path: Path):
+    controller = FakeController([{"status": "VERIFIED", "evidence": ["pytest passed"], "ability": "a1"}])
+    runtime = build(tmp_path, controller, FakeProposal(make_task("task-1", "a1")))
+    runtime.scheduler.enqueue(make_task("task-1"))
+
+    assert runtime.tick()["status"] == "verified"
+
+    status = runtime.status()
+    assert status["follow_ups_enqueued"] == 0
+    events = (tmp_path / "curriculum.events.jsonl").read_text(encoding="utf-8")
+    assert '"event": "enqueue_rejected"' in events
+    assert '"reason": "duplicate task_id"' in events
+
+
 def test_failure_is_recorded_without_claiming_ability(tmp_path: Path):
     runtime = build(tmp_path, FakeController([{"status": "ROLLED_BACK", "reason": "verification failed"}]), max_task_attempts=1)
     runtime.scheduler.enqueue(make_task("task-1"))
@@ -117,6 +148,30 @@ def test_restart_recovers_running_task_and_stop_is_durable(tmp_path: Path):
     assert runtime.scheduler._state().queue[0].status is TaskStatus.PAUSED
     assert runtime.stop("operator") is True
     assert runtime.status()["stopped"] is True
+
+
+def test_restart_reconciles_task_already_promoted_into_live_worktree(tmp_path: Path):
+    store = CurriculumStore(tmp_path / "curriculum.json")
+    task = make_task("promoted-before-restart")
+    task.status = TaskStatus.PAUSED
+    task.failure_reason = "paused after process restart"
+    task.proposal_files = {"src/example.py": "return 2\n"}
+    store.save(__import__("sophyane.rsi.curriculum", fromlist=["CurriculumState"]).CurriculumState(queue=[task]))
+
+    live_file = tmp_path / "live-worktree" / "src" / "example.py"
+    live_file.parent.mkdir(parents=True)
+    live_file.write_text("return 2\n", encoding="utf-8")
+    (tmp_path / "promotion.json").write_text(
+        '{"promoted":true,"active_commit":"a7e045a"}\n', encoding="utf-8"
+    )
+
+    runtime = build(tmp_path, FakeController([]))
+    assert runtime.start() is True
+
+    state = runtime.scheduler._state()
+    assert state.queue[0].status is TaskStatus.VERIFIED
+    assert state.queue[0].completed_at is not None
+    assert runtime.scheduler.next_task() is None
 
 
 def test_stop_does_not_restart_on_later_tick(tmp_path: Path):

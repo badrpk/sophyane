@@ -56,6 +56,7 @@ class CurriculumTask:
     completed_at: float | None = None
     component: str = ""
     attempts: int = 0
+    proposal_files: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,7 @@ def _task_from_dict(raw: dict[str, Any]) -> CurriculumTask:
         completed_at=raw.get("completed_at"),
         component=str(raw.get("component", "")),
         attempts=int(raw.get("attempts", 0)),
+        proposal_files={str(path): str(content) for path, content in dict(raw.get("proposal_files", {})).items()},
     )
 
 
@@ -240,11 +242,20 @@ class CurriculumScheduler:
 
     def enqueue(self, task: CurriculumTask) -> bool:
         state = self._state()
-        if len(state.queue) >= self.policy.max_queue_length:
-            return False
-        if any(item.task_id == task.task_id for item in state.queue):
-            return False
-        if not task.objective.strip() or not task.editable_paths or not task.verification:
+        active_tasks = sum(
+            item.status in {TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.PAUSED}
+            for item in state.queue
+        )
+        if active_tasks >= self.policy.max_queue_length:
+            reason = "queue full"
+        elif any(item.task_id == task.task_id for item in state.queue):
+            reason = "duplicate task_id"
+        elif not task.objective.strip() or not task.editable_paths or not task.verification:
+            reason = "invalid task"
+        else:
+            reason = ""
+        if reason:
+            self.store.append_event({"event": "enqueue_rejected", "task_id": task.task_id, "reason": reason})
             return False
         state.queue.append(task)
         self._save(state, {"event": "task_queued", "task_id": task.task_id})
@@ -295,6 +306,32 @@ class CurriculumScheduler:
         state.last_verified_at = self.clock()
         state.last_result = {"task_id": task_id, "status": TaskStatus.VERIFIED.value, "evidence": list(evidence)}
         self._save(state, {"event": "task_verified", "task_id": task_id, "evidence": list(evidence)})
+
+    def reconcile_verified(self, task_id: str, evidence: tuple[str, ...]) -> bool:
+        """Close a task whose promotion completed before a daemon restart.
+
+        Restart recovery changes an interrupted RUNNING task to PAUSED.  A
+        promotion can finish just before that recovery state is persisted, so
+        the task must be allowed to become VERIFIED without being executed a
+        second time.  This method is deliberately restricted to non-terminal
+        tasks and emits the same durable completion event as normal success.
+        """
+        state = self._state()
+        task = next(item for item in state.queue if item.task_id == task_id)
+        if task.status is TaskStatus.VERIFIED:
+            return False
+        if task.status not in {TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.PAUSED}:
+            return False
+        task.status = TaskStatus.VERIFIED
+        task.completed_at = self.clock()
+        task.failure_reason = ""
+        if state.current_task_id == task_id:
+            state.current_task_id = None
+        state.iteration += 1
+        state.last_verified_at = self.clock()
+        state.last_result = {"task_id": task_id, "status": TaskStatus.VERIFIED.value, "evidence": list(evidence)}
+        self._save(state, {"event": "task_reconciled_verified", "task_id": task_id, "evidence": list(evidence)})
+        return True
 
     def record_failure(self, task_id: str, status: TaskStatus, reason: str) -> None:
         if status not in {TaskStatus.REJECTED, TaskStatus.ROLLED_BACK, TaskStatus.PAUSED}:
