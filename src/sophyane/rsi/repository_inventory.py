@@ -27,6 +27,8 @@ class RepositoryRecord:
     test_commands: tuple[tuple[str, ...], ...]
     editable_paths: tuple[str, ...]
     digest: str
+    language: str = "unknown"
+    default_branch: str = ""
 
 
 @dataclass
@@ -62,17 +64,78 @@ def _rebase_index(
     return position % len(current_ids)
 
 
-def _test_commands(path: Path) -> tuple[tuple[str, ...], ...]:
-    python_markers = ("pyproject.toml", "pytest.ini", "setup.cfg")
-    if any((path / name).exists() for name in python_markers) or (path / "tests").is_dir():
-        return (("python", "-m", "pytest", "-q"),)
-    if (path / "package.json").is_file():
-        return (("npm", "test"),)
-    if (path / "Cargo.toml").is_file():
-        return (("cargo", "test"),)
-    if (path / "go.mod").is_file():
-        return (("go", "test", "./..."),)
-    return ()
+def _language(path: Path) -> str:
+    for marker, language in (
+        ("go.mod", "go"),
+        ("Cargo.toml", "rust"),
+        ("package.json", "javascript"),
+        ("pyproject.toml", "python"),
+        ("pytest.ini", "python"),
+        ("setup.cfg", "python"),
+    ):
+        if (path / marker).is_file():
+            return language
+    if (path / "tests").is_dir() and (path / "src").is_dir():
+        return "python"
+    return "unknown"
+
+
+def _test_commands(language: str) -> tuple[tuple[str, ...], ...]:
+    commands = {
+        "python": (("python", "-m", "pytest", "-q"),),
+        "javascript": (("npm", "test"),),
+        "rust": (("cargo", "test"),),
+        "go": (("go", "test", "./..."),),
+    }
+    return commands.get(language, ())
+
+
+def _default_branch(path: Path, current: str) -> str:
+    remote_head = _git(
+        path, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"
+    )
+    if remote_head.startswith("origin/"):
+        return remote_head.removeprefix("origin/")
+    for name in ("main", "master"):
+        if _git(path, "show-ref", "--verify", f"refs/heads/{name}"):
+            return name
+    return current
+
+
+def _editable_paths(path: Path, language: str) -> tuple[str, ...]:
+    rules = {
+        "python": (
+            ("src", "tests"),
+            {".py"},
+            {"pyproject.toml", "setup.cfg", "pytest.ini"},
+        ),
+        "javascript": (
+            ("src", "app", "pages", "test", "tests"),
+            {".js", ".jsx", ".ts", ".tsx"},
+            {"package.json", "tsconfig.json", "vite.config.js", "vite.config.ts"},
+        ),
+        "rust": (
+            ("src", "tests", "benches", "examples"),
+            {".rs"},
+            {"Cargo.toml", "build.rs"},
+        ),
+        "go": (("cmd", "internal", "pkg", "test", "tests"), {".go"}, {"go.mod", "go.sum"}),
+    }
+    directories, suffixes, files = rules.get(language, (("src", "tests"), set(), set()))
+    editable = [
+        name
+        for name in directories
+        if (path / name).is_dir() and not (path / name).is_symlink()
+    ]
+    root_files = sorted(
+        child.name
+        for child in path.iterdir()
+        if child.is_file()
+        and not child.is_symlink()
+        and (child.suffix in suffixes or child.name in files)
+    )
+    editable.extend(root_files[:64])
+    return tuple(editable)
 
 
 class RepositoryInventory:
@@ -114,6 +177,8 @@ class RepositoryInventory:
                             tuple(command) for command in item["test_commands"]
                         ),
                         "editable_paths": tuple(item["editable_paths"]),
+                        "language": item.get("language", "unknown"),
+                        "default_branch": item.get("default_branch", item["branch"]),
                     }
                 )
             )
@@ -170,12 +235,10 @@ class RepositoryInventory:
             if not commit:
                 continue
             branch = _git(path, "branch", "--show-current")
-            tests = _test_commands(path)
-            editable = tuple(
-                name
-                for name in ("src", "tests")
-                if (path / name).is_dir() and not (path / name).is_symlink()
-            )
+            language = _language(path)
+            default_branch = _default_branch(path, branch)
+            tests = _test_commands(language)
+            editable = _editable_paths(path, language)
             repo_id = f"{owner.lower()}/{name.lower()}"
             identity = {
                 "repo_id": repo_id,
@@ -185,6 +248,8 @@ class RepositoryInventory:
                 "name": name,
                 "commit": commit,
                 "branch": branch,
+                "language": language,
+                "default_branch": default_branch,
                 "test_commands": tests,
                 "editable_paths": editable,
             }
@@ -207,11 +272,18 @@ class RepositoryInventory:
 
     def next_repository(self) -> RepositoryRecord | None:
         self.refresh()
-        if not self.records:
-            return None
-        index = self.cursor.next_index
-        record = self.records[index]
+        for offset in range(len(self.records)):
+            record = self.records[(self.cursor.next_index + offset) % len(self.records)]
+            if self.cursor.scanned_commits.get(record.repo_id) != record.commit:
+                return record
+        return None
+
+    def complete_scan(self, record: RepositoryRecord) -> None:
+        """Advance only after the caller has durably recorded the scan outcome."""
+        selected = self.next_repository()
+        if selected is None or (selected.repo_id, selected.commit) != (record.repo_id, record.commit):
+            raise ValueError("scan selection is stale or already completed")
+        index = self.records.index(selected)
         self.cursor.next_index = (index + 1) % len(self.records)
-        self.cursor.scanned_commits[record.repo_id] = record.commit
+        self.cursor.scanned_commits[selected.repo_id] = selected.commit
         self._save()
-        return record
