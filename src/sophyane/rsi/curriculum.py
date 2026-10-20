@@ -57,6 +57,12 @@ class CurriculumTask:
     component: str = ""
     attempts: int = 0
     proposal_files: dict[str, str] = field(default_factory=dict)
+    repository_id: str = ""
+    base_commit: str = ""
+    proposal_digest: str = ""
+    red_command: tuple[str, ...] = ()
+    red_failure_marker: str = ""
+    green_commands: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -114,6 +120,12 @@ def _task_from_dict(raw: dict[str, Any]) -> CurriculumTask:
         component=str(raw.get("component", "")),
         attempts=int(raw.get("attempts", 0)),
         proposal_files={str(path): str(content) for path, content in dict(raw.get("proposal_files", {})).items()},
+        repository_id=str(raw.get("repository_id", "")),
+        base_commit=str(raw.get("base_commit", "")),
+        proposal_digest=str(raw.get("proposal_digest", "")),
+        red_command=tuple(str(item) for item in raw.get("red_command", [])),
+        red_failure_marker=str(raw.get("red_failure_marker", "")),
+        green_commands=tuple(tuple(str(item) for item in command) for command in raw.get("green_commands", [])),
     )
 
 
