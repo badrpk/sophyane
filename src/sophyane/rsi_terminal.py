@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import sqlite3
 import socket
 import subprocess
 import sys
@@ -121,7 +122,59 @@ def _multi_repo_status(state_dir: Path) -> dict[str, object]:
     }
 
 
+def _failure_boundary(error: Exception) -> str:
+    message = str(error).lower()
+    if isinstance(error, SyntaxError) or "ast" in message or "parser" in message:
+        return "ast_parser"
+    if isinstance(error, sqlite3.Error) or "database is locked" in message or "sqlite" in message:
+        return "sqlite_state"
+    if "git" in message or "commit" in message or "hash" in message:
+        return "git_inventory"
+    if "symlink" in message or "path" in message or "workspace" in message:
+        return "workspace_containment"
+    return "daemon_cycle"
+
+
+def _pause_after_failure(runtime, error: Exception) -> dict[str, object]:
+    boundary = _failure_boundary(error)
+    reason = f"{boundary}: {type(error).__name__}: {error}"
+    try:
+        runtime.scheduler.pause(reason)
+    except Exception:
+        # A locked/corrupt state store may prevent the normal pause write.
+        # Preserve the failure boundary in the append-only audit channel when
+        # that channel remains available, while still failing closed.
+        try:
+            runtime.scheduler.store.append_event({"event": "chaos_failure", "boundary": boundary, "reason": reason})
+        except Exception:
+            pass
+    return {"status": "paused", "reason": reason}
+
+
 def run_multi_repo_cycle(runtime, mode: str, *, max_files: int) -> dict[str, object]:
+    try:
+        return _run_multi_repo_cycle(runtime, mode, max_files=max_files)
+    except Exception as error:
+        return _pause_after_failure(runtime, error)
+
+
+def _task_paths_safe(record, task) -> bool:
+    root = Path(record.path).resolve()
+    for relative in task.editable_paths:
+        candidate = (root / relative).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return False
+        current = root
+        for part in Path(relative).parts:
+            current = current / part
+            if current.is_symlink():
+                return False
+    return True
+
+
+def _run_multi_repo_cycle(runtime, mode: str, *, max_files: int) -> dict[str, object]:
     """Perform at most one durable scan, proposal, or bounded execution step."""
     if mode not in {"inventory", "proposal", "execute"} or max_files < 1:
         raise ValueError("invalid multi-repository rollout controls")
@@ -186,9 +239,11 @@ def run_multi_repo_cycle(runtime, mode: str, *, max_files: int) -> dict[str, obj
         finish("rejected", review_outcome=proposal.review_outcome or reason)
         return {"status": "rejected", "repository_id": record.repo_id, "reason": reason}
     task = proposal.task
-    if task.repository_id != record.repo_id or task.base_commit != record.commit or len(task.editable_paths) > max_files:
-        runtime.scheduler.pause("proposal exceeds repository or file budget")
-        return {"status": "paused", "reason": "proposal exceeds repository or file budget"}
+    if (task.repository_id != record.repo_id or task.base_commit != record.commit
+            or len(task.editable_paths) > max_files or not _task_paths_safe(record, task)):
+        reason = "proposal exceeds repository, file, or symlink containment policy"
+        runtime.scheduler.pause(reason)
+        return {"status": "paused", "reason": reason}
     if not runtime.scheduler.enqueue(task):
         runtime.scheduler.pause("scheduler rejected proposed task")
         return {"status": "paused", "reason": "scheduler rejected proposed task"}
