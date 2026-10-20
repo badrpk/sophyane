@@ -191,8 +191,8 @@ def _candidate_roots(
 
     candidates.extend(
         (
-            home,
             home / "badrpk-repos",
+            home,
             home / "badrpk",
             home / "repos",
             home / "projects",
@@ -235,6 +235,15 @@ def _repo_path(
 
         if candidate.is_dir():
             return candidate
+
+        # Repository names are case-insensitive in the ecosystem contract,
+        # while checkout directory casing is not consistent across hosts.
+        try:
+            for child in root.iterdir():
+                if child.is_dir() and child.name.casefold() == name.casefold():
+                    return child
+        except OSError:
+            continue
 
     return None
 

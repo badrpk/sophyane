@@ -30,7 +30,9 @@ class LocalPeerProcessAdapter:
     @staticmethod
     def _environment() -> dict[str, str]:
         return {
-            "PATH": os.defpath,
+            # Keep only the executable search path from the host environment;
+            # do not forward arbitrary user/application secrets.
+            "PATH": os.environ.get("PATH", os.defpath),
             "LC_ALL": "C",
             "LANG": "C",
         }
@@ -40,7 +42,10 @@ class LocalPeerProcessAdapter:
         executable = argv[0]
         if os.path.isabs(executable) or os.sep in executable:
             return os.path.isfile(executable) and os.access(executable, os.X_OK)
-        return shutil.which(executable, path=os.defpath) is not None
+        return shutil.which(
+            executable,
+            path=os.environ.get("PATH", os.defpath),
+        ) is not None
 
     def invoke(
         self,

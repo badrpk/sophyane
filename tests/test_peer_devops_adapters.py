@@ -220,3 +220,56 @@ def test_local_registration_requires_a_valid_local_operation_manifest(
 
     assert "huobz" in registered
     assert "huobz" in peer_adapter_catalog()
+
+
+def test_all_four_peer_adapters_register_and_execute_from_fixture_roots(tmp_path):
+    from sophyane.ecosystem_peer_runtime import register_local_peer_adapters
+    from sophyane.peer_capability_adapter import invoke_peer_capability
+
+    repositories = {
+        "veyron": "print('veyron-ready')",
+        "huobz": "print('huobz-ready')",
+        "rangoons": "print('rangoons-ready')",
+        "shmry": "print('shmry-ready')",
+    }
+    for repository, output in repositories.items():
+        write_manifest(
+            tmp_path / repository,
+            repository,
+            operations={
+                "status": {
+                    "argv": [sys.executable, "-c", output],
+                    "timeout_seconds": 5,
+                    "max_output_bytes": 1024,
+                }
+            },
+        )
+
+    registered = register_local_peer_adapters(roots=[tmp_path])
+
+    assert set(repositories).issubset(registered)
+    for repository in repositories:
+        result = invoke_peer_capability(
+            repository=repository,
+            capability="status",
+            objective="fixture verification",
+            workspace=tmp_path / repository,
+        )
+        assert result.handled is True
+        assert result.ok is True
+        assert result.evidence["exit_status"] == 0
+
+
+def test_verification_script_uses_temporary_fixtures_only(tmp_path, monkeypatch):
+    monkeypatch.setenv("SOPHYANE_BADRPK_ROOT", str(tmp_path / "does-not-exist"))
+    from scripts.verify_peer_devops_adapters import verify_peer_devops_adapters
+
+    report = verify_peer_devops_adapters()
+
+    assert report["fixture_verification"]["ok"] is True
+    assert set(report["fixture_verification"]["repositories"]) == {
+        "veyron",
+        "huobz",
+        "rangoons",
+        "shmry",
+    }
