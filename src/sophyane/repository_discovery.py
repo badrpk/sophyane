@@ -100,7 +100,27 @@ def discover_local_repositories(
         or "badrpk"
     ).lower()
 
-    search_roots = list(roots or (Path.home(),))
+    if roots is not None:
+        search_roots = list(roots)
+    else:
+        configured_roots = os.environ.get(
+            "SOPHYANE_REPOSITORY_ROOTS",
+            "",
+        ).strip()
+        if configured_roots:
+            search_roots = [
+                Path(item).expanduser()
+                for item in configured_roots.split(os.pathsep)
+                if item.strip()
+            ]
+        else:
+            # The home root preserves existing behavior.  The explicit
+            # collection root makes sibling BADRPK checkouts discoverable
+            # without recursively walking arbitrary user data.
+            search_roots = [
+                Path.home(),
+                Path.home() / "badrpk-repos",
+            ]
     found: list[tuple[Path, str, str, str]] = []
     seen: set[Path] = set()
 

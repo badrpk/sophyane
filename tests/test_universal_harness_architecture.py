@@ -115,6 +115,30 @@ def test_repository_discovery_deduplicates_logical_repositories():
     assert len(identities) == len(set(identities))
 
 
+def test_repository_discovery_accepts_explicit_collection_roots(
+    tmp_path: Path,
+    monkeypatch,
+):
+    repo = tmp_path / "collection" / "sample"
+    repo.mkdir(parents=True)
+    subprocess = __import__("subprocess")
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", "git@github.com:badrpk/sample.git"],
+        check=True,
+    )
+
+    monkeypatch.setenv(
+        "SOPHYANE_REPOSITORY_ROOTS",
+        str(tmp_path / "collection"),
+    )
+    discovered = discover_local_repositories()
+
+    assert [(owner, name) for _, _, owner, name in discovered] == [
+        ("badrpk", "sample"),
+    ]
+
+
 def test_repository_ranking_ignores_generic_stop_words():
     from sophyane.repository_discovery import _tokens
 
