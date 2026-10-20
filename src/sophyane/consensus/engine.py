@@ -89,7 +89,7 @@ class BFTConsensusEngine:
                     # slow workers never extend the decision deadline.
                     extra_done, pending = wait(
                         pending,
-                        timeout=min(0.01, max(0.0, self.deadline_seconds - (time.monotonic() - started))),
+                        timeout=min(0.10, max(0.0, self.deadline_seconds - (time.monotonic() - started))),
                         return_when=FIRST_COMPLETED,
                     )
                     for future in extra_done:
