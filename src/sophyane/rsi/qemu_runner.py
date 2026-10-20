@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 import subprocess
+import time
 import uuid
 
 from .coding_provider import CodingCancelled
@@ -29,6 +30,11 @@ class QemuRunnerConfig:
     max_output_bytes: int
     enabled: bool = False
     firmware: Path | None = None
+    memory_mb: int = 1024
+    kernel: Path | None = None
+    initrd: Path | None = None
+    root_device: str = "/dev/vda1"
+    init_path: str | None = None
 
     def __post_init__(self) -> None:
         if self.architecture != "aarch64":
@@ -37,6 +43,14 @@ class QemuRunnerConfig:
             raise ValueError("QEMU RSI timeout must be positive")
         if self.max_output_bytes <= 0:
             raise ValueError("QEMU RSI output limit must be positive")
+        if self.memory_mb <= 0:
+            raise ValueError("QEMU RSI memory must be positive")
+        if (self.kernel is None) != (self.initrd is None):
+            raise ValueError("QEMU kernel and initrd must be configured together")
+        if not self.root_device.startswith("/dev/"):
+            raise ValueError("QEMU root device must be a device path")
+        if self.init_path is not None and (not self.init_path.startswith("/") or " " in self.init_path):
+            raise ValueError("QEMU init path must be an absolute path without spaces")
 
 
 @dataclass(frozen=True)
@@ -89,9 +103,17 @@ def build_qemu_command(
         executable,
         "-machine",
         "virt",
+        "-cpu",
+        "cortex-a57",
         "-accel",
         "tcg,thread=multi",
+        "-m",
+        str(config.memory_mb),
         "-nographic",
+        "-monitor",
+        "none",
+        "-serial",
+        "stdio",
         "-no-reboot",
         "-drive",
         f"if=none,format={'qcow2' if config.guest_image.suffix.lower() in ('.qcow2', '.qcow') else 'raw'},readonly=on,file={image},id=drive0",
@@ -102,7 +124,20 @@ def build_qemu_command(
         "-virtfs",
         f"local,path={Path(output_dir).resolve()},mount_tag=sophyane-output,security_model=none",
     ]
-    if config.firmware is not None:
+    if config.kernel is not None and config.initrd is not None:
+        command[1:1] = [
+            "-kernel", str(config.kernel.resolve()),
+            "-initrd", str(config.initrd.resolve()),
+            "-append", " ".join(filter(None, (
+                f"root={config.root_device} rw console=ttyAMA0,115200 earlycon=pl011,mmio32,0x09000000 loglevel=8",
+                # rdinit runs from the initramfs, before the ext4 root is
+                # mounted. The configured Sophyane bootstrap lives on that
+                # root, so the initramfs entrypoint must remain /init.
+                "rdinit=/init",
+                f"init={config.init_path}" if config.init_path else None,
+            ))),
+        ]
+    elif config.firmware is not None:
         command[1:1] = ["-bios", str(config.firmware.resolve())]
     return tuple(command)
 
@@ -122,6 +157,9 @@ class QemuRsiRunner:
             raise QemuRunnerConfigurationError("QEMU guest image must be a regular file")
         if self.config.firmware is not None and not self.config.firmware.is_file():
             raise QemuRunnerConfigurationError("QEMU firmware must be a regular file")
+        for name, path in (("kernel", self.config.kernel), ("initrd", self.config.initrd)):
+            if path is not None and not path.is_file():
+                raise QemuRunnerConfigurationError(f"QEMU {name} must be a regular file")
         if not str(self.config.executable).strip():
             raise QemuRunnerConfigurationError("QEMU executable is required")
 
@@ -230,13 +268,25 @@ class QemuRsiRunner:
                 text=True,
                 shell=False,
             )
-            try:
-                stdout, stderr = process.communicate(timeout=self.config.timeout_seconds)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                stdout, stderr = process.communicate()
-                return QemuRunResult(run_id, getattr(process, "returncode", None), stdout, stderr, True, "timeout")
-            return self.parse_result(exchange, stdout, stderr, process.returncode, False)
+            deadline = time.monotonic() + self.config.timeout_seconds
+            while True:
+                returncode = process.poll()
+                if returncode is not None:
+                    stdout, stderr = process.communicate()
+                    return self.parse_result(exchange, stdout, stderr, returncode, False)
+                if exchange.result_path.exists():
+                    process.terminate()
+                    try:
+                        stdout, stderr = process.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        stdout, stderr = process.communicate()
+                    return self.parse_result(exchange, stdout, stderr, 0, False)
+                if time.monotonic() >= deadline:
+                    process.kill()
+                    stdout, stderr = process.communicate()
+                    return QemuRunResult(run_id, getattr(process, "returncode", None), stdout, stderr, True, "timeout")
+                time.sleep(0.1)
         except OSError as error:
             return QemuRunResult(run_id, None, "", str(error), False, "failed")
         finally:
@@ -253,10 +303,12 @@ class QemuRsiRunner:
                 executable=config.executable, guest_image=config.guest_image,
                 architecture=config.architecture, scratch_root=config.scratch_root,
                 timeout_seconds=bounded_timeout, max_output_bytes=config.max_output_bytes,
-                enabled=config.enabled, firmware=config.firmware,
+                enabled=config.enabled, firmware=config.firmware, memory_mb=config.memory_mb,
+                kernel=config.kernel, initrd=config.initrd, root_device=config.root_device,
+                init_path=config.init_path,
             )
         result = QemuRsiRunner(config, popen_factory=self._popen_factory).run(
-            cwd, {"task_id": self.new_run_id(), "command": list(command), "cwd": "/sophyane-input/candidate"}
+            cwd, {"schema_version": 1, "task_id": self.new_run_id(), "command": list(command), "cwd": "/mnt/sophyane-input/candidate"}
         )
         if result.status == "timeout":
             exit_code = 124

@@ -1,4 +1,5 @@
 from pathlib import Path
+from dataclasses import replace
 import json
 import subprocess
 
@@ -8,6 +9,7 @@ from sophyane.rsi.qemu_runner import (
     ExchangePaths,
     QemuRunnerConfig,
     QemuRunnerConfigurationError,
+    QemuRunResult,
     QemuRsiRunner,
     build_qemu_command,
 )
@@ -18,7 +20,7 @@ def _manifest(task_id="task-1"):
         "schema_version": 1,
         "task_id": task_id,
         "command": ["pytest", "-q"],
-        "cwd": "/sophyane-input/candidate",
+        "cwd": "/mnt/sophyane-input/candidate",
     }
 
 
@@ -61,9 +63,17 @@ def test_build_qemu_command_is_deterministic_tcg_and_uses_separate_9p_shares(tmp
         "qemu-system-aarch64",
         "-machine",
         "virt",
+            "-cpu",
+            "cortex-a57",
         "-accel",
         "tcg,thread=multi",
+        "-m",
+        "1024",
         "-nographic",
+        "-monitor",
+        "none",
+        "-serial",
+        "stdio",
         "-no-reboot",
         "-drive",
         f"if=none,format=raw,readonly=on,file={config.guest_image.resolve()},id=drive0",
@@ -98,6 +108,61 @@ def test_qcow2_guest_uses_qcow2_format_and_explicit_firmware(tmp_path):
     assert str(firmware) in command
     assert "if=none,format=qcow2,readonly=on,file=" + str(image.resolve()) + ",id=drive0" in command
     assert "-append" not in command
+
+
+def test_kernel_boot_uses_explicit_kernel_initrd_and_root(tmp_path):
+    image = tmp_path / "guest.qcow2"
+    image.write_bytes(b"guest")
+    kernel = tmp_path / "vmlinuz"
+    kernel.write_bytes(b"kernel")
+    initrd = tmp_path / "initrd"
+    initrd.write_bytes(b"initrd")
+    config = QemuRunnerConfig(
+        executable="qemu-system-aarch64", guest_image=image, architecture="aarch64",
+        scratch_root=tmp_path / "scratch", timeout_seconds=30, max_output_bytes=4096,
+        enabled=True, kernel=kernel, initrd=initrd,
+    )
+    config.scratch_root.mkdir()
+    input_dir = config.scratch_root / "input"
+    output_dir = config.scratch_root / "output"
+    input_dir.mkdir()
+    output_dir.mkdir()
+
+    command = build_qemu_command(config, input_dir, output_dir, {})
+
+    assert "-kernel" in command and str(kernel) in command
+    assert "-initrd" in command and str(initrd) in command
+    assert any("root=/dev/vda1" in token for token in command)
+    assert any("console=ttyAMA0,115200" in token for token in command)
+    assert any("earlycon=pl011,mmio32,0x09000000" in token for token in command)
+    assert "-cpu" in command
+    assert command[command.index("-cpu") + 1] == "cortex-a57"
+    assert "-bios" not in command
+
+
+def test_kernel_boot_can_use_guest_init_wrapper(tmp_path):
+    image = tmp_path / "guest.qcow2"
+    image.write_bytes(b"guest")
+    kernel = tmp_path / "vmlinuz"
+    kernel.write_bytes(b"kernel")
+    initrd = tmp_path / "initrd"
+    initrd.write_bytes(b"initrd")
+    config = QemuRunnerConfig(
+        executable="qemu-system-aarch64", guest_image=image, architecture="aarch64",
+        scratch_root=tmp_path / "scratch", timeout_seconds=30, max_output_bytes=4096,
+        enabled=True, kernel=kernel, initrd=initrd,
+        init_path="/usr/local/lib/sophyane/sophyane-init.sh",
+    )
+    config.scratch_root.mkdir()
+    input_dir = config.scratch_root / "input"
+    output_dir = config.scratch_root / "output"
+    input_dir.mkdir()
+    output_dir.mkdir()
+
+    command = build_qemu_command(config, input_dir, output_dir, {})
+
+    assert any("rdinit=/init" in token for token in command)
+    assert any("init=/usr/local/lib/sophyane/sophyane-init.sh" in token for token in command)
 
 
 def test_disabled_runner_fails_closed_before_execution(tmp_path):
@@ -146,6 +211,23 @@ def test_prepare_exchange_copies_candidate_read_only_and_separates_output(tmp_pa
     assert exchange.input_dir != exchange.output_dir
     assert not (exchange.output_dir / "result.json").exists()
     assert not (exchange.input_dir / "candidate" / "answer.py").stat().st_mode & 0o222
+
+
+def test_run_command_emits_protocol_schema_version(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    config.guest_image.write_bytes(b"guest")
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    captured = {}
+
+    def fake_run(self, _candidate, manifest):
+        captured.update(manifest)
+        return QemuRunResult("run", 0, "ok", "", False, "passed")
+
+    monkeypatch.setattr(QemuRsiRunner, "run", fake_run)
+    QemuRsiRunner(config).run_command(("python", "-c", "pass"), candidate)
+
+    assert captured["schema_version"] == 1
 
 
 def test_prepare_exchange_rejects_invalid_guest_manifest(tmp_path):
@@ -274,6 +356,7 @@ class _FakeProcess:
         self.command = command
         self.outcome = outcome
         self.killed = False
+        self.terminated = False
 
     def communicate(self, timeout=None):
         if self.outcome == "timeout" and not self.killed:
@@ -288,10 +371,40 @@ class _FakeProcess:
     def kill(self):
         self.killed = True
 
+    def terminate(self):
+        self.terminated = True
+        self.returncode = 0
+
+    def poll(self):
+        if self.outcome == "timeout" and not self.killed:
+            return None
+        return self.returncode
+
     returncode = 0
 
     def wait(self, timeout=None):
         return None
+
+
+def test_run_accepts_result_before_qemu_exits(tmp_path):
+    config = _config(tmp_path)
+    config.guest_image.write_bytes(b"guest")
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    process = _FakeProcess(())
+    process.returncode = None
+
+    def popen(command, **kwargs):
+        process.command = command
+        output = next(token.split("path=", 1)[1].split(",", 1)[0]
+                      for token in command if token.startswith("local,path=") and "sophyane-output" in token)
+        Path(output, "result.json").write_text(json.dumps(_guest_result()))
+        return process
+
+    result = QemuRsiRunner(config, popen_factory=popen).run(candidate, _manifest())
+
+    assert result.status == "passed"
+    assert process.terminated is True
 
 
 def test_run_executes_without_shell_and_cleans_exchange(tmp_path):
@@ -317,6 +430,7 @@ def test_run_executes_without_shell_and_cleans_exchange(tmp_path):
 
 def test_run_terminates_timed_out_qemu_and_cleans_exchange(tmp_path):
     config = _config(tmp_path)
+    config = replace(config, timeout_seconds=0.1)
     config.guest_image.write_bytes(b"guest")
     candidate = tmp_path / "candidate"
     candidate.mkdir()
