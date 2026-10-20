@@ -57,6 +57,8 @@ class NativeEvolutionTaskAdapter:
             f"promotion_committed={promoted}; "
             f"run_id={getattr(record, 'run_id', '')}"
         )
+        if native_status == "reinforced":
+            return {"status": "verified", "evidence": (evidence,), "ability": task.task_id}
         if not promoted:
             return {"status": "rejected", "reason": evidence}
         if self.promotion_manager is None:
@@ -88,11 +90,11 @@ class AutonomousCurriculumTaskAdapter:
     def _component(self, task: CurriculumTask) -> str:
         component = str(getattr(task, "component", "") or "").strip()
         plans = getattr(self.controller, "plans", {})
-        if component:
+        if component in plans:
             return component
         if len(plans) == 1:
             return next(iter(plans))
-        return ""
+        return component
 
     def run_task(self, task: CurriculumTask) -> dict[str, object]:
         ledger = getattr(self.controller, "ledger", None)
@@ -126,13 +128,25 @@ class AutonomousCurriculumTaskAdapter:
         elif record.status == WeaknessStatus.ACCEPTED.value:
             return {"status": "verified", "evidence": tuple(record.evidence), "ability": task.task_id}
 
-        for _ in range(self.max_cycles):
-            try:
-                tick()
-            except Exception as error:
-                return {"status": "paused", "reason": f"RSI task execution failed: {error}"}
-            if record.status == WeaknessStatus.ACCEPTED.value:
-                return {"status": "verified", "evidence": tuple(record.evidence), "ability": task.task_id}
-            if record.status == WeaknessStatus.REJECTED.value:
-                return {"status": "rejected", "reason": record.rejection_history[-1] if record.rejection_history else "RSI rejected task"}
-        return {"status": "paused", "reason": f"RSI task exceeded {self.max_cycles} cycles"}
+        self.controller.active_curriculum_task = task
+        try:
+            # A candidate rejected by an infrastructure gate (for example a
+            # reviewer outage) must be eligible for a later scheduler retry.
+            # The controller's fingerprint set still prevents duplicate
+            # candidates within this bounded task attempt, but historical
+            # fingerprints must not permanently poison a valid proposal.
+            seen = getattr(self.controller, "seen", None)
+            if isinstance(seen, set):
+                seen.clear()
+            for _ in range(self.max_cycles):
+                try:
+                    tick()
+                except Exception as error:
+                    return {"status": "paused", "reason": f"RSI task execution failed: {error}"}
+                if record.status == WeaknessStatus.ACCEPTED.value:
+                    return {"status": "verified", "evidence": tuple(record.evidence), "ability": task.task_id}
+                if record.status == WeaknessStatus.REJECTED.value:
+                    return {"status": "rejected", "reason": record.rejection_history[-1] if record.rejection_history else "RSI rejected task"}
+            return {"status": "paused", "reason": f"RSI task exceeded {self.max_cycles} cycles"}
+        finally:
+            self.controller.active_curriculum_task = None
