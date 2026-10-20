@@ -340,6 +340,38 @@ The built-in autonomous controller is wrapped by a bounded task adapter, and
 all existing candidate, verification, promotion, and rollback gates remain
 authoritative.
 
+Multi-repository RSI uses a staged rollout. Set `SOPHYANE_REPOSITORY_ROOTS` to
+the local checkout roots (separated by the platform path separator) and
+`SOPHYANE_REPO_OWNER` to the expected repository owner. By default,
+`SOPHYANE_RSI_MULTI_REPO_MODE=inventory` only inventories repositories and
+advances a durable cursor. Set the mode to `proposal` to generate bounded tasks
+without executing them, or explicitly set it to `execute` to run tasks through
+the existing verification and promotion gates. An invalid mode fails closed.
+
+`SOPHYANE_RSI_MAX_REPOSITORIES` (default `8`) limits daemon scan steps, and
+`SOPHYANE_RSI_MAX_FILES_PER_SCAN` (default `8`) limits editable files per task.
+Both must be positive. Execute mode pauses durably if a queued task has no
+available proposal provider, has no current repository and commit binding, or
+exceeds the file budget. A failed safety check leaves the scan cursor in place.
+The curriculum `status` response includes `mode`, `repository_cursor`,
+`current_repository`, `current_task_id`, and `last_review_outcome` alongside
+the scheduler status; `pause` and `stop` remain durable controls.
+
+For multi-repository operation, set the mode explicitly:
+
+```bash
+export SOPHYANE_RSI_MULTI_REPO_MODE=inventory   # scan only
+export SOPHYANE_RSI_MULTI_REPO_MODE=proposal    # request bounded proposals
+export SOPHYANE_RSI_MULTI_REPO_MODE=execute     # execute repository-bound tasks
+export SOPHYANE_RSI_MAX_REPOSITORIES=8
+export SOPHYANE_RSI_MAX_FILES_PER_SCAN=8
+```
+
+`execute` is required for mutations. Repository identity, base commits,
+RED/GREEN evidence, isolation, authority, review, promotion, and rollback
+gates remain mandatory; a missing provider or stale/unbound queued task pauses
+the daemon.
+
 ## Provider modes
 
 At startup Sophyane can run:

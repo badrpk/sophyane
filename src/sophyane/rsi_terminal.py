@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -24,7 +25,7 @@ def socket_path(state_dir: Path) -> Path:
 def handle_command(command: str, state_dir: Path) -> str:
     command = str(command).strip()
     if command == "status":
-        return json.dumps(_curriculum_command("status", state_dir), sort_keys=True)
+        return json.dumps({**_curriculum_command("status", state_dir), **_multi_repo_status(state_dir)}, sort_keys=True)
     if command == "pause":
         return json.dumps(_curriculum_command("pause", state_dir), sort_keys=True)
     if command == "stop":
@@ -59,7 +60,153 @@ def _curriculum_command(command: str, state_dir: Path) -> dict[str, object]:
     )
 
 
+def multi_repo_mode() -> str:
+    """Require an explicit execute opt-in; invalid modes fail closed."""
+    mode = os.environ.get("SOPHYANE_RSI_MULTI_REPO_MODE", "inventory").strip().lower()
+    if mode not in {"inventory", "proposal", "execute"}:
+        raise ValueError("SOPHYANE_RSI_MULTI_REPO_MODE must be inventory, proposal, or execute")
+    return mode
+
+
+def _positive_budget(name: str, default: int) -> int:
+    value = int(os.environ.get(name, str(default)))
+    if value < 1:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+
+def _multi_repo_status(state_dir: Path) -> dict[str, object]:
+    state_dir = Path(state_dir)
+    cursor: dict[str, object] = {"next_index": 0, "scanned_commits": {}}
+    inventory_path = state_dir / "repository-inventory.json"
+    if inventory_path.is_file():
+        try:
+            cursor = json.loads(inventory_path.read_text(encoding="utf-8")).get("cursor", cursor)
+        except (OSError, ValueError, TypeError):
+            cursor = {"error": "repository inventory unreadable"}
+    last_scan: dict[str, object] = {}
+    events_path = state_dir / "curriculum.events.jsonl"
+    if events_path.is_file():
+        try:
+            with events_path.open(encoding="utf-8") as events:
+                for line in events:
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        continue
+                    if event.get("event") == "repository_scan":
+                        last_scan = event
+        except OSError:
+            pass
+    current_task_id = None
+    current_repository = last_scan.get("repository_id")
+    try:
+        from .rsi.curriculum import CurriculumStore, TaskStatus
+        state = CurriculumStore(state_dir / "curriculum.json").load()
+        current_task_id = state.current_task_id
+        active = next((task for task in state.queue if task.task_id == current_task_id), None)
+        if active is None:
+            active = next((task for task in state.queue if task.status in {TaskStatus.QUEUED, TaskStatus.PAUSED}), None)
+        if active is not None:
+            current_task_id = active.task_id
+            current_repository = active.repository_id or current_repository
+    except ValueError:
+        pass
+    return {
+        "mode": multi_repo_mode(),
+        "repository_cursor": cursor,
+        "current_repository": current_repository,
+        "current_task_id": current_task_id,
+        "last_review_outcome": last_scan.get("review_outcome"),
+    }
+
+
+def run_multi_repo_cycle(runtime, mode: str, *, max_files: int) -> dict[str, object]:
+    """Perform at most one durable scan, proposal, or bounded execution step."""
+    if mode not in {"inventory", "proposal", "execute"} or max_files < 1:
+        raise ValueError("invalid multi-repository rollout controls")
+    status = runtime.scheduler.status()
+    if status.get("stopped"):
+        return {"status": "stopped"}
+    if status.get("paused"):
+        return {"status": "paused"}
+    inventory = runtime.repository_inventory
+    if mode == "execute" and status.get("queue_length", 0):
+        if runtime.task_source is None:
+            reason = "proposal provider unavailable"
+            runtime.scheduler.pause(reason)
+            return {"status": "paused", "reason": reason}
+        task = runtime.scheduler.choose_next(runtime.scheduler.store.load().queue)
+        inventory.refresh()
+        record = next((item for item in inventory.records if task is not None and item.repo_id == task.repository_id), None)
+        if task is None or record is None or not task.base_commit or task.base_commit != record.commit:
+            reason = "queued task repository unavailable or stale"
+            runtime.scheduler.pause(reason)
+            return {"status": "paused", "reason": reason}
+        if len(task.editable_paths) > max_files:
+            reason = "queued task exceeds file budget"
+            runtime.scheduler.pause(reason)
+            return {"status": "paused", "reason": reason}
+        result = runtime.tick()
+        if result.get("status") == "paused":
+            runtime.scheduler.pause(str(result.get("reason", "unsafe task state")))
+        return result
+    record = inventory.next_repository()
+    if record is None:
+        return {"status": "idle"}
+
+    def finish(outcome: str, *, task_id: str = "", review_outcome: str = "") -> None:
+        runtime.scheduler.store.append_event({
+            "event": "repository_scan", "repository_id": record.repo_id,
+            "commit": record.commit, "task_id": task_id,
+            "outcome": outcome, "review_outcome": review_outcome,
+        })
+        inventory.complete_scan(record)
+
+    if mode == "inventory":
+        finish("inventoried")
+        return {"status": "inventoried", "repository_id": record.repo_id}
+    if runtime.task_source is None:
+        runtime.scheduler.pause("proposal provider unavailable")
+        return {"status": "paused", "reason": "proposal provider unavailable"}
+    context = runtime.context_factory()
+    if context is None or context.repository_id != record.repo_id or context.base_commit != record.commit:
+        runtime.scheduler.pause("repository context unavailable or stale")
+        return {"status": "paused", "reason": "repository context unavailable or stale"}
+    context = replace(context, allowed_paths=context.allowed_paths[:max_files])
+    if not context.allowed_paths:
+        finish("skipped", review_outcome="no editable files")
+        return {"status": "skipped", "repository_id": record.repo_id}
+    proposal = runtime.task_source.propose(context)
+    if not proposal.accepted or proposal.task is None:
+        reason = str(proposal.reason or "proposal rejected")
+        if "provider" in reason.lower() or "unavailable" in reason.lower():
+            runtime.scheduler.pause(reason)
+            return {"status": "paused", "reason": reason}
+        finish("rejected", review_outcome=proposal.review_outcome or reason)
+        return {"status": "rejected", "repository_id": record.repo_id, "reason": reason}
+    task = proposal.task
+    if task.repository_id != record.repo_id or task.base_commit != record.commit or len(task.editable_paths) > max_files:
+        runtime.scheduler.pause("proposal exceeds repository or file budget")
+        return {"status": "paused", "reason": "proposal exceeds repository or file budget"}
+    if not runtime.scheduler.enqueue(task):
+        runtime.scheduler.pause("scheduler rejected proposed task")
+        return {"status": "paused", "reason": "scheduler rejected proposed task"}
+    if mode == "proposal":
+        finish("proposed", task_id=task.task_id, review_outcome=proposal.review_outcome or "unreviewed")
+        return {"status": "proposed", "repository_id": record.repo_id, "task_id": task.task_id}
+    result = runtime.tick()
+    finish(str(result.get("status", "unknown")), task_id=task.task_id,
+           review_outcome=proposal.review_outcome or "unreviewed")
+    if result.get("status") == "paused":
+        runtime.scheduler.pause(str(result.get("reason", "unsafe task state")))
+    return {**result, "repository_id": record.repo_id}
+
+
 def _serve(state_dir: Path) -> int:
+    mode = multi_repo_mode()
+    max_repositories = _positive_budget("SOPHYANE_RSI_MAX_REPOSITORIES", 8)
+    max_files = _positive_budget("SOPHYANE_RSI_MAX_FILES_PER_SCAN", 8)
     state_dir.mkdir(parents=True, exist_ok=True)
     runtime_source_root = Path(__file__).resolve().parents[2]
     current_commit_result = subprocess.run(
@@ -82,7 +229,7 @@ def _serve(state_dir: Path) -> int:
     heartbeat = HeartbeatStore(state_dir / "heartbeat.json")
     now = time.time()
     heartbeat.save(HeartbeatRecord(f"rsi-{os.getpid()}", os.getpid(), "starting", now, now))
-    from .rsi.heartbeat_runtime import ContinuousRSIWorker, RSIWatchdog
+    from .rsi.heartbeat_runtime import RSIWatchdog
     from .rsi.runtime_services import build_controller, build_curriculum_runtime
     # The daemon is a background worker. Treating it as user-active forces the
     # resource governor into OBSERVE_ONLY forever and prevents queued tasks
@@ -90,38 +237,43 @@ def _serve(state_dir: Path) -> int:
     controller = build_controller(state_dir, active=lambda: False)
     runtime = build_curriculum_runtime(state_dir, controller)
     runtime.start()
-    worker = ContinuousRSIWorker(
-        runtime,
-        runtime.heartbeat,
-        runtime.task_source,
-        context_factory=runtime.context_factory,
-    )
+    def run_cycle():
+        return run_multi_repo_cycle(runtime, mode, max_files=max_files)
+
     watchdog = RSIWatchdog(
         runtime.heartbeat,
-        worker.run_once,
+        run_cycle,
         runtime.scheduler,
         runtime.stale_seconds,
     ) if runtime.watchdog_enabled else None
     stop_event = threading.Event()
+    scans = 0
 
     def pulse_heartbeat():
         while not stop_event.is_set():
             try:
+                status = runtime.status()
                 runtime.heartbeat.touch(
-                    state="running",
+                    state="stopped" if status.get("stopped") else "paused" if status.get("paused") else "running",
                     last_tick_at=time.time(),
+                    current_task_id=status.get("current_task_id"),
                 )
             except Exception:
                 pass
             stop_event.wait(min(1.0, runtime.heartbeat_interval))
 
     def run_worker():
+        nonlocal scans
         while not stop_event.is_set():
             try:
                 if watchdog is not None:
                     watchdog.check()
-                result = worker.run_once()
-                if result.get("status") == "verified" and needs_live_relaunch(state_dir, current_commit):
+                result = run_cycle()
+                if result.get("status") not in {"idle", "paused", "stopped"}:
+                    scans += 1
+                    if scans >= max_repositories:
+                        runtime.scheduler.pause("repository scan budget exhausted")
+                if mode == "execute" and result.get("status") == "verified" and needs_live_relaunch(state_dir, current_commit):
                     live_root = runtime_root(state_dir)
                     environment = os.environ.copy()
                     environment["PYTHONPATH"] = str(live_root / "src") + os.pathsep + environment.get("PYTHONPATH", "")
@@ -131,7 +283,7 @@ def _serve(state_dir: Path) -> int:
                         [sys.executable, "-m", "sophyane.rsi_terminal", "--daemon", "--state-dir", str(state_dir)],
                         environment,
                     )
-                if result.get("status") == "idle" and runtime.status().get("queue_length", 0) == 0:
+                if mode == "execute" and result.get("status") == "idle" and runtime.status().get("queue_length", 0) == 0:
                     controller.tick()
             except Exception as error:
                 try:
