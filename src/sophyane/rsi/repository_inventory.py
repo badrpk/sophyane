@@ -237,7 +237,7 @@ class RepositoryInventory:
         previous_ids = tuple(record.repo_id for record in self.records)
         next_index = self.cursor.next_index
         if workers is None:
-            workers = int(os.environ.get("SOPHYANE_RSI_SCAN_WORKERS", "8"))
+            workers = int(os.environ.get("SOPHYANE_RSI_SCAN_WORKERS", "1"))
         if workers < 1:
             raise ValueError("repository scan workers must be positive")
         workers = min(int(workers), 32)
