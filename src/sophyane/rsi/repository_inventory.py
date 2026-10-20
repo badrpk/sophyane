@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from dataclasses import asdict, dataclass, field
 import hashlib
 import json
@@ -51,6 +52,16 @@ def _within_roots(path: Path, roots: tuple[Path, ...]) -> bool:
     return any(resolved.is_relative_to(root) for root in roots)
 
 
+def _rebase_index(
+    previous_ids: tuple[str, ...], next_index: int, current_ids: tuple[str, ...]
+) -> int:
+    if not previous_ids or not current_ids:
+        return 0
+    next_id = previous_ids[next_index % len(previous_ids)]
+    position = bisect_left(current_ids, next_id)
+    return position % len(current_ids)
+
+
 def _test_commands(path: Path) -> tuple[tuple[str, ...], ...]:
     python_markers = ("pyproject.toml", "pytest.ini", "setup.cfg")
     if any((path / name).exists() for name in python_markers) or (path / "tests").is_dir():
@@ -89,6 +100,7 @@ class RepositoryInventory:
 
     def _load(self) -> None:
         data = json.loads(self.state_path.read_text(encoding="utf-8"))
+        previous_ids = tuple(item["repo_id"] for item in data.get("records", []))
         records = []
         for item in data.get("records", []):
             path = Path(item["path"])
@@ -105,11 +117,15 @@ class RepositoryInventory:
                     }
                 )
             )
-        self.records = tuple(records)
+        self.records = tuple(sorted(records, key=lambda record: (record.repo_id, record.path)))
         cursor = data.get("cursor", {})
         ids = {record.repo_id for record in self.records}
         self.cursor = RepositoryCursor(
-            next_index=int(cursor.get("next_index", 0)),
+            next_index=_rebase_index(
+                previous_ids,
+                int(cursor.get("next_index", 0)),
+                tuple(record.repo_id for record in self.records),
+            ),
             scanned_commits={
                 key: value
                 for key, value in cursor.get("scanned_commits", {}).items()
@@ -141,6 +157,8 @@ class RepositoryInventory:
                 os.unlink(temporary)
 
     def refresh(self) -> tuple[RepositoryRecord, ...]:
+        previous_ids = tuple(record.repo_id for record in self.records)
+        next_index = self.cursor.next_index
         records = []
         for path, remote, owner, name in discover_local_repositories(
             self.roots, owner=self.owner, prefer_cwd=False,
@@ -181,7 +199,9 @@ class RepositoryInventory:
             for key, value in self.cursor.scanned_commits.items()
             if key in ids
         }
-        self.cursor.next_index = self.cursor.next_index % len(self.records) if self.records else 0
+        self.cursor.next_index = _rebase_index(
+            previous_ids, next_index, tuple(record.repo_id for record in self.records)
+        )
         self._save()
         return self.records
 

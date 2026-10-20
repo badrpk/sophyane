@@ -120,3 +120,22 @@ def test_records_have_stable_canonical_order(tmp_path: Path) -> None:
 
     assert [record.repo_id for record in inventory.refresh()] == ["badrpk/alpha", "badrpk/zeta"]
     assert [record.repo_id for record in inventory.refresh()] == ["badrpk/alpha", "badrpk/zeta"]
+
+
+def test_cursor_keeps_next_repository_when_earlier_checkout_disappears(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repos"
+    root.mkdir()
+    alpha = _repository(root, "alpha", "alpha")
+    _repository(root, "beta", "beta")
+    _repository(root, "gamma", "gamma")
+    state = tmp_path / "inventory.json"
+    inventory = RepositoryInventory(state, roots=[root], owner="badrpk")
+
+    assert inventory.next_repository().repo_id == "badrpk/alpha"
+    alpha.rename(tmp_path / "moved-alpha")
+
+    restarted = RepositoryInventory(state, roots=[root], owner="badrpk")
+    assert restarted.next_repository().repo_id == "badrpk/beta"
+    assert restarted.next_repository().repo_id == "badrpk/gamma"
