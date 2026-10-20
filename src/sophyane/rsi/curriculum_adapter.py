@@ -7,20 +7,48 @@ import time
 from typing import Any
 
 from .curriculum import CurriculumTask
+from .curriculum_redgreen import RedGreenResult
 from .weakness_ledger import WeaknessRecord, WeaknessStatus
+
+
+def _preverify_task(task: CurriculumTask, preverification) -> tuple[dict[str, object] | None, tuple[str, ...]]:
+    if not (task.repository_id or task.base_commit):
+        return None, ()
+    if preverification is None:
+        return {"status": "paused", "reason": "repository-bound preverification unavailable"}, ()
+    try:
+        result: RedGreenResult = preverification(task)
+    except Exception as error:
+        return {"status": "paused", "reason": f"preverification failed: {error}"}, ()
+    if result.status == "verified":
+        return None, result.evidence
+    status = {
+        "already_green": "already_green",
+        "candidate_failed": "rejected",
+        "invalid_red": "rejected",
+        "infrastructure_error": "paused",
+    }.get(result.status, "paused")
+    return {"status": status, "reason": "; ".join(result.evidence) or result.status,
+            "evidence": result.evidence}, ()
 
 
 class NativeEvolutionTaskAdapter:
     """Run one bounded cycle of Sophyane's native promotion engine."""
 
-    def __init__(self, repository, *, timeout_seconds: int = 300, engine_factory=None, promotion_manager=None):
+    def __init__(self, repository, *, timeout_seconds: int = 300, engine_factory=None, promotion_manager=None,
+                 preverification=None):
         self.repository = repository
         self.timeout_seconds = max(1, int(timeout_seconds))
         self.engine_factory = engine_factory
         self.promotion_manager = promotion_manager
+        self.preverification = preverification
 
     def run_task(self, task: CurriculumTask) -> dict[str, object]:
         from sophyane.evolution.models import EvolutionConfig
+
+        rejected, redgreen_evidence = _preverify_task(task, self.preverification)
+        if rejected is not None:
+            return rejected
 
         factory = self.engine_factory
         if factory is None:
@@ -58,7 +86,7 @@ class NativeEvolutionTaskAdapter:
             f"run_id={getattr(record, 'run_id', '')}"
         )
         if native_status == "reinforced":
-            return {"status": "verified", "evidence": (evidence,), "ability": task.task_id}
+            return {"status": "verified", "evidence": (*redgreen_evidence, evidence), "ability": task.task_id}
         if not promoted:
             return {"status": "rejected", "reason": evidence}
         if self.promotion_manager is None:
@@ -70,7 +98,7 @@ class NativeEvolutionTaskAdapter:
         live = self.promotion_manager.promote(candidate_commit, expected_base=expected_base)
         live_evidence = f"live_promoted={bool(getattr(live, 'promoted', False))}; active_commit={getattr(live, 'active_commit', '')}"
         if getattr(live, "promoted", False):
-            return {"status": "verified", "evidence": (evidence, live_evidence), "ability": task.task_id, "checkpoint": expected_base}
+            return {"status": "verified", "evidence": (*redgreen_evidence, evidence, live_evidence), "ability": task.task_id, "checkpoint": expected_base}
         return {"status": "rejected", "reason": evidence + "; " + live_evidence + "; " + str(getattr(live, "reason", "promotion rejected"))}
 
 
@@ -82,10 +110,11 @@ class AutonomousCurriculumTaskAdapter:
     promotion, rollback, and persistence of the accepted result.
     """
 
-    def __init__(self, controller: Any, *, max_cycles: int = 64, clock=time.time):
+    def __init__(self, controller: Any, *, max_cycles: int = 64, clock=time.time, preverification=None):
         self.controller = controller
         self.max_cycles = max(1, int(max_cycles))
         self.clock = clock
+        self.preverification = preverification
 
     def _component(self, task: CurriculumTask) -> str:
         component = str(getattr(task, "component", "") or "").strip()
@@ -111,6 +140,10 @@ class AutonomousCurriculumTaskAdapter:
         if not set(task.editable_paths).issubset(allowed_paths):
             return {"status": "rejected", "reason": "task paths are outside the frozen plan allowed paths"}
 
+        rejected, redgreen_evidence = _preverify_task(task, self.preverification)
+        if rejected is not None:
+            return rejected
+
         fingerprint = hashlib.sha256(("curriculum:" + task.task_id).encode()).hexdigest()
         record = ledger.records.get(fingerprint)
         if record is None:
@@ -126,7 +159,7 @@ class AutonomousCurriculumTaskAdapter:
             ledger.records[fingerprint] = record
             ledger.save()
         elif record.status == WeaknessStatus.ACCEPTED.value:
-            return {"status": "verified", "evidence": tuple(record.evidence), "ability": task.task_id}
+            return {"status": "verified", "evidence": (*redgreen_evidence, *record.evidence), "ability": task.task_id}
 
         self.controller.active_curriculum_task = task
         try:
@@ -144,7 +177,7 @@ class AutonomousCurriculumTaskAdapter:
                 except Exception as error:
                     return {"status": "paused", "reason": f"RSI task execution failed: {error}"}
                 if record.status == WeaknessStatus.ACCEPTED.value:
-                    return {"status": "verified", "evidence": tuple(record.evidence), "ability": task.task_id}
+                    return {"status": "verified", "evidence": (*redgreen_evidence, *record.evidence), "ability": task.task_id}
                 if record.status == WeaknessStatus.REJECTED.value:
                     return {"status": "rejected", "reason": record.rejection_history[-1] if record.rejection_history else "RSI rejected task"}
             return {"status": "paused", "reason": f"RSI task exceeded {self.max_cycles} cycles"}

@@ -168,6 +168,10 @@ class ContinuousCurriculumRuntime:
             ability = self._record_ability(task, result)
             self._enqueue_follow_up(ability)
             return {"status": "verified", "task_id": task.task_id, "ability_id": ability.ability_id}
+        if status == "already_green":
+            reason = str(result.get("reason", "RED_ALREADY_GREEN"))
+            self.scheduler.record_failure(task.task_id, TaskStatus.REJECTED, reason)
+            return {"status": "already_green", "task_id": task.task_id, "reason": reason}
         failure_status = {
             "rejected": TaskStatus.REJECTED,
             "rolled_back": TaskStatus.ROLLED_BACK,
