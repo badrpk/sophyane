@@ -62,6 +62,13 @@ REPOSITORIES: dict[str, dict[str, str]] = {
 
 
 @dataclass(frozen=True)
+class ManifestOperation:
+    argv: tuple[str, ...]
+    timeout_seconds: float = 30.0
+    max_output_bytes: int = 65_536
+
+
+@dataclass(frozen=True)
 class EcosystemManifest:
     repository: str
     schema: str = ""
@@ -73,6 +80,7 @@ class EcosystemManifest:
     transports: tuple[str, ...] = ()
     routing_policy: str = ""
     fallback: str = ""
+    operations: tuple[tuple[str, ManifestOperation], ...] = ()
     source: str = ""
     valid_contract: bool = False
 
@@ -305,6 +313,51 @@ def _manifest_from_data(
             )
         )
 
+    raw_operations = data.get("operations", {})
+    operations: tuple[tuple[str, ManifestOperation], ...] = ()
+    operations_valid = True
+    if raw_operations is not None:
+        if not isinstance(raw_operations, dict):
+            operations_valid = False
+        else:
+            parsed_operations = []
+            for name, raw_operation in raw_operations.items():
+                operation_name = str(name).strip().casefold()
+                if not operation_name or not isinstance(raw_operation, dict):
+                    operations_valid = False
+                    continue
+                raw_argv = raw_operation.get("argv")
+                if (
+                    not isinstance(raw_argv, list)
+                    or not raw_argv
+                    or any(not isinstance(item, str) or not item for item in raw_argv)
+                ):
+                    operations_valid = False
+                    continue
+                timeout = raw_operation.get("timeout_seconds", 30.0)
+                output_limit = raw_operation.get("max_output_bytes", 65_536)
+                if (
+                    isinstance(timeout, bool)
+                    or not isinstance(timeout, (int, float))
+                    or not 0 < float(timeout) <= 300
+                    or isinstance(output_limit, bool)
+                    or not isinstance(output_limit, int)
+                    or not 0 < output_limit <= 1_048_576
+                ):
+                    operations_valid = False
+                    continue
+                parsed_operations.append(
+                    (
+                        operation_name,
+                        ManifestOperation(
+                            argv=tuple(raw_argv),
+                            timeout_seconds=float(timeout),
+                            max_output_bytes=output_limit,
+                        ),
+                    )
+                )
+            operations = tuple(sorted(parsed_operations))
+
     routing = data.get(
         "routing",
         {},
@@ -359,10 +412,12 @@ def _manifest_from_data(
             )
             or ""
         ).strip(),
+        operations=operations,
         source=source,
         valid_contract=(
             schema
             == SCHEMA
+            and operations_valid
         ),
     )
 
