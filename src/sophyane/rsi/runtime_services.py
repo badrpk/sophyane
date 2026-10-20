@@ -8,7 +8,6 @@ import json
 import hashlib
 import os
 from pathlib import Path
-import shlex
 import shutil
 import socket
 import sys
@@ -18,7 +17,7 @@ from urllib.parse import urlparse
 
 from .autonomous import AutonomousRSIController
 from .candidate_workspace import CandidateWorkspace
-from .cloud_review import CloudReviewer, provider_reviewer
+from .cloud_review import CloudReviewer, LocalArtifactReviewer, provider_reviewer
 from .experiment import ExperimentPlan
 from .local_intelligence import LocalIntelligenceRouter
 from .observation_bus import autonomous_bus
@@ -34,10 +33,12 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
     task adapter; it remains responsible for all candidate and promotion gates.
     """
     from .curriculum import CurriculumPolicy, CurriculumScheduler, CurriculumStore
-    from .curriculum_adapter import NativeEvolutionTaskAdapter
+    from .curriculum_adapter import AutonomousCurriculumTaskAdapter
+    from .curriculum_intelligence import CurriculumIntelligenceRouter
     from .curriculum_proposals import CurriculumProposalAdapter, ProposalContext
     from .curriculum_source import CurriculumTaskSource
     from .curriculum_runtime import ContinuousCurriculumRuntime
+    from .intelligence_evidence import ProviderEvidenceStore
     from .heartbeat import HeartbeatStore
     from .local_intelligence import LocalRole
 
@@ -51,23 +52,26 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
         max_task_attempts=max(1, int(os.environ.get("SOPHYANE_RSI_MAX_TASK_ATTEMPTS", "3"))),
     )
     enabled = os.environ.get("SOPHYANE_CONTINUOUS_RSI", "1").strip() == "1"
-    if proposal_adapter is None:
-        proposal_adapter = CurriculumProposalAdapter(
-            lambda prompt: _curriculum_proposal_with_fallback(prompt, LocalRole.TINY_PROPOSAL)
-        )
     repository = Path(__file__).resolve().parents[3]
-    health_text = os.environ.get("SOPHYANE_RSI_LIVE_HEALTH_COMMAND", "")
-    health_command = tuple(shlex.split(health_text)) if health_text.strip() else (
-        sys.executable,
-        "-c",
-        "import sophyane",
-    )
-    from .promotion import PromotionManager
-    promotion_manager = PromotionManager(repository, root, health_command=health_command)
-    task_runner = NativeEvolutionTaskAdapter(
-        repository,
-        timeout_seconds=max(1, int(os.environ.get("SOPHYANE_RSI_TASK_TIMEOUT", "300"))),
-        promotion_manager=promotion_manager,
+    if proposal_adapter is None:
+        proposal_provider = os.environ.get("SOPHYANE_RSI_PROPOSAL_PROVIDER", "codex_cli").strip()
+        if proposal_provider == "codex_cli":
+            proposal_adapter = CurriculumProposalAdapter(
+                lambda prompt: _curriculum_proposal_with_codex(
+                    prompt, LocalRole.TINY_PROPOSAL, repository
+                ),
+                generator="codex_cli",
+            )
+        elif proposal_provider == "local_gguf":
+            proposal_adapter = CurriculumProposalAdapter(
+                lambda prompt: _curriculum_proposal_with_fallback(prompt, LocalRole.TINY_PROPOSAL),
+                generator="local_llm",
+            )
+        else:
+            raise ValueError(f"unsupported RSI proposal provider: {proposal_provider}")
+    task_runner = AutonomousCurriculumTaskAdapter(
+        controller,
+        max_cycles=max(1, int(os.environ.get("SOPHYANE_RSI_TASK_MAX_CYCLES", "64"))),
     )
     scheduler = CurriculumScheduler(CurriculumStore(root / "curriculum.json"), policy)
     runtime = ContinuousCurriculumRuntime(
@@ -76,6 +80,23 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
         scheduler,
         proposal_adapter=proposal_adapter,
         enabled=enabled,
+    )
+
+    # Codex requires a trusted Git workspace. Its provider is read-only, while
+    # session state remains persisted externally by CodexCliProvider.
+    review_workspace = repository
+    def make_reviewer(provider_name):
+        def review(prompt):
+            provider = create_provider(provider_name, review_workspace, 180, operation=Operation.READ_ONLY_OPERATION)
+            return provider.generate(
+                prompt,
+                "Review this bounded curriculum proposal. Return only JSON with action approve or reject and an optional reason. Do not edit files, execute commands, add paths, or make authority decisions.",
+            )
+        return review
+
+    intelligence = CurriculumIntelligenceRouter(
+        {name: make_reviewer(name) for name in ("codex_cli", "nifdu_browser")},
+        ProviderEvidenceStore(root / "intelligence-evidence.json"),
     )
 
     def context_factory():
@@ -88,11 +109,19 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
                                 for path in getattr(plan, "allowed_paths", ())})[:8])
         if not allowed:
             return None
+        capability_summary = "request one bounded, measurable RSI follow-up"
+        if "demo_score" in getattr(controller, "plans", {}):
+            capability_summary += (
+                "; preserve src/sophyane/rsi_demo_target.py: define score() -> int and return an int; "
+                "the improvement contract requires score() == 2, while holdout requires score() >= 2 "
+                "and regression requires score() >= 1; use complete replacement text in files; "
+                "the concrete implementation must retain def score() -> int and return 2"
+            )
         return ProposalContext(
             ability=ability,
             allowed_paths=allowed,
             existing_task_ids=tuple(task.task_id for task in state.queue),
-            capability_summary="request one bounded, measurable RSI follow-up",
+            capability_summary=capability_summary,
         )
 
     runtime.heartbeat = HeartbeatStore(root / "heartbeat.json")
@@ -102,9 +131,10 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
     runtime.task_source_name = os.environ.get("SOPHYANE_RSI_TASK_SOURCE", "qwen").strip() or "qwen"
     generator = getattr(proposal_adapter, "generate", None)
     runtime.task_source = (
-        CurriculumTaskSource(generator, proposal_adapter)
+        CurriculumTaskSource(generator, proposal_adapter, intelligence=intelligence)
         if callable(generator) else None
     )
+    runtime.intelligence = intelligence
     runtime.context_factory = context_factory
     return runtime
 
@@ -123,6 +153,8 @@ def build_qemu_runner(state_dir):
         "/data/data/com.termux/files/usr/share/qemu/edk2-aarch64-code.fd",
     ).strip()
     scratch = Path(os.environ.get("SOPHYANE_RSI_QEMU_SCRATCH", str(root / "qemu-scratch")))
+    kernel_text = os.environ.get("SOPHYANE_RSI_QEMU_KERNEL", "").strip()
+    initrd_text = os.environ.get("SOPHYANE_RSI_QEMU_INITRD", "").strip()
     config = QemuRunnerConfig(
         executable=executable,
         guest_image=image,
@@ -132,6 +164,11 @@ def build_qemu_runner(state_dir):
         max_output_bytes=max(1024, int(os.environ.get("SOPHYANE_RSI_QEMU_OUTPUT_LIMIT", "1048576"))),
         enabled=True,
         firmware=Path(firmware_text) if firmware_text else None,
+        memory_mb=max(256, int(os.environ.get("SOPHYANE_RSI_QEMU_MEMORY_MB", "1024"))),
+        kernel=Path(kernel_text) if kernel_text else None,
+        initrd=Path(initrd_text) if initrd_text else None,
+        root_device=os.environ.get("SOPHYANE_RSI_QEMU_ROOT_DEVICE", "/dev/vda1"),
+        init_path=os.environ.get("SOPHYANE_RSI_QEMU_INIT", "/usr/local/lib/sophyane/sophyane-init.sh"),
     )
     return QemuRsiRunner(config)
 
@@ -200,6 +237,25 @@ def _curriculum_proposal_with_fallback(prompt: str, role) -> str:
         return _deterministic_curriculum_proposal(prompt)
 
 
+def _curriculum_proposal_with_codex(prompt: str, role, workspace: Path) -> str:
+    from .authority import Operation
+    from .coding_provider import create_provider
+
+    provider = create_provider("codex_cli", workspace, 600, operation=Operation.READ_ONLY_OPERATION)
+    raw = provider.generate(
+        prompt,
+        "Return only one JSON task object with task_id, parent_ability_id, objective, editable_paths, verification, and files. "
+        "The files object must contain concrete replacement text for the proposed editable files. "
+        "Do not edit files, execute commands, add paths, or make authority decisions.",
+    )
+    payload = json.loads(raw)
+    required = {"task_id", "parent_ability_id", "objective", "editable_paths", "verification", "files"}
+    if (not isinstance(payload, dict) or not required.issubset(payload)
+            or not isinstance(payload.get("files"), dict) or not payload["files"]):
+        raise ValueError("Codex proposal schema is incomplete")
+    return raw
+
+
 def _reachable(endpoint):
     value = urlparse(endpoint)
     try:
@@ -213,6 +269,7 @@ def build_controller(state_dir, *, active=lambda: True):
     state_dir = Path(state_dir)
     repository = Path(__file__).resolve().parents[3]
     qemu_runner = build_qemu_runner(state_dir)
+    execute_command = qemu_runner.run_command if qemu_runner is not None else None
     specs = {}
     policy_file = state_dir / 'experiments.json'
     if policy_file.exists():
@@ -226,7 +283,7 @@ def build_controller(state_dir, *, active=lambda: True):
         plans[component] = ExperimentPlan(spec['identifier'],
             tuple(tuple(c) for c in spec['focused']), tuple(tuple(c) for c in spec['holdout']),
             tuple(tuple(c) for c in spec['regression']), spec['expected_failure'],
-            frozenset(spec['allowed_paths']), spec['version'], min(60, spec.get('timeout', 60)))
+            frozenset(spec['allowed_paths']), spec['version'], min(300, spec.get('timeout', 60)))
     resource_spec = {}
     if len(specs) == 1:
         resource_spec = next(iter(specs.values())).get("resource_policy", {})
@@ -281,7 +338,9 @@ def build_controller(state_dir, *, active=lambda: True):
     def prepare(candidate, plan, hypotheses):
         spec = next(s for s in specs.values() if s['identifier'] == plan.identifier)
         # Host-authored deterministic replacement fixture, not parsed model output.
-        proposals = next((h.files for h in hypotheses if h.files), {})
+        task = getattr(controller, "active_curriculum_task", None)
+        proposals = getattr(task, "proposal_files", {}) if task is not None else {}
+        proposals = proposals or next((h.files for h in hypotheses if h.files), {})
         if not proposals:
             raise ValueError('No concrete local proposal; retain weakness for later analysis')
         candidate.preview(proposals, plan.allowed_paths)
@@ -292,7 +351,30 @@ def build_controller(state_dir, *, active=lambda: True):
             raise ValueError('Measurement requires one frozen active benchmark policy')
         spec = next(iter(specs.values()))
         command = tuple(spec['benchmark_command'])
-        result = run_command(command, path, timeout=60)
+        measurement_path = Path(path)
+        temporary_snapshot = None
+        if execute_command is not None:
+            # The promoted live tree may contain symlinks that are valid for
+            # the host but forbidden at the QEMU exchange boundary. Measure a
+            # regular-file snapshot so the guest receives exactly the same
+            # source bytes without weakening the symlink safety check.
+            from .candidate_workspace import snapshot
+            if any(item.is_symlink() for item in measurement_path.rglob('*')):
+                temporary_snapshot = tempfile.TemporaryDirectory(prefix='rsi-qemu-measure-')
+                measurement_path = Path(temporary_snapshot.name)
+                for name, value in snapshot(path).files.items():
+                    target = measurement_path / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(value)
+        try:
+            result = (execute_command or run_command)(
+                command,
+                measurement_path,
+                timeout=min(300, spec.get('timeout', 60)),
+            )
+        finally:
+            if temporary_snapshot is not None:
+                temporary_snapshot.cleanup()
         if result.exit_code:
             raise ValueError('Capability benchmark failed')
         return json.loads(result.output)
@@ -311,13 +393,19 @@ def build_controller(state_dir, *, active=lambda: True):
     experiment_runner = DeterministicExperimentRunner()
     if qemu_runner is not None:
         experiment_runner = DeterministicExperimentRunner(command_runner=qemu_runner.run_command)
+    review_provider = os.environ.get('SOPHYANE_RSI_REVIEW_PROVIDER', 'cloud').strip().lower()
+    if review_provider not in ('cloud', 'local_artifact'):
+        raise ValueError('unsupported SOPHYANE_RSI_REVIEW_PROVIDER: ' + review_provider)
+    reviewer = (LocalArtifactReviewer() if review_provider == 'local_artifact' else
+                CloudReviewer({name: lambda package, name=name: review(name, package)
+                               for name in ('codex_cli', 'nifdu_browser')}))
     controller = AutonomousRSIController(autonomous_bus, WeaknessLedger(state_dir / 'weaknesses.json'),
         ResourceGovernor(policy=ResourcePolicy(maximum_load_per_cpu=maximum_load), sampler=sample),
         local=LocalIntelligenceRouter({name: lambda context, role, name=name: local_request(name, context, role)
                                        for name in ('qwen', 'spark')}),
         research=TargetedSLIResearch(),
-        cloud=CloudReviewer({name: lambda package, name=name: review(name, package)
-                            for name in ('codex_cli', 'nifdu_browser')}),
+        cloud=reviewer,
+        execution_backend='qemu' if qemu_runner is not None else 'native',
         plans=plans, runner=experiment_runner,
         workspace_factory=lambda: CandidateWorkspace(repository, state_dir / 'candidates').create(),
         prepare=prepare, measure=measure, context=context)
@@ -326,7 +414,7 @@ def build_controller(state_dir, *, active=lambda: True):
     def meta_measure(path):
         from .verification import run_command
         spec = next(iter(specs.values()))
-        result = run_command(tuple(spec['meta_command']), path, timeout=60)
+        result = (execute_command or run_command)(tuple(spec['meta_command']), path, timeout=min(300, spec.get('timeout', 60)))
         if result.exit_code:
             raise ValueError('Meta benchmark failed')
         return json.loads(result.output)
