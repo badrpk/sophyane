@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from bisect import bisect_left
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 import hashlib
 import json
@@ -65,6 +66,10 @@ def _rebase_index(
 
 
 def _language(path: Path) -> str:
+    try:
+        names = {entry.name for entry in os.scandir(path)}
+    except OSError:
+        names = set()
     for marker, language in (
         ("go.mod", "go"),
         ("Cargo.toml", "rust"),
@@ -73,9 +78,9 @@ def _language(path: Path) -> str:
         ("pytest.ini", "python"),
         ("setup.cfg", "python"),
     ):
-        if (path / marker).is_file():
+        if marker in names and (path / marker).is_file():
             return language
-    if (path / "tests").is_dir() and (path / "src").is_dir():
+    if "tests" in names and "src" in names and (path / "tests").is_dir() and (path / "src").is_dir():
         return "python"
     return "unknown"
 
@@ -91,6 +96,10 @@ def _test_commands(language: str) -> tuple[tuple[str, ...], ...]:
 
 
 def _default_branch(path: Path, current: str) -> str:
+    refs = path / ".git" / "refs" / "heads"
+    for name in ("main", "master"):
+        if (refs / name).is_file():
+            return name
     remote_head = _git(
         path, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"
     )
@@ -122,17 +131,20 @@ def _editable_paths(path: Path, language: str) -> tuple[str, ...]:
         "go": (("cmd", "internal", "pkg", "test", "tests"), {".go"}, {"go.mod", "go.sum"}),
     }
     directories, suffixes, files = rules.get(language, (("src", "tests"), set(), set()))
+    try:
+        entries = {entry.name: entry for entry in os.scandir(path)}
+    except OSError:
+        entries = {}
     editable = [
         name
         for name in directories
-        if (path / name).is_dir() and not (path / name).is_symlink()
+        if name in entries and entries[name].is_dir(follow_symlinks=False)
     ]
     root_files = sorted(
-        child.name
-        for child in path.iterdir()
-        if child.is_file()
-        and not child.is_symlink()
-        and (child.suffix in suffixes or child.name in files)
+        name
+        for name, child in entries.items()
+        if child.is_file(follow_symlinks=False)
+        and (Path(name).suffix in suffixes or name in files)
     )
     editable.extend(root_files[:64])
     return tuple(editable)
@@ -221,19 +233,23 @@ class RepositoryInventory:
             if os.path.exists(temporary):
                 os.unlink(temporary)
 
-    def refresh(self) -> tuple[RepositoryRecord, ...]:
+    def refresh(self, *, workers: int | None = None) -> tuple[RepositoryRecord, ...]:
         previous_ids = tuple(record.repo_id for record in self.records)
         next_index = self.cursor.next_index
-        records = []
-        for path, remote, owner, name in discover_local_repositories(
-            self.roots, owner=self.owner, prefer_cwd=False,
-        ):
+        if workers is None:
+            workers = int(os.environ.get("SOPHYANE_RSI_SCAN_WORKERS", "8"))
+        if workers < 1:
+            raise ValueError("repository scan workers must be positive")
+        workers = min(int(workers), 32)
+
+        def inspect(item: tuple[Path, str, str, str]) -> RepositoryRecord | None:
+            path, remote, owner, name = item
             path = path.resolve()
             if not _within_roots(path, self.roots):
-                continue
+                return None
             commit = _git(path, "rev-parse", "HEAD")
             if not commit:
-                continue
+                return None
             branch = _git(path, "branch", "--show-current")
             language = _language(path)
             default_branch = _default_branch(path, branch)
@@ -256,7 +272,16 @@ class RepositoryInventory:
             digest = hashlib.sha256(
                 json.dumps(identity, sort_keys=True).encode()
             ).hexdigest()
-            records.append(RepositoryRecord(**identity, digest=digest))
+            return RepositoryRecord(**identity, digest=digest)
+
+        discovered = discover_local_repositories(
+            self.roots, owner=self.owner, prefer_cwd=False,
+        )
+        if workers == 1:
+            records = [record for item in discovered if (record := inspect(item)) is not None]
+        else:
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="sophyane-inventory") as pool:
+                records = [record for record in pool.map(inspect, discovered) if record is not None]
         self.records = tuple(sorted(records, key=lambda record: (record.repo_id, record.path)))
         ids = {record.repo_id for record in self.records}
         self.cursor.scanned_commits = {

@@ -215,3 +215,15 @@ def test_default_branch_differs_from_current_branch(tmp_path: Path) -> None:
     assert record.language == "javascript"
     assert "index.js" in record.editable_paths
     assert "package.json" in record.editable_paths
+
+
+def test_refresh_accepts_bounded_parallel_workers_and_keeps_order(tmp_path: Path) -> None:
+    root = tmp_path / "repos"
+    root.mkdir()
+    _repository(root, "z-folder", "zeta")
+    _repository(root, "a-folder", "alpha")
+    inventory = RepositoryInventory(tmp_path / "state.json", roots=[root])
+
+    records = inventory.refresh(workers=2)
+
+    assert [record.repo_id for record in records] == ["badrpk/alpha", "badrpk/zeta"]
