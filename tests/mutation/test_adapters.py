@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 from pathlib import Path
 
@@ -170,6 +171,47 @@ def test_cpp_unsupported_ast_output_fails_closed(
         return subprocess.CompletedProcess(args[0], 0, output, "")
 
     monkeypatch.setattr(subprocess, "run", unsupported)
+    result = CppAdapter().analyze(source, ())
+
+    assert not result.ok and result.semantic_digest is None
+    assert result.failure_boundary == "cpp_ast"
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_cpp_rejects_nonstandard_json_constants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, constant: str
+) -> None:
+    import subprocess
+
+    source = tmp_path / "sample.cpp"
+    source.write_text("int answer();\n")
+    output = f'{{"kind":"TranslationUnitDecl","inner":[],"value":{constant}}}'
+
+    def malformed(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 0, output, "")
+
+    monkeypatch.setattr(subprocess, "run", malformed)
+    result = CppAdapter().analyze(source, ())
+
+    assert not result.ok and result.semantic_digest is None
+    assert result.failure_boundary == "cpp_ast"
+
+
+def test_cpp_lone_surrogate_ast_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    source = tmp_path / "sample.cpp"
+    source.write_text("int answer();\n")
+    output = json.dumps(
+        {"kind": "TranslationUnitDecl", "inner": [{"kind": "FunctionDecl", "name": chr(0xD800)}]}
+    )
+
+    def malformed(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 0, output, "")
+
+    monkeypatch.setattr(subprocess, "run", malformed)
     result = CppAdapter().analyze(source, ())
 
     assert not result.ok and result.semantic_digest is None

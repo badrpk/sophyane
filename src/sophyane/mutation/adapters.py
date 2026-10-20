@@ -67,6 +67,10 @@ class PythonAdapter:
 _LOCATION_FIELDS = frozenset({"id", "loc", "range"})
 
 
+def _reject_json_constant(value: str) -> object:
+    raise ValueError(f"nonstandard JSON constant: {value}")
+
+
 def _normalize_clang_ast(value: object) -> object:
     if isinstance(value, dict):
         return {
@@ -132,7 +136,7 @@ class CppAdapter:
             return AnalysisResult("cpp", str(path), False, None, "cpp_syntax", diagnostics)
 
         try:
-            tree = json.loads(completed.stdout)
+            tree = json.loads(completed.stdout, parse_constant=_reject_json_constant)
             if (
                 not isinstance(tree, dict)
                 or tree.get("kind") != "TranslationUnitDecl"
@@ -140,14 +144,18 @@ class CppAdapter:
             ):
                 raise ValueError("Clang did not return a translation-unit AST")
             names = _clang_names(tree)
-        except (ValueError, TypeError) as error:
+            canonical = json.dumps(
+                _normalize_clang_ast(tree),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+            digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        except (ValueError, TypeError, UnicodeError) as error:
             return AnalysisResult("cpp", str(path), False, None, "cpp_ast", str(error))
         missing = _missing_invariant(invariants, names)
         if missing:
             return AnalysisResult("cpp", str(path), False, None, "cpp_invariant", missing)
 
-        canonical = json.dumps(
-            _normalize_clang_ast(tree), sort_keys=True, separators=(",", ":"), ensure_ascii=False
-        )
-        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         return AnalysisResult("cpp", str(path), True, digest, None, "")
