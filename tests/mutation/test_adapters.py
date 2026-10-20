@@ -34,7 +34,7 @@ def test_python_semantic_edit_changes_digest(tmp_path: Path) -> None:
     assert first.semantic_digest != PythonAdapter().analyze(source, ()).semantic_digest
 
 
-@pytest.mark.parametrize("text", ["def broken(:\n    pass\n", "x = (\n"])
+@pytest.mark.parametrize("text", ["def broken(:\n    pass\n", "x = (\n", "return 1\n"])
 def test_python_syntax_error_fails_closed(tmp_path: Path, text: str) -> None:
     source = tmp_path / "broken.py"
     source.write_text(text)
@@ -105,6 +105,17 @@ def test_cpp_parses_header_with_fixed_include_dir(tmp_path: Path, clang: str) ->
     assert result.semantic_digest and result.failure_boundary is None
 
 
+def test_cpp_invariants_accept_header_declarations_without_bodies(
+    tmp_path: Path, clang: str
+) -> None:
+    header = tmp_path / "api.hpp"
+    header.write_text("class Widget;\nint answer();\n")
+
+    result = CppAdapter(clang).analyze(header, ("class:Widget", "function:answer"))
+
+    assert result.ok, result.diagnostics
+
+
 def test_cpp_ast_hash_ignores_source_positions(tmp_path: Path, clang: str) -> None:
     source = tmp_path / "sample.cpp"
     source.write_text("int answer() { return 42; }\n")
@@ -143,6 +154,8 @@ def test_cpp_missing_compiler_fails_closed(tmp_path: Path) -> None:
         "{}",
         '{"kind":"TranslationUnitDecl"}',
         '{"kind":"TranslationUnitDecl","inner":"bad"}',
+        '{"kind":"TranslationUnitDecl","inner":[{"name":"answer"}]}',
+        '{"kind":"TranslationUnitDecl","inner":[{"kind":"FunctionDecl","inner":[{}]}]}',
     ],
 )
 def test_cpp_unsupported_ast_output_fails_closed(
@@ -191,6 +204,17 @@ def test_semantic_tree_hash_rejects_failed_analysis() -> None:
         semantic_tree_hash([failed])
 
 
+def test_semantic_tree_hash_rejects_duplicate_paths() -> None:
+    with pytest.raises(ValueError, match="duplicate"):
+        semantic_tree_hash([_result("pkg/a.py", "old"), _result("pkg/a.py", "new")])
+
+
+@pytest.mark.parametrize("bad_path", ["/lab/a.py", "../a.py", "pkg/../a.py", r"C:\lab\a.py"])
+def test_semantic_tree_hash_rejects_non_relative_paths(bad_path: str) -> None:
+    with pytest.raises(ValueError, match="relative"):
+        semantic_tree_hash([_result(bad_path, "digest")])
+
+
 def test_semantic_diff_hash_only_includes_changed_paths() -> None:
     baseline = {"b.py": "old", "a.py": "same"}
     candidate = {"a.py": "same", "b.py": "new"}
@@ -202,3 +226,9 @@ def test_semantic_diff_hash_only_includes_changed_paths() -> None:
         {"b.py": "new"}, {"b.py": "old"}
     )
     assert semantic_diff_hash(baseline, baseline) == hashlib.sha256(b"").hexdigest()
+
+
+@pytest.mark.parametrize("bad_path", ["/lab/a.py", "../a.py", "pkg/../a.py", r"C:\lab\a.py"])
+def test_semantic_diff_hash_rejects_non_relative_paths_even_when_unchanged(bad_path: str) -> None:
+    with pytest.raises(ValueError, match="relative"):
+        semantic_diff_hash({bad_path: "same"}, {bad_path: "same"})

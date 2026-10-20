@@ -43,6 +43,8 @@ class PythonAdapter:
         except (OSError, UnicodeError) as error:
             return AnalysisResult("python", str(path), False, None, "python_io", str(error))
         try:
+            # Generates bytecode for validation only; it does not execute source.
+            compile(source, str(path), "exec", dont_inherit=True)
             tree = ast.parse(source, filename=str(path))
         except SyntaxError as error:
             return AnalysisResult("python", str(path), False, None, "python_syntax", str(error))
@@ -83,6 +85,8 @@ def _clang_names(root: dict[str, object]) -> dict[str, set[str]]:
     while pending:
         node = pending.pop()
         kind = node.get("kind")
+        if not isinstance(kind, str) or not kind:
+            raise ValueError("Clang AST node has no kind")
         name = node.get("name")
         if isinstance(name, str):
             if kind in {"FunctionDecl", "CXXMethodDecl", "FunctionTemplateDecl"}:
@@ -97,6 +101,8 @@ def _clang_names(root: dict[str, object]) -> dict[str, set[str]]:
 
 
 class CppAdapter:
+    """Analyze C++ syntax; name invariants require declarations, not definitions."""
+
     def __init__(self, clang_executable: str = "clang++", include_dirs: Sequence[Path] = ()):
         self.clang_executable = clang_executable
         self.include_dirs = tuple(Path(directory) for directory in include_dirs)
