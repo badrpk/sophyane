@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from urllib.parse import urlparse
 
 from sophyane.rsi_host_broker import PromotionResult, promote
 
@@ -58,9 +59,9 @@ class PromotionManager:
             self._git("worktree", "add", str(self.live_worktree), self.branch)
         return current
 
-    def _record(self, event: str, result: LivePromotionResult) -> None:
+    def _record(self, event: str, result: LivePromotionResult, evidence: dict | None = None) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        payload = {"event": event, "recorded_at": time.time(), **asdict(result)}
+        payload = {"event": event, "recorded_at": time.time(), **asdict(result), **(evidence or {})}
         with self.ledger.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(payload, sort_keys=True) + "\n")
         (self.state_dir / "promotion.json").write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
@@ -69,31 +70,54 @@ class PromotionManager:
         self._git("reset", "--hard", commit, cwd=self.live_worktree)
         self._git("update-ref", self.branch, commit)
 
-    def promote(self, candidate_commit: str, *, expected_base: str) -> LivePromotionResult:
+    def promote(self, candidate_commit: str, *, expected_base: str, task_id: str = "",
+                repository_id: str = "", reviewer: str = "", isolation_result: str = "",
+                post_promotion_checks: tuple[str, ...] = ()) -> LivePromotionResult:
         candidate_commit = str(candidate_commit).strip()
         expected_base = str(expected_base).strip()
+        evidence = {"task_id": task_id, "repository_id": repository_id,
+                    "base_commit": expected_base, "candidate_commit": candidate_commit,
+                    "reviewer": reviewer, "isolation_result": isolation_result,
+                    "post_promotion_checks": list(post_promotion_checks)}
+        if repository_id:
+            try:
+                remote = self._git("remote", "get-url", "origin")
+            except subprocess.CalledProcessError:
+                remote = ""
+            path = urlparse(remote).path if "://" in remote else remote.split(":", 1)[-1]
+            owner_name = path.strip("/").removesuffix(".git").split("/")[-2:]
+            if len(owner_name) != 2 or "/".join(owner_name).lower() != repository_id.lower():
+                return LivePromotionResult(False, self._branch_commit() or "", expected_base, "repository identity mismatch")
         if not candidate_commit or not expected_base or not self._commit_exists(candidate_commit):
             return LivePromotionResult(False, self._branch_commit() or "", expected_base, "candidate commit unavailable")
         active = self._ensure_live_worktree(expected_base)
+        try:
+            live_head = self._git("rev-parse", "HEAD", cwd=self.live_worktree)
+        except subprocess.CalledProcessError:
+            live_head = ""
+        if live_head != active:
+            result = LivePromotionResult(False, live_head, expected_base, "live HEAD diverged from recorded branch")
+            self._record("promotion_refused", result, evidence)
+            return result
         if active != expected_base:
             result = LivePromotionResult(False, active, expected_base, "live branch diverged from expected base")
-            self._record("promotion_refused", result)
+            self._record("promotion_refused", result, evidence)
             return result
         try:
             self._git("merge-base", "--is-ancestor", expected_base, candidate_commit)
         except subprocess.CalledProcessError:
             result = LivePromotionResult(False, active, expected_base, "candidate is not based on expected base")
-            self._record("promotion_refused", result)
+            self._record("promotion_refused", result, evidence)
             return result
         self._git("merge", "--ff-only", candidate_commit, cwd=self.live_worktree)
         health = subprocess.run(list(self.health_command), cwd=self.live_worktree, capture_output=True, text=True, check=False)
         if health.returncode != 0:
             self._reset_live(expected_base)
             result = LivePromotionResult(False, expected_base, expected_base, "live health check failed; rolled back", health.returncode)
-            self._record("promotion_rolled_back", result)
+            self._record("promotion_rolled_back", result, evidence)
             return result
         result = LivePromotionResult(True, candidate_commit, expected_base, "live health check passed", 0)
-        self._record("promotion_verified", result)
+        self._record("promotion_verified", result, evidence)
         return result
 
     def rollback(self) -> PromotionResult:

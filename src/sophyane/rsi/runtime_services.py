@@ -41,6 +41,8 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
     from .intelligence_evidence import ProviderEvidenceStore
     from .heartbeat import HeartbeatStore
     from .local_intelligence import LocalRole
+    from .repository_inventory import RepositoryInventory
+    from .promotion import PromotionManager
 
     root = Path(state_dir)
     policy = CurriculumPolicy(
@@ -53,6 +55,9 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
     )
     enabled = os.environ.get("SOPHYANE_CONTINUOUS_RSI", "1").strip() == "1"
     repository = Path(__file__).resolve().parents[3]
+    inventory = RepositoryInventory(root / "repository-inventory.json")
+    if inventory.roots:
+        inventory.refresh()
     if proposal_adapter is None:
         proposal_provider = os.environ.get("SOPHYANE_RSI_PROPOSAL_PROVIDER", "codex_cli").strip()
         if proposal_provider == "codex_cli":
@@ -81,6 +86,11 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
         proposal_adapter=proposal_adapter,
         enabled=enabled,
     )
+    runtime.repository_inventory = inventory
+    runtime.promotion_managers = {
+        record.repo_id: PromotionManager(record.path, root / "repositories" / record.repo_id)
+        for record in inventory.records
+    }
 
     # Codex requires a trusted Git workspace. Its provider is read-only, while
     # session state remains persisted externally by CodexCliProvider.
@@ -105,8 +115,17 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
         if ability is None:
             from .curriculum import AbilityRecord
             ability = AbilityRecord("seed", "initial bounded RSI ability", ("host policy",))
+        selected = inventory.next_repository() if inventory.roots else None
         allowed = tuple(sorted({path for plan in getattr(controller, "plans", {}).values()
                                 for path in getattr(plan, "allowed_paths", ())})[:8])
+        if selected is not None:
+            allowed = tuple(sorted({str(path.relative_to(Path(selected.path)))
+                                    for rule in selected.editable_paths
+                                    for path in ((Path(selected.path) / rule).rglob("*")
+                                                 if (Path(selected.path) / rule).is_dir()
+                                                 else (Path(selected.path) / rule,))
+                                    if path.is_file() and not path.is_symlink()
+                                    and path.resolve().is_relative_to(Path(selected.path))})[:8])
         if not allowed:
             return None
         capability_summary = "request one bounded, measurable RSI follow-up"
@@ -122,6 +141,9 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
             allowed_paths=allowed,
             existing_task_ids=tuple(task.task_id for task in state.queue),
             capability_summary=capability_summary,
+            repository=selected,
+            repository_id=selected.repo_id if selected else "",
+            base_commit=selected.commit if selected else "",
         )
 
     runtime.heartbeat = HeartbeatStore(root / "heartbeat.json")

@@ -68,13 +68,21 @@ class ContinuousCurriculumRuntime:
         except OSError:
             pass
         recorded_commit = str(promotion["active_commit"]).strip()
-        if live_commit and live_commit != recorded_commit:
+        scoped = bool(promotion.get("task_id") or promotion.get("repository_id"))
+        if scoped and live_commit != recorded_commit:
+            return 0
+        if not scoped and live_commit and live_commit != recorded_commit:
             return 0
         state = self.store.load()
         reconciled = 0
         evidence_prefix = f"reconciled promoted live snapshot {recorded_commit}"
         for task in state.queue:
             if task.status not in {TaskStatus.QUEUED, TaskStatus.PAUSED} or not task.proposal_files:
+                continue
+            if scoped and (task.task_id != promotion.get("task_id")
+                           or task.repository_id != promotion.get("repository_id")
+                           or task.base_commit != promotion.get("base_commit")
+                           or recorded_commit != promotion.get("candidate_commit")):
                 continue
             matches = True
             for relative, expected in task.proposal_files.items():
