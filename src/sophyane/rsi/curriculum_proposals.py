@@ -5,12 +5,22 @@ from __future__ import annotations
 import json
 import hashlib
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Any
 
 from .curriculum import AbilityRecord, CurriculumTask, TaskSource
 from .repository_inventory import RepositoryRecord
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
 
 
 @dataclass(frozen=True)
@@ -63,7 +73,9 @@ class CurriculumProposalAdapter:
 
     def validate(self, raw: str, context: ProposalContext) -> ProposalResult:
         try:
-            payload: Any = json.loads(raw)
+            if not isinstance(raw, str):
+                raise TypeError("proposal response must be text")
+            payload: Any = json.loads(raw, object_pairs_hook=_unique_object)
         except (TypeError, ValueError, json.JSONDecodeError) as error:
             return self._reject(f"invalid JSON proposal: {error}")
 
@@ -93,6 +105,15 @@ class CurriculumProposalAdapter:
                 return self._reject("selected repository identity is invalid")
             if not re.fullmatch(r"[0-9a-fA-F]{40}", context.base_commit) or context.base_commit != repository.commit:
                 return self._reject("selected repository base commit is stale or invalid")
+            try:
+                live_commit = subprocess.check_output(
+                    ["git", "-C", repository.path, "rev-parse", "--verify", "HEAD^{commit}"],
+                    text=True, stderr=subprocess.DEVNULL, timeout=3,
+                ).strip()
+            except (OSError, subprocess.SubprocessError):
+                return self._reject("selected repository HEAD is unavailable")
+            if live_commit != context.base_commit:
+                return self._reject("selected repository base commit is stale")
             if repository_id != context.repository_id or base_commit != context.base_commit:
                 return self._reject("proposal repository identity or base commit does not match")
             if not isinstance(red_command, list) or not red_command or any(not isinstance(item, str) or not item.strip() for item in red_command):
@@ -138,7 +159,9 @@ class CurriculumProposalAdapter:
                 root = Path(context.repository.path).resolve()
                 target = (root / path).resolve()
                 permitted = any(
-                    pure == PurePosixPath(policy) or PurePosixPath(policy) in pure.parents
+                    (pure == PurePosixPath(policy) or PurePosixPath(policy) in pure.parents)
+                    and (root / policy).resolve().is_relative_to(root)
+                    and target.is_relative_to((root / policy).resolve())
                     for policy in context.repository.editable_paths
                 )
                 if not target.is_relative_to(root) or not permitted:
@@ -147,19 +170,19 @@ class CurriculumProposalAdapter:
                 return self._reject(f"unsafe or unauthorized path: {path!r}")
             normalized.append(path)
 
-        if any(not str(item).strip() for item in verification):
-            return self._reject("verification contains an empty argument")
+        if any(not isinstance(item, str) or not item.strip() for item in verification):
+            return self._reject("verification contains an invalid argument")
         task = CurriculumTask(
             task_id=task_id,
             parent_ability_id=parent_id,
             objective=objective,
             editable_paths=tuple(normalized),
-            verification=tuple(str(item) for item in verification),
+            verification=tuple(verification),
             source=TaskSource.LLM_FOLLOW_UP,
             component=str(payload.get("component", "")).strip(),
             repository_id=repository_id,
             base_commit=base_commit,
-            proposal_digest=hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest() if bound else "",
+            proposal_digest=hashlib.sha256(raw.encode("utf-8")).hexdigest() if bound else "",
             red_command=tuple(red_command) if bound else (),
             red_failure_marker=red_failure_marker.strip() if bound else "",
             green_commands=tuple(tuple(command) for command in green_commands) if bound else (),
