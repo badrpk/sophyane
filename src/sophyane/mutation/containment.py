@@ -144,10 +144,15 @@ class LabTransaction:
         if self._closed:
             raise RuntimeError("mutation transaction is closed")
 
-    def _open_parent_directory(self, parts: tuple[str, ...]) -> int:
+    def _open_parent_directory(self, parts: tuple[str, ...], *, create: bool = False) -> int:
         descriptor = os.dup(self._root_fd)
         try:
             for part in parts:
+                if create:
+                    try:
+                        os.mkdir(part, dir_fd=descriptor)
+                    except FileExistsError:
+                        pass
                 next_descriptor = os.open(
                     part,
                     os.O_RDONLY
@@ -162,22 +167,26 @@ class LabTransaction:
             os.close(descriptor)
             raise
 
-    def _atomic_replace_text(self, name: str, text: str) -> None:
+    def _atomic_replace_bytes(self, name: str, data: bytes, *, create_parents: bool = False) -> None:
         parts = _relative_path(name).parts
-        parent_fd = self._open_parent_directory(parts[:-1])
+        parent_fd = self._open_parent_directory(parts[:-1], create=create_parents)
         temp_name = f".mutation-{secrets.token_hex(12)}.tmp"
         temp_fd = -1
         try:
-            target_info = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
-            if not stat.S_ISREG(target_info.st_mode):
-                raise LabPathError(f"replacement target is not a regular file: {name!r}")
+            try:
+                target_info = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                target_mode = 0o600
+            else:
+                if not stat.S_ISREG(target_info.st_mode):
+                    raise LabPathError(f"replacement target is not a regular file: {name!r}")
+                target_mode = stat.S_IMODE(target_info.st_mode)
             temp_fd = os.open(
                 temp_name,
                 os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-                stat.S_IMODE(target_info.st_mode),
+                target_mode,
                 dir_fd=parent_fd,
             )
-            data = text.encode("utf-8")
             offset = 0
             while offset < len(data):
                 offset += os.write(temp_fd, data[offset:])
@@ -196,6 +205,17 @@ class LabTransaction:
                 os.unlink(temp_name, dir_fd=parent_fd)
             except FileNotFoundError:
                 pass
+            os.close(parent_fd)
+
+    def _atomic_replace_text(self, name: str, text: str) -> None:
+        self._atomic_replace_bytes(name, text.encode("utf-8"))
+
+    def _unlink_relative(self, name: str) -> None:
+        parts = _relative_path(name).parts
+        parent_fd = self._open_parent_directory(parts[:-1])
+        try:
+            os.unlink(parts[-1], dir_fd=parent_fd)
+        finally:
             os.close(parent_fd)
 
     def _checked_target(self, relative: str) -> Path:
@@ -264,16 +284,27 @@ class LabTransaction:
         for name in sorted(set(self.snapshot()) | set(self._baseline)):
             target = self._checked_target(name)
             if name in self._baseline:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(self._baseline[name])
+                self._atomic_replace_bytes(name, self._baseline[name], create_parents=True)
             elif target.exists():
-                target.unlink()
-        for current, directories, _ in os.walk(self.path, topdown=False):
+                self._unlink_relative(name)
+        for current, directories, _ in os.walk(
+            self.path, topdown=False, onerror=self._raise_walk_error
+        ):
             current_path = Path(current)
             for directory in directories:
                 child = current_path / directory
-                if child.is_dir() and not any(child.iterdir()):
-                    child.rmdir()
+                try:
+                    child_info = child.lstat()
+                except FileNotFoundError:
+                    continue
+                if stat.S_ISDIR(child_info.st_mode) and not any(child.iterdir()):
+                    parent_fd = self._open_parent_directory(
+                        child.relative_to(self.path).parts[:-1]
+                    )
+                    try:
+                        os.rmdir(child.name, dir_fd=parent_fd)
+                    finally:
+                        os.close(parent_fd)
 
     def close(self) -> None:
         if not self._closed:

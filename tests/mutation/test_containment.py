@@ -177,3 +177,53 @@ def test_restore_baseline_reverses_lab_candidate(tmp_path: Path) -> None:
 
     assert "VALUE = 2" in patch and "VALUE = 1" in patch
     assert transaction.snapshot()["pkg/module.py"] == b"VALUE = 1\n"
+
+
+def test_restore_baseline_does_not_follow_target_symlink_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _source(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep me\n")
+    transaction = MutationLab(tmp_path / "lab").create_transaction(source)
+    transaction.apply_replacements({"pkg/module.py": "CANDIDATE\n"}, ("pkg/module.py",))
+    target = transaction.path / "pkg" / "module.py"
+    real_replace = containment.os.replace
+    swapped = False
+
+    def swap_before_replace(source_name, target_name, *args, **kwargs):
+        nonlocal swapped
+        if target_name == "module.py" and kwargs.get("dst_dir_fd") is not None and not swapped:
+            target.unlink()
+            target.symlink_to(outside)
+            swapped = True
+        return real_replace(source_name, target_name, *args, **kwargs)
+
+    monkeypatch.setattr(containment.os, "replace", swap_before_replace)
+    transaction.restore_baseline()
+
+    assert swapped
+    assert outside.read_text() == "keep me\n"
+    assert target.is_file() and not target.is_symlink()
+    assert target.read_text() == "VALUE = 1\n"
+
+
+def test_restore_cleanup_walk_errors_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transaction = MutationLab(tmp_path / "lab").create_transaction(_source(tmp_path))
+    transaction.apply_replacements({"pkg/module.py": "CANDIDATE\n"}, ("pkg/module.py",))
+    original_walk = containment.os.walk
+
+    def failing_cleanup_walk(root, *args, **kwargs):
+        if Path(root) == transaction.path and kwargs.get("topdown") is False:
+            error = PermissionError("cleanup directory became unreadable")
+            onerror = kwargs.get("onerror")
+            if onerror is None:
+                return
+            onerror(error)
+        yield from original_walk(root, *args, **kwargs)
+
+    monkeypatch.setattr(containment.os, "walk", failing_cleanup_walk)
+    with pytest.raises(PermissionError, match="cleanup directory"):
+        transaction.restore_baseline()

@@ -63,3 +63,21 @@ unrelated dirty repository changes were left unstaged and untouched.
 - The actual hard-link creation path remains unavailable under this
   environment's filesystem permissions (`EACCES`); the test exercises the
   multiple-link metadata rejection path as a fallback.
+
+## Review fix round 2
+
+- Baseline restoration now uses the same pinned transaction directory
+  descriptor and same-directory atomic replacement for original file bytes.
+  This safely replaces a swapped symlink or hard-link entry without writing
+  through it. Removal of candidate-only files is descriptor-relative too.
+- Bottom-up empty-directory cleanup now supplies a raising `onerror` handler,
+  so cleanup traversal failures are propagated to the caller.
+- Added regressions that inject an external symlink immediately before a
+  restore rename and inject a cleanup traversal error.
+- RED: both round 2 regression tests failed against the prior restoration
+  implementation.
+- GREEN: `env PYTHONPATH=src ./.venv/bin/python -m pytest -q tests/mutation/test_containment.py`
+  completed with **15 passed**.
+- Actual hard-link creation is still denied with `EACCES`; the test retains
+  the synthetic `st_nlink > 1` fallback and skips only for `ENOSYS` or
+  `EOPNOTSUPP`.
