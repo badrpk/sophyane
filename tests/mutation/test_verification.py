@@ -304,7 +304,11 @@ def test_regression_timeout_kills_descendant_process_group(tmp_path: Path) -> No
         except ProcessLookupError:
             break
         state_path = Path(f"/proc/{child_pid}/stat")
-        if not state_path.exists() or state_path.read_text().split()[2] == "Z":
+        try:
+            state = state_path.read_text().split()[2]
+        except (FileNotFoundError, ProcessLookupError):
+            break
+        if state == "Z":
             break
         time.sleep(0.02)
     else:
@@ -340,3 +344,42 @@ def test_reversal_patch_preserves_no_newline_for_header_like_final_line(tmp_path
     )
     assert result.returncode == 0, result.stderr.decode()
     assert (tmp_path / "sample.py").read_bytes() == baseline["sample.py"]
+
+
+def test_checker_leader_exit_cannot_leave_forked_descendant_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sophyane.mutation import verification
+
+    lab, transaction = _transaction(tmp_path)
+    (transaction / "sample.py").write_text("VALUE = 1\n")
+    child_pid_file = transaction / "sample.py.child"
+    monkeypatch.setattr(
+        verification,
+        "_PYTHON_CHECK",
+        (
+            "import os, sys, time; "
+            "child = os.fork(); "
+            "(open(sys.argv[1] + '.child', 'w').write(str(os.getpid())), time.sleep(30)) "
+            "if child == 0 else None"
+        ),
+    )
+
+    result = StaticVerifier(timeout_seconds=0.2, lab_root=lab).run(
+        transaction, ("sample.py",), ()
+    )
+
+    assert not result.ok and result.failure_boundary == "timeout"
+    child_pid = int(child_pid_file.read_text())
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        state_path = Path(f"/proc/{child_pid}/stat")
+        if not state_path.exists() or state_path.read_text().split()[2] == "Z":
+            break
+        time.sleep(0.02)
+    else:
+        pytest.fail("checker descendant remained alive after timeout cleanup")

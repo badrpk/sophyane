@@ -106,12 +106,22 @@ class StaticVerifier:
 
     @staticmethod
     def _kill_process_group(process: subprocess.Popen[bytes]) -> None:
+        try:
+            os.killpg(process.pid, 9)
+        except ProcessLookupError:
+            pass
         if process.poll() is None:
-            try:
-                os.killpg(process.pid, 9)
-            except ProcessLookupError:
-                pass
             process.wait(timeout=0.2)
+
+    @staticmethod
+    def _process_group_exists(process_group_id: int) -> bool:
+        try:
+            os.killpg(process_group_id, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
 
     def _run_checker(
         self,
@@ -147,9 +157,14 @@ class StaticVerifier:
                 events = selector.select(min(remaining, 0.05))
                 if not events and process.poll() is not None:
                     for stream in tuple(streams):
-                        chunk = stream.read() or b""
+                        try:
+                            chunk = stream.read() or b""
+                        except BlockingIOError:
+                            chunk = b""
                         streams[stream].extend(chunk)
-                    break
+                    if not self._process_group_exists(process.pid):
+                        break
+                    time.sleep(min(remaining, 0.01))
                 for key, _ in events:
                     stream = key.fileobj
                     chunk = stream.read(8192) or b""
@@ -162,6 +177,9 @@ class StaticVerifier:
                         return "output_limit", "checker output exceeded capture limit"
                     streams[stream].extend(chunk)
             process.wait(timeout=max(0.0, deadline - time.monotonic()))
+            if self._process_group_exists(process.pid):
+                self._kill_process_group(process)
+                return "timeout", "checker descendant process group did not exit"
             diagnostics = bytes(streams[process.stderr]).decode("utf-8", errors="replace").strip()
             if process.returncode != 0 or diagnostics:
                 return "checker_failure", diagnostics[:_MAX_CHECK_OUTPUT] or f"checker exited {process.returncode}"
