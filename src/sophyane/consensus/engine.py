@@ -6,7 +6,7 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Any
 
 from .isolation import IsolationRegistry
@@ -90,7 +90,7 @@ class BFTConsensusEngine:
                     extra_done, pending = wait(
                         pending,
                         timeout=min(0.10, max(0.0, self.deadline_seconds - (time.monotonic() - started))),
-                        return_when=FIRST_COMPLETED,
+                        return_when=ALL_COMPLETED,
                     )
                     for future in extra_done:
                         worker = futures[future]
