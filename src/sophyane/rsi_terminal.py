@@ -24,11 +24,11 @@ def socket_path(state_dir: Path) -> Path:
 def handle_command(command: str, state_dir: Path) -> str:
     command = str(command).strip()
     if command == "status":
-        return json.dumps(run_curriculum_command("status", state_dir), sort_keys=True)
+        return json.dumps(_curriculum_command("status", state_dir), sort_keys=True)
     if command == "pause":
-        return json.dumps(run_curriculum_command("pause", state_dir), sort_keys=True)
+        return json.dumps(_curriculum_command("pause", state_dir), sort_keys=True)
     if command == "stop":
-        result = run_curriculum_command("stop", state_dir)
+        result = _curriculum_command("stop", state_dir)
         return json.dumps(result, sort_keys=True)
     if command.startswith("instruction "):
         text = command[len("instruction "):].strip()
@@ -46,6 +46,17 @@ def handle_command(command: str, state_dir: Path) -> str:
     if command in {"help", "?"}:
         return "status | pause | stop | instruction <bounded improvement request>"
     return "unknown command; use help"
+
+
+def _curriculum_command(command: str, state_dir: Path) -> dict[str, object]:
+    """Apply a lifecycle command using the daemon's configured budgets."""
+    return run_curriculum_command(
+        command,
+        state_dir,
+        max_iterations=max(1, int(os.environ.get("SOPHYANE_RSI_MAX_ITERATIONS", "100"))),
+        max_wall_seconds=max(1.0, float(os.environ.get("SOPHYANE_RSI_MAX_WALL_SECONDS", "86400"))),
+        cooldown_seconds=max(0.0, float(os.environ.get("SOPHYANE_RSI_COOLDOWN_SECONDS", "30"))),
+    )
 
 
 def _serve(state_dir: Path) -> int:
@@ -207,7 +218,7 @@ def needs_live_relaunch(state_dir: Path, current_commit: str) -> bool:
 def start(state_dir: Path | None = None) -> int:
     state_dir = Path(state_dir or _default_state_dir())
     state_dir.mkdir(parents=True, exist_ok=True)
-    run_curriculum_command("start", state_dir)
+    _curriculum_command("start", state_dir)
     pid_path = state_dir / "rsi.pid"
     if pid_path.exists():
         try:
