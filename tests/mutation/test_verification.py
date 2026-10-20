@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import time
+import os
 from pathlib import Path
 
 import pytest
@@ -12,25 +13,34 @@ import pytest
 from sophyane.mutation.verification import StaticVerifier, build_reversal_patch
 
 
+def _transaction(tmp_path: Path) -> tuple[Path, Path]:
+    lab = tmp_path / "lab"
+    transaction = lab / "transaction"
+    transaction.mkdir(parents=True)
+    return lab, transaction
+
+
 def test_python_and_cpp_checks_aggregate_without_executing_candidate(tmp_path: Path) -> None:
-    (tmp_path / "sample.py").write_text(
+    lab, transaction = _transaction(tmp_path)
+    (transaction / "sample.py").write_text(
         "from pathlib import Path\nPath('executed').write_text('bad')\nVALUE = 1\n"
     )
-    (tmp_path / "sample.cpp").write_text("int answer() { return 42; }\n")
+    (transaction / "sample.cpp").write_text("int answer() { return 42; }\n")
     if shutil.which("clang++") is None:
         pytest.skip("clang++ unavailable")
 
-    result = StaticVerifier().run(tmp_path, ("sample.cpp", "sample.py"), ("refactor",))
+    result = StaticVerifier(lab_root=lab).run(transaction, ("sample.cpp", "sample.py"), ("refactor",))
 
     assert result.ok and result.failure_boundary is None and result.diagnostics == ""
     assert result.checks == ("cpp:sample.cpp", "python:sample.py")
-    assert not (tmp_path / "executed").exists()
+    assert not (transaction / "executed").exists()
 
 
 def test_static_failure_fails_closed_and_records_check(tmp_path: Path) -> None:
-    (tmp_path / "broken.py").write_text("def broken(:\n")
+    lab, transaction = _transaction(tmp_path)
+    (transaction / "broken.py").write_text("def broken(:\n")
 
-    result = StaticVerifier().run(tmp_path, ("broken.py",), ())
+    result = StaticVerifier(lab_root=lab).run(transaction, ("broken.py",), ())
 
     assert not result.ok and result.failure_boundary == "python_syntax"
     assert result.checks == ("python:broken.py",)
@@ -40,19 +50,21 @@ def test_static_failure_fails_closed_and_records_check(tmp_path: Path) -> None:
 def test_cpp_warning_diagnostics_fail_closed(tmp_path: Path) -> None:
     if shutil.which("clang++") is None:
         pytest.skip("clang++ unavailable")
-    (tmp_path / "sample.cpp").write_text("#warning verify this\nint answer() { return 42; }\n")
+    lab, transaction = _transaction(tmp_path)
+    (transaction / "sample.cpp").write_text("#warning verify this\nint answer() { return 42; }\n")
 
-    result = StaticVerifier().run(tmp_path, ("sample.cpp",), ())
+    result = StaticVerifier(lab_root=lab).run(transaction, ("sample.cpp",), ())
 
     assert not result.ok and result.failure_boundary == "cpp_syntax"
     assert "warning" in result.diagnostics
 
 
 def test_regression_failure_fails_closed(tmp_path: Path) -> None:
-    (tmp_path / "sample.py").write_text("VALUE = 1\n")
+    lab, transaction = _transaction(tmp_path)
+    (transaction / "sample.py").write_text("VALUE = 1\n")
 
-    result = StaticVerifier(regression_check=lambda path: False).run(
-        tmp_path, ("sample.py",), ()
+    result = StaticVerifier(lab_root=lab, regression_check=lambda path: False).run(
+        transaction, ("sample.py",), ()
     )
 
     assert not result.ok and result.failure_boundary == "regression"
@@ -60,27 +72,29 @@ def test_regression_failure_fails_closed(tmp_path: Path) -> None:
 
 
 def test_regression_exception_fails_closed(tmp_path: Path) -> None:
-    (tmp_path / "sample.py").write_text("VALUE = 1\n")
+    lab, transaction = _transaction(tmp_path)
+    (transaction / "sample.py").write_text("VALUE = 1\n")
 
     def broken(path: Path) -> bool:
         raise RuntimeError("checker exploded")
 
-    result = StaticVerifier(regression_check=broken).run(tmp_path, ("sample.py",), ())
+    result = StaticVerifier(lab_root=lab, regression_check=broken).run(transaction, ("sample.py",), ())
 
     assert not result.ok and result.failure_boundary == "verifier_exception"
     assert "checker exploded" in result.diagnostics
 
 
 def test_regression_timeout_is_bounded(tmp_path: Path) -> None:
-    (tmp_path / "sample.py").write_text("VALUE = 1\n")
+    lab, transaction = _transaction(tmp_path)
+    (transaction / "sample.py").write_text("VALUE = 1\n")
 
     def slow(path: Path) -> bool:
         time.sleep(2)
         return True
 
     start = time.monotonic()
-    result = StaticVerifier(timeout_seconds=0.2, regression_check=slow).run(
-        tmp_path, ("sample.py",), ()
+    result = StaticVerifier(timeout_seconds=0.2, lab_root=lab, regression_check=slow).run(
+        transaction, ("sample.py",), ()
     )
 
     assert time.monotonic() - start < 1.5
@@ -89,12 +103,13 @@ def test_regression_timeout_is_bounded(tmp_path: Path) -> None:
 
 
 def test_rejects_path_escape_and_never_runs_intent_text(tmp_path: Path) -> None:
-    (tmp_path / "sample.py").write_text("VALUE = 1\n")
+    lab, transaction = _transaction(tmp_path)
+    (transaction / "sample.py").write_text("VALUE = 1\n")
     marker = tmp_path / "injected"
     intent = f"touch {marker}"
 
-    accepted = StaticVerifier().run(tmp_path, ("sample.py",), (intent,))
-    rejected = StaticVerifier().run(tmp_path, ("../outside.py",), ())
+    accepted = StaticVerifier(lab_root=lab).run(transaction, ("sample.py",), (intent,))
+    rejected = StaticVerifier(lab_root=lab).run(transaction, ("../outside.py",), ())
 
     assert accepted.ok and not marker.exists()
     assert not rejected.ok and rejected.failure_boundary == "verifier_path"
@@ -198,14 +213,130 @@ def test_static_checker_exception_fails_closed(
 ) -> None:
     from sophyane.mutation import verification
 
-    (tmp_path / "sample.py").write_text("VALUE = 1\n")
+    lab, transaction = _transaction(tmp_path)
+    (transaction / "sample.py").write_text("VALUE = 1\n")
 
     def broken(*args, **kwargs):
         raise OSError("checker unavailable")
 
-    monkeypatch.setattr(verification.subprocess, "run", broken)
-    result = StaticVerifier().run(tmp_path, ("sample.py",), ())
+    monkeypatch.setattr(verification.subprocess, "Popen", broken)
+    result = StaticVerifier(lab_root=lab).run(transaction, ("sample.py",), ())
 
     assert not result.ok and result.failure_boundary == "verifier_exception"
     assert result.checks == ("python:sample.py",)
     assert "checker unavailable" in result.diagnostics
+
+
+def test_transaction_must_be_inside_configured_lab_before_temp_write(tmp_path: Path) -> None:
+    lab = tmp_path / "lab"
+    lab.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "sample.py").write_text("VALUE = 1\n")
+
+    result = StaticVerifier(lab_root=lab).run(outside, ("sample.py",), ())
+
+    assert not result.ok and result.failure_boundary == "verifier_path"
+    assert list(lab.iterdir()) == []
+
+
+def test_transaction_root_itself_cannot_be_lab_root(tmp_path: Path) -> None:
+    lab = tmp_path / "lab"
+    lab.mkdir()
+
+    result = StaticVerifier(lab_root=lab).run(lab, (), ())
+
+    assert not result.ok and result.failure_boundary == "verifier_path"
+
+
+def test_clang_lookup_ignores_attacker_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lab, transaction = _transaction(tmp_path)
+    (transaction / "sample.cpp").write_text("int answer() { return 42; }\n")
+    attacker = tmp_path / "attacker"
+    attacker.mkdir()
+    (attacker / "clang++").write_text("#!/bin/sh\ntouch attacker-ran\nexit 0\n")
+    (attacker / "clang++").chmod(0o755)
+    monkeypatch.setenv("PATH", str(attacker))
+
+    result = StaticVerifier(lab_root=lab).run(transaction, ("sample.cpp",), ())
+
+    assert result.ok
+    assert not (transaction / "attacker-ran").exists()
+
+
+def test_checker_output_limit_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from sophyane.mutation import verification
+
+    lab, transaction = _transaction(tmp_path)
+    (transaction / "sample.py").write_text("VALUE = 1\n")
+
+    monkeypatch.setattr(
+        verification,
+        "_PYTHON_CHECK",
+        f"import sys; sys.stdout.write('x' * {verification._MAX_CHECK_OUTPUT + 1})",
+    )
+    result = StaticVerifier(lab_root=lab).run(transaction, ("sample.py",), ())
+
+    assert not result.ok and result.failure_boundary == "output_limit"
+
+
+def test_regression_timeout_kills_descendant_process_group(tmp_path: Path) -> None:
+    lab, transaction = _transaction(tmp_path)
+    (transaction / "sample.py").write_text("VALUE = 1\n")
+    pid_file = transaction / "child.pid"
+
+    def spawns_child(path: Path) -> bool:
+        child = subprocess.Popen(["sleep", "30"])
+        path.joinpath("child.pid").write_text(str(child.pid))
+        time.sleep(30)
+        return True
+
+    result = StaticVerifier(timeout_seconds=0.2, lab_root=lab, regression_check=spawns_child).run(
+        transaction, ("sample.py",), ()
+    )
+
+    assert not result.ok and result.failure_boundary == "timeout"
+    child_pid = int(pid_file.read_text())
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        state_path = Path(f"/proc/{child_pid}/stat")
+        if not state_path.exists() or state_path.read_text().split()[2] == "Z":
+            break
+        time.sleep(0.02)
+    else:
+        pytest.fail("regression descendant remained alive after timeout")
+
+
+def test_reversal_patch_marks_changed_header_like_lines(tmp_path: Path) -> None:
+    baseline = {"sample.py": b"+++ old\n--- old\n"}
+    candidate = {"sample.py": b"+++ new\n--- new\n"}
+    (tmp_path / "sample.py").write_bytes(candidate["sample.py"])
+
+    patch = build_reversal_patch(baseline, candidate)
+    result = subprocess.run(
+        ["patch", "-p1", "--batch", "--forward"],
+        input=patch.encode(), cwd=tmp_path, capture_output=True, timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr.decode()
+    assert (tmp_path / "sample.py").read_bytes() == baseline["sample.py"]
+
+
+def test_reversal_patch_preserves_no_newline_for_header_like_final_line(tmp_path: Path) -> None:
+    baseline = {"sample.py": b"+++ old"}
+    candidate = {"sample.py": b"+++ new"}
+    (tmp_path / "sample.py").write_bytes(candidate["sample.py"])
+
+    patch = build_reversal_patch(baseline, candidate)
+
+    assert "\\ No newline at end of file" in patch
+    result = subprocess.run(
+        ["patch", "-p1", "--batch", "--forward"],
+        input=patch.encode(), cwd=tmp_path, capture_output=True, timeout=5,
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    assert (tmp_path / "sample.py").read_bytes() == baseline["sample.py"]

@@ -7,6 +7,7 @@ import math
 import multiprocessing
 from multiprocessing.connection import Connection
 import os
+import selectors
 import shutil
 import stat
 import subprocess
@@ -17,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from .containment import LabPathError, _relative_path
+from .containment import DEFAULT_LAB_ROOT, LabPathError, _relative_path
 
 
 @dataclass(frozen=True)
@@ -33,10 +34,12 @@ _PYTHON_CHECK = (
     "compile(Path(sys.argv[1]).read_bytes(), sys.argv[1], 'exec', dont_inherit=True)"
 )
 _CPP_SUFFIXES = frozenset({".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"})
+_MAX_CHECK_OUTPUT = 64 * 1024
 
 
 def _regression_worker(check: Callable[[Path], bool], path: Path, sender: Connection) -> None:
     try:
+        os.setsid()
         sender.send(("result", check(path) is True))
     except BaseException as error:
         sender.send(("exception", f"{type(error).__name__}: {error}"[:4096]))
@@ -56,9 +59,11 @@ class StaticVerifier:
         self,
         timeout_seconds: float = 30.0,
         regression_check: Callable[[Path], bool] | None = None,
+        lab_root: Path = DEFAULT_LAB_ROOT,
     ) -> None:
         self.timeout_seconds = timeout_seconds
         self.regression_check = regression_check
+        self.lab_root = Path(lab_root)
 
     @staticmethod
     def _checked_file(root: Path, name: str) -> Path:
@@ -86,6 +91,89 @@ class StaticVerifier:
             "LC_ALL": "C",
         }
 
+    def _validate_transaction(self, transaction_path: Path, deadline: float) -> Path:
+        if time.monotonic() >= deadline:
+            raise TimeoutError("transaction validation timed out")
+        lab = self.lab_root.absolute().resolve(strict=True)
+        root = Path(transaction_path).absolute().resolve(strict=True)
+        if time.monotonic() >= deadline:
+            raise TimeoutError("transaction validation timed out")
+        if root == lab or not root.is_relative_to(lab):
+            raise LabPathError("transaction path is outside configured mutation lab")
+        if not stat.S_ISDIR(root.lstat().st_mode):
+            raise LabPathError("transaction root is not a directory")
+        return root
+
+    @staticmethod
+    def _kill_process_group(process: subprocess.Popen[bytes]) -> None:
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, 9)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=0.2)
+
+    def _run_checker(
+        self,
+        command: list[str],
+        root: Path,
+        environment: dict[str, str],
+        deadline: float,
+    ) -> tuple[str, str]:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return "timeout", "static checker timed out before startup"
+        try:
+            process = subprocess.Popen(
+                command, cwd=root, env=environment,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+        except (OSError, ValueError) as error:
+            return "verifier_exception", f"checker startup failed: {error}"
+        assert process.stdout is not None and process.stderr is not None
+        selector = selectors.DefaultSelector()
+        streams = {process.stdout: bytearray(), process.stderr: bytearray()}
+        for stream in streams:
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ)
+        total = 0
+        try:
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._kill_process_group(process)
+                    return "timeout", "static checker timed out"
+                events = selector.select(min(remaining, 0.05))
+                if not events and process.poll() is not None:
+                    for stream in tuple(streams):
+                        chunk = stream.read() or b""
+                        streams[stream].extend(chunk)
+                    break
+                for key, _ in events:
+                    stream = key.fileobj
+                    chunk = stream.read(8192) or b""
+                    if not chunk:
+                        selector.unregister(stream)
+                        continue
+                    total += len(chunk)
+                    if total > _MAX_CHECK_OUTPUT:
+                        self._kill_process_group(process)
+                        return "output_limit", "checker output exceeded capture limit"
+                    streams[stream].extend(chunk)
+            process.wait(timeout=max(0.0, deadline - time.monotonic()))
+            diagnostics = bytes(streams[process.stderr]).decode("utf-8", errors="replace").strip()
+            if process.returncode != 0 or diagnostics:
+                return "checker_failure", diagnostics[:_MAX_CHECK_OUTPUT] or f"checker exited {process.returncode}"
+            return "", ""
+        except subprocess.TimeoutExpired:
+            self._kill_process_group(process)
+            return "timeout", "static checker timed out"
+        finally:
+            selector.close()
+            for stream in streams:
+                stream.close()
+
     def _run_regression(self, root: Path, deadline: float) -> tuple[str, str]:
         assert self.regression_check is not None
         context = multiprocessing.get_context("fork")
@@ -109,10 +197,10 @@ class StaticVerifier:
             return "", ""
         finally:
             if process.is_alive():
-                process.terminate()
-                process.join(timeout=0.1)
-                if process.is_alive():
-                    process.kill()
+                try:
+                    os.killpg(process.pid, 9)
+                except ProcessLookupError:
+                    process.terminate()
             if process.pid is not None:
                 process.join(timeout=0.1)
             receiver.close()
@@ -129,14 +217,16 @@ class StaticVerifier:
             if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
                 return VerificationEvidence(False, (), "timeout", "invalid verification timeout")
             deadline = time.monotonic() + self.timeout_seconds
-            root = Path(transaction_path).absolute()
-            if not stat.S_ISDIR(root.lstat().st_mode) or root.is_symlink():
-                raise LabPathError("transaction root is not a regular directory")
+            root = self._validate_transaction(transaction_path, deadline)
             paths = sorted(set(changed_paths))
             if not paths:
                 raise LabPathError("no changed paths to verify")
             for name in paths:
+                if time.monotonic() >= deadline:
+                    return VerificationEvidence(False, tuple(checks), "timeout", "transaction path validation timed out")
                 self._checked_file(root, name)
+            if time.monotonic() >= deadline:
+                return VerificationEvidence(False, tuple(checks), "timeout", "transaction path validation timed out")
 
             failures: list[tuple[str, str]] = []
             with tempfile.TemporaryDirectory(prefix="verification-", dir=root) as scratch_name:
@@ -149,7 +239,9 @@ class StaticVerifier:
                         command = [sys.executable, "-I", "-c", _PYTHON_CHECK, name]
                     elif suffix in _CPP_SUFFIXES:
                         kind = "cpp"
-                        compiler = shutil.which("clang++")
+                        if time.monotonic() >= deadline:
+                            return VerificationEvidence(False, tuple(checks), "timeout", "checker lookup timed out")
+                        compiler = shutil.which("clang++", path=os.defpath)
                         if compiler is None:
                             checks.append(f"cpp:{name}")
                             failures.append(("cpp_tool", "clang++ is unavailable"))
@@ -160,21 +252,11 @@ class StaticVerifier:
                         failures.append(("verifier_path", f"unsupported source type: {name}"))
                         continue
                     checks.append(f"{kind}:{name}")
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        return VerificationEvidence(False, tuple(checks), "timeout", "static checks timed out")
-                    try:
-                        result = subprocess.run(
-                            command, cwd=root, env=environment, capture_output=True,
-                            timeout=remaining, check=False,
-                        )
-                    except subprocess.TimeoutExpired:
-                        return VerificationEvidence(False, tuple(checks), "timeout", "static checks timed out")
-                    if result.returncode != 0 or (kind == "cpp" and result.stderr.strip()):
-                        detail = result.stderr.decode("utf-8", errors="replace").strip()
-                        failures.append((
-                            f"{kind}_syntax", detail[:4096] or f"{kind} checker exited {result.returncode}"
-                        ))
+                    boundary, detail = self._run_checker(command, root, environment, deadline)
+                    if boundary:
+                        if boundary in {"timeout", "output_limit", "verifier_exception"}:
+                            return VerificationEvidence(False, tuple(checks), boundary, detail)
+                        failures.append((f"{kind}_syntax", detail))
             if failures:
                 return VerificationEvidence(
                     False, tuple(checks), failures[0][0],
@@ -188,6 +270,8 @@ class StaticVerifier:
             return VerificationEvidence(True, tuple(checks), None, "")
         except LabPathError as error:
             return VerificationEvidence(False, tuple(checks), "verifier_path", str(error))
+        except TimeoutError as error:
+            return VerificationEvidence(False, tuple(checks), "timeout", str(error))
         except Exception as error:
             return VerificationEvidence(
                 False, tuple(checks), "verifier_exception", f"{type(error).__name__}: {error}"
@@ -238,8 +322,10 @@ def build_reversal_patch(baseline: Mapping[str, bytes], candidate: Mapping[str, 
                 "index e69de29..0000000\n"
             )
             continue
-        for line in difflib.unified_diff(old_lines, new_lines, fromfile, tofile, lineterm="\n"):
-            if line.startswith(("--- ", "+++ ", "@@ ")) or line.endswith("\n"):
+        for index, line in enumerate(
+            difflib.unified_diff(old_lines, new_lines, fromfile, tofile, lineterm="\n")
+        ):
+            if index < 2 or line.startswith("@@ ") or line.endswith("\n"):
                 chunks.append(line)
             else:
                 chunks.append(f"{line}\n\\ No newline at end of file\n")
