@@ -8,9 +8,42 @@ integration surface.
 from __future__ import annotations
 
 from typing import Any
+from pathlib import Path
 
 
 _INITIALIZED = False
+
+
+def register_local_peer_adapters(
+    *,
+    roots: tuple[str | Path, ...] | list[str | Path] | None = None,
+) -> tuple[str, ...]:
+    from sophyane.ecosystem_capabilities import discover_badrpk_capabilities
+    from sophyane.ecosystem_contract import load_local_manifest
+    from sophyane.peer_capability_adapter import register_peer_adapter
+    from sophyane.peer_process_adapter import LocalPeerProcessAdapter
+
+    discovered = discover_badrpk_capabilities(roots=roots)
+    registered: list[str] = []
+    for item in discovered:
+        if not item.local_available or not item.contract_valid or not item.root:
+            continue
+        manifest = load_local_manifest(item.root, repository=item.repository)
+        if manifest is None or not manifest.operations:
+            continue
+        operations = dict(manifest.operations)
+        adapter = LocalPeerProcessAdapter(
+            item.repository,
+            Path(item.root),
+            operations,
+        )
+        register_peer_adapter(
+            repository=item.repository,
+            capabilities=tuple(operations),
+            invoker=adapter.invoke,
+        )
+        registered.append(item.repository)
+    return tuple(sorted(set(registered)))
 
 
 def initialize_peer_adapters() -> tuple[str, ...]:
@@ -22,6 +55,8 @@ def initialize_peer_adapters() -> tuple[str, ...]:
 
     if _INITIALIZED:
         return peer_adapter_catalog()
+
+    register_local_peer_adapters()
 
     # NIFDU already has a Sophyane-native provider/guarded integration.
     # Do not create a second subprocess implementation here. The graph
@@ -85,5 +120,6 @@ def peer_runtime_status() -> dict[str, Any]:
 
 __all__ = [
     "initialize_peer_adapters",
+    "register_local_peer_adapters",
     "peer_runtime_status",
 ]

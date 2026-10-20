@@ -1,4 +1,7 @@
 import json
+import os
+import sys
+import time
 from pathlib import Path
 
 from sophyane.ecosystem_capabilities import discover_badrpk_capabilities
@@ -88,3 +91,132 @@ def test_remote_metadata_never_makes_peer_execution_ready(monkeypatch, tmp_path)
     assert veyron.remote_available is True
     assert veyron.local_available is False
     assert veyron.execution_ready is False
+
+
+def executable(path: Path, body: str) -> Path:
+    path.write_text(f"#!{sys.executable}\n{body}\n")
+    path.chmod(0o700)
+    return path
+
+
+def adapter_for(tmp_path, argv, **kwargs):
+    from sophyane.ecosystem_contract import ManifestOperation
+    from sophyane.peer_process_adapter import LocalPeerProcessAdapter
+
+    return LocalPeerProcessAdapter(
+        "fixture",
+        tmp_path,
+        {"status": ManifestOperation(tuple(argv), **kwargs)},
+    )
+
+
+def test_process_adapter_runs_fixed_argv_without_shell_interpretation(tmp_path):
+    script = executable(
+        tmp_path / "echo_args.py",
+        "import sys; print(sys.argv[1])",
+    )
+    adapter = adapter_for(
+        tmp_path,
+        [str(script), "literal; echo injected"],
+    )
+
+    result = adapter.invoke("status", "ignored objective", str(tmp_path))
+
+    assert result.ok is True
+    assert result.output.strip() == "literal; echo injected"
+    assert result.evidence["exit_status"] == 0
+    assert result.evidence["shell"] is False
+
+
+def test_process_adapter_rejects_unknown_capability(tmp_path):
+    result = adapter_for(tmp_path, [sys.executable, "-c", "print('ok')"]).invoke(
+        "build", "", str(tmp_path)
+    )
+
+    assert result.handled is False
+    assert result.ok is False
+    assert result.evidence["reason"] == "PEER_CAPABILITY_UNSUPPORTED"
+
+
+def test_process_adapter_reports_missing_executable(tmp_path):
+    result = adapter_for(tmp_path, [str(tmp_path / "missing")]).invoke(
+        "status", "", str(tmp_path)
+    )
+
+    assert result.handled is True
+    assert result.ok is False
+    assert result.evidence["reason"] == "PEER_EXECUTABLE_UNAVAILABLE"
+
+
+def test_process_adapter_reports_nonzero_exit(tmp_path):
+    script = executable(
+        tmp_path / "fail.py",
+        "import sys; print('failed'); sys.exit(7)",
+    )
+    result = adapter_for(tmp_path, [str(script)]).invoke("status", "", str(tmp_path))
+
+    assert result.ok is False
+    assert result.evidence["exit_status"] == 7
+    assert result.output.strip() == "failed"
+
+
+def test_process_adapter_bounds_timeout(tmp_path):
+    script = executable(
+        tmp_path / "slow.py",
+        "import time; time.sleep(1)",
+    )
+    started = time.monotonic()
+    result = adapter_for(
+        tmp_path,
+        [str(script)],
+        timeout_seconds=0.05,
+    ).invoke("status", "", str(tmp_path))
+
+    assert time.monotonic() - started < 0.8
+    assert result.ok is False
+    assert result.evidence["reason"] == "PEER_COMMAND_TIMEOUT"
+
+
+def test_process_adapter_bounds_output_and_sanitizes_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("PEER_SECRET", "must-not-leak")
+    script = executable(
+        tmp_path / "output.py",
+        "import os; print(os.environ.get('PEER_SECRET', 'missing')); print('x' * 5000)",
+    )
+    result = adapter_for(
+        tmp_path,
+        [str(script)],
+        max_output_bytes=128,
+    ).invoke("status", "", str(tmp_path))
+
+    assert result.ok is True
+    assert "must-not-leak" not in result.output
+    assert len(result.output.encode()) <= 128
+    assert result.evidence["output_truncated"] is True
+
+
+def test_local_registration_requires_a_valid_local_operation_manifest(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("SOPHYANE_ECOSYSTEM_REMOTE", "0")
+    script = executable(tmp_path / "status.py", "print('ready')")
+    write_manifest(
+        tmp_path / "huobz",
+        "huobz",
+        operations={
+            "status": {
+                "argv": [str(script)],
+                "timeout_seconds": 5,
+                "max_output_bytes": 1024,
+            }
+        },
+    )
+
+    from sophyane.ecosystem_peer_runtime import register_local_peer_adapters
+    from sophyane.peer_capability_adapter import peer_adapter_catalog
+
+    registered = register_local_peer_adapters(roots=[tmp_path])
+
+    assert "huobz" in registered
+    assert "huobz" in peer_adapter_catalog()

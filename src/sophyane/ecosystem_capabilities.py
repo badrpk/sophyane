@@ -192,6 +192,7 @@ def _candidate_roots(
     candidates.extend(
         (
             home,
+            home / "badrpk-repos",
             home / "badrpk",
             home / "repos",
             home / "projects",
