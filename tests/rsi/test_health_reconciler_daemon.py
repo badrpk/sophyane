@@ -34,5 +34,6 @@ def test_health_reconciler_can_be_stopped_without_another_tick(tmp_path):
     runtime = SimpleNamespace(repository_inventory=SimpleNamespace(records=()), promotion_managers={})
     reconciler = build_health_reconciler(tmp_path / "state", runtime)
     reconciler.close()
-    with pytest.raises(Exception):
-        run_health_tick(reconciler)
+    result = run_health_tick(reconciler)
+    assert result["status"] == "paused"
+    assert result["failure_boundary"] == "sqlite_state"

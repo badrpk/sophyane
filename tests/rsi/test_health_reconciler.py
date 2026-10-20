@@ -1,5 +1,6 @@
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 from sophyane.rsi.health_reconciler import HealthReconciler
 
@@ -128,3 +129,35 @@ def test_rollback_failure_is_recorded_without_repeating_or_touching_other_node(t
     assert reconciler.status()["nodes"]["bad"]["rollback_state"] == "rollback_failed"
     assert reconciler.status()["nodes"]["good"]["status"] == "healthy"
     assert changed.read_text() == "preserve\n"
+
+
+def test_locked_sqlite_state_fails_closed_without_raising(tmp_path):
+    database = tmp_path / "health.sqlite3"
+    reconciler = HealthReconciler(database)
+    reconciler.register_node("node-a", tmp_path / "repo-a", "commit", lambda: None)
+    locker = sqlite3.connect(database)
+    locker.execute("BEGIN EXCLUSIVE")
+
+    result = reconciler.tick()
+
+    locker.rollback()
+    locker.close()
+    assert result["status"] == "paused"
+    assert result["failure_boundary"] == "sqlite_state"
+
+
+def test_unsuccessful_rollback_result_is_recorded_as_failure(tmp_path):
+    reconciler = HealthReconciler(
+        tmp_path / "health.sqlite3",
+        sampler=lambda *_args: (_ for _ in ()).throw(RuntimeError("node failed")),
+        git_probe=lambda _repository: "commit",
+    )
+    reconciler.register_node(
+        "node-a", tmp_path / "repo-a", "commit",
+        lambda: SimpleNamespace(promoted=False, reason="live branch diverged"),
+    )
+
+    for _ in range(3):
+        reconciler.tick()
+
+    assert reconciler.status()["nodes"]["node-a"]["rollback_state"] == "rollback_failed"

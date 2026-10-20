@@ -136,6 +136,18 @@ class HealthReconciler:
         self._connection.commit()
 
     def tick(self) -> dict[str, object]:
+        try:
+            return self._tick()
+        except sqlite3.Error as exc:
+            return {
+                "status": "paused",
+                "nodes": {},
+                "pruned": [],
+                "failure_boundary": "sqlite_state",
+                "reason": f"{type(exc).__name__}: {exc}",
+            }
+
+    def _tick(self) -> dict[str, object]:
         now = float(self.clock())
         stale = self._connection.execute(
             "SELECT node_id FROM nodes WHERE ? - last_heartbeat > ? ORDER BY node_id",
@@ -205,7 +217,9 @@ class HealthReconciler:
             try:
                 if callback is None:
                     raise RuntimeError("rollback callback unavailable")
-                callback()
+                outcome = callback()
+                if hasattr(outcome, "promoted") and not bool(outcome.promoted):
+                    raise RuntimeError(str(getattr(outcome, "reason", "rollback rejected")))
                 rollback_state = "rolled_back"
                 event = "rollback_triggered"
                 detail = "failure threshold reached"
