@@ -653,6 +653,22 @@ def _is_judge_validation_request(message: str) -> bool:
     )
 
 
+def _is_navier_stokes_request(message: str) -> bool:
+    text = _normalise(message).casefold()
+    return any(term in text for term in ("navier-stokes", "navier stokes", "navier stroke"))
+
+
+def _execute_navier_stokes_request(message: str, workspace: Path) -> CapabilityExecution:
+    from sophyane.navier_stokes_capability import run_taylor_green, unsupported_three_dimensional_request
+    text = _normalise(message).casefold()
+    if (("3d" in text or "three-dimensional" in text or "three dimensional" in text)
+            and any(word in text for word in ("solve", "prove", "existence", "smoothness"))):
+        result = unsupported_three_dimensional_request(workspace)
+    else:
+        result = run_taylor_green(workspace)
+    return CapabilityExecution(result.ok, result.capability_id, result.text, result.data)
+
+
 def execute_deterministic_capability(
     message: str,
     *,
@@ -665,6 +681,9 @@ def execute_deterministic_capability(
         return None
 
     base = Path(workspace or Path.cwd()).expanduser()
+
+    if _is_navier_stokes_request(request):
+        return _execute_navier_stokes_request(request, base)
 
     # --- Highest priority harness short-circuits ---
     if _is_shell_exit_probe_request(request):
