@@ -91,6 +91,7 @@ def discover_local_repositories(
     roots: Iterable[Path] | None = None,
     *,
     owner: str | None = None,
+    prefer_cwd: bool = True,
 ) -> list[tuple[Path, str, str, str]]:
     """Discover local Git repositories belonging to the configured owner."""
 
@@ -147,6 +148,10 @@ def discover_local_repositories(
             except OSError:
                 continue
 
+            # A child symlink must not expand the configured search boundary.
+            if not resolved.is_relative_to(root):
+                continue
+
             if resolved in seen:
                 continue
 
@@ -194,7 +199,7 @@ def discover_local_repositories(
         ) -> tuple[int, int, str]:
             path = item[0].resolve()
             return (
-                0 if path == cwd else 1,
+                0 if prefer_cwd and path == cwd else 1,
                 len(path.parts),
                 str(path),
             )
