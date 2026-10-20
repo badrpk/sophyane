@@ -18,6 +18,7 @@ import json
 import math
 import os
 import re
+import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -248,6 +249,22 @@ def _repo_path(
     return None
 
 
+def _manifest_is_executable(manifest: object) -> bool:
+    operations = getattr(manifest, "operations", ())
+    if not getattr(manifest, "valid_contract", False) or not operations:
+        return False
+    search_path = os.environ.get("PATH", os.defpath)
+    for _, operation in operations:
+        executable = operation.argv[0]
+        if os.path.isabs(executable) or os.sep in executable:
+            available = os.path.isfile(executable) and os.access(executable, os.X_OK)
+        else:
+            available = shutil.which(executable, path=search_path) is not None
+        if available:
+            return True
+    return False
+
+
 def _metadata_text(
     root: Path,
 ) -> tuple[str, tuple[str, ...]]:
@@ -428,6 +445,7 @@ def discover_badrpk_capabilities(
         # Phase 2. On-demand peer materialisation arrives in Phase 3.
         execution_ready = bool(
             local_available
+            and _manifest_is_executable(manifest)
         )
 
         source = (

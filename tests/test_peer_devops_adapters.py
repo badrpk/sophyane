@@ -52,10 +52,34 @@ def test_local_manifest_preserves_explicit_safe_operations(tmp_path):
     )
 
 
+def test_local_manifest_rejects_unsafe_operation_commands(tmp_path):
+    write_manifest(
+        tmp_path,
+        "huobz",
+        operations={
+            "deploy": {
+                "argv": ["sh", "-c", "rm -rf /"],
+            }
+        },
+    )
+
+    manifest = load_local_manifest(tmp_path, repository="huobz")
+
+    assert manifest is not None
+    assert manifest.valid_contract is False
+
+
 def test_local_root_discovery_marks_local_manifest_ready(monkeypatch, tmp_path):
     peer_root = tmp_path / "peers"
-    write_manifest(peer_root / "huobz", "huobz")
-    write_manifest(peer_root / "rangoons", "rangoons")
+    operation = {
+        "status": {
+            "argv": [sys.executable, "-c", "print('ready')"],
+            "timeout_seconds": 5,
+            "max_output_bytes": 1024,
+        }
+    }
+    write_manifest(peer_root / "huobz", "huobz", operations=operation)
+    write_manifest(peer_root / "rangoons", "rangoons", operations=operation)
     monkeypatch.setenv("SOPHYANE_BADRPK_ROOT", str(peer_root))
     monkeypatch.setenv("SOPHYANE_ECOSYSTEM_REMOTE", "0")
 
@@ -66,6 +90,25 @@ def test_local_root_discovery_marks_local_manifest_ready(monkeypatch, tmp_path):
     assert by_name["huobz"].execution_ready is True
     assert by_name["rangoons"].local_available is True
     assert by_name["rangoons"].execution_ready is True
+
+
+def test_invalid_or_unexecutable_local_manifests_are_not_execution_ready(
+    tmp_path,
+):
+    write_manifest(
+        tmp_path / "huobz",
+        "huobz",
+        operations={
+            "status": {
+                "argv": [str(tmp_path / "missing")],
+                "timeout_seconds": 5,
+                "max_output_bytes": 1024,
+            }
+        },
+    )
+    capabilities = discover_badrpk_capabilities(roots=[tmp_path])
+    huobz = next(item for item in capabilities if item.repository == "huobz")
+    assert huobz.execution_ready is False
 
 
 def test_remote_metadata_never_makes_peer_execution_ready(monkeypatch, tmp_path):
@@ -200,13 +243,12 @@ def test_local_registration_requires_a_valid_local_operation_manifest(
     tmp_path,
 ):
     monkeypatch.setenv("SOPHYANE_ECOSYSTEM_REMOTE", "0")
-    script = executable(tmp_path / "status.py", "print('ready')")
     write_manifest(
         tmp_path / "huobz",
         "huobz",
         operations={
             "status": {
-                "argv": [str(script)],
+                    "argv": [sys.executable, "-c", "print('ready')"],
                 "timeout_seconds": 5,
                 "max_output_bytes": 1024,
             }
@@ -220,6 +262,37 @@ def test_local_registration_requires_a_valid_local_operation_manifest(
 
     assert "huobz" in registered
     assert "huobz" in peer_adapter_catalog()
+
+
+def test_local_registration_skips_missing_executable_and_clears_stale_adapter(
+    tmp_path,
+):
+    from sophyane.ecosystem_peer_runtime import register_local_peer_adapters
+    from sophyane.peer_capability_adapter import (
+        peer_adapter_catalog,
+        register_peer_adapter,
+    )
+
+    register_peer_adapter(
+        repository="huobz",
+        capabilities=("status",),
+        invoker=lambda *_: None,
+    )
+    write_manifest(
+        tmp_path / "huobz",
+        "huobz",
+        operations={
+            "status": {
+                "argv": [str(tmp_path / "missing")],
+                "timeout_seconds": 5,
+                "max_output_bytes": 1024,
+            }
+        },
+    )
+
+    register_local_peer_adapters(roots=[tmp_path])
+
+    assert "huobz" not in peer_adapter_catalog()
 
 
 def test_all_four_peer_adapters_register_and_execute_from_fixture_roots(tmp_path):

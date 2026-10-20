@@ -20,18 +20,30 @@ def register_local_peer_adapters(
 ) -> tuple[str, ...]:
     from sophyane.ecosystem_capabilities import discover_badrpk_capabilities
     from sophyane.ecosystem_contract import load_local_manifest
-    from sophyane.peer_capability_adapter import register_peer_adapter
+    from sophyane.peer_capability_adapter import (
+        register_peer_adapter,
+        unregister_peer_adapter,
+    )
     from sophyane.peer_process_adapter import LocalPeerProcessAdapter
 
     discovered = discover_badrpk_capabilities(roots=roots)
     registered: list[str] = []
     for item in discovered:
-        if not item.local_available or not item.contract_valid or not item.root:
+        if not item.local_available:
+            continue
+        unregister_peer_adapter(repository=item.repository)
+        if not item.contract_valid or not item.root:
             continue
         manifest = load_local_manifest(item.root, repository=item.repository)
         if manifest is None or not manifest.operations:
             continue
-        operations = dict(manifest.operations)
+        operations = {
+            name: operation
+            for name, operation in manifest.operations
+            if LocalPeerProcessAdapter.executable_available(operation.argv)
+        }
+        if not operations:
+            continue
         adapter = LocalPeerProcessAdapter(
             item.repository,
             Path(item.root),

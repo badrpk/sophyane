@@ -38,7 +38,7 @@ class LocalPeerProcessAdapter:
         }
 
     @staticmethod
-    def _executable_available(argv: tuple[str, ...]) -> bool:
+    def executable_available(argv: tuple[str, ...]) -> bool:
         executable = argv[0]
         if os.path.isabs(executable) or os.sep in executable:
             return os.path.isfile(executable) and os.access(executable, os.X_OK)
@@ -82,7 +82,7 @@ class LocalPeerProcessAdapter:
                 output="",
                 evidence={**base_evidence, "reason": "PEER_ROOT_UNAVAILABLE"},
             )
-        if not self._executable_available(operation.argv):
+        if not self.executable_available(operation.argv):
             return PeerCapabilityResult(
                 handled=True,
                 ok=False,

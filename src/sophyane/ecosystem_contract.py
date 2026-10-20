@@ -22,6 +22,11 @@ from typing import Any, Callable
 
 SCHEMA = "sophyane-ecosystem-v1"
 
+_SAFE_OPERATION_NAMES = {"build", "check", "status", "test"}
+_SAFE_EXECUTABLES = {
+    "cmake", "node", "npm", "python", "python3", "pytest", "unittest"
+}
+
 REPOSITORIES: dict[str, dict[str, str]] = {
     "neuron": {
         "owner": "badrpk",
@@ -331,6 +336,12 @@ def _manifest_from_data(
                     not isinstance(raw_argv, list)
                     or not raw_argv
                     or any(not isinstance(item, str) or not item for item in raw_argv)
+                ):
+                    operations_valid = False
+                    continue
+                if (
+                    operation_name not in _SAFE_OPERATION_NAMES
+                    or Path(raw_argv[0]).name.casefold() not in _SAFE_EXECUTABLES
                 ):
                     operations_valid = False
                     continue

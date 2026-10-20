@@ -116,6 +116,13 @@ class PeerCapabilityRegistry:
                 )
             )
 
+    def unregister(self, repository: str) -> None:
+        normalized = str(repository or "").strip().casefold()
+        if not normalized:
+            return
+        with self._lock:
+            self._items.pop(normalized, None)
+
     def supports(
         self,
         *,
@@ -232,6 +239,10 @@ def register_peer_adapter(
     )
 
 
+def unregister_peer_adapter(*, repository: str) -> None:
+    _REGISTRY.unregister(repository)
+
+
 def invoke_peer_capability(
     *,
     repository: str,
@@ -269,4 +280,5 @@ __all__ = [
     "invoke_peer_capability",
     "peer_adapter_catalog",
     "register_peer_adapter",
+    "unregister_peer_adapter",
 ]
