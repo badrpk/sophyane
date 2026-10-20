@@ -414,7 +414,26 @@ def build_controller(state_dir, *, active=lambda: True):
     def meta_measure(path):
         from .verification import run_command
         spec = next(iter(specs.values()))
-        result = (execute_command or run_command)(tuple(spec['meta_command']), path, timeout=min(300, spec.get('timeout', 60)))
+        measurement_path = Path(path)
+        temporary_snapshot = None
+        if execute_command is not None:
+            from .candidate_workspace import snapshot
+            if any(item.is_symlink() for item in measurement_path.rglob('*')):
+                temporary_snapshot = tempfile.TemporaryDirectory(prefix='rsi-qemu-meta-')
+                measurement_path = Path(temporary_snapshot.name)
+                for name, value in snapshot(path).files.items():
+                    target = measurement_path / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(value)
+        try:
+            result = (execute_command or run_command)(
+                tuple(spec['meta_command']),
+                measurement_path,
+                timeout=min(300, spec.get('timeout', 60)),
+            )
+        finally:
+            if temporary_snapshot is not None:
+                temporary_snapshot.cleanup()
         if result.exit_code:
             raise ValueError('Meta benchmark failed')
         return json.loads(result.output)
