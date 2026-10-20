@@ -34,13 +34,32 @@ containment boundary.
   failed during collection with `ModuleNotFoundError: No module named
   'sophyane.mutation'`, as expected before package creation.
 - GREEN: the same command completed with **9 passed, 1 skipped**.
-- The hard-link fixture is skipped because the Termux filesystem rejects
-  creating hard links with `EACCES`. The production snapshot check rejects
-  source files where `st_nlink != 1`; that behavior could not be exercised in
-  this environment.
+- The initial hard-link fixture run skipped because this Termux filesystem
+  denied link creation with `EACCES`. The follow-up test now simulates
+  `st_nlink > 1` when link creation is denied, and skips only when the platform
+  reports hard links are unsupported (`ENOSYS` or `EOPNOTSUPP`).
 - `git diff --check` completed with no whitespace errors.
 
 ## Scope and commit
 
 Committed only the Task 1 package, focused tests, and this report. Existing
 unrelated dirty repository changes were left unstaged and untouched.
+
+## Review fix round 1
+
+- Added fail-closed `onerror` handling to source copying and transaction
+  snapshots; filesystem walk errors now propagate instead of silently
+  omitting entries.
+- Replacement writes now traverse from a pinned transaction directory
+  descriptor, write a fresh same-directory temporary file, and atomically
+  replace the target. A destination symlink swap therefore replaces the link
+  itself and does not write through it; hard-link swaps likewise cannot
+  redirect the write to the linked inode.
+- Added tests that inject source/snapshot walk errors and swap the replacement
+  target to an external symlink immediately before atomic replacement.
+- RED: all three focused review cases failed against the prior implementation.
+- GREEN: `env PYTHONPATH=src ./.venv/bin/python -m pytest -q tests/mutation/test_containment.py`
+  completed with **13 passed**.
+- The actual hard-link creation path remains unavailable under this
+  environment's filesystem permissions (`EACCES`); the test exercises the
+  multiple-link metadata rejection path as a fallback.

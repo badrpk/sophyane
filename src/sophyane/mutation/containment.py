@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import secrets
 import shutil
 import stat
 import tempfile
@@ -66,6 +67,7 @@ class MutationLab:
         try:
             transaction._copy_source()
         except BaseException:
+            transaction.close()
             shutil.rmtree(transaction_path)
             raise
         return transaction
@@ -80,6 +82,14 @@ class LabTransaction:
         self.transaction_id = self.path.name.removeprefix("mutation-")
         self._baseline: dict[str, bytes] = {}
         self._closed = False
+        self._root_fd = os.open(
+            self.path,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+
+    @staticmethod
+    def _raise_walk_error(error: OSError) -> None:
+        raise error
 
     @property
     def baseline_files(self) -> Mapping[str, bytes]:
@@ -90,7 +100,9 @@ class LabTransaction:
         return _hash_files(self._baseline)
 
     def _copy_source(self) -> None:
-        for current, directories, filenames in os.walk(self.source_root, followlinks=False):
+        for current, directories, filenames in os.walk(
+            self.source_root, followlinks=False, onerror=self._raise_walk_error
+        ):
             current_path = Path(current)
             kept_dirs: list[str] = []
             for directory in directories:
@@ -132,6 +144,60 @@ class LabTransaction:
         if self._closed:
             raise RuntimeError("mutation transaction is closed")
 
+    def _open_parent_directory(self, parts: tuple[str, ...]) -> int:
+        descriptor = os.dup(self._root_fd)
+        try:
+            for part in parts:
+                next_descriptor = os.open(
+                    part,
+                    os.O_RDONLY
+                    | getattr(os, "O_DIRECTORY", 0)
+                    | getattr(os, "O_NOFOLLOW", 0),
+                    dir_fd=descriptor,
+                )
+                os.close(descriptor)
+                descriptor = next_descriptor
+            return descriptor
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    def _atomic_replace_text(self, name: str, text: str) -> None:
+        parts = _relative_path(name).parts
+        parent_fd = self._open_parent_directory(parts[:-1])
+        temp_name = f".mutation-{secrets.token_hex(12)}.tmp"
+        temp_fd = -1
+        try:
+            target_info = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
+            if not stat.S_ISREG(target_info.st_mode):
+                raise LabPathError(f"replacement target is not a regular file: {name!r}")
+            temp_fd = os.open(
+                temp_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                stat.S_IMODE(target_info.st_mode),
+                dir_fd=parent_fd,
+            )
+            data = text.encode("utf-8")
+            offset = 0
+            while offset < len(data):
+                offset += os.write(temp_fd, data[offset:])
+            os.close(temp_fd)
+            temp_fd = -1
+            os.replace(
+                temp_name,
+                parts[-1],
+                src_dir_fd=parent_fd,
+                dst_dir_fd=parent_fd,
+            )
+        finally:
+            if temp_fd >= 0:
+                os.close(temp_fd)
+            try:
+                os.unlink(temp_name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+            os.close(parent_fd)
+
     def _checked_target(self, relative: str) -> Path:
         parsed = _relative_path(relative)
         target = self.path.joinpath(*parsed.parts)
@@ -162,12 +228,14 @@ class LabTransaction:
                 raise LabPathError(f"replacement target is not a single-link regular file: {name!r}")
             checked.append((target, text))
         for target, text in checked:
-            target.write_text(text, encoding="utf-8")
+            self._atomic_replace_text(target.relative_to(self.path).as_posix(), text)
 
     def snapshot(self) -> Mapping[str, bytes]:
         self._ensure_open()
         files: dict[str, bytes] = {}
-        for current, directories, filenames in os.walk(self.path, followlinks=False):
+        for current, directories, filenames in os.walk(
+            self.path, followlinks=False, onerror=self._raise_walk_error
+        ):
             current_path = Path(current)
             for directory in directories:
                 if (current_path / directory).is_symlink():
@@ -208,4 +276,6 @@ class LabTransaction:
                     child.rmdir()
 
     def close(self) -> None:
-        self._closed = True
+        if not self._closed:
+            os.close(self._root_fd)
+            self._closed = True

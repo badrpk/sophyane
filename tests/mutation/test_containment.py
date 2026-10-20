@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from sophyane.mutation import DEFAULT_LAB_ROOT, LabPathError, MutationLab
+from sophyane.mutation import containment
 
 
 def _source(tmp_path: Path) -> Path:
@@ -78,7 +79,61 @@ def test_rejects_source_symlinks(tmp_path: Path) -> None:
         MutationLab(tmp_path / "lab").create_transaction(source)
 
 
-def test_rejects_source_hard_links(tmp_path: Path) -> None:
+@pytest.mark.parametrize("operation", ["copy", "snapshot"])
+def test_filesystem_walk_errors_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    source = _source(tmp_path)
+    transaction = MutationLab(tmp_path / "lab").create_transaction(source)
+    original_walk = containment.os.walk
+
+    def failing_walk(root, *args, **kwargs):
+        if Path(root) in (source, transaction.path):
+            error = PermissionError("directory became unreadable")
+            onerror = kwargs.get("onerror")
+            if onerror is None:
+                return
+            onerror(error)
+        yield from original_walk(root, *args, **kwargs)
+
+    monkeypatch.setattr(containment.os, "walk", failing_walk)
+    if operation == "copy":
+        with pytest.raises(PermissionError, match="unreadable"):
+            MutationLab(tmp_path / "other-lab").create_transaction(source)
+    else:
+        with pytest.raises(PermissionError, match="unreadable"):
+            transaction.snapshot()
+
+
+def test_replacement_does_not_follow_target_symlink_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _source(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep me\n")
+    transaction = MutationLab(tmp_path / "lab").create_transaction(source)
+    target = transaction.path / "pkg" / "module.py"
+    real_replace = containment.os.replace
+    swapped = False
+
+    def swap_before_replace(source_name, target_name, *args, **kwargs):
+        nonlocal swapped
+        if target_name == "module.py" and kwargs.get("dst_dir_fd") is not None and not swapped:
+            target.unlink()
+            target.symlink_to(outside)
+            swapped = True
+        return real_replace(source_name, target_name, *args, **kwargs)
+
+    monkeypatch.setattr(containment.os, "replace", swap_before_replace)
+    transaction.apply_replacements({"pkg/module.py": "MUTATED\n"}, ("pkg/module.py",))
+
+    assert swapped
+    assert outside.read_text() == "keep me\n"
+    assert target.is_file() and not target.is_symlink()
+    assert target.read_text() == "MUTATED\n"
+
+
+def test_rejects_source_hard_links(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = _source(tmp_path)
     link = ctypes.CDLL(None, use_errno=True).link
     link.argtypes = (ctypes.c_char_p, ctypes.c_char_p)
@@ -89,9 +144,25 @@ def test_rejects_source_hard_links(tmp_path: Path) -> None:
     )
     if result != 0:
         error = ctypes.get_errno()
-        if error in (errno.EACCES, errno.ENOSYS, errno.EPERM, errno.EOPNOTSUPP):
+        if error in (errno.ENOSYS, errno.EOPNOTSUPP):
             pytest.skip(f"filesystem hard links unavailable: {os.strerror(error)}")
-        raise OSError(error, os.strerror(error))
+        if error not in (errno.EACCES, errno.EPERM):
+            raise OSError(error, os.strerror(error))
+
+        # Restricted Termux filesystems may deny link creation even when the
+        # kernel supports it. Exercise the same st_nlink guard in that case.
+        source_file = source / "pkg" / "module.py"
+        original_lstat = Path.lstat
+
+        def report_multiple_links(path: Path, *args, **kwargs):
+            info = original_lstat(path, *args, **kwargs)
+            if path == source_file:
+                values = list(info)
+                values[3] = 2
+                return os.stat_result(values)
+            return info
+
+        monkeypatch.setattr(Path, "lstat", report_multiple_links)
 
     with pytest.raises(LabPathError, match="hard link"):
         MutationLab(tmp_path / "lab").create_transaction(source)
