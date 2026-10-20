@@ -383,3 +383,61 @@ def test_checker_leader_exit_cannot_leave_forked_descendant_running(
         time.sleep(0.02)
     else:
         pytest.fail("checker descendant remained alive after timeout cleanup")
+
+
+def test_checker_descendant_output_after_leader_exit_hits_output_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sophyane.mutation import verification
+
+    lab, transaction = _transaction(tmp_path)
+    (transaction / "sample.py").write_text("VALUE = 1\n")
+    child_pid_file = transaction / "sample.py.child"
+    monkeypatch.setattr(
+        verification,
+        "_PYTHON_CHECK",
+        (
+            "import os, sys, time; "
+            "child = os.fork(); "
+            "(open(sys.argv[1] + '.child', 'w').write(str(os.getpid())), "
+            "time.sleep(0.05), sys.stdout.write('x' * "
+            f"{verification._MAX_CHECK_OUTPUT + 1}" "), sys.stdout.flush(), time.sleep(30)) "
+            "if child == 0 else None"
+        ),
+    )
+    selector_type = verification.selectors.DefaultSelector
+    original_select = selector_type.select
+    delayed = False
+
+    def delay_first_select(selector, timeout=None):
+        nonlocal delayed
+        if not delayed:
+            delayed = True
+            time.sleep(0.1)
+            return []
+        return original_select(selector, timeout)
+
+    monkeypatch.setattr(selector_type, "select", delay_first_select)
+
+    result = StaticVerifier(timeout_seconds=0.5, lab_root=lab).run(
+        transaction, ("sample.py",), ()
+    )
+
+    assert not result.ok and result.failure_boundary == "output_limit"
+    child_pid = int(child_pid_file.read_text())
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        state_path = Path(f"/proc/{child_pid}/stat")
+        try:
+            state = state_path.read_text().split()[2]
+        except (FileNotFoundError, ProcessLookupError):
+            break
+        if state == "Z":
+            break
+        time.sleep(0.02)
+    else:
+        pytest.fail("checker descendant remained alive after output-limit cleanup")

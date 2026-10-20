@@ -157,11 +157,18 @@ class StaticVerifier:
                 events = selector.select(min(remaining, 0.05))
                 if not events and process.poll() is not None:
                     for stream in tuple(streams):
-                        try:
-                            chunk = stream.read() or b""
-                        except BlockingIOError:
-                            chunk = b""
-                        streams[stream].extend(chunk)
+                        while True:
+                            try:
+                                chunk = stream.read(8192) or b""
+                            except BlockingIOError:
+                                chunk = b""
+                            if not chunk:
+                                break
+                            total += len(chunk)
+                            if total > _MAX_CHECK_OUTPUT:
+                                self._kill_process_group(process)
+                                return "output_limit", "checker output exceeded capture limit"
+                            streams[stream].extend(chunk)
                     if not self._process_group_exists(process.pid):
                         break
                     time.sleep(min(remaining, 0.01))
