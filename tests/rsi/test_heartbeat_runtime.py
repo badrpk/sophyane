@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from sophyane.rsi.curriculum import CurriculumTask, ResourceClass, TaskSource
+from sophyane.rsi.curriculum import CurriculumTask, CurriculumStore, ResourceClass, TaskSource
 from sophyane.rsi.curriculum_proposals import ProposalResult
 from sophyane.rsi.heartbeat import HeartbeatRecord, HeartbeatStore
 from sophyane.rsi.heartbeat_runtime import ContinuousRSIWorker, RSIWatchdog
@@ -77,6 +77,19 @@ def test_worker_requests_one_task_when_queue_is_empty(tmp_path: Path):
     assert [item.task_id for item in runtime.enqueued] == ["task-2"]
 
 
+def test_worker_records_proposal_provenance_after_enqueue(tmp_path: Path):
+    store = heartbeat(tmp_path)
+    runtime = FakeRuntime()
+    runtime.scheduler.store = CurriculumStore(tmp_path / "curriculum.json")
+    worker = ContinuousRSIWorker(runtime, store, FakeSource(), context_factory=lambda: "context")
+
+    worker.run_once()
+
+    events = (tmp_path / "curriculum.events.jsonl").read_text(encoding="utf-8")
+    assert '"event": "proposal_provenance"' in events
+    assert '"task_id": "task-2"' in events
+
+
 def test_worker_reports_rejected_proposal_in_heartbeat(tmp_path: Path):
     store = heartbeat(tmp_path)
     runtime = FakeRuntime()
@@ -114,6 +127,22 @@ def test_runtime_services_wires_heartbeat_and_llm_source(tmp_path: Path, monkeyp
     assert runtime.enabled is True
     assert runtime.heartbeat.path == tmp_path / "heartbeat.json"
     assert runtime.task_source is not None
+    assert runtime.task_source.proposal_adapter.generator == "codex_cli"
+
+
+def test_runtime_services_describes_demo_score_contract_to_proposal_llm(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("SOPHYANE_CONTINUOUS_RSI", raising=False)
+    controller = SimpleNamespace(
+        ledger=WeaknessLedger(),
+        plans={"demo_score": SimpleNamespace(allowed_paths=("src/sophyane/rsi_demo_target.py",))},
+    )
+
+    runtime = build_curriculum_runtime(tmp_path, controller)
+
+    summary = runtime.context_factory().capability_summary
+    assert "score() -> int" in summary
+    assert "score() == 3" in summary
+    assert "return 3" in summary
 
 
 def test_runtime_services_falls_back_to_bounded_task_when_local_llm_times_out(
@@ -121,6 +150,7 @@ def test_runtime_services_falls_back_to_bounded_task_when_local_llm_times_out(
     monkeypatch,
 ):
     monkeypatch.delenv("SOPHYANE_CONTINUOUS_RSI", raising=False)
+    monkeypatch.setenv("SOPHYANE_RSI_PROPOSAL_PROVIDER", "local_gguf")
     controller = SimpleNamespace(
         ledger=WeaknessLedger(),
         plans={
@@ -148,6 +178,7 @@ def test_runtime_services_falls_back_when_local_llm_returns_malformed_json(
     monkeypatch,
 ):
     monkeypatch.delenv("SOPHYANE_CONTINUOUS_RSI", raising=False)
+    monkeypatch.setenv("SOPHYANE_RSI_PROPOSAL_PROVIDER", "local_gguf")
     controller = SimpleNamespace(
         ledger=WeaknessLedger(),
         plans={"demo_score": SimpleNamespace(allowed_paths=("src/sophyane/rsi_demo_target.py",))},

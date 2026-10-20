@@ -58,18 +58,21 @@ class ContinuousCurriculumRuntime:
         live_root = self.state_dir / "live-worktree"
         if not live_root.is_dir():
             return 0
-        state = self.store.load()
-        reconciled = 0
-        promoted_commit = str(promotion["active_commit"])
+        live_commit = ""
         try:
             result = subprocess.run(
                 ["git", "rev-parse", "HEAD"], cwd=live_root, capture_output=True, text=True, check=False
             )
-            if result.returncode == 0 and result.stdout.strip():
-                promoted_commit = result.stdout.strip()
+            if result.returncode == 0:
+                live_commit = result.stdout.strip()
         except OSError:
             pass
-        evidence_prefix = f"reconciled promoted live snapshot {promoted_commit}"
+        recorded_commit = str(promotion["active_commit"]).strip()
+        if live_commit and live_commit != recorded_commit:
+            return 0
+        state = self.store.load()
+        reconciled = 0
+        evidence_prefix = f"reconciled promoted live snapshot {recorded_commit}"
         for task in state.queue:
             if task.status not in {TaskStatus.QUEUED, TaskStatus.PAUSED} or not task.proposal_files:
                 continue

@@ -113,9 +113,9 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
         if "demo_score" in getattr(controller, "plans", {}):
             capability_summary += (
                 "; preserve src/sophyane/rsi_demo_target.py: define score() -> int and return an int; "
-                "the improvement contract requires score() == 2, while holdout requires score() >= 2 "
-                "and regression requires score() >= 1; use complete replacement text in files; "
-                "the concrete implementation must retain def score() -> int and return 2"
+                "the improvement contract requires score() == 3, while holdout and regression require score() >= 3; "
+                "use complete replacement text in files; the concrete implementation must retain def score() -> int "
+                "and return 3"
             )
         return ProposalContext(
             ability=ability,
