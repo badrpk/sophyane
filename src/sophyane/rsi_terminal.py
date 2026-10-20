@@ -76,6 +76,33 @@ def _positive_budget(name: str, default: int) -> int:
     return value
 
 
+def health_interval() -> float:
+    value = float(os.environ.get("SOPHYANE_RSI_HEALTH_INTERVAL_SECONDS", "30"))
+    if value <= 0:
+        raise ValueError("SOPHYANE_RSI_HEALTH_INTERVAL_SECONDS must be positive")
+    return value
+
+
+def build_health_reconciler(state_dir: Path, runtime):
+    from .rsi.health_reconciler import HealthReconciler
+
+    ttl = float(os.environ.get("SOPHYANE_RSI_HEALTH_TTL_SECONDS", "300"))
+    if ttl <= 0:
+        raise ValueError("SOPHYANE_RSI_HEALTH_TTL_SECONDS must be positive")
+    reconciler = HealthReconciler(Path(state_dir) / "health.sqlite3", ttl_seconds=ttl)
+    managers = getattr(runtime, "promotion_managers", {})
+    inventory = getattr(runtime, "repository_inventory", None)
+    for record in getattr(inventory, "records", ()):
+        manager = managers.get(record.repo_id)
+        if manager is not None and callable(getattr(manager, "rollback", None)):
+            reconciler.register_node(record.repo_id, Path(record.path), record.commit, manager.rollback)
+    return reconciler
+
+
+def run_health_tick(reconciler) -> dict[str, object]:
+    return reconciler.tick()
+
+
 def _multi_repo_status(state_dir: Path) -> dict[str, object]:
     state_dir = Path(state_dir)
     cursor: dict[str, object] = {"next_index": 0, "scanned_commits": {}}
@@ -292,6 +319,9 @@ def _serve(state_dir: Path) -> int:
     controller = build_controller(state_dir, active=lambda: False)
     runtime = build_curriculum_runtime(state_dir, controller)
     runtime.start()
+    health = build_health_reconciler(state_dir, runtime)
+    health_tick_interval = health_interval()
+    next_health_tick = time.monotonic()
     def run_cycle():
         return run_multi_repo_cycle(runtime, mode, max_files=max_files)
 
@@ -318,9 +348,12 @@ def _serve(state_dir: Path) -> int:
             stop_event.wait(min(1.0, runtime.heartbeat_interval))
 
     def run_worker():
-        nonlocal scans
+        nonlocal scans, next_health_tick
         while not stop_event.is_set():
             try:
+                if time.monotonic() >= next_health_tick:
+                    run_health_tick(health)
+                    next_health_tick = time.monotonic() + health_tick_interval
                 if watchdog is not None:
                     watchdog.check()
                 result = run_cycle()
@@ -376,6 +409,7 @@ def _serve(state_dir: Path) -> int:
         heartbeat_thread.join(timeout=2.0)
         if getattr(controller, "candidate", None):
             controller.candidate.close()
+        health.close()
         server.close()
         if sock_path.exists():
             sock_path.unlink()
