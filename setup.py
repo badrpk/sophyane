@@ -1,4 +1,14 @@
-from setuptools import find_packages, setup
+from setuptools import Extension, find_packages, setup
+
+
+native_reconciler = Extension(
+    "sophyane.native._reconciler",
+    sources=["src/sophyane/native/reconciler.cpp"],
+    language="c++",
+    libraries=["sqlite3"],
+    extra_compile_args=["-std=c++17", "-O3", "-pthread"],
+    extra_link_args=["-pthread"],
+)
 
 
 setup(
@@ -10,6 +20,7 @@ setup(
     ),
     packages=find_packages(where="src"),
     package_dir={"": "src"},
+    ext_modules=[native_reconciler],
     entry_points={
         "console_scripts": [
             "sophyane=sophyane.cli_entry:main",

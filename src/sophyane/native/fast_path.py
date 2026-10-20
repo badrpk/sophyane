@@ -73,6 +73,10 @@ def _local_models() -> str:
     return f"Local llama.cpp/GGUF model: {model}"
 
 
+def handle_list_models(_: str) -> str:
+    return _local_models()
+
+
 
 
 def handle_current_model(_: str) -> str:
