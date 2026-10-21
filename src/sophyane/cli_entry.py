@@ -52,13 +52,14 @@ def build_core_controller(
     from sophyane.core_controller.adapters import AdapterRegistry
     from sophyane.core_controller.audit import AuditStore
     from sophyane.core_controller.controller import CoreController
+    from sophyane.core_controller.provider_gateway import ConfiguredProviderGateway
 
     if audit_store is None:
         path = audit_path or os.environ.get("SOPHYANE_CORE_AUDIT_PATH", ".sophyane-state/core-audit.jsonl")
         audit_store = AuditStore(Path(path))
     return CoreController(
         adapter_registry=adapter_registry or AdapterRegistry.with_defaults(),
-        provider_gateway=provider_gateway or _UnavailableControllerGateway(),
+        provider_gateway=provider_gateway or ConfiguredProviderGateway.offline(),
         execution_boundary=execution_boundary or _DeniedControllerBoundary(),
         audit_store=audit_store,
     )
