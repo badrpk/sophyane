@@ -10,7 +10,12 @@ from sophyane.rsi.curriculum import CurriculumPolicy, CurriculumScheduler, Curri
 from sophyane.rsi.curriculum_proposals import ProposalContext, ProposalResult
 from sophyane.rsi.curriculum_runtime import ContinuousCurriculumRuntime
 from sophyane.rsi.repository_inventory import RepositoryInventory
-from sophyane.rsi_terminal import handle_command, multi_repo_mode, run_multi_repo_cycle
+from sophyane.rsi_terminal import (
+    ensure_curriculum_task,
+    handle_command,
+    multi_repo_mode,
+    run_multi_repo_cycle,
+)
 
 
 def _git(repo, *args):
@@ -104,6 +109,32 @@ def test_inventory_advances_cursor_across_restart_and_reports_empty_queue(tmp_pa
     status = json.loads(handle_command("status", runtime.state_dir))
     assert status["repository_cursor"]["scanned_commits"].keys() == {"badrpk/alpha", "badrpk/beta"}
     assert status["queue_length"] == 0
+
+
+def test_empty_curriculum_queue_is_filled_from_llm_source(tmp_path):
+    runtime, calls = _runtime(tmp_path)
+
+    result = ensure_curriculum_task(runtime)
+
+    assert result["status"] == "queued"
+    assert runtime.scheduler.status()["queue_length"] == 1
+    assert runtime.task_source.contexts[0].repository_id == "badrpk/alpha"
+    assert calls == []
+
+
+def test_empty_curriculum_queue_reports_provider_failure_without_false_health(tmp_path):
+    runtime, _ = _runtime(tmp_path)
+
+    class BrokenSource:
+        def propose(self, _context):
+            return ProposalResult(False, reason="provider error: all proposal providers unavailable")
+
+    runtime.task_source = BrokenSource()
+    result = ensure_curriculum_task(runtime)
+
+    assert result["status"] == "waiting"
+    assert "providers unavailable" in result["reason"]
+    assert runtime.scheduler.status()["queue_length"] == 0
 
 
 def test_proposal_mode_caps_files_and_never_executes_queued_task(tmp_path):

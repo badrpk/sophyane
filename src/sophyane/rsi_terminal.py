@@ -185,6 +185,46 @@ def run_multi_repo_cycle(runtime, mode: str, *, max_files: int) -> dict[str, obj
         return _pause_after_failure(runtime, error)
 
 
+def ensure_curriculum_task(runtime) -> dict[str, object]:
+    """Keep at least one durable next task queued when RSI is active."""
+    status = runtime.scheduler.status()
+    if status.get("stopped"):
+        return {"status": "stopped"}
+    if status.get("paused"):
+        return {"status": "paused"}
+    if status.get("queue_length", 0):
+        return {"status": "ready", "queue_length": status["queue_length"]}
+    source = getattr(runtime, "task_source", None)
+    context_factory = getattr(runtime, "context_factory", None)
+    if source is None or not callable(getattr(source, "propose", None)):
+        return {"status": "waiting", "reason": "proposal provider unavailable"}
+    if not callable(context_factory):
+        return {"status": "waiting", "reason": "proposal context unavailable"}
+    try:
+        context = context_factory()
+    except Exception as error:
+        return {"status": "waiting", "reason": f"proposal context error: {error}"}
+    if context is None:
+        return {"status": "waiting", "reason": "proposal context unavailable"}
+    try:
+        proposal = source.propose(context)
+    except Exception as error:
+        return {"status": "waiting", "reason": f"proposal provider error: {error}"}
+    if not proposal.accepted or proposal.task is None:
+        reason = str(proposal.reason or "proposal rejected")
+        return {"status": "waiting", "reason": reason}
+    if not runtime.scheduler.enqueue(proposal.task):
+        return {"status": "waiting", "reason": "scheduler rejected proposed task"}
+    runtime.scheduler.store.append_event({
+        "event": "proposal_provenance",
+        "task_id": proposal.task.task_id,
+        "generator": proposal.generator or "unknown",
+        "reviewers": list(proposal.reviewers),
+        "review_outcome": proposal.review_outcome or "unreviewed",
+    })
+    return {"status": "queued", "task_id": proposal.task.task_id}
+
+
 def _task_paths_safe(record, task) -> bool:
     root = Path(record.path).resolve()
     for relative in task.editable_paths:
@@ -358,6 +398,9 @@ def _serve(state_dir: Path, *, pid_file: Path | None = None, socket_override: Pa
                     next_health_tick = time.monotonic() + health_tick_interval
                 if watchdog is not None:
                     watchdog.check()
+                proposal_status = ensure_curriculum_task(runtime)
+                if proposal_status.get("status") == "waiting":
+                    runtime.heartbeat.touch(last_error=str(proposal_status.get("reason", "proposal unavailable")))
                 result = run_cycle()
                 if result.get("status") not in {"idle", "paused", "stopped"}:
                     scans += 1
