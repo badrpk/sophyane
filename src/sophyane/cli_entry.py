@@ -107,6 +107,13 @@ def list_host_curriculum_tasks():
 
     return default_curriculum_bridge().pending_tasks()
 
+
+def review_host_curriculum_task(task_id=None, *, reviewer=None):
+    """Ask the configured external reviewer to approve or reject one task."""
+    from sophyane.core_controller.curriculum_review import review_host_curriculum_task as review
+
+    return review(task_id, reviewer=reviewer)
+
 # SOPHYANE_TRANSIENT_SESSION_BANNER_V1
 def _session_ready_model(
     configured_model: str | None,
