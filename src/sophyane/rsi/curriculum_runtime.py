@@ -145,6 +145,9 @@ class ContinuousCurriculumRuntime:
         if proposal.accepted and intelligence is not None:
             proposal = intelligence.review(context, proposal)
         if proposal.accepted and proposal.task is not None:
+            proposal.task.review_status = (
+                "approved" if proposal.review_outcome == "approved" else "pending"
+            )
             if self.scheduler.enqueue(proposal.task):
                 self.scheduler.mark_follow_up_enqueued()
             else:

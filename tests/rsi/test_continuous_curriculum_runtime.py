@@ -63,10 +63,10 @@ def test_verified_ability_enqueues_one_follow_up_and_progresses(tmp_path: Path):
     runtime.scheduler.enqueue(make_task("task-1"))
 
     assert runtime.tick()["status"] == "verified"
-    assert runtime.tick()["status"] == "verified"
-    assert controller.calls == ["task-1", "task-2"]
-    assert runtime.status()["iteration"] == 2
-    assert runtime.status()["queue_length"] == 0
+    assert runtime.tick()["status"] == "idle"
+    assert controller.calls == ["task-1"]
+    assert runtime.status()["iteration"] == 1
+    assert runtime.status()["queue_length"] == 1
 
 
 def test_verified_ability_routes_follow_up_through_intelligence(tmp_path: Path):
@@ -77,7 +77,7 @@ def test_verified_ability_routes_follow_up_through_intelligence(tmp_path: Path):
     class Review:
         def review(self, context, proposal):
             calls.append((context.ability.ability_id, proposal.task.task_id))
-            return proposal
+            return ProposalResult(True, proposal.task, "accepted", "codex_cli", ("codex_cli",), "approved")
 
     runtime.intelligence = Review()
     runtime.scheduler.enqueue(make_task("task-1"))

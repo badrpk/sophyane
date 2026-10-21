@@ -56,6 +56,9 @@ class ContinuousRSIWorker:
                 else:
                     proposal = self.source.propose(context)
                     if proposal.accepted and proposal.task is not None:
+                        proposal.task.review_status = (
+                            "approved" if proposal.review_outcome == "approved" else "pending"
+                        )
                         queued = self.runtime.scheduler.enqueue(proposal.task)
                         if not queued:
                             cycle_warning = "scheduler rejected proposed task"
