@@ -7,6 +7,62 @@ import sys
 from sophyane.config import load_config
 from sophyane.version import __version__
 
+
+class _UnavailableControllerGateway:
+    """Safe default: construction never implies provider authorization."""
+
+    def admit(self, plan):
+        from sophyane.core_controller.models import ProviderDecision
+
+        return ProviderDecision(
+            trace_id=plan.trace_id,
+            provider=plan.provider_intent,
+            ready=False,
+            reason="no provider gateway was configured",
+        )
+
+
+class _DeniedControllerBoundary:
+    def execute(self, plan, decision):
+        from sophyane.core_controller.models import ExecutionResult, FailureBoundary
+
+        return ExecutionResult(
+            approved=False,
+            completed=False,
+            failure_boundary=FailureBoundary.EXECUTION_DENIED,
+            reason="no execution boundary was configured",
+        )
+
+
+def build_core_controller(
+    *,
+    provider_gateway=None,
+    execution_boundary=None,
+    audit_store=None,
+    audit_path=None,
+    adapter_registry=None,
+):
+    """Construct the explicit controller entry point for CLI/API callers.
+
+    Safe denied dependencies are used when live integrations are not supplied;
+    callers must inject real gateways and execution boundaries deliberately.
+    """
+    from pathlib import Path
+
+    from sophyane.core_controller.adapters import AdapterRegistry
+    from sophyane.core_controller.audit import AuditStore
+    from sophyane.core_controller.controller import CoreController
+
+    if audit_store is None:
+        path = audit_path or os.environ.get("SOPHYANE_CORE_AUDIT_PATH", ".sophyane-state/core-audit.jsonl")
+        audit_store = AuditStore(Path(path))
+    return CoreController(
+        adapter_registry=adapter_registry or AdapterRegistry.with_defaults(),
+        provider_gateway=provider_gateway or _UnavailableControllerGateway(),
+        execution_boundary=execution_boundary or _DeniedControllerBoundary(),
+        audit_store=audit_store,
+    )
+
 # SOPHYANE_TRANSIENT_SESSION_BANNER_V1
 def _session_ready_model(
     configured_model: str | None,
