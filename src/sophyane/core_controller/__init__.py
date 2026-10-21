@@ -11,6 +11,7 @@ from .models import (
     ModeResult,
     ProviderDecision,
 )
+from .audit import AuditStore
 
 __all__ = [
     "AuditEvent",
@@ -22,4 +23,5 @@ __all__ = [
     "ModePlan",
     "ModeResult",
     "ProviderDecision",
+    "AuditStore",
 ]
