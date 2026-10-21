@@ -43,6 +43,7 @@ class ObservationCurriculumBridge:
             source=TaskSource.WEAKNESS,
             resource_class=ResourceClass.NORMAL,
             component=component[:200],
+            review_status="pending",
         )
         return self.scheduler.enqueue(task), task_id
 

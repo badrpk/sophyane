@@ -59,8 +59,13 @@ class CurriculumTaskReviewer:
         )
         proposal = ProposalResult(True, task, "candidate")
         result = self.router.review(context, proposal)
-        if result.review_outcome == "rejected":
-            self.scheduler.record_failure(task.task_id, TaskStatus.REJECTED, result.reason or "LLM reviewer rejected candidate")
+        if result.review_outcome in {"approved", "rejected"}:
+            self.scheduler.record_review(
+                task.task_id,
+                approved=result.review_outcome == "approved",
+                provider=result.reviewers[0] if result.reviewers else "",
+                reason=result.reason,
+            )
         self.store.append_event({
             "event": "llm_task_reviewed",
             "task_id": task.task_id,

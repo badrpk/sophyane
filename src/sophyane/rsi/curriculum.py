@@ -63,6 +63,8 @@ class CurriculumTask:
     red_command: tuple[str, ...] = ()
     red_failure_marker: str = ""
     green_commands: tuple[tuple[str, ...], ...] = ()
+    review_status: str = "not_required"
+    review_provider: str = ""
 
 
 @dataclass(frozen=True)
@@ -126,6 +128,8 @@ def _task_from_dict(raw: dict[str, Any]) -> CurriculumTask:
         red_command=tuple(str(item) for item in raw.get("red_command", [])),
         red_failure_marker=str(raw.get("red_failure_marker", "")),
         green_commands=tuple(tuple(str(item) for item in command) for command in raw.get("green_commands", [])),
+        review_status=str(raw.get("review_status", "not_required")),
+        review_provider=str(raw.get("review_provider", "")),
     )
 
 
@@ -243,9 +247,11 @@ class CurriculumScheduler:
         queued = [
             task for task in candidates
             if task.status is TaskStatus.QUEUED
+            and task.review_status in {"not_required", "approved"}
             or (
                 task.status is TaskStatus.PAUSED
                 and task.failure_reason == "paused after process restart"
+                and task.review_status in {"not_required", "approved"}
             )
         ]
         if not queued:
@@ -356,6 +362,23 @@ class CurriculumScheduler:
         state.current_task_id = None
         state.last_result = {"task_id": task_id, "status": status.value, "reason": str(reason)}
         self._save(state, {"event": "task_failed", "task_id": task_id, "status": status.value, "reason": str(reason)})
+
+    def record_review(self, task_id: str, *, approved: bool, provider: str, reason: str = "") -> None:
+        state = self._state()
+        task = next(item for item in state.queue if item.task_id == task_id)
+        task.review_status = "approved" if approved else "rejected"
+        task.review_provider = str(provider)
+        if not approved:
+            task.status = TaskStatus.REJECTED
+            task.failure_reason = str(reason or "curriculum candidate rejected by reviewer")
+            task.completed_at = self.clock()
+        self._save(state, {
+            "event": "task_reviewed",
+            "task_id": task_id,
+            "approved": approved,
+            "provider": str(provider),
+            "reason": str(reason),
+        })
 
     def retry(self, task_id: str, reason: str) -> bool:
         state = self._state()

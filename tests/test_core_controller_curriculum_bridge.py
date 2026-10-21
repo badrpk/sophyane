@@ -28,6 +28,7 @@ def test_learning_persists_next_curriculum_task(tmp_path, monkeypatch):
     assert result.output["task_enqueued"] is True
     payload = json.loads(state_path.read_text())
     assert payload["queue"][0]["source"] == "weakness"
+    assert payload["queue"][0]["review_status"] == "pending"
     assert "provider timeout recovery" in payload["queue"][0]["objective"]
 
 
