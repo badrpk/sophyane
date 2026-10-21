@@ -44,6 +44,7 @@ def test_host_runtime_sli_handler_builds_deterministic_plan(tmp_path, monkeypatc
 
 def test_host_runtime_learning_handler_submits_bounded_observation(tmp_path, monkeypatch):
     monkeypatch.setattr("sophyane.local_runtime.llama_server_reachable", lambda: True)
+    monkeypatch.setenv("SOPHYANE_CURRICULUM_STATE", str(tmp_path / "curriculum.json"))
 
     controller = build_host_live_core_controller(audit_path=tmp_path / "audit.jsonl")
     result = controller.handle(
