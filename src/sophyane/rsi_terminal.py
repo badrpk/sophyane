@@ -19,8 +19,8 @@ from .rsi.observation_bus import ImprovementObservation, ImprovementSource, auto
 from .v13_cli import run_curriculum_command
 
 
-def socket_path(state_dir: Path) -> Path:
-    return Path(state_dir) / "rsi.sock"
+def socket_path(state_dir: Path, override: Path | None = None) -> Path:
+    return Path(override) if override is not None else Path(state_dir) / "rsi.sock"
 
 
 def handle_command(command: str, state_dir: Path) -> str:
@@ -285,7 +285,7 @@ def _run_multi_repo_cycle(runtime, mode: str, *, max_files: int) -> dict[str, ob
     return {**result, "repository_id": record.repo_id}
 
 
-def _serve(state_dir: Path) -> int:
+def _serve(state_dir: Path, *, pid_file: Path | None = None, socket_override: Path | None = None) -> int:
     mode = multi_repo_mode()
     max_repositories = _positive_budget("SOPHYANE_RSI_MAX_REPOSITORIES", 8)
     max_files = _positive_budget("SOPHYANE_RSI_MAX_FILES_PER_SCAN", 8)
@@ -299,14 +299,16 @@ def _serve(state_dir: Path) -> int:
         check=False,
     )
     current_commit = current_commit_result.stdout.strip()
-    sock_path = socket_path(state_dir)
+    sock_path = socket_path(state_dir, socket_override)
     if sock_path.exists():
         sock_path.unlink()
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(str(sock_path))
     server.listen(4)
     server.settimeout(0.5)
-    (state_dir / "rsi.pid").write_text(str(os.getpid()), encoding="utf-8")
+    daemon_pid_path = pid_file or (state_dir / "rsi.pid")
+    daemon_pid_path.parent.mkdir(parents=True, exist_ok=True)
+    daemon_pid_path.write_text(str(os.getpid()), encoding="utf-8")
     from .rsi.heartbeat import HeartbeatRecord, HeartbeatStore
     heartbeat = HeartbeatStore(state_dir / "heartbeat.json")
     now = time.time()
@@ -413,7 +415,7 @@ def _serve(state_dir: Path) -> int:
         server.close()
         if sock_path.exists():
             sock_path.unlink()
-        (state_dir / "rsi.pid").unlink(missing_ok=True)
+        daemon_pid_path.unlink(missing_ok=True)
     return 0
 
 
@@ -505,10 +507,16 @@ def main(argv=None) -> int:
     parser.add_argument("command", nargs="?", default="shell", choices=("start", "stop", "status", "shell"))
     parser.add_argument("--daemon", action="store_true")
     parser.add_argument("--state-dir", default=str(Path.home() / ".local/state/sophyane/continuous-rsi"))
+    parser.add_argument("--pid-file", default=None)
+    parser.add_argument("--socket-path", default=None)
     args = parser.parse_args(argv)
     state_dir = Path(args.state_dir)
     if args.daemon:
-        return _serve(state_dir)
+        return _serve(
+            state_dir,
+            pid_file=Path(args.pid_file) if args.pid_file else None,
+            socket_override=Path(args.socket_path) if args.socket_path else None,
+        )
     if args.command == "start":
         return start(state_dir)
     if args.command == "stop":

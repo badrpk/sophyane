@@ -1,10 +1,17 @@
-"""Default-on daemon lifecycle with thread and process ownership locks."""
+"""Default-on lifecycle helpers and an external RSI process watchdog."""
+import argparse
 import atexit
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import wraps
+import json
 import os
 from pathlib import Path
+import shutil
+import signal
+import socket
+import subprocess
+import sys
 import threading
 import time
 
@@ -21,6 +28,185 @@ class Supervisor:
     thread: threading.Thread
     stop_event: threading.Event
     wake_event: threading.Event
+
+
+@dataclass(frozen=True)
+class ExternalWatchdogConfig:
+    state_dir: Path
+    pid_file: Path
+    socket_path: Path
+    heartbeat_interval: float = 5.0
+    heartbeat_stale_after: float = 30.0
+    restart_backoff: float = 1.0
+    max_restart_backoff: float = 60.0
+    daemonize: bool = False
+    wakelock: bool = False
+    watchdog_mode: str = "external"
+
+    def __post_init__(self):
+        if self.watchdog_mode != "external":
+            raise ValueError("watchdog mode must be external")
+        if self.heartbeat_interval <= 0 or self.heartbeat_stale_after <= 0:
+            raise ValueError("heartbeat intervals must be positive")
+        if self.restart_backoff <= 0 or self.max_restart_backoff < self.restart_backoff:
+            raise ValueError("invalid restart backoff")
+
+
+def parse_external_args(argv=None):
+    default_state = Path.home() / ".local/state/sophyane/continuous-rsi"
+    parser = argparse.ArgumentParser(prog="python -m sophyane.rsi.supervisor")
+    parser.add_argument("--daemonize", action="store_true")
+    parser.add_argument("--heartbeat-interval", type=float, default=5.0)
+    parser.add_argument("--pid-file", type=Path, default=default_state / "external-rsi.pid")
+    parser.add_argument("--socket-path", type=Path, default=default_state / "rsi.sock")
+    parser.add_argument("--state-dir", type=Path, default=None)
+    parser.add_argument("--watchdog-mode", choices=("external",), required=True)
+    parser.add_argument("--wakelock", action="store_true")
+    parser.add_argument("--once", action="store_true")
+    args = parser.parse_args(argv)
+    if args.state_dir is None:
+        args.state_dir = args.socket_path.parent
+    args.heartbeat_stale_after = max(3.0 * args.heartbeat_interval, 15.0)
+    return args
+
+
+def acquire_wakelock(enabled: bool, *, runner=subprocess.run) -> bool:
+    """Best-effort Termux wakelock acquisition; unavailable is nonfatal."""
+    if not enabled:
+        return False
+    command = shutil.which("termux-wake-lock")
+    if not command:
+        return False
+    try:
+        return runner([command], check=False).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def release_wakelock(enabled: bool, *, runner=subprocess.run) -> bool:
+    if not enabled:
+        return False
+    command = shutil.which("termux-wake-unlock")
+    if not command:
+        return False
+    try:
+        return runner([command], check=False).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+class ExternalWatchdog:
+    """Own and supervise one RSI daemon process."""
+
+    def __init__(self, config: ExternalWatchdogConfig, *, process_is_alive=None, clock=time.time, popen=None):
+        self.config = config
+        self.clock = clock
+        self.process_is_alive = process_is_alive or self._default_process_is_alive
+        self.popen = popen or subprocess.Popen
+        self.child = None
+        self.restart_count = 0
+        self.last_error = ""
+
+    @staticmethod
+    def _default_process_is_alive(pid: int) -> bool:
+        if pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except (OSError, ProcessLookupError):
+            return False
+        return True
+
+    def recover_stale_artifacts(self) -> None:
+        pid_path = self.config.pid_file
+        if pid_path.exists():
+            try:
+                pid = int(pid_path.read_text(encoding="utf-8").strip())
+            except (OSError, ValueError):
+                pid = 0
+            if pid and self.process_is_alive(pid):
+                raise RuntimeError(f"external RSI watchdog already running: {pid}")
+            pid_path.unlink(missing_ok=True)
+        if self.config.socket_path.exists():
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                probe.settimeout(0.2)
+                probe.connect(str(self.config.socket_path))
+            except OSError:
+                self.config.socket_path.unlink(missing_ok=True)
+            else:
+                raise RuntimeError(f"RSI daemon socket already active: {self.config.socket_path}")
+            finally:
+                probe.close()
+        (self.config.state_dir / "rsi-child.pid").unlink(missing_ok=True)
+
+    def heartbeat_healthy(self) -> bool:
+        try:
+            raw = json.loads((self.config.state_dir / "heartbeat.json").read_text(encoding="utf-8"))
+            pid = int(raw["pid"])
+            last_tick = float(raw["last_tick_at"])
+            state = str(raw["state"])
+        except (OSError, TypeError, ValueError, KeyError, json.JSONDecodeError):
+            return False
+        child_pid = getattr(self.child, "pid", None)
+        return (
+            state not in {"error", "stopped"}
+            and (child_pid is None or int(child_pid) == pid)
+            and self.process_is_alive(pid)
+            and self.clock() - last_tick < self.config.heartbeat_stale_after
+        )
+
+    def restart_delay(self, failures: int) -> float:
+        return min(self.config.max_restart_backoff, self.config.restart_backoff * (2 ** max(0, int(failures))))
+
+    def launch(self):
+        self.config.state_dir.mkdir(parents=True, exist_ok=True)
+        environment = os.environ.copy()
+        source_root = Path(__file__).resolve().parents[2]
+        environment["PYTHONPATH"] = str(source_root) + os.pathsep + environment.get("PYTHONPATH", "")
+        log_path = self.config.state_dir / "rsi.log"
+        log = log_path.open("a", encoding="utf-8")
+        try:
+            self.child = self.popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "sophyane.rsi_terminal",
+                    "--daemon",
+                    "--state-dir",
+                    str(self.config.state_dir),
+                    "--pid-file",
+                    str(self.config.state_dir / "rsi-child.pid"),
+                    "--socket-path",
+                    str(self.config.socket_path),
+                ],
+                cwd=str(source_root),
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=log,
+                start_new_session=True,
+            )
+        finally:
+            log.close()
+        return self.child
+
+    def write_pid(self) -> None:
+        self.config.pid_file.parent.mkdir(parents=True, exist_ok=True)
+        self.config.pid_file.write_text(str(os.getpid()), encoding="utf-8")
+
+    def write_status(self, state: str) -> None:
+        status = {
+            "state": state,
+            "pid": os.getpid(),
+            "child_pid": getattr(self.child, "pid", None),
+            "restart_count": self.restart_count,
+            "last_error": self.last_error,
+            "updated_at": self.clock(),
+        }
+        path = self.config.state_dir / "external-watchdog.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(status, sort_keys=True) + "\n", encoding="utf-8")
 
 @contextmanager
 def foreground_work():
@@ -238,3 +424,119 @@ def runtime_session(function):
             if outer:
                 stop_supervisor()
     return wrapped
+
+
+def _external_lock(path: Path):
+    import fcntl
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        raise RuntimeError(f"external RSI watchdog already owns {path}")
+    return handle
+
+
+def _daemonize() -> None:
+    pid = os.fork()
+    if pid:
+        raise SystemExit(0)
+    os.setsid()
+    pid = os.fork()
+    if pid:
+        raise SystemExit(0)
+    os.chdir("/")
+    with open(os.devnull, "r") as stdin, open(os.devnull, "a") as stdout, open(os.devnull, "a") as stderr:
+        os.dup2(stdin.fileno(), 0)
+        os.dup2(stdout.fileno(), 1)
+        os.dup2(stderr.fileno(), 2)
+
+
+def run_external_watchdog(args) -> int:
+    config = ExternalWatchdogConfig(
+        state_dir=Path(args.state_dir),
+        pid_file=Path(args.pid_file),
+        socket_path=Path(args.socket_path),
+        heartbeat_interval=float(args.heartbeat_interval),
+        heartbeat_stale_after=float(args.heartbeat_stale_after),
+        daemonize=bool(args.daemonize),
+        wakelock=bool(args.wakelock),
+        watchdog_mode=args.watchdog_mode,
+    )
+    if config.daemonize:
+        _daemonize()
+    lock = _external_lock(config.pid_file.with_suffix(config.pid_file.suffix + ".lock"))
+    watchdog = ExternalWatchdog(config)
+    stop = threading.Event()
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(signum, lambda *_: stop.set())
+    wakelock_held = acquire_wakelock(config.wakelock)
+    try:
+        watchdog.recover_stale_artifacts()
+        watchdog.write_pid()
+        watchdog.write_status("starting")
+        if args.once:
+            watchdog.write_status("checked")
+            return 0
+        watchdog.launch()
+        startup_deadline = time.monotonic() + max(15.0, config.heartbeat_stale_after)
+        watchdog.write_status("running")
+        while not stop.wait(config.heartbeat_interval):
+            child = watchdog.child
+            if child is None:
+                watchdog.launch()
+                continue
+            exit_code = child.poll()
+            heartbeat_exists = (config.state_dir / "heartbeat.json").exists()
+            healthy = watchdog.heartbeat_healthy()
+            if exit_code is None and (healthy or (not heartbeat_exists and time.monotonic() < startup_deadline)):
+                watchdog.write_status("running")
+                continue
+            if exit_code is None:
+                child.terminate()
+                try:
+                    child.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait(timeout=3)
+                watchdog.last_error = "stale RSI heartbeat"
+            else:
+                watchdog.last_error = f"RSI daemon exited with code {exit_code}"
+            watchdog.restart_count += 1
+            watchdog.write_status("backoff")
+            if stop.wait(watchdog.restart_delay(watchdog.restart_count - 1)):
+                break
+            watchdog.launch()
+            startup_deadline = time.monotonic() + max(15.0, config.heartbeat_stale_after)
+    finally:
+        child = watchdog.child
+        if child is not None and child.poll() is None:
+            child.terminate()
+            try:
+                child.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                child.kill()
+        if config.pid_file.exists():
+            try:
+                if int(config.pid_file.read_text(encoding="utf-8").strip()) == os.getpid():
+                    config.pid_file.unlink()
+            except (OSError, ValueError):
+                pass
+        release_wakelock(wakelock_held)
+        try:
+            import fcntl
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        finally:
+            lock.close()
+    return 0
+
+
+def main(argv=None) -> int:
+    args = parse_external_args(argv)
+    return run_external_watchdog(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
