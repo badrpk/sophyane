@@ -100,6 +100,13 @@ def build_host_live_core_controller(*, audit_store=None, audit_path=None):
         audit_path=audit_path,
     )
 
+
+def list_host_curriculum_tasks():
+    """Return durable queued/paused improvement tasks for host inspection."""
+    from sophyane.core_controller.curriculum_bridge import default_curriculum_bridge
+
+    return default_curriculum_bridge().pending_tasks()
+
 # SOPHYANE_TRANSIENT_SESSION_BANNER_V1
 def _session_ready_model(
     configured_model: str | None,

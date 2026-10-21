@@ -69,7 +69,16 @@ def _learning_handler(plan: ModePlan, capability: object) -> Any:
         evidence=tuple(str(item) for item in raw_evidence),
         suggested_direction=str(values.get("suggested_direction") or ""),
     )
-    return {"accepted": autonomous_bus.submit(observation), "fingerprint": observation.fingerprint}
+    accepted = autonomous_bus.submit(observation)
+    from .curriculum_bridge import default_curriculum_bridge
+
+    task_enqueued, task_id = default_curriculum_bridge().enqueue_observation(observation)
+    return {
+        "accepted": accepted,
+        "fingerprint": observation.fingerprint,
+        "task_enqueued": task_enqueued,
+        "task_id": task_id,
+    }
 
 
 def build_host_dependencies() -> dict[ModeName, dict[str, Any]]:
