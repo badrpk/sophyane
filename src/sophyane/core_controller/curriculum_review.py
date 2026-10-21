@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 from typing import Callable, Any
 
@@ -80,6 +81,54 @@ class CurriculumTaskReviewer:
             "reason": result.reason,
             "provider": result.reviewers[0] if result.reviewers else "",
         }
+
+
+def execute_approved_host_task(
+    state_path: Path,
+    *,
+    runner: Callable[[str], tuple[int, str]] | None = None,
+    repo: Path | None = None,
+) -> dict[str, Any]:
+    """Run one approved, verification-only host task.
+
+    Only the generated pytest command form is accepted. This function never
+    applies proposal files and therefore cannot promote source changes.
+    """
+    store = CurriculumStore(state_path)
+    scheduler = CurriculumScheduler(store, CurriculumPolicy())
+    state = store.load()
+    task = next((item for item in state.queue if item.status is TaskStatus.QUEUED), None)
+    if task is None:
+        return {"status": "idle", "reason": "no queued task"}
+    if task.review_status != "approved":
+        return {"status": "blocked", "reason": "task has not been approved", "task_id": task.task_id}
+    if task.proposal_files:
+        return {"status": "blocked", "reason": "task contains proposal files; promotion runner required", "task_id": task.task_id}
+    if len(task.verification) != 1 or not task.verification[0].startswith("PYTHONPATH=src .venv/bin/pytest -q tests/"):
+        return {"status": "blocked", "reason": "verification command is outside host allowlist", "task_id": task.task_id}
+    command = task.verification[0]
+    if runner is None:
+        def runner(command_text: str) -> tuple[int, str]:
+            completed = subprocess.run(
+                ["env", "PYTHONPATH=src", *command_text.split()[1:]],
+                cwd=str(repo or Path.cwd()),
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+            return completed.returncode, (completed.stdout + completed.stderr)[-4000:]
+    scheduler.mark_running(task.task_id)
+    try:
+        returncode, output = runner(command)
+    except Exception as error:
+        scheduler.record_failure(task.task_id, TaskStatus.PAUSED, str(error))
+        return {"status": "paused", "task_id": task.task_id, "reason": str(error)}
+    if returncode == 0:
+        scheduler.record_verified(task.task_id, ("verification command passed", output[-1000:]))
+        return {"status": "verified", "task_id": task.task_id, "evidence": [output[-1000:]]}
+    scheduler.record_failure(task.task_id, TaskStatus.REJECTED, output[-1000:] or "verification command failed")
+    return {"status": "rejected", "task_id": task.task_id, "reason": output[-1000:]}
 
 
 def review_host_curriculum_task(task_id: str | None = None, *, reviewer: Callable[[str], str] | None = None) -> dict[str, Any]:

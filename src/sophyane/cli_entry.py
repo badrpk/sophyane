@@ -1,6 +1,7 @@
 """Public CLI entry point with explicit runtime identity."""
 from __future__ import annotations
 import os
+from pathlib import Path
 
 import sys
 
@@ -113,6 +114,14 @@ def review_host_curriculum_task(task_id=None, *, reviewer=None):
     from sophyane.core_controller.curriculum_review import review_host_curriculum_task as review
 
     return review(task_id, reviewer=reviewer)
+
+
+def execute_approved_host_curriculum_task():
+    """Run one approved verification-only curriculum task."""
+    from sophyane.core_controller.curriculum_review import execute_approved_host_task
+
+    path = Path(os.environ.get("SOPHYANE_CURRICULUM_STATE", ".sophyane-state/curriculum.json")).expanduser()
+    return execute_approved_host_task(path)
 
 # SOPHYANE_TRANSIENT_SESSION_BANNER_V1
 def _session_ready_model(
