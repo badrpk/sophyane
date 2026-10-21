@@ -59,6 +59,25 @@ class _Serializable:
 
 
 @dataclass(frozen=True)
+class ReadinessResult(_Serializable):
+    ready: bool
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        _bounded_text(self.reason, "reason")
+
+
+@dataclass(frozen=True)
+class ProviderPolicy(_Serializable):
+    mode: ModeName
+    primary_provider: str
+    permitted_fallbacks: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _bounded_text(self.primary_provider, "primary_provider")
+
+
+@dataclass(frozen=True)
 class ControllerRequest(_Serializable):
     text: str
     caller_id: str = ""

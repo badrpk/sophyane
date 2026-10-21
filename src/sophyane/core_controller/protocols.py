@@ -11,6 +11,7 @@ from .models import (
     ModePlan,
     ModeResult,
     ProviderDecision,
+    ReadinessResult,
 )
 
 
@@ -35,3 +36,13 @@ class ProviderGateway(Protocol):
 @runtime_checkable
 class ExecutionBoundary(Protocol):
     def execute(self, plan: ModePlan, decision: ProviderDecision) -> ExecutionResult: ...
+
+
+@runtime_checkable
+class ModeHandler(Protocol):
+    def execute(self, plan: ModePlan, capability: object) -> ExecutionResult: ...
+
+
+@runtime_checkable
+class ReadinessProbe(Protocol):
+    def check(self, plan: ModePlan) -> ReadinessResult: ...

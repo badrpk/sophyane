@@ -10,8 +10,49 @@ from .models import (
     ModeName,
     ModePlan,
     ModeResult,
+    ProviderPolicy,
+    ReadinessResult,
 )
-from .protocols import ModeAdapter
+from .protocols import ModeAdapter, ModeHandler, ReadinessProbe
+
+
+class ConcreteModeAdapter:
+    def __init__(
+        self,
+        mode: ModeName,
+        *,
+        provider_intent: str,
+        handler: ModeHandler,
+        readiness: ReadinessProbe,
+        provider_policy: ProviderPolicy,
+    ):
+        self.mode = mode
+        self.provider_intent = provider_intent
+        self.handler = handler
+        self.readiness = readiness
+        self.provider_policy = provider_policy
+
+    def prepare(self, request, context, *, trace_id):
+        return DefaultModeAdapter(self.mode, provider_intent=self.provider_intent).prepare(
+            request, context, trace_id=trace_id
+        )
+
+    def execute(self, plan: ModePlan, capability: object) -> ExecutionResult:
+        ready = self.readiness.check(plan)
+        if not ready.ready:
+            return ExecutionResult(
+                approved=False,
+                completed=False,
+                failure_boundary=FailureBoundary.PROVIDER_UNAVAILABLE,
+                reason=ready.reason or "mode dependency unavailable",
+            )
+        result = self.handler.execute(plan, capability)
+        if isinstance(result.output, str) and len(result.output) > 10_000:
+            raise ValueError("output exceeds 10000 characters")
+        return result
+
+    def interpret(self, plan, execution):
+        return DefaultModeAdapter(self.mode, provider_intent=self.provider_intent).interpret(plan, execution)
 
 
 class DefaultModeAdapter:
