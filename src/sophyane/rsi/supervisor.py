@@ -164,6 +164,9 @@ class ExternalWatchdog:
         environment = os.environ.copy()
         source_root = Path(__file__).resolve().parents[2]
         environment["PYTHONPATH"] = str(source_root) + os.pathsep + environment.get("PYTHONPATH", "")
+        environment.setdefault("SOPHYANE_RSI_MAX_ITERATIONS", "1000000")
+        environment.setdefault("SOPHYANE_RSI_MAX_WALL_SECONDS", "31536000")
+        environment.setdefault("SOPHYANE_RSI_MAX_REPOSITORIES", "1000000")
         log_path = self.config.state_dir / "rsi.log"
         log = log_path.open("a", encoding="utf-8")
         try:
@@ -475,6 +478,14 @@ def run_external_watchdog(args) -> int:
     wakelock_held = acquire_wakelock(config.wakelock)
     try:
         watchdog.recover_stale_artifacts()
+        from .v13_cli import run_curriculum_command
+        run_curriculum_command(
+            "start",
+            config.state_dir,
+            max_iterations=1_000_000,
+            max_wall_seconds=31_536_000,
+            cooldown_seconds=30,
+        )
         watchdog.write_pid()
         watchdog.write_status("starting")
         if args.once:

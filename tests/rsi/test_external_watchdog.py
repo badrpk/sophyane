@@ -142,6 +142,33 @@ def test_restart_delay_is_bounded_exponential():
     assert [watchdog.restart_delay(i) for i in range(5)] == [2, 4, 8, 10, 10]
 
 
+def test_launch_preserves_explicit_environment_and_raises_default_continuous_budgets(tmp_path: Path, monkeypatch):
+    config = ExternalWatchdogConfig(
+        state_dir=tmp_path,
+        pid_file=tmp_path / "rsi.pid",
+        socket_path=tmp_path / "rsi.sock",
+    )
+    captured = {}
+
+    class Child:
+        pid = 44
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured["env"] = kwargs["env"]
+        return Child()
+
+    monkeypatch.delenv("SOPHYANE_RSI_MAX_ITERATIONS", raising=False)
+    monkeypatch.delenv("SOPHYANE_RSI_MAX_REPOSITORIES", raising=False)
+    watchdog = ExternalWatchdog(config, popen=fake_popen)
+    watchdog.launch()
+
+    assert captured["env"]["SOPHYANE_RSI_MAX_ITERATIONS"] == "1000000"
+    assert captured["env"]["SOPHYANE_RSI_MAX_REPOSITORIES"] == "1000000"
+    assert "--pid-file" in captured["command"]
+    assert str(tmp_path / "rsi-child.pid") in captured["command"]
+
+
 def test_missing_termux_wakelock_is_nonfatal(monkeypatch):
     monkeypatch.setattr("sophyane.rsi.supervisor.shutil.which", lambda name: None)
     assert acquire_wakelock(True) is False
