@@ -52,7 +52,10 @@ def _race_handler(plan: ModePlan, _capability: object) -> Any:
 def _learning_handler(plan: ModePlan, capability: object) -> Any:
     from sophyane.rsi.observation_bus import ImprovementObservation, ImprovementSource, autonomous_bus
 
-    evidence = plan.payload.get("evidence", {})
+    evidence = plan.payload.get("evidence")
+    if evidence is None:
+        context = plan.payload.get("context", {})
+        evidence = context.get("evidence", {}) if isinstance(context, dict) else {}
     if isinstance(evidence, dict):
         values = evidence
     else:

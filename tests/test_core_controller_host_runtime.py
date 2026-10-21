@@ -56,3 +56,4 @@ def test_host_runtime_learning_handler_submits_bounded_observation(tmp_path, mon
 
     assert result.disposition == "completed"
     assert result.output["accepted"] is True
+    assert result.output["task_enqueued"] is True
