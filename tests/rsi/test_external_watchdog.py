@@ -14,6 +14,7 @@ from sophyane.rsi.supervisor import (
     parse_external_args,
     run_external_watchdog,
     status_external_watchdog,
+    logs_external_watchdog,
 )
 
 
@@ -212,3 +213,13 @@ def test_status_command_is_read_only_and_does_not_require_watchdog_mode(tmp_path
     assert result["supervisor_alive"] is False
     assert result["child_alive"] is False
     assert (tmp_path / "external-rsi.pid").exists()
+
+
+def test_logs_command_returns_requested_tail_without_mutation(tmp_path: Path):
+    log = tmp_path / "rsi.log"
+    log.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    args = parse_external_args(
+        ["--logs", "--tail=2", f"--state-dir={tmp_path}", f"--socket-path={tmp_path / 'rsi.sock'}"]
+    )
+
+    assert logs_external_watchdog(args) == ["two\n", "three\n"]

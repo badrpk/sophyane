@@ -64,7 +64,11 @@ def parse_external_args(argv=None):
     parser.add_argument("--wakelock", action="store_true")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--status", action="store_true")
+    parser.add_argument("--logs", action="store_true")
+    parser.add_argument("--tail", type=int, default=50)
     args = parser.parse_args(argv)
+    if args.tail < 1:
+        parser.error("--tail must be positive")
     if args.state_dir is None:
         args.state_dir = args.socket_path.parent
     args.heartbeat_stale_after = max(3.0 * args.heartbeat_interval, 15.0)
@@ -106,6 +110,14 @@ def status_external_watchdog(args) -> dict[str, object]:
     except (OSError, TypeError, ValueError, AttributeError, json.JSONDecodeError):
         pass
     return result
+
+
+def logs_external_watchdog(args) -> list[str]:
+    try:
+        lines = (Path(args.state_dir) / "rsi.log").read_text(encoding="utf-8").splitlines(keepends=True)
+    except OSError:
+        return []
+    return lines[-int(args.tail):]
 
 
 def acquire_wakelock(enabled: bool, *, runner=subprocess.run) -> bool:
@@ -586,6 +598,10 @@ def main(argv=None) -> int:
     args = parse_external_args(argv)
     if args.status:
         print(json.dumps(status_external_watchdog(args), sort_keys=True))
+        return 0
+    if args.logs:
+        for line in logs_external_watchdog(args):
+            print(line, end="")
         return 0
     return run_external_watchdog(args)
 
