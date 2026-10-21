@@ -8,7 +8,7 @@ import subprocess
 from typing import Any
 
 from .curriculum import AbilityRecord, CurriculumScheduler, CurriculumStore, TaskStatus
-from .curriculum_proposals import ProposalContext
+from .curriculum_proposals import ProposalContext, ProposalResult
 
 
 class ContinuousCurriculumRuntime:
@@ -153,12 +153,50 @@ class ContinuousCurriculumRuntime:
             else:
                 self.store.append_event({"event": "follow_up_rejected", "reason": "scheduler rejected proposal"})
 
+    def _review_pending_tasks(self) -> int:
+        """Automatically review generated candidates when intelligence is configured."""
+        intelligence = getattr(self, "intelligence", None)
+        if intelligence is None:
+            return 0
+        state = self.store.load()
+        reviewed = 0
+        for task in state.queue:
+            if task.status is not TaskStatus.QUEUED or task.review_status != "pending":
+                continue
+            ability = AbilityRecord(
+                task.parent_ability_id or "runtime-observation",
+                task.component or "curriculum improvement",
+                (task.objective,),
+                task.task_id,
+            )
+            context = ProposalContext(
+                ability=ability,
+                allowed_paths=task.editable_paths,
+                existing_task_ids=tuple(item.task_id for item in state.queue),
+                capability_summary=task.objective,
+            )
+            try:
+                result = intelligence.review(context, ProposalResult(True, task, "candidate"))
+            except Exception as error:
+                self.store.append_event({"event": "task_review_error", "task_id": task.task_id, "reason": str(error)})
+                continue
+            if result.review_outcome in {"approved", "rejected"}:
+                self.scheduler.record_review(
+                    task.task_id,
+                    approved=result.review_outcome == "approved",
+                    provider=result.reviewers[0] if result.reviewers else "",
+                    reason=result.reason,
+                )
+                reviewed += 1
+        return reviewed
+
     def tick(self) -> dict[str, object]:
         if not self.enabled:
             return {"status": "disabled"}
         if not self.started:
             if not self.start():
                 return {"status": "idle", **self.scheduler.status()}
+        self._review_pending_tasks()
         task = self.scheduler.next_task()
         if task is None:
             return {"status": "idle", **self.scheduler.status()}
