@@ -18,6 +18,11 @@ class Audit:
         self.events.append(event)
 
 
+class BrokenAudit:
+    def append(self, event):
+        raise OSError("audit storage unavailable")
+
+
 class Gateway:
     def __init__(self, decision):
         self.decision = decision
@@ -117,3 +122,15 @@ def test_provider_fallback_stays_inside_the_selected_plan():
 
     assert gateway.plans[0].mode is ModeName.LOCAL_LLM
     assert gateway.plans[0].provider_intent == "local_gguf"
+
+
+def test_audit_storage_failure_fails_closed_with_state_boundary():
+    result = CoreController(
+        adapter_registry=AdapterRegistry.with_defaults(),
+        provider_gateway=Gateway(ProviderDecision("trace", "local_gguf", ready=True)),
+        execution_boundary=Boundary(ExecutionResult(True, True, output="must not be trusted")),
+        audit_store=BrokenAudit(),
+    ).handle(request(), context())
+
+    assert result.failure_boundary is FailureBoundary.STATE_UNAVAILABLE
+    assert result.disposition == "failed"

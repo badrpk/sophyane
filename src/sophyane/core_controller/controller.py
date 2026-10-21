@@ -53,6 +53,8 @@ class CoreController:
             mode = selection.mode
             self._audit(AuditEvent(trace_id, "mode_selected", mode, "selected", {"source": selection.source}))
         except Exception as error:
+            if isinstance(error, OSError):
+                return self._state_failure(trace_id, request.requested_mode or ModeName.HUMAN_CONVERSATION, str(error))
             mode = request.requested_mode or ModeName.HUMAN_CONVERSATION
             return self._failure(trace_id, mode, boundary_for(error, phase="selection"), str(error))
 
@@ -64,7 +66,10 @@ class CoreController:
             return self._failure(trace_id, mode, boundary_for(error, phase="provider"), str(error))
         if not decision.ready:
             return self._failure(trace_id, mode, FailureBoundary.PROVIDER_UNAVAILABLE, decision.reason or "provider unavailable")
-        self._audit(AuditEvent(trace_id, "provider_admitted", mode, "admitted", {"provider": decision.provider}))
+        try:
+            self._audit(AuditEvent(trace_id, "provider_admitted", mode, "admitted", {"provider": decision.provider}))
+        except Exception as error:
+            return self._state_failure(trace_id, mode, str(error))
 
         try:
             execution = self.execution_boundary.execute(plan, decision)
@@ -78,18 +83,27 @@ class CoreController:
         if execution.verification_status == "promoted" and not execution.promotion_approved:
             return self._failure(trace_id, mode, FailureBoundary.PROMOTION_DENIED, "independent promotion approval is required")
         result = adapter.interpret(plan, execution)
-        self._audit(AuditEvent(trace_id, "execution_completed", mode, result.disposition, {"verification": result.verification_status}))
+        try:
+            self._audit(AuditEvent(trace_id, "execution_completed", mode, result.disposition, {"verification": result.verification_status}))
+        except Exception as error:
+            return self._state_failure(trace_id, mode, str(error))
         return result
 
     def _failure(self, trace_id: str, mode: ModeName, boundary: FailureBoundary, reason: str) -> ModeResult:
         result = ModeResult.failure(trace_id=trace_id, mode=mode, boundary=boundary, reason=reason[:1000])
-        self._audit(AuditEvent(trace_id, "terminal_failure", mode, result.disposition, {"boundary": boundary, "reason": result.reason}))
-        return result
+        try:
+            self._audit(AuditEvent(trace_id, "terminal_failure", mode, result.disposition, {"boundary": boundary, "reason": result.reason}))
+            return result
+        except Exception as error:
+            return self._state_failure(trace_id, mode, str(error))
+
+    def _state_failure(self, trace_id: str, mode: ModeName, reason: str) -> ModeResult:
+        return ModeResult.failure(
+            trace_id=trace_id,
+            mode=mode,
+            boundary=FailureBoundary.STATE_UNAVAILABLE,
+            reason=f"audit storage unavailable: {reason}"[:1000],
+        )
 
     def _audit(self, event: AuditEvent) -> None:
-        try:
-            self.audit_store.append(event)
-        except Exception:
-            # The request result remains fail-closed; durable audit failure is
-            # surfaced by the state boundary on the next lifecycle operation.
-            pass
+        self.audit_store.append(event)
