@@ -114,6 +114,7 @@ class ExecutionResult(_Serializable):
     verification_status: str = "not_run"
     failure_boundary: FailureBoundary | None = None
     reason: str = ""
+    promotion_approved: bool = False
 
     def __post_init__(self) -> None:
         _bounded_text(self.verification_status, "verification_status")
