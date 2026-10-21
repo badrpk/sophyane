@@ -125,3 +125,14 @@ class AdapterRegistry:
 
     def modes(self) -> tuple[ModeName, ...]:
         return tuple(sorted(self._adapters, key=lambda item: item.value))
+
+    def readiness(self) -> dict[str, dict[str, object]]:
+        result = {}
+        for mode, adapter in self._adapters.items():
+            probe = getattr(adapter, "readiness", None)
+            if probe is None:
+                result[mode.value] = {"ready": True, "reason": "dry-run adapter"}
+                continue
+            status = probe.check(ModePlan("readiness", mode, provider_intent=getattr(adapter, "provider_intent", "")))
+            result[mode.value] = status.to_dict()
+        return {key: result[key] for key in sorted(result)}

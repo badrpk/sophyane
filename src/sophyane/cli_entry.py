@@ -64,6 +64,26 @@ def build_core_controller(
         audit_store=audit_store,
     )
 
+
+def build_live_core_controller(*, dependencies=None, audit_store=None, audit_path=None):
+    """Construct concrete mode adapters with explicit runtime readiness."""
+    from pathlib import Path
+
+    from sophyane.core_controller.audit import AuditStore
+    from sophyane.core_controller.controller import CoreController
+    from sophyane.core_controller.live_registry import build_live_registry
+
+    registry, gateway = build_live_registry(dependencies)
+    if audit_store is None:
+        path = audit_path or os.environ.get("SOPHYANE_CORE_AUDIT_PATH", ".sophyane-state/core-audit.jsonl")
+        audit_store = AuditStore(Path(path))
+    return CoreController(
+        adapter_registry=registry,
+        provider_gateway=gateway,
+        execution_boundary=_DeniedControllerBoundary(),
+        audit_store=audit_store,
+    )
+
 # SOPHYANE_TRANSIENT_SESSION_BANNER_V1
 def _session_ready_model(
     configured_model: str | None,

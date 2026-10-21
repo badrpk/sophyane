@@ -41,6 +41,9 @@ class CoreController:
         self.audit_store = audit_store
         self.mode_selector = mode_selector
 
+    def readiness(self) -> dict[str, object]:
+        return {"modes": self.adapter_registry.readiness()}
+
     def handle(
         self,
         request: ControllerRequest,
