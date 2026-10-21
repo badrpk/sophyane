@@ -10,6 +10,19 @@ from .models import ExecutionResult, FailureBoundary, ModeName, ModePlan, Provid
 from .provider_gateway import ConfiguredProviderGateway
 
 
+class _ConcreteExecutionBoundary:
+    """Run a mode handler only after provider admission has succeeded."""
+
+    def execute_mode(self, plan, decision, adapter):
+        return adapter.execute(
+            plan,
+            {"provider": decision.provider, "execution_approved": True},
+        )
+
+    def execute(self, plan, decision):
+        return ExecutionResult(False, False, failure_boundary=FailureBoundary.EXECUTION_DENIED, reason="mode handler was not registered")
+
+
 class _CallableHandler:
     def __init__(self, call: Callable[..., Any] | None, mode: ModeName):
         self.call = call

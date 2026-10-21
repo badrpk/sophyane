@@ -72,6 +72,7 @@ def build_live_core_controller(*, dependencies=None, audit_store=None, audit_pat
     from sophyane.core_controller.audit import AuditStore
     from sophyane.core_controller.controller import CoreController
     from sophyane.core_controller.live_registry import build_live_registry
+    from sophyane.core_controller.live_registry import _ConcreteExecutionBoundary
 
     registry, gateway = build_live_registry(dependencies)
     if audit_store is None:
@@ -80,7 +81,7 @@ def build_live_core_controller(*, dependencies=None, audit_store=None, audit_pat
     return CoreController(
         adapter_registry=registry,
         provider_gateway=gateway,
-        execution_boundary=_DeniedControllerBoundary(),
+        execution_boundary=_ConcreteExecutionBoundary(),
         audit_store=audit_store,
     )
 

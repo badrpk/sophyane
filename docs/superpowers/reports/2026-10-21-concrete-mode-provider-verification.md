@@ -4,7 +4,7 @@ Date: 2026-10-21
 
 ## Verified
 
-- Concrete handler/provider/controller integration suite: `257 passed`
+- Concrete handler/provider/controller integration suite: `258 passed`
 - Existing Race, SLI, Local, External, Learning, and Mode 6 regression tests included in that run.
 - `git diff --check`: clean for the milestone changes.
 - Readiness reporting executes probes without invoking handlers or creating audit artifacts.
@@ -20,6 +20,7 @@ Date: 2026-10-21
 - Human Conversation delegates to `conversation_turn` and rejects authority-bearing observations.
 - Provider admission supports local-only, sticky external, Mode 6 Codex→NIFDU, and offline policies.
 - The live registry exposes readiness without executing mode work.
+- After provider admission, the live execution boundary invokes the registered concrete handler; readiness alone still remains side-effect free.
 
 ## Live dependencies not claimed healthy
 

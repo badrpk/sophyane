@@ -75,7 +75,11 @@ class CoreController:
             return self._state_failure(trace_id, mode, str(error))
 
         try:
-            execution = self.execution_boundary.execute(plan, decision)
+            execute_mode = getattr(self.execution_boundary, "execute_mode", None)
+            if callable(execute_mode) and callable(getattr(adapter, "execute", None)):
+                execution = execute_mode(plan, decision, adapter)
+            else:
+                execution = self.execution_boundary.execute(plan, decision)
         except Exception as error:
             return self._failure(trace_id, mode, boundary_for(error, phase="execution"), str(error))
         if not execution.approved or not execution.completed:

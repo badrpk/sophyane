@@ -1,5 +1,5 @@
 from sophyane.cli_entry import build_live_core_controller
-from sophyane.core_controller.models import ModeName
+from sophyane.core_controller.models import ControllerRequest, ModeName
 
 
 def test_live_controller_reports_readiness_without_executing_handlers(tmp_path):
@@ -39,3 +39,23 @@ def test_readiness_does_not_create_execution_artifacts(tmp_path):
     controller.readiness()
 
     assert not audit_path.exists()
+
+
+def test_live_controller_invokes_admitted_concrete_handler(tmp_path):
+    calls = []
+    dependencies = {
+        ModeName.LOCAL_LLM: {
+            "handler": lambda plan, capability: calls.append(plan.mode) or "local result",
+            "ready": True,
+            "provider": "local_gguf",
+        }
+    }
+    controller = build_live_core_controller(
+        dependencies=dependencies,
+        audit_path=tmp_path / "audit.jsonl",
+    )
+
+    result = controller.handle(ControllerRequest(text="run local", requested_mode=ModeName.LOCAL_LLM))
+
+    assert result.disposition == "completed"
+    assert calls == [ModeName.LOCAL_LLM]
