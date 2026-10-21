@@ -101,6 +101,18 @@ def test_worker_reports_rejected_proposal_in_heartbeat(tmp_path: Path):
     assert "no frozen experiment plan" in store.load().last_error
 
 
+def test_worker_clears_stale_proposal_error_after_successful_cycle(tmp_path: Path):
+    store = heartbeat(tmp_path)
+    runtime = FakeRuntime()
+    worker = ContinuousRSIWorker(runtime, store, clock=lambda: 20.0)
+    store.touch(last_error="old proposal error")
+
+    result = worker.run_once()
+
+    assert result["status"] == "idle"
+    assert store.load().last_error == ""
+
+
 def test_watchdog_restarts_stale_worker_but_not_paused_or_stopped(tmp_path: Path):
     store = heartbeat(tmp_path, last_tick_at=10.0)
     starts = []

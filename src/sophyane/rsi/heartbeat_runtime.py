@@ -47,20 +47,38 @@ class ContinuousRSIWorker:
         except Exception as error:
             return {"status": "paused", "reason": f"heartbeat unavailable: {error}"}
         try:
+            cycle_warning = ""
             if status.get("queue_length", 0) == 0 and self.source is not None and self.context_factory is not None:
                 context = self.context_factory()
                 if context is None:
-                    self._touch(state="waiting", last_error="no frozen experiment plan configured")
+                    cycle_warning = "no frozen experiment plan configured"
+                    self._touch(state="waiting", last_error=cycle_warning)
                 else:
                     proposal = self.source.propose(context)
                     if proposal.accepted and proposal.task is not None:
                         queued = self.runtime.scheduler.enqueue(proposal.task)
                         if not queued:
-                            self._touch(state="waiting", last_error="scheduler rejected proposed task")
+                            cycle_warning = "scheduler rejected proposed task"
+                            self._touch(state="waiting", last_error=cycle_warning)
+                        else:
+                            store = getattr(self.runtime.scheduler, "store", None)
+                            if store is not None:
+                                store.append_event({
+                                    "event": "proposal_provenance",
+                                    "task_id": proposal.task.task_id,
+                                    "generator": proposal.generator or "unknown",
+                                    "reviewers": list(proposal.reviewers),
+                                    "review_outcome": proposal.review_outcome or "unreviewed",
+                                })
                     elif not proposal.accepted:
-                        self._touch(state="waiting", last_error=f"task proposal rejected: {proposal.reason}")
+                        cycle_warning = f"task proposal rejected: {proposal.reason}"
+                        self._touch(state="waiting", last_error=cycle_warning)
             result = self.runtime.tick()
-            current_error = self.heartbeat.load().last_error
+            result_status = str(result.get("status", "")).lower()
+            result_error = str(result.get("reason", ""))
+            current_error = cycle_warning
+            if result_status in {"paused", "error"} and result_error:
+                current_error = result_error
             self._touch(state="waiting", current_task_id=result.get("task_id"), last_error=current_error)
             return result
         except Exception as error:
