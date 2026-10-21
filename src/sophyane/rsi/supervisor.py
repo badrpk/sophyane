@@ -60,13 +60,11 @@ def parse_external_args(argv=None):
     parser.add_argument("--pid-file", type=Path, default=default_state / "external-rsi.pid")
     parser.add_argument("--socket-path", type=Path, default=default_state / "rsi.sock")
     parser.add_argument("--state-dir", type=Path, default=None)
-    parser.add_argument("--watchdog-mode", choices=("external",), default=None)
+    parser.add_argument("--watchdog-mode", choices=("external",), default="external")
     parser.add_argument("--wakelock", action="store_true")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--status", action="store_true")
     args = parser.parse_args(argv)
-    if not args.status and args.watchdog_mode is None:
-        parser.error("--watchdog-mode=external is required unless --status is used")
     if args.state_dir is None:
         args.state_dir = args.socket_path.parent
     args.heartbeat_stale_after = max(3.0 * args.heartbeat_interval, 15.0)

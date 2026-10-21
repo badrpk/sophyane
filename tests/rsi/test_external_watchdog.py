@@ -42,6 +42,11 @@ def test_external_cli_rejects_other_watchdog_modes():
         parse_external_args(["--watchdog-mode=internal"])
 
 
+def test_external_cli_defaults_to_external_mode():
+    args = parse_external_args([])
+    assert args.watchdog_mode == "external"
+
+
 def test_stale_pid_and_socket_are_removed_but_live_unrelated_pid_is_protected(tmp_path: Path):
     config = ExternalWatchdogConfig(
         state_dir=tmp_path,
