@@ -12,6 +12,7 @@ from sophyane.rsi.supervisor import (
     ExternalWatchdogConfig,
     acquire_wakelock,
     parse_external_args,
+    run_external_watchdog,
 )
 
 
@@ -173,3 +174,18 @@ def test_missing_termux_wakelock_is_nonfatal(monkeypatch):
     monkeypatch.setattr("sophyane.rsi.supervisor.shutil.which", lambda name: None)
     assert acquire_wakelock(True) is False
     assert acquire_wakelock(False) is False
+
+
+def test_one_shot_resume_path_starts_without_import_error(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("sophyane.v13_cli.run_curriculum_command", lambda *args, **kwargs: {})
+    args = parse_external_args(
+        [
+            "--watchdog-mode=external",
+            "--once",
+            f"--pid-file={tmp_path / 'watchdog.pid'}",
+            f"--socket-path={tmp_path / 'rsi.sock'}",
+            f"--state-dir={tmp_path / 'state'}",
+        ]
+    )
+
+    assert run_external_watchdog(args) == 0

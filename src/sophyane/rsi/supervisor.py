@@ -478,7 +478,7 @@ def run_external_watchdog(args) -> int:
     wakelock_held = acquire_wakelock(config.wakelock)
     try:
         watchdog.recover_stale_artifacts()
-        from .v13_cli import run_curriculum_command
+        from ..v13_cli import run_curriculum_command
         run_curriculum_command(
             "start",
             config.state_dir,
