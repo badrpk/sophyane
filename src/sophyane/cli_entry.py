@@ -85,6 +85,21 @@ def build_live_core_controller(*, dependencies=None, audit_store=None, audit_pat
         audit_store=audit_store,
     )
 
+
+def build_host_live_core_controller(*, audit_store=None, audit_path=None):
+    """Construct live controller bindings proven by the current host.
+
+    This is explicit because probing a host is a runtime decision. The
+    zero-argument ``build_live_core_controller`` remains safely unavailable.
+    """
+    from sophyane.core_controller.host_runtime import build_host_dependencies
+
+    return build_live_core_controller(
+        dependencies=build_host_dependencies(),
+        audit_store=audit_store,
+        audit_path=audit_path,
+    )
+
 # SOPHYANE_TRANSIENT_SESSION_BANNER_V1
 def _session_ready_model(
     configured_model: str | None,
