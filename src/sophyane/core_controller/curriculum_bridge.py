@@ -54,6 +54,7 @@ class ObservationCurriculumBridge:
                 "task_id": task.task_id,
                 "objective": task.objective,
                 "status": task.status.value,
+                "review_status": task.review_status,
                 "source": task.source.value,
             }
             for task in state.queue
