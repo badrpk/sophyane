@@ -70,3 +70,42 @@ class ExternalLlmModeHandler:
     def execute(self, plan: ModePlan, capability: object) -> ExecutionResult:
         provider = _capability_value(capability, "provider", plan.provider_intent)
         return _invoke(self.run_external, plan, capability, provider=provider)
+
+
+class LearningModeHandler:
+    def __init__(self, record_evidence: Callable[..., Any]):
+        self.record_evidence = record_evidence
+
+    def execute(self, plan: ModePlan, capability: object) -> ExecutionResult:
+        if not _capability_value(capability, "execution_approved", True):
+            return ExecutionResult(False, False, failure_boundary=FailureBoundary.EXECUTION_DENIED, reason="learning execution not approved")
+        evidence = _capability_value(capability, "evidence", {})
+        try:
+            output = self.record_evidence(evidence, plan=plan, capability=capability)
+        except Exception as error:
+            return ExecutionResult(False, False, failure_boundary=FailureBoundary.CONTROLLER_INTERNAL, reason=str(error))
+        return ExecutionResult(True, True, output=output, verification_status="evidence")
+
+
+class HumanConversationModeHandler:
+    def __init__(self, conversation_turn: Callable[..., Any], *, observation_handoff: Callable[..., Any] | None = None):
+        self.conversation_turn = conversation_turn
+        self.observation_handoff = observation_handoff
+
+    def execute(self, plan: ModePlan, capability: object) -> ExecutionResult:
+        if not _capability_value(capability, "execution_approved", True):
+            return ExecutionResult(False, False, failure_boundary=FailureBoundary.EXECUTION_DENIED, reason="conversation execution not approved")
+        try:
+            turn = self.conversation_turn(plan.payload.get("text", ""), plan=plan, capability=capability)
+        except Exception as error:
+            return ExecutionResult(False, False, failure_boundary=FailureBoundary.CONTROLLER_INTERNAL, reason=str(error))
+        observation = getattr(turn, "improvement_observation", None)
+        if observation is not None:
+            if any(getattr(observation, field, False) for field in ("trusted", "instruction_authority", "mutation_authority")):
+                return ExecutionResult(False, False, failure_boundary=FailureBoundary.EXECUTION_DENIED, reason="conversation observation contains authority")
+            if self.observation_handoff is not None:
+                try:
+                    self.observation_handoff(observation)
+                except Exception as error:
+                    return ExecutionResult(False, False, failure_boundary=FailureBoundary.CONTROLLER_INTERNAL, reason=str(error))
+        return ExecutionResult(True, True, output=getattr(turn, "reply", turn), verification_status="evidence")
