@@ -13,6 +13,7 @@ from sophyane.rsi.supervisor import (
     acquire_wakelock,
     parse_external_args,
     run_external_watchdog,
+    status_external_watchdog,
 )
 
 
@@ -189,3 +190,20 @@ def test_one_shot_resume_path_starts_without_import_error(tmp_path: Path, monkey
     )
 
     assert run_external_watchdog(args) == 0
+
+
+def test_status_command_is_read_only_and_does_not_require_watchdog_mode(tmp_path: Path):
+    (tmp_path / "external-rsi.pid").write_text("999999", encoding="utf-8")
+    (tmp_path / "external-watchdog.json").write_text(
+        json.dumps({"state": "running", "pid": 999999, "child_pid": 888888}),
+        encoding="utf-8",
+    )
+    args = parse_external_args(
+        ["--status", f"--pid-file={tmp_path / 'external-rsi.pid'}", f"--socket-path={tmp_path / 'rsi.sock'}"]
+    )
+
+    result = status_external_watchdog(args)
+
+    assert result["supervisor_alive"] is False
+    assert result["child_alive"] is False
+    assert (tmp_path / "external-rsi.pid").exists()

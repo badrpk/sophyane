@@ -60,14 +60,54 @@ def parse_external_args(argv=None):
     parser.add_argument("--pid-file", type=Path, default=default_state / "external-rsi.pid")
     parser.add_argument("--socket-path", type=Path, default=default_state / "rsi.sock")
     parser.add_argument("--state-dir", type=Path, default=None)
-    parser.add_argument("--watchdog-mode", choices=("external",), required=True)
+    parser.add_argument("--watchdog-mode", choices=("external",), default=None)
     parser.add_argument("--wakelock", action="store_true")
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--status", action="store_true")
     args = parser.parse_args(argv)
+    if not args.status and args.watchdog_mode is None:
+        parser.error("--watchdog-mode=external is required unless --status is used")
     if args.state_dir is None:
         args.state_dir = args.socket_path.parent
     args.heartbeat_stale_after = max(3.0 * args.heartbeat_interval, 15.0)
     return args
+
+
+def status_external_watchdog(args) -> dict[str, object]:
+    state_dir = Path(args.state_dir)
+    pid_file = Path(args.pid_file)
+    supervisor_pid = None
+    try:
+        supervisor_pid = int(pid_file.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        pass
+    child_pid = None
+    payload: dict[str, object] = {}
+    try:
+        payload = json.loads((state_dir / "external-watchdog.json").read_text(encoding="utf-8"))
+        child_pid = int(payload["child_pid"]) if payload.get("child_pid") else None
+    except (OSError, TypeError, ValueError, KeyError, json.JSONDecodeError):
+        pass
+    alive = ExternalWatchdog._default_process_is_alive
+    result = {
+        **payload,
+        "supervisor_pid": supervisor_pid,
+        "supervisor_alive": bool(supervisor_pid and alive(supervisor_pid)),
+        "child_pid": child_pid,
+        "child_alive": bool(child_pid and alive(child_pid)),
+        "heartbeat": None,
+    }
+    try:
+        heartbeat = json.loads((state_dir / "heartbeat.json").read_text(encoding="utf-8"))
+        result["heartbeat"] = {
+            "pid": heartbeat.get("pid"),
+            "state": heartbeat.get("state"),
+            "last_tick_at": heartbeat.get("last_tick_at"),
+            "last_error": heartbeat.get("last_error", ""),
+        }
+    except (OSError, TypeError, ValueError, AttributeError, json.JSONDecodeError):
+        pass
+    return result
 
 
 def acquire_wakelock(enabled: bool, *, runner=subprocess.run) -> bool:
@@ -546,6 +586,9 @@ def run_external_watchdog(args) -> int:
 
 def main(argv=None) -> int:
     args = parse_external_args(argv)
+    if args.status:
+        print(json.dumps(status_external_watchdog(args), sort_keys=True))
+        return 0
     return run_external_watchdog(args)
 
 
