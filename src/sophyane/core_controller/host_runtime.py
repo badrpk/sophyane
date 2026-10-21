@@ -32,6 +32,46 @@ def _conversation_handler(plan: ModePlan, _capability: object) -> Any:
     return conversation_turn(plan.payload.get("text", ""))
 
 
+def _sli_handler(plan: ModePlan, _capability: object) -> Any:
+    from sophyane.sli_semantic_intelligence import build_semantic_plan
+
+    return build_semantic_plan(plan.payload.get("text", ""))
+
+
+def _race_handler(plan: ModePlan, _capability: object) -> Any:
+    from sophyane.config import load_config
+    from sophyane.race_orchestrator import run_adaptive_race
+
+    return run_adaptive_race(
+        plan.payload.get("text", ""),
+        workspace=Path.cwd(),
+        config=load_config(),
+    )
+
+
+def _learning_handler(plan: ModePlan, capability: object) -> Any:
+    from sophyane.rsi.observation_bus import ImprovementObservation, ImprovementSource, autonomous_bus
+
+    evidence = plan.payload.get("evidence", {})
+    if isinstance(evidence, dict):
+        values = evidence
+    else:
+        values = {"value": evidence}
+    problem = str(values.get("problem") or plan.payload.get("text") or "runtime learning observation")
+    component = str(values.get("component") or "sophyane.core_controller")
+    raw_evidence = values.get("evidence") or (str(values.get("value") or "observed"),)
+    if isinstance(raw_evidence, str):
+        raw_evidence = (raw_evidence,)
+    observation = ImprovementObservation(
+        source=ImprovementSource.RUNTIME,
+        problem=problem,
+        component=component,
+        evidence=tuple(str(item) for item in raw_evidence),
+        suggested_direction=str(values.get("suggested_direction") or ""),
+    )
+    return {"accepted": autonomous_bus.submit(observation), "fingerprint": observation.fingerprint}
+
+
 def build_host_dependencies() -> dict[ModeName, dict[str, Any]]:
     """Return explicit, readiness-backed host bindings.
 
@@ -45,6 +85,16 @@ def build_host_dependencies() -> dict[ModeName, dict[str, Any]]:
     local_ready = lambda: bool(llama_server_reachable())
     codex_ready = lambda: bool(agy_available())
     return {
+        ModeName.RACE: {
+            "provider": "local_gguf",
+            "ready": local_ready,
+            "handler": _race_handler,
+        },
+        ModeName.SLI_GRAPH: {
+            "provider": "local_gguf",
+            "ready": local_ready,
+            "handler": _sli_handler,
+        },
         ModeName.LOCAL_LLM: {
             "provider": "local_gguf",
             "ready": local_ready,
@@ -59,6 +109,11 @@ def build_host_dependencies() -> dict[ModeName, dict[str, Any]]:
             "provider": "codex_cli",
             "ready": codex_ready,
             "handler": _conversation_handler,
+        },
+        ModeName.LEARNING: {
+            "provider": "local_gguf",
+            "ready": local_ready,
+            "handler": _learning_handler,
         },
     }
 

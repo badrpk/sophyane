@@ -12,7 +12,9 @@ def test_host_runtime_binds_proven_local_and_codex_dependencies(tmp_path, monkey
     assert status["modes"][ModeName.LOCAL_LLM.value]["ready"] is True
     assert status["modes"][ModeName.EXTERNAL_LLM.value]["ready"] is True
     assert status["modes"][ModeName.HUMAN_CONVERSATION.value]["ready"] is True
-    assert status["modes"][ModeName.RACE.value]["ready"] is False
+    assert status["modes"][ModeName.RACE.value]["ready"] is True
+    assert status["modes"][ModeName.SLI_GRAPH.value]["ready"] is True
+    assert status["modes"][ModeName.LEARNING.value]["ready"] is True
 
 
 def test_host_runtime_local_handler_uses_llama_provider(tmp_path, monkeypatch):
@@ -24,5 +26,33 @@ def test_host_runtime_local_handler_uses_llama_provider(tmp_path, monkeypatch):
         ControllerRequest(text="hello local", requested_mode=ModeName.LOCAL_LLM)
     )
 
-    assert result.disposition == "completed"
+    assert result.disposition == "completed", result.to_dict()
     assert result.output == "local:hello local"
+
+
+def test_host_runtime_sli_handler_builds_deterministic_plan(tmp_path, monkeypatch):
+    monkeypatch.setattr("sophyane.local_runtime.llama_server_reachable", lambda: True)
+
+    controller = build_host_live_core_controller(audit_path=tmp_path / "audit.jsonl")
+    result = controller.handle(
+        ControllerRequest(text="build a python tool", requested_mode=ModeName.SLI_GRAPH)
+    )
+
+    assert result.disposition == "completed"
+    assert result.output.target_language == "python"
+
+
+def test_host_runtime_learning_handler_submits_bounded_observation(tmp_path, monkeypatch):
+    monkeypatch.setattr("sophyane.local_runtime.llama_server_reachable", lambda: True)
+
+    controller = build_host_live_core_controller(audit_path=tmp_path / "audit.jsonl")
+    result = controller.handle(
+        ControllerRequest(
+            text="record provider timeout",
+            requested_mode=ModeName.LEARNING,
+            context={"evidence": {"component": "provider", "evidence": ["timeout"]}},
+        )
+    )
+
+    assert result.disposition == "completed"
+    assert result.output["accepted"] is True
