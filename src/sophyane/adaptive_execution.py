@@ -2599,12 +2599,32 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     # create an isolated project environment, install dependencies with an
     # Android-friendly timeout, then run the project's own tests.
     deterministic_verification_stage = ""
+    pending_repair_verification: str | None = None
+    repair_action_in_flight = False
+    verification_action_in_flight = False
+    verification_repair_attempts = 0
 
     for step in range(1, max_steps + 1):
         # After the initial multi-file bundle is materialized, do not depend on
         # the provider to emit a run_command action. Sophyane owns the next
         # deterministic step: install declared dependencies and execute tests.
-        if deterministic_verification_stage == "prepare":
+        if (
+            pending_repair_verification is not None
+            and not repair_action_in_flight
+            and not verification_action_in_flight
+        ):
+            action = {
+                "type": "run_command",
+                "command": pending_repair_verification,
+                "timeout": 300,
+                "deterministic_post_bundle_verification": "test",
+            }
+            plan = None
+            verification_action_in_flight = True
+            progress(
+                "Rerunning the original failed verification command after repair"
+            )
+        elif deterministic_verification_stage == "prepare":
             # SOPHYANE_FULL_STACK_STDLIB_VERIFY_V1
             #
             # A classified full-stack local product has a fixed stdlib-only
@@ -3059,6 +3079,15 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                 )
 
         ok, result = _execute(runtime, action, workspace, progress)
+        if verification_action_in_flight:
+            verification_action_in_flight = False
+
+        if repair_action_in_flight:
+            repair_action_in_flight = False
+            if ok:
+                current = ""
+                continue
+
         if read_only_execution and kind not in {"respond", "message"}:
             if ok:
                 pending_read_only_execution_failure = False
@@ -3378,14 +3407,39 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                     + "\n".join(evidence)
                 )
 
-            # A real pytest failure may now be sent for a targeted source fix.
+            # A real pytest failure must be sent through the selected provider
+            # for one targeted repair, then the exact failed command is rerun
+            # deterministically. Do not parse repair prose as an action or
+            # reset the task-level verification repair budget.
+            if verification_repair_attempts >= 2:
+                return _UnresolvedExecutionResult(
+                    "Execution stopped safely after bounded verification "
+                    "repair attempts.\n\n"
+                    + "\n".join(evidence),
+                    evidence=evidence,
+                )
+
+            pending_repair_verification = _command_text(action)
+            if not pending_repair_verification:
+                return _UnresolvedExecutionResult(
+                    "Execution stopped safely: failed verification had no "
+                    "replayable command.\n\n"
+                    + "\n".join(evidence),
+                    evidence=evidence,
+                )
+
+            verification_repair_attempts += 1
             deterministic_verification_stage = ""
-            current = _compact_repair_prompt(
-                original_request,
-                _files(workspace),
-                result,
+            response = ask(
+                _compact_repair_prompt(
+                    original_request,
+                    _files(workspace),
+                    result,
+                )
             )
-            repairs = 0
+            current_provider = getattr(response, "provider_id", None)
+            current = getattr(response, "text", str(response))
+            repair_action_in_flight = True
             continue
 
         if _simple_file_write_request_completed(

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from sophyane.adaptive_execution import run_adaptive_loop
 
 
@@ -156,3 +158,109 @@ def test_recovered_failure_may_complete_after_real_success(
 
     assert "probe.txt" in result
     assert "Execution evidence:" in result
+
+
+@pytest.mark.parametrize(
+    ("marker", "failure_name"),
+    [
+        ("zero_battery.ready", "zero-battery failure"),
+        ("solar_capacity.ready", "solar-capacity mismatch"),
+    ],
+)
+def test_failed_verification_calls_one_repair_then_reruns_exact_command(
+    tmp_path,
+    marker,
+    failure_name,
+):
+    command = f"test -f {marker}"
+    initial = json.dumps(
+        {
+            "action": {
+                "type": "run_command",
+                "command": command,
+                "deterministic_post_bundle_verification": "test",
+            }
+        }
+    )
+    prompts = []
+    responses = iter(
+        [
+            Response(
+                {
+                    "type": "write_file",
+                    "path": marker,
+                    "content": f"repaired {failure_name}\n",
+                }
+            )
+        ]
+    )
+
+    def ask(prompt):
+        prompts.append(prompt)
+        return next(responses)
+
+    result = run_adaptive_loop(
+        initial_text=initial,
+        original_request=(
+            f"Repair the {failure_name} in the generated application, "
+            "then rerun the exact verification command."
+        ),
+        ask=ask,
+        workspace=tmp_path,
+        max_steps=6,
+    )
+
+    assert "completed successfully" in result.casefold()
+    assert len(prompts) == 1
+    assert (tmp_path / marker).is_file()
+    assert result.count(command) >= 2
+
+
+def test_failed_verification_repair_budget_is_not_reset_by_repair_writes(
+    tmp_path,
+):
+    command = "test -f first.ready && test -f second.ready"
+    initial = json.dumps(
+        {
+            "action": {
+                "type": "run_command",
+                "command": command,
+                "deterministic_post_bundle_verification": "test",
+            }
+        }
+    )
+    prompts = []
+    responses = iter(
+        [
+            Response(
+                {
+                    "type": "write_file",
+                    "path": "first.ready",
+                    "content": "first\n",
+                }
+            ),
+            Response(
+                {
+                    "type": "write_file",
+                    "path": "still-unfixed.txt",
+                    "content": "repair attempt\n",
+                }
+            ),
+        ]
+    )
+
+    def ask(prompt):
+        prompts.append(prompt)
+        return next(responses)
+
+    result = run_adaptive_loop(
+        initial_text=initial,
+        original_request="Repair the energy simulator and rerun its tests.",
+        ask=ask,
+        workspace=tmp_path,
+        max_steps=8,
+    )
+
+    assert "completed successfully" not in result.casefold()
+    assert "bounded verification repair attempts" in result.casefold()
+    assert len(prompts) == 2
