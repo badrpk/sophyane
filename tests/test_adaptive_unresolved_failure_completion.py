@@ -264,3 +264,56 @@ def test_failed_verification_repair_budget_is_not_reset_by_repair_writes(
     assert "completed successfully" not in result.casefold()
     assert "bounded verification repair attempts" in result.casefold()
     assert len(prompts) == 2
+
+
+def test_failed_full_stack_test_calls_one_repair_then_replays_exact_command(
+    tmp_path,
+    monkeypatch,
+):
+    command = "test -f full_stack.ready"
+    initial = json.dumps(
+        {
+            "action": {
+                "type": "run_command",
+                "command": command,
+                "deterministic_post_bundle_verification": "full_stack_test",
+            }
+        }
+    )
+    prompts = []
+    responses = iter(
+        [
+            Response(
+                {
+                    "type": "write_file",
+                    "path": "full_stack.ready",
+                    "content": "repaired\n",
+                }
+            )
+        ]
+    )
+
+    def ask(prompt):
+        prompts.append(prompt)
+        return next(responses)
+
+    monkeypatch.setattr(
+        "sophyane.full_stack_verification.verify_full_stack_application",
+        lambda _workspace, _progress: (True, "fabric ok"),
+    )
+
+    result = run_adaptive_loop(
+        initial_text=initial,
+        original_request=(
+            "Repair the full-stack application, then rerun its exact "
+            "verification command."
+        ),
+        ask=ask,
+        workspace=tmp_path,
+        max_steps=8,
+    )
+
+    assert "completed successfully" in result.casefold()
+    assert len(prompts) == 1
+    assert (tmp_path / "full_stack.ready").is_file()
+    assert result.count(command) >= 2

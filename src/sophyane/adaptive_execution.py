@@ -2599,7 +2599,7 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     # create an isolated project environment, install dependencies with an
     # Android-friendly timeout, then run the project's own tests.
     deterministic_verification_stage = ""
-    pending_repair_verification: str | None = None
+    pending_repair_verification: tuple[str, str] | None = None
     repair_action_in_flight = False
     verification_action_in_flight = False
     verification_repair_attempts = 0
@@ -2613,11 +2613,13 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
             and not repair_action_in_flight
             and not verification_action_in_flight
         ):
+            replay_command, replay_phase = pending_repair_verification
+            pending_repair_verification = None
             action = {
                 "type": "run_command",
-                "command": pending_repair_verification,
+                "command": replay_command,
                 "timeout": 300,
-                "deterministic_post_bundle_verification": "test",
+                "deterministic_post_bundle_verification": replay_phase,
             }
             plan = None
             verification_action_in_flight = True
@@ -3396,7 +3398,7 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                 + "\n".join(evidence)
             )
 
-        if verification_phase == "test":
+        if verification_phase in {"test", "full_stack_test"}:
             if ok:
                 successful_commands.add(_command_text(action))
                 return (
@@ -3419,8 +3421,8 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                     evidence=evidence,
                 )
 
-            pending_repair_verification = _command_text(action)
-            if not pending_repair_verification:
+            failed_command = _command_text(action)
+            if not failed_command:
                 return _UnresolvedExecutionResult(
                     "Execution stopped safely: failed verification had no "
                     "replayable command.\n\n"
@@ -3429,6 +3431,7 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                 )
 
             verification_repair_attempts += 1
+            pending_repair_verification = (failed_command, verification_phase)
             deterministic_verification_stage = ""
             response = ask(
                 _compact_repair_prompt(
