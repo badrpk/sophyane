@@ -2601,6 +2601,7 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
     deterministic_verification_stage = ""
     pending_repair_verification: tuple[str, str] | None = None
     repair_action_in_flight = False
+    repair_verification_stage: str | None = None
     verification_action_in_flight = False
     verification_repair_attempts = 0
 
@@ -2735,15 +2736,27 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
                 "entering targeted repair"
             )
 
+            if verification_repair_attempts >= 2:
+                return _UnresolvedExecutionResult(
+                    "Execution stopped safely after bounded verification "
+                    "repair attempts.\n\n"
+                    + "\n".join(evidence),
+                    evidence=evidence,
+                )
+
+            verification_repair_attempts += 1
             deterministic_verification_stage = ""
-
-            current = _compact_repair_prompt(
-                original_request,
-                _files(workspace),
-                result,
+            repair_verification_stage = "full_stack_fabric"
+            response = ask(
+                _compact_repair_prompt(
+                    original_request,
+                    _files(workspace),
+                    result,
+                )
             )
-
-            repairs = 0
+            current_provider = getattr(response, "provider_id", None)
+            current = getattr(response, "text", str(response))
+            repair_action_in_flight = True
             continue
 
         elif deterministic_verification_stage == "install":
@@ -3087,6 +3100,11 @@ def run_adaptive_loop(*, initial_text: str, original_request: str, ask: Callable
         if repair_action_in_flight:
             repair_action_in_flight = False
             if ok:
+                if repair_verification_stage is not None:
+                    deterministic_verification_stage = (
+                        repair_verification_stage
+                    )
+                    repair_verification_stage = None
                 current = ""
                 continue
 

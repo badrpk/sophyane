@@ -317,3 +317,57 @@ def test_failed_full_stack_test_calls_one_repair_then_replays_exact_command(
     assert len(prompts) == 1
     assert (tmp_path / "full_stack.ready").is_file()
     assert result.count(command) >= 2
+
+
+def test_failed_service_fabric_verification_repairs_then_rechecks(
+    tmp_path,
+    monkeypatch,
+):
+    initial = json.dumps(
+        {
+            "action": {
+                "type": "run_command",
+                "command": "true",
+                "deterministic_post_bundle_verification": "full_stack_test",
+            }
+        }
+    )
+    prompts = []
+    responses = iter(
+        [
+            Response(
+                {
+                    "type": "write_file",
+                    "path": "fabric.ready",
+                    "content": "repaired\n",
+                }
+            )
+        ]
+    )
+    fabric_results = iter(
+        [
+            (False, "fabric rejected the application"),
+            (True, "fabric ok"),
+        ]
+    )
+
+    def ask(prompt):
+        prompts.append(prompt)
+        return next(responses)
+
+    monkeypatch.setattr(
+        "sophyane.full_stack_verification.verify_full_stack_application",
+        lambda _workspace, _progress: next(fabric_results),
+    )
+
+    result = run_adaptive_loop(
+        initial_text=initial,
+        original_request="Repair the full-stack application and verify it.",
+        ask=ask,
+        workspace=tmp_path,
+        max_steps=8,
+    )
+
+    assert "completed successfully" in result.casefold()
+    assert len(prompts) == 1
+    assert (tmp_path / "fabric.ready").is_file()
