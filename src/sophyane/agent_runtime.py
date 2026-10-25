@@ -24,6 +24,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .neuron_security import (
+    NeuronSecurityDecision,
+    NeuronSecurityUnavailable,
+    authorize_shell,
+)
+
 
 BASE_DIR = Path.home() / ".sophyane"
 DATA_DIR = BASE_DIR / "data"
@@ -554,10 +560,35 @@ def safe_shell(command_text: str) -> str:
         log_tool("safe_shell", command_text, output, False)
         return output
 
+    try:
+        security = authorize_shell(command_text)
+    except NeuronSecurityUnavailable as error:
+        output = f"Shell command rejected: {error}"
+        log_tool("safe_shell", command_text, output, False)
+        return output
+
+    if security.decision in {
+        NeuronSecurityDecision.ISOLATE,
+        NeuronSecurityDecision.BLOCK,
+    }:
+        reasons = ", ".join(security.reasons) or "policy decision"
+        output = (
+            "Shell command rejected by Neuron security: "
+            f"{security.decision.value} ({reasons})."
+        )
+        log_tool("safe_shell", command_text, output, False)
+        return output
+
     print()
     print("Sophyane wants to execute:")
     print(f"  {' '.join(shlex.quote(item) for item in arguments)}")
     print()
+
+    if security.decision == NeuronSecurityDecision.REQUIRE_REVIEW:
+        print(
+            "Neuron security requires review "
+            f"(risk={security.risk:.3f})."
+        )
 
     confirmation = input("Allow this command? [y/N]: ").strip().lower()
 
