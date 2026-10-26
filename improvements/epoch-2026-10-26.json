@@ -1,0 +1,40 @@
+{
+  "day": "2026-10-26",
+  "exported_at": 1793003276.6616192,
+  "device": "runnervmtai0g-1a530cc0",
+  "sophyane_version": "27.0.1",
+  "chain_verify": {
+    "ok": true,
+    "length": 1,
+    "tip": "5df6fb1a90f3b0eccc6fe6279005a577abb3132d2f8153a501f7fd0122051998"
+  },
+  "count": 1,
+  "blocks": [
+    {
+      "index": 0,
+      "timestamp": 1793003276.6614344,
+      "proposal": {
+        "proposal_id": "f86ad676-0e80-48d1-ad57-8083cc5a91ff",
+        "kind": "benchmark",
+        "title": "daily-ci-heartbeat",
+        "body": "Automated daily CI epoch for Sophyane continuous improvement catalog.",
+        "source_device": "runnervmtai0g-1a530cc0",
+        "evidence": {
+          "workflow": "sophyane-daily-improve",
+          "verify": {
+            "ok": true,
+            "length": 0,
+            "message": "empty chain"
+          }
+        },
+        "score": 0.1,
+        "created_at": 1793003276.661433
+      },
+      "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "hash": "5df6fb1a90f3b0eccc6fe6279005a577abb3132d2f8153a501f7fd0122051998",
+      "device": "runnervmtai0g-1a530cc0",
+      "version": "27.0.1"
+    }
+  ],
+  "merkle_root": "5df6fb1a90f3b0eccc6fe6279005a577abb3132d2f8153a501f7fd0122051998"
+}
