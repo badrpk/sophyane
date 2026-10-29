@@ -7,16 +7,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from sophyane.config import CONFIG_DIR, CONFIG_FILE, get_secret, load_json, default_config, save_config, save_json
+from sophyane.config import CONFIG_DIR, get_secret, load_config, save_config, save_json
 from sophyane.plugin_loader import PluginLoader
 
 LOCAL_IDS = {"local_gguf"}
 LLM_FILE = CONFIG_DIR / "llm.json"
-
-
-def load_config() -> dict[str, Any]:
-    """Read startup settings without initializing provider configuration."""
-    return load_json(CONFIG_FILE) or default_config()
 
 
 def _load_llm() -> dict[str, Any]:
@@ -139,32 +134,6 @@ def _configured_clouds() -> list[tuple[str, str]]:
     return result
 
 
-def intelligence_provider_inventory(config: dict[str, Any] | None = None) -> dict[str, tuple[str, str, str]]:
-    """Authoritative provider readiness inventory shared by banner and Mode 1."""
-    cfg = config if isinstance(config, dict) else load_config()
-    result: dict[str, tuple[str, str, str]] = {}
-    for provider_id, label in _configured_clouds():
-        result[provider_id] = (label, "external_api", "ready")
-    try:
-        import shutil
-        from sophyane.providers.codex_cli import agy_available
-        if (os.environ.get("SOPHYANE_CODEX_CLI") or shutil.which("codex")):
-            result["codex_cli"] = ("Codex CLI", "external_harness", "ready")
-        if agy_available():
-            result["agy"] = ("Antigravity (AGY)", "external_harness", "ready")
-    except Exception:
-        pass
-    try:
-        from sophyane.providers.nifdu_browser import _selection_path, _tracked_bridge_path
-        if _selection_path().is_file() and _tracked_bridge_path().is_file():
-            result["nifdu_browser"] = ("ChatGPT Browser", "external_browser", "ready")
-    except Exception:
-        pass
-    if _local_candidate(cfg, _load_llm()):
-        result["local_gguf"] = ("Local GGUF", "local_gguf", "ready")
-    return result
-
-
 def _cloud_model(provider_id: str, config: dict[str, Any], llm: dict[str, Any]) -> str:
     if str(config.get("provider") or "").lower() == provider_id and config.get("model"):
         return str(config["model"])
@@ -192,397 +161,11 @@ def _install_topic_learning_mode() -> None:
     continuous_sli_loop.run_continuous_sli_loop = run_topic_learning_loop
 
 
-def resolve_local_session_config() -> dict[str, Any]:
-    """Resolve explicit Mode-3 local authority without interactive selection."""
-
-    config = load_config()
-    llm = _load_llm()
-    local = _local_candidate(
-        config,
-        llm,
-    )
-
-    if not local:
-        raise RuntimeError(
-            "Mode 3 requires a configured local GGUF runtime"
-        )
-
-    local_id, local_model = local
-
-    # Preserve an explicitly selected transient Mode-3 profile when runtime
-    # identity/configuration is resolved later without another prompt.
-    from sophyane.local_model_profiles import (
-        configure_session_profile,
-    )
-
-    selected_local = configure_session_profile(
-        os.environ.get(
-            "SOPHYANE_LOCAL_PROFILE",
-            "qwen",
-        ),
-        qwen_model=local_model,
-    )
-
-    local_model = str(
-        selected_local.get("model")
-        or local_model
-    )
-
-    # SOPHYANE_MODE3_NONINTERACTIVE_RESOLUTION_V1
-    #
-    # This helper deliberately contains no interactive prompt or terminal
-    # selection logic, cloud discovery, or persisted cloud-provider routing.
-    # An already-selected
-    # Mode-3 session has exactly one provider authority: local_gguf.
-    os.environ[
-        "SOPHYANE_SESSION_MODE"
-    ] = "local_llm"
-
-    os.environ[
-        "SOPHYANE_SESSION_PROVIDER"
-    ] = "local_gguf"
-
-    os.environ[
-        "SOPHYANE_SESSION_MODEL"
-    ] = local_model
-
-    os.environ[
-        "SOPHYANE_SESSION_TIMEOUT"
-    ] = "300"
-
-    os.environ[
-        "SOPHYANE_LOCAL_ONLY"
-    ] = "1"
-
-    os.environ[
-        "SOPHYANE_DISABLE_CLOUD_FALLBACK"
-    ] = "1"
-
-    os.environ[
-        "SOPHYANE_DISABLE_LOCAL_FALLBACK"
-    ] = "0"
-
-    os.environ[
-        "SOPHYANE_ALLOW_CLOUD_LOCAL_RESCUE"
-    ] = "0"
-
-    llm[
-        "active_provider"
-    ] = "local_gguf"
-
-    llm[
-        "fallback_order"
-    ] = [
-        "local_gguf"
-    ]
-
-    llm[
-        "allow_quality_escalation"
-    ] = False
-
-    llm[
-        "quality_rescue_provider"
-    ] = ""
-
-    llm[
-        "allow_local_fallbacks"
-    ] = False
-
-    llm[
-        "allow_cloud_local_rescue"
-    ] = False
-
-    return {
-        **config,
-        "provider": "local_gguf",
-        "model": local_model,
-        "company": "Local",
-        "timeout": 300,
-    }
-
-
-def _human_conversation_session(config: dict[str, Any]) -> dict[str, Any]:
-    """Establish transient Mode-6 authority without writing configuration."""
-    from sophyane.providers.human_conversation import mode6_status
-
-    os.environ["SOPHYANE_SESSION_MODE"] = "human_conversation"
-    os.environ["SOPHYANE_SESSION_PROVIDER"] = "codex_cli"
-    os.environ["SOPHYANE_SESSION_MODEL"] = "codex-default"
-    os.environ["SOPHYANE_SESSION_TIMEOUT"] = "300"
-    for key in (
-        "SOPHYANE_SLI_GRAPH", "SOPHYANE_SLI_ONLY", "SOPHYANE_SLI_CONTINUOUS",
-        "SOPHYANE_TOPIC_LEARNING", "SOPHYANE_LOCAL_ONLY",
-        "SOPHYANE_DISABLE_CLOUD_FALLBACK", "SOPHYANE_DISABLE_LOCAL_FALLBACK",
-        "SOPHYANE_ALLOW_CLOUD_LOCAL_RESCUE", "SOPHYANE_MODE4_EXTERNAL_FAILOVER",
-    ):
-        os.environ.pop(key, None)
-    return {**config, "provider": "codex_cli", "model": "codex-default",
-            "company": "Human Conversation", "timeout": 300, **mode6_status()}
-
-
-def mode4_transport_families() -> tuple[str, str, str]:
-    return ("APIs", "NIFDU Browser", "Harnesses / CLI")
-
-
-def mode4_api_choices(config: dict[str, Any], llm: dict[str, Any]) -> list[tuple[str, str, str]]:
-    return [
-        (provider_id, label, _cloud_model(provider_id, config, llm))
-        for provider_id, label in _configured_clouds()[:10]
-    ]
-
-
-def _mode4_nifdu_transport_available() -> bool:
-    bridge = (
-        Path.home()
-        / "nifdu"
-        / "tools"
-        / "nifdu_browser_bridge.py"
-    )
-    return bridge.is_file()
-
-
-def mode4_nifdu_choices() -> list[tuple[str, str, str]]:
-    if not _mode4_nifdu_transport_available():
-        return []
-
-    return [
-        ("browser_chatgpt", "ChatGPT", "chatgpt-browser"),
-        ("browser_claude", "Claude", "claude-browser"),
-        ("browser_gemini", "Gemini", "gemini-browser"),
-        ("browser_grok", "Grok", "grok-browser"),
-        ("browser_perplexity", "Perplexity", "perplexity-browser"),
-        ("browser_poe", "Poe", "poe-browser"),
-        ("browser_copilot", "Copilot", "copilot-browser"),
-        ("browser_mistral", "Mistral", "mistral-browser"),
-        ("browser_qwen", "Qwen", "qwen-browser"),
-        ("browser_kimi", "Kimi", "kimi-browser"),
-    ][:10]
-
-
-def _configure_mode4_nifdu_leaf_callable() -> str:
-    import json
-
-    adapter = (
-        Path(__file__).resolve().parent
-        / "providers"
-        / "nifdu_leaf_adapter.py"
-    )
-
-    if not adapter.is_file():
-        raise RuntimeError(
-            "Mode-4 NIFDU leaf adapter is missing: "
-            f"{adapter}"
-        )
-
-    directory = (
-        Path.home()
-        / ".cache"
-        / "sophyane"
-        / "mode4"
-    )
-    directory.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    selection_file = (
-        directory
-        / "nifdu-leaf-callable.json"
-    )
-
-    payload = {
-        "kind": "function",
-        "module": str(adapter),
-        "name": "ask",
-        "args": [
-            "prompt",
-            "image",
-        ],
-        "async": False,
-        "score": 1000,
-    }
-
-    selection_file.write_text(
-        json.dumps(
-            payload,
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    return str(selection_file)
-
-
-def _mode4_codex_available() -> bool:
-    import shutil
-    return shutil.which("codex") is not None
-
-
-def _mode4_agy_available() -> bool:
-    from sophyane.providers.codex_cli import agy_available
-    return bool(agy_available())
-
-
-def mode4_harness_choices() -> list[tuple[str, str, str]]:
-    choices: list[tuple[str, str, str]] = []
-    if _mode4_codex_available():
-        choices.append(("codex_cli", "Codex CLI", "codex-default"))
-    if _mode4_agy_available():
-        choices.append(("agy", "Antigravity (AGY)", "agy-default"))
-    return choices[:10]
-
-
-def apply_mode4_selection(family: str, provider: str, model: str | None = None, *, config: dict[str, Any] | None = None, llm: dict[str, Any] | None = None) -> dict[str, str]:
-    cfg = config if isinstance(config, dict) else load_config()
-    llm_cfg = llm if isinstance(llm, dict) else _load_llm()
-    family_key = str(family or "").strip().casefold()
-    provider_key = str(provider or "").strip().casefold()
-    if family_key == "apis":
-        choices = {item[0]: item for item in mode4_api_choices(cfg, llm_cfg)}
-        if provider_key not in choices:
-            raise ValueError("Unknown Mode-4 API provider")
-        selected = choices[provider_key]
-        mode, selected_model = "cloud_llm", model or selected[2]
-    elif family_key in {"nifdu browser", "nifdu", "nifdu_browser"}:
-        choices = {item[0]: item for item in mode4_nifdu_choices()}
-        if provider_key not in choices:
-            raise ValueError("Unavailable Mode-4 NIFDU provider")
-
-        selected = choices[provider_key]
-        leaf_provider = selected[0]
-        selected_model = model or selected[2]
-
-        site = leaf_provider.removeprefix("browser_")
-        callable_file = _configure_mode4_nifdu_leaf_callable()
-
-        os.environ["SOPHYANE_NIFDU_PROVIDER"] = leaf_provider
-        os.environ["SOPHYANE_NIFDU_SITE"] = site
-        os.environ["SOPHYANE_NIFDU_CALLABLE_FILE"] = callable_file
-
-        mode = "nifdu_llm"
-        provider_key = "nifdu_browser"
-    elif family_key in {"harnesses / cli", "harnesses", "cli"}:
-        choices = {item[0]: item for item in mode4_harness_choices()}
-        if provider_key not in choices:
-            raise ValueError("Unavailable Mode-4 harness")
-        mode, selected_model = provider_key, model or choices[provider_key][2]
-    else:
-        raise ValueError("Unknown Mode-4 transport family")
-    os.environ["SOPHYANE_SESSION_MODE"] = mode
-    os.environ["SOPHYANE_SESSION_PROVIDER"] = provider_key
-    os.environ["SOPHYANE_SESSION_MODEL"] = selected_model
-    os.environ["SOPHYANE_SESSION_TIMEOUT"] = "300"
-    return {"mode": mode, "provider": provider_key, "model": selected_model}
-
-
-def _choose_mode4_transport(
-    config: dict[str, Any],
-    llm: dict[str, Any],
-) -> dict[str, Any]:
-    while True:
-        print("External LLM transport:", file=sys.stderr)
-        print("1. APIs", file=sys.stderr)
-        print("2. NIFDU Browser", file=sys.stderr)
-        print("3. Harnesses / CLI", file=sys.stderr)
-
-        family = input("Select transport [1-3]: ").strip()
-
-        if family not in {"1", "2", "3"}:
-            print(
-                "Invalid transport selection. Choose 1, 2, or 3.",
-                file=sys.stderr,
-            )
-            continue
-
-        if family == "1":
-            family_name = "APIs"
-            choices = mode4_api_choices(config, llm)
-        elif family == "2":
-            family_name = "NIFDU Browser"
-            choices = mode4_nifdu_choices()
-        else:
-            family_name = "Harnesses / CLI"
-            choices = mode4_harness_choices()
-
-        choices = choices[:10]
-
-        if not choices:
-            print(
-                f"{family_name} is unavailable.",
-                file=sys.stderr,
-            )
-            continue
-
-        for number, (_, label, model) in enumerate(choices, 1):
-            print(
-                f"{number}. {label} — {model}",
-                file=sys.stderr,
-            )
-
-        while True:
-            raw = input(
-                f"Select provider [1-{len(choices)}]: "
-            ).strip()
-
-            try:
-                selected_number = int(raw)
-            except ValueError:
-                selected_number = 0
-
-            if not 1 <= selected_number <= len(choices):
-                print(
-                    "Invalid provider selection. Choose a listed number.",
-                    file=sys.stderr,
-                )
-                continue
-
-            provider, label, model = choices[selected_number - 1]
-            break
-
-        selection = apply_mode4_selection(
-            family_name,
-            provider,
-            model,
-            config=config,
-            llm=llm,
-        )
-
-        for key in (
-            "SOPHYANE_SLI_GRAPH",
-            "SOPHYANE_SLI_ONLY",
-            "SOPHYANE_SLI_CONTINUOUS",
-            "SOPHYANE_TOPIC_LEARNING",
-            "SOPHYANE_LOCAL_ONLY",
-            "SOPHYANE_DISABLE_CLOUD_FALLBACK",
-        ):
-            os.environ.pop(key, None)
-
-        return {
-            **config,
-            "provider": selection["provider"],
-            "model": selection["model"],
-            "company": label,
-            "timeout": 300,
-        }
-
-
 def choose_startup_provider() -> dict[str, Any]:
-    # Startup selection must not initialize llm.json before the user can
-    # choose a transient mode. Keep the existing injectable config reader.
     config = load_config()
     llm = _load_llm()
     local = _local_candidate(config, llm)
     clouds = _configured_clouds()
-
-    # SOPHYANE_MODE4_CODEX_CLI_AVAILABILITY_V1
-    # Codex CLI uses the current ChatGPT-authenticated local CLI session.
-    codex_cli_available = (
-        __import__("shutil").which("codex")
-        is not None
-    )
-    from sophyane.providers.codex_cli import agy_available
-    antigravity_available = agy_available()
 
     verbose_startup = _verbose_startup_enabled()
 
@@ -620,69 +203,35 @@ def choose_startup_provider() -> dict[str, Any]:
 
             return updated
 
-        if requested_mode == "learning":
-            # SOPHYANE_NONINTERACTIVE_MODE5_LEARNING_V1
-            os.environ["SOPHYANE_SESSION_MODE"] = "learning"
-            os.environ.pop("SOPHYANE_SLI_GRAPH", None)
-            os.environ.pop("SOPHYANE_SLI_ONLY", None)
-            os.environ["SOPHYANE_SLI_CONTINUOUS"] = "1"
-            os.environ["SOPHYANE_TOPIC_LEARNING"] = "1"
-            _install_topic_learning_mode()
-
-            updated = dict(config)
-            updated.update({
-                "company": "Sophyane Learning",
-                "timeout": 300,
-            })
-
-            return updated
-
         if requested_mode == "local_llm":
-            return resolve_local_session_config()
+            if not local:
+                return config
 
-        if requested_mode == "codex_cli":
-            if not codex_cli_available:
-                raise RuntimeError(
-                    "Codex CLI session requested but "
-                    "`codex` is unavailable."
-                )
+            os.environ["SOPHYANE_LOCAL_ONLY"] = "1"
+            os.environ["SOPHYANE_DISABLE_CLOUD_FALLBACK"] = "1"
 
-            os.environ["SOPHYANE_SESSION_MODE"] = "codex_cli"
-            os.environ["SOPHYANE_MODE4_EXTERNAL_FAILOVER"] = "1"
-            os.environ["SOPHYANE_SESSION_PROVIDER"] = "codex_cli"
-            os.environ["SOPHYANE_SESSION_MODEL"] = "codex-default"
-            os.environ["SOPHYANE_SESSION_TIMEOUT"] = "300"
-
-            os.environ.pop("SOPHYANE_SLI_GRAPH", None)
-            os.environ.pop("SOPHYANE_SLI_ONLY", None)
-            os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
-            os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
-            os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
-            os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
+            local_id, local_model = local
 
             updated = dict(config)
             updated.update({
-                "provider": "codex_cli",
-                "model": "codex-default",
-                "company": "Codex CLI",
+                "provider": local_id,
+                "model": local_model,
+                "company": "Local",
                 "timeout": 300,
             })
 
-            return updated
+            llm["active_provider"] = local_id
+            llm["fallback_order"] = [local_id]
+            llm["allow_quality_escalation"] = False
+            llm["quality_rescue_provider"] = ""
+            llm["allow_local_fallbacks"] = False
+            llm["allow_cloud_local_rescue"] = False
 
-        if requested_mode == "human_conversation":
-            return _human_conversation_session(config)
+            return updated
 
         if requested_mode == "cloud_llm":
             if not clouds:
                 return config
-
-            os.environ.pop("SOPHYANE_SLI_GRAPH", None)
-            os.environ.pop("SOPHYANE_SLI_ONLY", None)
-            os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
-            os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
-            os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
-            os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
 
             cloud_id, label = clouds[0]
 
@@ -710,93 +259,24 @@ def choose_startup_provider() -> dict[str, Any]:
 
         return config
 
-    if local or clouds or codex_cli_available or antigravity_available:
-        # SOPHYANE_FIVE_MODE_STARTUP_MENU_V1
-        #
-        # Session-mode visibility is independent from provider
-        # availability. Keep all five Sophyane operating modes
-        # visible and mark provider-specific modes unavailable.
-        print(
-            "\nStart this session with:",
-            file=sys.stderr,
-        )
-
+    if local and clouds:
+        print("\nStart this session with:", file=sys.stderr)
         print(
             "  1. Sophyane — intelligently decide between available capabilities",
             file=sys.stderr,
         )
-
-        print(
-            "  2. SLI Graph — memory + internet, no LLM",
-            file=sys.stderr,
-        )
-
-        if local:
-            print(
-                "  3. Local LLM — llama.cpp / GGUF on-device model",
-                file=sys.stderr,
-            )
-        else:
-            print(
-                "  3. Local LLM — unavailable; no local model configured",
-                file=sys.stderr,
-            )
-
-        if clouds or codex_cli_available or antigravity_available:
-            print(
-                "  4. External LLM — API / Browser / Codex CLI",
-                file=sys.stderr,
-            )
-        else:
-            print(
-                "  4. External LLM — unavailable",
-                file=sys.stderr,
-            )
-
+        print("  2. SLI Graph — memory + internet, no LLM", file=sys.stderr)
+        print("  3. Local LLM — llama.cpp / GGUF on-device model", file=sys.stderr)
+        print(f"  4. Cloud LLM — use {clouds[0][1]}", file=sys.stderr)
         print(
             "  5. Sophyane Learning — acquire + embed until saturation/Ctrl+C",
             file=sys.stderr,
         )
-
-        print(
-            "  6. Human Conversation — natural chat + voice/camera + repository execution",
-            file=sys.stderr,
-        )
-
         while True:
-            answer = input(
-                "Select [1-6, default 1]: "
-            ).strip()
-
-            if answer in {"", "1", "2", "5", "6"}:
+            answer = input("Select [1-5, default 1]: ").strip()
+            if answer in {"", "1", "2", "3", "4", "5"}:
                 break
-
-            if answer == "3":
-                if local:
-                    break
-
-                print(
-                    "Local LLM unavailable. "
-                    "Configure a local model first."
-                )
-                continue
-
-            if answer == "4":
-                if (
-                    clouds
-                    or mode4_nifdu_choices()
-                    or codex_cli_available
-                    or antigravity_available
-                ):
-                    return _choose_mode4_transport(config, llm)
-
-                print(
-                    "External LLM unavailable. Configure a cloud "
-                    "provider or install/login to Codex CLI."
-                )
-                continue
-
-            print("Enter 1, 2, 3, 4, 5, or 6.")
+            print("Enter 1, 2, 3, 4, or 5.")
 
         if answer in {"", "1"}:
             # Sophyane owns execution policy in automatic mode.
@@ -805,7 +285,6 @@ def choose_startup_provider() -> dict[str, Any]:
 
             # Remove strict-mode flags that could otherwise constrain
             # Sophyane's adaptive decision/race.
-            os.environ.pop("SOPHYANE_SLI_GRAPH", None)
             os.environ.pop("SOPHYANE_SLI_ONLY", None)
             os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
             os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
@@ -822,59 +301,26 @@ def choose_startup_provider() -> dict[str, Any]:
             os.environ["SOPHYANE_SESSION_MODE"] = "sli_graph"
             os.environ["SOPHYANE_SLI_GRAPH"] = "1"
             os.environ["SOPHYANE_SLI_ONLY"] = "1"
-            # SOPHYANE_MODE2_TRANSIENT_CONFIG_V1
-            #
-            # Mode-2 execution policy is session-local. Never persist
-            # SLI company/timeout metadata into the provider configuration,
-            # otherwise a later Local/Cloud session inherits Mode-2 state.
-            os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
-            os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
-            os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
-            os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
-
             updated = dict(config)
             updated.update({"company": "SLI", "timeout": 60})
-
-            print(
-                "Mode: SLI Graph + internet (no local/cloud LLM)",
-                file=sys.stderr,
-            )
+            save_config(updated)
+            print("Mode: SLI Graph + internet (no local/cloud LLM)", file=sys.stderr)
             return updated
 
-        if answer == "6":
-            print(
-                "Mode: Human Conversation (codex_cli -> nifdu_browser)",
-                file=sys.stderr,
-            )
-            return _human_conversation_session(config)
-
         if answer == "5":
-            # SOPHYANE_MODE5_DEDICATED_LEARNING_AUTHORITY_V1
-            #
-            # Learning is intentionally independent from Mode-2 SLI Graph.
-            # It may acquire/embed training material through its dedicated
-            # learning loop, but must not acquire SLI execution authority.
-            os.environ["SOPHYANE_SESSION_MODE"] = "learning"
-            os.environ.pop("SOPHYANE_SLI_GRAPH", None)
-            os.environ.pop("SOPHYANE_SLI_ONLY", None)
+            os.environ["SOPHYANE_SESSION_MODE"] = "sli_graph"
+            os.environ["SOPHYANE_SLI_GRAPH"] = "1"
+            os.environ["SOPHYANE_SLI_ONLY"] = "1"
             os.environ["SOPHYANE_SLI_CONTINUOUS"] = "1"
             os.environ["SOPHYANE_TOPIC_LEARNING"] = "1"
             _install_topic_learning_mode()
 
-            # SOPHYANE_MODE5_TRANSIENT_CONFIG_V1
-            #
-            # Learning mode is session policy, not provider configuration.
-            os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
-            os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
-
             updated = dict(config)
-            updated.update({
-                "company": "Sophyane Learning",
-                "timeout": 300,
-            })
+            updated.update({"company": "SLI Topic Learning", "timeout": 300})
+            save_config(updated)
             print(
-                "Mode: Sophyane Learning "
-                "(acquire + embed until saturation/Ctrl+C)",
+                "Mode: Continuous SLI topic learning "
+                "(multi-iteration acquisition + vector embedding; Ctrl+C stops)",
                 file=sys.stderr,
             )
             return updated
@@ -883,89 +329,19 @@ def choose_startup_provider() -> dict[str, Any]:
             # Option 3 is intentionally strict local-only mode.
             # Never consult, rescue through, or fall back to a cloud model.
             os.environ["SOPHYANE_SESSION_MODE"] = "local_llm"
-            os.environ.pop("SOPHYANE_SLI_GRAPH", None)
-            os.environ.pop("SOPHYANE_SLI_ONLY", None)
-            os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
-            os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
             os.environ["SOPHYANE_LOCAL_ONLY"] = "1"
             os.environ["SOPHYANE_DISABLE_CLOUD_FALLBACK"] = "1"
 
             local_id, local_model = local
 
-            # SOPHYANE_MODE3_LOCAL_PROFILE_SELECTOR_V1
-            #
-            # Keep local_gguf as the one provider identity.  The selected
-            # physical model/runtime is transient Mode-3 process state.
-            from sophyane.local_model_profiles import (
-                configure_session_profile,
-                spark_profile_available,
-            )
-
-            local_profile = "qwen"
-
-            if spark_profile_available():
-                print(
-                    "",
-                    file=sys.stderr,
-                )
-                print(
-                    "Choose local LLM:",
-                    file=sys.stderr,
-                )
-                print(
-                    "  1. Qwen2.5-1.5B — fast/lightweight",
-                    file=sys.stderr,
-                )
-                print(
-                    "  2. Spark-X2.5-4B — stronger local model",
-                    file=sys.stderr,
-                )
-                print(
-                    "  3. Compare Qwen2.5-1.5B vs Spark-X2.5-4B",
-                    file=sys.stderr,
-                )
-
-                while True:
-                    local_answer = input(
-                        "Select [1-3, default 1]: "
-                    ).strip() or "1"
-
-                    if local_answer in {"1", "2", "3"}:
-                        break
-
-                    print(
-                        "Enter 1, 2, or 3."
-                    )
-
-                local_profile = {
-                    "1": "qwen",
-                    "2": "spark",
-                    "3": "compare",
-                }[local_answer]
-
-            selected_local = configure_session_profile(
-                local_profile,
-                qwen_model=local_model,
-            )
-
-            selected_model = str(
-                selected_local.get("model")
-                or local_model
-            )
-
             updated = dict(config)
             updated.update({
                 "provider": local_id,
-                "model": selected_model,
+                "model": local_model,
                 "company": "Local",
                 "timeout": 300,
             })
-
-            # SOPHYANE_TRANSIENT_SESSION_PROVIDER_V1
-            # Explicit startup provider selection is session-scoped.
-            os.environ["SOPHYANE_SESSION_PROVIDER"] = local_id
-            os.environ["SOPHYANE_SESSION_MODEL"] = selected_model
-            os.environ["SOPHYANE_SESSION_TIMEOUT"] = "300"
+            save_config(updated)
 
             llm["active_provider"] = local_id
             llm["fallback_order"] = [local_id]
@@ -983,201 +359,30 @@ def choose_startup_provider() -> dict[str, Any]:
             save_json(LLM_FILE, llm, private=False)
 
             print(
-                f"Mode: Local LLM only ({selected_model}); "
+                f"Mode: Local LLM only ({local_model}); "
                 "cloud fallback disabled",
                 file=sys.stderr,
             )
             return updated
 
         if answer == "4":
-            print(
-                "",
-                file=sys.stderr,
-            )
-            print(
-                "Choose external LLM intelligence:",
-                file=sys.stderr,
-            )
-            print(
-                "  1. Cloud API — configured cloud provider",
-                file=sys.stderr,
-            )
-            print(
-                "  2. NIFDU Browser — ChatGPT via Chromium/screenshots",
-                file=sys.stderr,
-            )
-            print(
-                "  3. Codex CLI — persistent read-only project session",
-                file=sys.stderr,
-            )
-            print(
-                "  4. Antigravity (AGY)",
-                file=sys.stderr,
-            )
-
-            while True:
-                intelligence = input(
-                    "Select [1-4, default 1]: "
-                ).strip() or "1"
-
-                if intelligence == "1" and not clouds:
-                    print(
-                        "Cloud API unavailable. "
-                        "Choose another external LLM."
-                    )
-                    continue
-
-                break
-
-            if intelligence == "2":
-                os.environ["SOPHYANE_SESSION_MODE"] = "nifdu_llm"
-                os.environ["SOPHYANE_MODE4_EXTERNAL_FAILOVER"] = "1"
-                os.environ["SOPHYANE_SESSION_PROVIDER"] = "nifdu_browser"
-                os.environ["SOPHYANE_SESSION_MODEL"] = "chatgpt-browser"
-                os.environ["SOPHYANE_SESSION_TIMEOUT"] = "180"
-
-                os.environ.pop("SOPHYANE_SLI_GRAPH", None)
-                os.environ.pop("SOPHYANE_SLI_ONLY", None)
-                os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
-                os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
-                os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
-                os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
-
-                updated = dict(config)
-                updated.update({
-                    "provider": "nifdu_browser",
-                    "model": "chatgpt-browser",
-                    "company": "NIFDU / ChatGPT Browser",
-                    "timeout": 180,
-                })
-
-                print(
-                    "Mode: NIFDU Browser LLM "
-                    "(ChatGPT via Chromium/screenshots)",
-                    file=sys.stderr,
-                )
-
-                return updated
-
-            if intelligence == "3":
-                if not codex_cli_available:
-                    print(
-                        "Codex CLI unavailable; using Cloud API.",
-                        file=sys.stderr,
-                    )
-                else:
-                    os.environ["SOPHYANE_SESSION_MODE"] = "codex_cli"
-                    os.environ["SOPHYANE_MODE4_EXTERNAL_FAILOVER"] = "1"
-                    os.environ["SOPHYANE_SESSION_PROVIDER"] = "codex_cli"
-                    os.environ["SOPHYANE_SESSION_MODEL"] = "codex-default"
-                    os.environ["SOPHYANE_SESSION_TIMEOUT"] = "300"
-
-                    os.environ.pop("SOPHYANE_SLI_GRAPH", None)
-                    os.environ.pop("SOPHYANE_SLI_ONLY", None)
-                    os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
-                    os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
-                    os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
-                    os.environ.pop(
-                        "SOPHYANE_DISABLE_CLOUD_FALLBACK",
-                        None,
-                    )
-
-                    updated = dict(config)
-                    updated.update({
-                        "provider": "codex_cli",
-                        "model": "codex-default",
-                        "company": "Codex CLI",
-                        "timeout": 300,
-                    })
-
-                    print(
-                        "Mode: Codex CLI "
-                        "(persistent read-only project session)",
-                        file=sys.stderr,
-                    )
-
-                    return updated
-
-            if intelligence == "4":
-                if not antigravity_available:
-                    print(
-                        "Antigravity (AGY) unavailable; using Cloud API.",
-                        file=sys.stderr,
-                    )
-                else:
-                    os.environ["SOPHYANE_SESSION_MODE"] = "agy"
-                    os.environ["SOPHYANE_MODE4_EXTERNAL_FAILOVER"] = "1"
-                    os.environ["SOPHYANE_SESSION_PROVIDER"] = "agy"
-                    os.environ["SOPHYANE_SESSION_MODEL"] = "agy-default"
-                    os.environ["SOPHYANE_SESSION_TIMEOUT"] = "300"
-
-                    os.environ.pop("SOPHYANE_SLI_GRAPH", None)
-                    os.environ.pop("SOPHYANE_SLI_ONLY", None)
-                    os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
-                    os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
-                    os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
-                    os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
-
-                    updated = dict(config)
-                    updated.update({
-                        "provider": "agy",
-                        "model": "agy-default",
-                        "company": "Antigravity (AGY)",
-                        "timeout": 300,
-                    })
-                    print(
-                        "Mode: Antigravity (AGY) (read-only plan/sandbox session)",
-                        file=sys.stderr,
-                    )
-                    return updated
-
-            if intelligence != "1":
-                print(
-                    "Invalid external LLM choice; using Cloud API.",
-                    file=sys.stderr,
-                )
-
-            if not clouds:
-                raise RuntimeError(
-                    "Cloud API selected but no cloud provider "
-                    "is configured."
-                )
-
             os.environ["SOPHYANE_SESSION_MODE"] = "cloud_llm"
-            os.environ["SOPHYANE_MODE4_EXTERNAL_FAILOVER"] = "1"
-            os.environ.pop("SOPHYANE_SLI_GRAPH", None)
-            os.environ.pop("SOPHYANE_SLI_ONLY", None)
-            os.environ.pop("SOPHYANE_SLI_CONTINUOUS", None)
-            os.environ.pop("SOPHYANE_TOPIC_LEARNING", None)
-            os.environ.pop("SOPHYANE_LOCAL_ONLY", None)
-            os.environ.pop("SOPHYANE_DISABLE_CLOUD_FALLBACK", None)
-
             cloud_id, label = clouds[0]
-            cloud_model = _cloud_model(
-                cloud_id,
-                config,
-                llm,
-            )
-
             updated = dict(config)
             updated.update({
                 "provider": cloud_id,
-                "model": cloud_model,
+                "model": _cloud_model(cloud_id, config, llm),
                 "company": label,
                 "timeout": 180,
             })
-
-            # SOPHYANE_TRANSIENT_SESSION_PROVIDER_V1
-            # Explicit startup provider selection is session-scoped.
-            os.environ["SOPHYANE_SESSION_PROVIDER"] = cloud_id
-            os.environ["SOPHYANE_SESSION_MODEL"] = cloud_model
-            os.environ["SOPHYANE_SESSION_TIMEOUT"] = "180"
-
+            save_config(updated)
             llm["active_provider"] = cloud_id
             save_json(LLM_FILE, llm, private=False)
             print(f"Mode: Cloud LLM ({cloud_id})", file=sys.stderr)
             return updated
 
+    elif local:
+        print("Mode: local only; no cloud rescue API is configured.", file=sys.stderr)
     elif clouds:
         if verbose_startup:
             print(f"Mode: cloud ({clouds[0][0]}); no local model is configured.", file=sys.stderr)

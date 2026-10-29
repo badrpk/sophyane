@@ -109,6 +109,12 @@ class Controller:
         def run(command, path):
             check()
             remaining = self.policy.max_lifecycle_seconds - (time.monotonic() - started)
+            # This fixed, read-only Git check does not execute candidate code.
+            # Keep it in the host verifier because the isolated guest accepts
+            # only its bounded Python/pytest command protocol.
+            if self.execution_runner is not None and tuple(command) == ('git', 'diff', '--check'):
+                return run_command(command, path, timeout=min(self.policy.command_timeout, remaining),
+                    cancelled=stopped)
             if self.execution_runner is not None:
                 return self.execution_runner(command, path, timeout=min(self.policy.command_timeout, remaining),
                     cancelled=stopped)
@@ -193,6 +199,7 @@ class Controller:
             emit('PROMOTION_READY', candidate_commit=commit)
             result = promote(baseline, candidate, weakness, verification, metrics, self.journal, identifier,
                 smoke=self.policy.smoke, failovers=failovers, parent_iteration=parent_iteration,
+                command_runner=self.execution_runner,
                 cancelled=stopped, timeout=min(self.policy.command_timeout,
                     self.policy.max_lifecycle_seconds - (time.monotonic() - started)))
             return emit(result.state, checkpoint=result.checkpoint, post_promotion_smoke=result.smoke)

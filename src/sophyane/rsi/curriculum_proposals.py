@@ -39,12 +39,21 @@ class ProposalResult:
     accepted: bool
     task: CurriculumTask | None = None
     reason: str = ""
+    generator: str = ""
+    reviewers: tuple[str, ...] = ()
+    review_outcome: str = ""
 
 
 class CurriculumProposalAdapter:
-    def __init__(self, generate: Callable[[str], str], authority: Callable[[str], bool] | None = None):
+    def __init__(
+        self,
+        generate: Callable[[str], str],
+        authority: Callable[[str], bool] | None = None,
+        generator: str = "local_llm",
+    ):
         self.generate = generate
         self.authority = authority or (lambda path: path.startswith("src/sophyane/"))
+        self.generator = generator
 
     def _reject(self, reason: str) -> ProposalResult:
         return ProposalResult(False, None, reason)
@@ -94,6 +103,7 @@ class CurriculumProposalAdapter:
         objective = str(payload["objective"]).strip()
         paths = payload["editable_paths"]
         verification = payload["verification"]
+        proposal_files = payload.get("files", {})
         repository_id = str(payload.get("repository_id", "")).strip()
         base_commit = str(payload.get("base_commit", "")).strip()
         red_command = payload.get("red_command", [])
@@ -147,6 +157,8 @@ class CurriculumProposalAdapter:
             return self._reject("editable_paths must contain 1 to 8 paths")
         if not isinstance(verification, list) or not verification or len(verification) > 16:
             return self._reject("verification must contain 1 to 16 arguments")
+        if not isinstance(proposal_files, dict) or len(proposal_files) > 8:
+            return self._reject("files must be an object with at most 8 entries")
 
         normalized: list[str] = []
         allowed = set(context.allowed_paths)
@@ -170,6 +182,14 @@ class CurriculumProposalAdapter:
                 return self._reject(f"unsafe or unauthorized path: {path!r}")
             normalized.append(path)
 
+        normalized_set = set(normalized)
+        for raw_path, content in proposal_files.items():
+            path = str(raw_path).replace("\\", "/").strip()
+            if path not in normalized_set:
+                return self._reject(f"file proposal path is not editable: {path!r}")
+            if not isinstance(content, str) or len(content.encode("utf-8")) > 1_048_576:
+                return self._reject("file proposal content is invalid or too large")
+
         if any(not isinstance(item, str) or not item.strip() for item in verification):
             return self._reject("verification contains an invalid argument")
         task = CurriculumTask(
@@ -180,6 +200,7 @@ class CurriculumProposalAdapter:
             verification=tuple(verification),
             source=TaskSource.LLM_FOLLOW_UP,
             component=str(payload.get("component", "")).strip(),
+            proposal_files={str(path).replace("\\", "/").strip(): content for path, content in proposal_files.items()},
             repository_id=repository_id,
             base_commit=base_commit,
             proposal_digest=hashlib.sha256(raw.encode("utf-8")).hexdigest() if bound else "",
@@ -187,4 +208,4 @@ class CurriculumProposalAdapter:
             red_failure_marker=red_failure_marker.strip() if bound else "",
             green_commands=tuple(tuple(command) for command in green_commands) if bound else (),
         )
-        return ProposalResult(True, task, "accepted")
+        return ProposalResult(True, task, "accepted", self.generator)

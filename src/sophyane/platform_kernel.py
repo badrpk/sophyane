@@ -15,9 +15,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from sophyane.context_builder import ContextBuilder, ContextPacket
-from sophyane.providers.base import ProviderCapabilities
-
 
 ROOT = Path.home() / ".sophyane"
 PLATFORM_ROOT = ROOT / "platform"
@@ -276,35 +273,11 @@ class AgentResult:
 class SubAgentRuntime:
     """Provider-neutral sub-agent deployment with bounded execution and tracing."""
 
-    # SOPHYANE_SUBAGENT_PROVIDER_AWARE_CONTEXT_V1
-    def __init__(
-        self,
-        generate: Callable[[str, str], str],
-        workspace: Path,
-        *,
-        capabilities: ProviderCapabilities
-        | Callable[[], ProviderCapabilities]
-        | None = None,
-    ) -> None:
+    def __init__(self, generate: Callable[[str, str], str], workspace: Path) -> None:
         self.generate = generate
         self.workspace = workspace.resolve()
-        self.capabilities = capabilities
         self.sandbox = CodedSandbox(self.workspace)
         self.sandbox.prepare()
-
-    def _capabilities(self) -> ProviderCapabilities:
-        value = self.capabilities
-
-        if callable(value):
-            try:
-                value = value()
-            except Exception:
-                return ProviderCapabilities()
-
-        if isinstance(value, ProviderCapabilities):
-            return value
-
-        return ProviderCapabilities()
 
     def run(self, spec: AgentSpec, task: str, context: str = "") -> AgentResult:
         started = time.monotonic()
@@ -313,26 +286,7 @@ class SubAgentRuntime:
             f"Permissions: {', '.join(spec.permissions)}. Work only inside {self.workspace}. "
             "Return a concise result with evidence; do not claim unverified success."
         )
-
-        packet = ContextPacket()
-        packet.add(
-            "Task:",
-            task,
-            priority=100,
-            pinned=True,
-        )
-
-        if context:
-            packet.add(
-                "Context:",
-                context,
-                priority=40,
-            )
-
-        prompt = ContextBuilder(
-            self._capabilities()
-        ).build(packet).text
-
+        prompt = f"Task: {task}\nContext: {context[:6000]}"
         try:
             output = self.generate(prompt, system)
             result = AgentResult(spec.name, bool(str(output).strip()), str(output), time.monotonic() - started)

@@ -1,7 +1,6 @@
 """Public CLI entry point with explicit runtime identity."""
 from __future__ import annotations
 import os
-from pathlib import Path
 
 import sys
 
@@ -9,220 +8,13 @@ from sophyane.config import load_config
 from sophyane.version import __version__
 
 
-class _UnavailableControllerGateway:
-    """Safe default: construction never implies provider authorization."""
-
-    def admit(self, plan):
-        from sophyane.core_controller.models import ProviderDecision
-
-        return ProviderDecision(
-            trace_id=plan.trace_id,
-            provider=plan.provider_intent,
-            ready=False,
-            reason="no provider gateway was configured",
-        )
-
-
-class _DeniedControllerBoundary:
-    def execute(self, plan, decision):
-        from sophyane.core_controller.models import ExecutionResult, FailureBoundary
-
-        return ExecutionResult(
-            approved=False,
-            completed=False,
-            failure_boundary=FailureBoundary.EXECUTION_DENIED,
-            reason="no execution boundary was configured",
-        )
-
-
-def build_core_controller(
-    *,
-    provider_gateway=None,
-    execution_boundary=None,
-    audit_store=None,
-    audit_path=None,
-    adapter_registry=None,
-):
-    """Construct the explicit controller entry point for CLI/API callers.
-
-    Safe denied dependencies are used when live integrations are not supplied;
-    callers must inject real gateways and execution boundaries deliberately.
-    """
-    from pathlib import Path
-
-    from sophyane.core_controller.adapters import AdapterRegistry
-    from sophyane.core_controller.audit import AuditStore
-    from sophyane.core_controller.controller import CoreController
-    from sophyane.core_controller.provider_gateway import ConfiguredProviderGateway
-
-    if audit_store is None:
-        path = audit_path or os.environ.get("SOPHYANE_CORE_AUDIT_PATH", ".sophyane-state/core-audit.jsonl")
-        audit_store = AuditStore(Path(path))
-    return CoreController(
-        adapter_registry=adapter_registry or AdapterRegistry.with_defaults(),
-        provider_gateway=provider_gateway or ConfiguredProviderGateway.offline(),
-        execution_boundary=execution_boundary or _DeniedControllerBoundary(),
-        audit_store=audit_store,
-    )
-
-
-def build_live_core_controller(*, dependencies=None, audit_store=None, audit_path=None):
-    """Construct concrete mode adapters with explicit runtime readiness."""
-    from pathlib import Path
-
-    from sophyane.core_controller.audit import AuditStore
-    from sophyane.core_controller.controller import CoreController
-    from sophyane.core_controller.live_registry import build_live_registry
-    from sophyane.core_controller.live_registry import _ConcreteExecutionBoundary
-
-    registry, gateway = build_live_registry(dependencies)
-    if audit_store is None:
-        path = audit_path or os.environ.get("SOPHYANE_CORE_AUDIT_PATH", ".sophyane-state/core-audit.jsonl")
-        audit_store = AuditStore(Path(path))
-    return CoreController(
-        adapter_registry=registry,
-        provider_gateway=gateway,
-        execution_boundary=_ConcreteExecutionBoundary(),
-        audit_store=audit_store,
-    )
-
-
-def build_host_live_core_controller(*, audit_store=None, audit_path=None):
-    """Construct live controller bindings proven by the current host.
-
-    This is explicit because probing a host is a runtime decision. The
-    zero-argument ``build_live_core_controller`` remains safely unavailable.
-    """
-    from sophyane.core_controller.host_runtime import build_host_dependencies
-
-    return build_live_core_controller(
-        dependencies=build_host_dependencies(),
-        audit_store=audit_store,
-        audit_path=audit_path,
-    )
-
-
-def list_host_curriculum_tasks():
-    """Return durable queued/paused improvement tasks for host inspection."""
-    from sophyane.core_controller.curriculum_bridge import default_curriculum_bridge
-
-    return default_curriculum_bridge().pending_tasks()
-
-
-def review_host_curriculum_task(task_id=None, *, reviewer=None):
-    """Ask the configured external reviewer to approve or reject one task."""
-    from sophyane.core_controller.curriculum_review import review_host_curriculum_task as review
-
-    return review(task_id, reviewer=reviewer)
-
-
-def execute_approved_host_curriculum_task():
-    """Run one approved verification-only curriculum task."""
-    from sophyane.core_controller.curriculum_review import execute_approved_host_task
-
-    path = Path(os.environ.get("SOPHYANE_CURRICULUM_STATE", ".sophyane-state/curriculum.json")).expanduser()
-    return execute_approved_host_task(path)
-
-# SOPHYANE_TRANSIENT_SESSION_BANNER_V1
-def _session_ready_model(
-    configured_model: str | None,
-) -> str:
-    """Resolve the model label owned by the current session mode.
-
-    SOPHYANE_SESSION_MODEL is transient process state. It is authoritative
-    only when the current process explicitly selected a model-bearing
-    transient mode. Otherwise persisted/current config owns the banner.
-    """
-
-    configured = str(
-        configured_model
-        or ""
-    ).strip()
-
-    session_mode = str(
-        os.environ.get(
-            "SOPHYANE_SESSION_MODE"
-        )
-        or ""
-    ).strip()
-
-    if session_mode not in {
-        "local_llm",
-        "cloud_llm",
-        "nifdu_llm",
-        "codex_cli",
-    }:
-        return configured
-
-    return str(
-        os.environ.get(
-            "SOPHYANE_SESSION_MODEL"
-        )
-        or configured
-    ).strip()
-
-
-
-
-def _available_intelligence_options() -> str:
-    """Render the same readiness inventory used by Mode 1 admission."""
-    try:
-        from sophyane.startup_policy import intelligence_provider_inventory
-        inventory = intelligence_provider_inventory()
-        return ", ".join(item[0] for _, item in sorted(inventory.items())) or "none ready"
-    except Exception:
-        return "discovery unavailable"
-
-
 def _runtime_identity() -> str:
     try:
-        if os.environ.get("SOPHYANE_SESSION_MODE", "").strip().lower() == "human_conversation":
-            config = {}
-        else:
-            config = load_config()
+        config = load_config()
     except Exception:
         config = {}
 
-    session_mode = str(
-        os.environ.get("SOPHYANE_SESSION_MODE")
-        or ""
-    ).strip().lower()
-
-    if session_mode == "local_llm":
-        # SOPHYANE_MODE3_NONINTERACTIVE_BANNER_AUTHORITY_V1
-        #
-        # Runtime identity is observational. It must never invoke the
-        # interactive startup selector for an already-selected Mode-3
-        # session. Resolve only the dedicated pure-local session contract.
-        try:
-            from sophyane.startup_policy import (
-                resolve_local_session_config,
-            )
-
-            resolved = (
-                resolve_local_session_config()
-            )
-
-            model = str(
-                resolved.get("model")
-                or os.environ.get("SOPHYANE_SESSION_MODEL")
-                or "local_gguf"
-            ).strip()
-
-        except Exception:
-            model = str(
-                os.environ.get("SOPHYANE_SESSION_MODEL")
-                or "local_gguf"
-            ).strip()
-    elif session_mode == "human_conversation":
-        model = "codex_cli -> nifdu_browser"
-    else:
-        model = str(
-            _session_ready_model(
-                config.get("model")
-            )
-            or "not configured"
-        )
+    model = str(config.get("model") or "not configured")
 
     try:
         from sophyane.connectors.runtime import list_connectors
@@ -235,21 +27,12 @@ def _runtime_identity() -> str:
     except Exception:
         email_ready = False
 
-    # Mode 1 is autonomous: the banner must describe its available
-    # intelligence routes, not a single persisted model name.
-    if session_mode == "race":
-        status = ["Intelligence: " + _available_intelligence_options()]
-    else:
-        status = [model]
+    status = [model]
 
     if email_ready:
         status.append("Email connected")
 
-    # SOPHYANE_NIFDU_SEMANTIC_CLI_STATUS_V1
-    # Provider configuration or CDP transport availability does not prove
-    # that the selected ChatGPT browser session is interactive.
-    from sophyane.session_banner import session_readiness_state
-    status.append(session_readiness_state())
+    status.append("Ready")
     if os.environ.get("SOPHYANE_SLI_ONLY") == "1" or os.environ.get("SOPHYANE_SESSION_MODE") == "sli_chunks":
         status = [("SLI Graph" if os.environ.get("SOPHYANE_SLI_GRAPH") == "1" else "SLI chunks"), "Ready"]
 
@@ -286,7 +69,6 @@ def _start_local_server_if_needed() -> None:
     # SLI-only modes do not use an LLM. Never inspect, start, or report the
     # llama.cpp/GGUF runtime for these sessions, even when local_gguf is saved
     # as the default provider in the persistent configuration.
-    # Mode 6 starts Local only when its request-local cascade reaches it.
     if (
         _metadata_only_invocation()
         or os.environ.get("SOPHYANE_SLI_ONLY") == "1"
@@ -296,42 +78,17 @@ def _start_local_server_if_needed() -> None:
             "sli_chunks",
             "sli_graph",
             "continuous_sli",
-            "human_conversation",
         }
     ):
         return
 
     try:
-        session_mode = str(
-            os.environ.get("SOPHYANE_SESSION_MODE")
-            or ""
-        ).strip().lower()
-
-        if session_mode == "local_llm":
-            provider_id = "local_gguf"
-        else:
-            config = load_config()
-            provider_id = str(
-                config.get("provider")
-                or ""
-            ).strip().lower()
-
-        if provider_id != "local_gguf":
+        config = load_config()
+        if str(config.get("provider") or "").strip().lower() != "local_gguf":
             return
+        from sophyane.local_server import ensure_server_background
 
-        # Mode-3 may select Qwen, Spark, or a sequential comparison.  The
-        # profile owner knows which physical llama-server(s) are required.
-        if session_mode == "local_llm":
-            from sophyane.local_model_profiles import (
-                ensure_profile_servers,
-            )
-
-            ok, message = ensure_profile_servers()
-
-        else:
-            from sophyane.local_server import ensure_server_background
-
-            ok, message = ensure_server_background()
+        ok, message = ensure_server_background()
         prefix = "◆ Local inference:" if ok else "◆ Local inference unavailable:"
         print(f"{prefix} {message}", file=sys.stderr, flush=True)
     except Exception as error:
@@ -395,46 +152,10 @@ def _canonicalize_launch_workspace() -> str | None:
     return None
 
 
-from sophyane.rsi.supervisor import runtime_session as _rsi_runtime_session
-
-@_rsi_runtime_session
 def main() -> int:
-    import os
-    from pathlib import Path
-
-    original_launch_dir = Path.cwd().resolve()
-
-    # SOPHYANE_STARTUP_AUTO_UPDATE_V1
-    # Update before runtime/provider initialization so a
-    # successfully updated installation is re-executed before
-    # any normal Sophyane services are started.
-    try:
-        from sophyane.startup_update import (
-            maybe_update_before_startup,
-        )
-
-        maybe_update_before_startup()
-
-    except KeyboardInterrupt:
-        raise
-
-    except Exception as error:
-        # Update availability must never become startup
-        # availability. Sophyane remains usable offline.
-        print(
-            f"◆ Sophyane update warning: {error}",
-            file=sys.stderr,
-            flush=True,
-        )
 
     # SOPHYANE_CANONICAL_WORKSPACE_CALL_V1
-    canonical_workspace = _canonicalize_launch_workspace()
-    effective_launch_dir = (
-        Path(canonical_workspace).resolve()
-        if canonical_workspace
-        else original_launch_dir
-    )
-    os.environ["SOPHYANE_LAUNCH_DIR"] = str(effective_launch_dir)
+    _canonicalize_launch_workspace()
     from sophyane.runtime_artifact_patch import install_artifact_patch
     from sophyane.runtime_browser_patch import install_browser_patch
     from sophyane.runtime_deep_agent_patch import install_deep_agent_runtime
@@ -449,12 +170,16 @@ def main() -> int:
     from sophyane.runtime_provider_error_patch import install_provider_error_patch
     from sophyane.runtime_quality_escalation import install_quality_escalation
     from sophyane.runtime_safety import install_runtime_safety
+    from sophyane.runtime_sli_brain import install_sli_brain
+    from sophyane.runtime_sli_builder import install_sli_builder
+    from sophyane.runtime_sli_capability_planner import install_sli_capability_planner
     # SOPHYANE_FILESYSTEM_CAPABILITIES_V20
     from sophyane.runtime_filesystem_capabilities_v20 import install_filesystem_capabilities_v20
-    from sophyane.runtime_sli_capability_planner import (
-        install_sli_capability_planner,
-    )
+    from sophyane.runtime_sli_intent_patch import install_sli_intent_routing
+    from sophyane.runtime_sli_mission_os import install_sli_mission_os
+    from sophyane.runtime_sli_onset_feedback import install_sli_onset_feedback
     from sophyane.runtime_software_routing_guard import install_software_routing_guard
+    from sophyane.runtime_snake_semantic_repair import install_snake_semantic_repair
     from sophyane.runtime_stagnation_patch import install_stagnation_patch
 
     install_quality_escalation()
@@ -471,23 +196,31 @@ def main() -> int:
     install_interrupt_patch()
     install_provider_error_patch()
     install_input_patch()
+    install_sli_intent_routing()
     install_intent_refinement()
+    install_sli_onset_feedback()
+    # Install capability planning before specialized browser builders so software
+    # requests receive a deterministic project type and safe scaffold first.
+    install_sli_capability_planner()
     # SOPHYANE_FILESYSTEM_CAPABILITIES_V20
     install_filesystem_capabilities_v20()
-    # SOPHYANE_SHARED_CAPABILITY_PLANNER_V1
-    #
-    # Capability planning is execution infrastructure.  It must be available
-    # to the unified human-conversation front door as well as explicit SLI
-    # graph sessions.  Mode-2 brain/builder/mission semantics remain isolated
-    # below.
-    install_sli_capability_planner()
+    # SLI assembles premium browser artifacts itself. Install before the asset
+    # pipeline so verified downloaded photos are supplied to the builder.
+    install_sli_builder()
     install_premium_asset_pipeline()
+    # Mission OS installs after all artifact builders so complex multi-service
+    # requests are intercepted before any one-shot provider artifact is requested.
+    install_sli_mission_os()
+    # Final authority: SLI owns routing, profile selection, prompt budgets and
+    # deterministic fallbacks. Local/cloud LLMs remain replaceable workers.
+    install_sli_brain()
     # Keep mission routing outermost after all provider wrappers.
     install_capability_acquisition_patch()
     # Executable software projects must bypass editable visual-session routing.
     install_software_routing_guard()
     # Semantic browser-game repair must see the final wrapped validator and
     # continuation prompt, so it is installed after all other runtime patches.
+    install_snake_semantic_repair()
 
     try:
         from sophyane.platform_kernel import ensure_platform_filesystem
@@ -496,101 +229,36 @@ def main() -> int:
     except Exception as error:  # noqa: BLE001
         print(f"◆ Platform filesystem warning: {error}", file=sys.stderr, flush=True)
 
-    # SOPHYANE_EXPLICIT_SESSION_NO_MENU_V1
-    #
-    # The startup selector exists only to choose a session when none has
-    # already been selected. Explicit automation/session authority must
-    # never be replaced by an interactive menu merely because argv is empty.
-    explicit_session_mode = str(
-        os.environ.get(
-            "SOPHYANE_SESSION_MODE"
-        )
-        or ""
-    ).strip().lower()
-
-    # A plain interactive launch is the ordinary human-conversation path.
-    # Explicit session modes and automation remain authoritative.
-    if (
-        len(sys.argv) <= 1
-        and not explicit_session_mode
-    ):
-        os.environ["SOPHYANE_SESSION_MODE"] = "human_conversation"
-        explicit_session_mode = "human_conversation"
-
-    if (
-        len(sys.argv) <= 1
-        and not explicit_session_mode
-    ):
+    if len(sys.argv) <= 1:
         try:
-            from sophyane.startup_policy import (
-                choose_startup_provider,
-            )
+            from sophyane.startup_policy import choose_startup_provider
 
             choose_startup_provider()
-
-        except (
-            EOFError,
-            KeyboardInterrupt,
-        ):
-            print(
-                "\nStartup selection cancelled; "
-                "keeping current configuration.",
-                file=sys.stderr,
-            )
-
+        except (EOFError, KeyboardInterrupt):
+            print("\nStartup selection cancelled; keeping current configuration.", file=sys.stderr)
         except Exception as error:
-            print(
-                f"◆ Startup provider selection warning: {error}",
-                file=sys.stderr,
-            )
+            print(f"◆ Startup provider selection warning: {error}", file=sys.stderr)
 
-    # SOPHYANE_MODE2_RUNTIME_ISOLATION_V1
-    #
-    # SLI execution/runtime wrappers are not global Sophyane authority.
-    # They exist only inside an explicitly selected Mode-2 session.
-    if (
-        os.environ.get("SOPHYANE_SESSION_MODE")
-        == "sli_graph"
-    ):
-        from sophyane.runtime_sli_brain import install_sli_brain
-        from sophyane.runtime_sli_builder import install_sli_builder
-        from sophyane.runtime_sli_intent_patch import (
-            install_sli_intent_routing,
-        )
-        from sophyane.runtime_sli_mission_os import install_sli_mission_os
-        from sophyane.runtime_sli_onset_feedback import (
-            install_sli_onset_feedback,
-        )
-
-        install_sli_intent_routing()
-        install_sli_onset_feedback()
-        install_sli_builder()
-        install_sli_mission_os()
-        install_sli_brain()
 
     # SOPHYANE_FRESH_PREVIEW_INSTALL_V1
     # All explicit SLI previews use the exact-workspace, no-store server.
-    if (
-        os.environ.get("SOPHYANE_SESSION_MODE")
-        == "sli_graph"
-    ):
-        try:
-            import sophyane.sli_capability_engine as _sli_engine
+    try:
+        import sophyane.sli_capability_engine as _sli_engine
 
-            from sophyane.code_memory.fresh_preview import (
-                preview_workspace as _fresh_preview_workspace,
-            )
+        from sophyane.code_memory.fresh_preview import (
+            preview_workspace as _fresh_preview_workspace,
+        )
 
-            _sli_engine.preview_sli_artifact = (
-                _fresh_preview_workspace
-            )
+        _sli_engine.preview_sli_artifact = (
+            _fresh_preview_workspace
+        )
 
-        except Exception as error:
-            print(
-                f"◆ Fresh preview installation warning: {error}",
-                file=sys.stderr,
-                flush=True,
-            )
+    except Exception as error:
+        print(
+            f"◆ Fresh preview installation warning: {error}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     print(_runtime_identity(), file=sys.stderr, flush=True)
     _start_local_server_if_needed()
@@ -604,33 +272,12 @@ def main() -> int:
 
         return run_continuous_sli_loop()
 
-    if (
-        os.environ.get("SOPHYANE_SESSION_MODE")
-        == "human_conversation"
-    ):
-        from sophyane.human_conversation_cli import (
-            main as run_cli,
-        )
-    else:
-        from sophyane.v13_cli import main as run_cli
-
+    from sophyane.v13_cli import main as run_cli
     try:
         return run_cli()
     finally:
-        from sophyane.runtime_cancel import (
-            cancel_all,
-            reset_cancel,
-        )
-
-        # SOPHYANE_REENTRANT_CLI_CANCELLATION_HYGIENE_V1
-        #
-        # Top-level shutdown must still terminate outstanding provider work,
-        # but cli_entry.main() may also be invoked in-process by tests and
-        # embedding callers.  cancel_all() latches the current/legacy token;
-        # clear that token before returning so later independent generations
-        # do not inherit a stale cancellation state.
+        from sophyane.runtime_cancel import cancel_all
         cancel_all()
-        reset_cancel()
 
 
 if __name__ == "__main__":

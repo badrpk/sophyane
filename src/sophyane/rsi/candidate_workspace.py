@@ -13,11 +13,104 @@ _EXCLUDED = {
     # Large unrelated Android build checkout; it is outside the configured RSI
     # experiment scope and would otherwise consume the whole snapshot budget.
     "termux-x11",
+    # Generated guest/build artifacts are not source candidates and can be
+    # hundreds of megabytes on the development device.
+    ".alpine-initrd-root", ".alpine-minimal-root", ".alpine-modloop-extract",
+    ".alpine-qemu-test", ".qemu-initrd-root", ".qemu-initrd-original",
+    ".sophyane-smoke", ".sophyane-state",
+    ".sophyane-rsi-state", ".local",
+    # Durable RSI control state is outside candidate source scope and changes
+    # while a bounded experiment is running. Including it would make the
+    # primary snapshot appear mutated during an otherwise isolated run.
+    "curriculum.json", "curriculum.events.jsonl", "heartbeat.json", "stages.jsonl",
+    "weaknesses.json", "metrics.json", "repository-inventory.json", "safety-halt.json",
+    "rsi.pid", "rsi-child.pid", "rsi.log",
+    # Runtime control sockets are not repository inputs and are not regular
+    # files; including them makes an otherwise valid snapshot fail closed.
+    "rsi.sock",
 }
 _IMMUTABLE_RSI_TRUST_ROOTS = frozenset({
     "src/sophyane/intelligence_authority.py",
     "src/sophyane/rsi_host_broker.py",
 })
+_RUNTIME_PID_FILES = ("rsi.pid", "rsi-child.pid")
+_RUNTIME_LOCK_FILES = ("rsi.pid.lock", "cloud-availability.lock")
+_RSI_COMMAND_MARKERS = ("sophyane.rsi_terminal", "sophyane.rsi.supervisor")
+
+
+def _default_process_is_alive(pid):
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except (OSError, ProcessLookupError):
+        return False
+    return True
+
+
+def _default_command_line_reader(pid):
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
+            "utf-8", "replace"
+        )
+    except OSError:
+        return None
+
+
+def _remove_unlocked(path):
+    try:
+        import fcntl
+        handle = path.open("a+")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            handle.close()
+            return False
+        try:
+            path.unlink(missing_ok=True)
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
+        return True
+    except (OSError, ImportError):
+        return False
+
+
+def reconcile_stale_runtime_artifacts(
+    candidate_root,
+    *,
+    process_is_alive=None,
+    command_line_reader=None,
+):
+    """Remove stale RSI PID/lock markers without deleting candidate evidence."""
+    root = Path(candidate_root)
+    process_is_alive = process_is_alive or _default_process_is_alive
+    command_line_reader = command_line_reader or _default_command_line_reader
+    if not root.is_dir():
+        return
+    workspaces = [root] + sorted((item for item in root.iterdir() if item.is_dir()), key=str)
+    for workspace in workspaces:
+        for name in _RUNTIME_PID_FILES:
+            path = workspace / name
+            if not path.is_file():
+                continue
+            try:
+                pid = int(path.read_text(encoding="utf-8").strip())
+            except (OSError, TypeError, ValueError):
+                pid = 0
+            stale = not process_is_alive(pid)
+            if not stale:
+                command_line = command_line_reader(pid)
+                stale = command_line is not None and not any(
+                    marker in command_line for marker in _RSI_COMMAND_MARKERS
+                )
+            if stale:
+                path.unlink(missing_ok=True)
+        if not any((workspace / name).exists() for name in _RUNTIME_PID_FILES):
+            for name in _RUNTIME_LOCK_FILES:
+                path = workspace / name
+                if path.is_file():
+                    _remove_unlocked(path)
 
 
 @dataclass(frozen=True)
@@ -47,7 +140,7 @@ def snapshot(path, *, max_bytes=64 * 1024**2, max_files=10000):
         )
         regular_names = [
             name for name in sorted(names)
-            if not (Path(directory) / name).is_symlink()
+            if name not in _EXCLUDED and not (Path(directory) / name).is_symlink()
         ]
         for name in regular_names:
             target = Path(directory) / name

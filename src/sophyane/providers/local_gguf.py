@@ -8,12 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from sophyane.providers.base import (
-    Provider,
-    ProviderCapabilities,
-    ProviderError,
-    ProviderMetadata,
-)
+from sophyane.providers.base import Provider, ProviderError, ProviderMetadata
 from sophyane.providers.http import post_json
 from sophyane.runtime_cancel import cancelled, register, unregister
 
@@ -156,63 +151,13 @@ class LocalGgufProvider(Provider):
                  temperature: float = 0.3, max_tokens: int = 1024, endpoint: str = "",
                  gguf_path: str = "", cli_path: str = "") -> None:
         super().__init__(api_key, model, timeout, temperature, max_tokens)
-        # Resolve the endpoint at construction time.  Mode-3 profile
-        # selection is transient process state and may be established after
-        # this module itself was imported.
-        self.endpoint = (
-            endpoint
-            or os.environ.get("SOPHYANE_LLAMA_SERVER")
-            or DEFAULT_ENDPOINT
-        ).rstrip("/")
+        self.endpoint = (endpoint or DEFAULT_ENDPOINT).rstrip("/")
         self.gguf_path = gguf_path or os.environ.get("SOPHYANE_GGUF_PATH", "")
         self.cli_path = cli_path or os.environ.get("SOPHYANE_LLAMA_CLI", "")
-
-    # SOPHYANE_LOCAL_DYNAMIC_PROVIDER_CAPACITY_V1
-    def get_capabilities(self) -> ProviderCapabilities:
-        """Expose the active llama.cpp context rather than a global guess.
-
-        The exact safe completion for a particular request remains
-        prompt-dependent and is enforced by ``_safe_completion_budget``.
-        """
-        return ProviderCapabilities(
-            context_window_tokens=_configured_context_size(),
-            max_output_tokens=max(0, int(self.max_tokens)),
-            provider_managed_context=False,
-            provider_managed_output=False,
-        )
 
     def generate(self, prompt: str, system_prompt: str) -> str:
         if cancelled():
             raise ProviderError("local generation cancelled")
-
-        local_profile = str(
-            os.environ.get(
-                "SOPHYANE_LOCAL_PROFILE"
-            )
-            or "qwen"
-        ).strip().lower()
-
-        # SOPHYANE_MODE3_SHARED_LOCAL_CONTEXT_BOUND_V1
-        #
-        # All Mode-3 local profiles, including comparison, must receive the
-        # same bounded mobile-safe request context.  Previously comparison
-        # returned before the historical local prompt bounds below, allowing
-        # full CLI/system context to reach both llama.cpp servers.
-        system_prompt = (system_prompt or "")[:800]
-        prompt = (prompt or "")[:4000]
-
-        # SOPHYANE_MODE3_LOCAL_COMPARE_V1
-        #
-        # Comparison is deliberately sequential.  Running both models at the
-        # same time on mobile hardware would create RAM/cache contention and
-        # distort tokens/sec.  Both requests receive the same prompt, system
-        # prompt, temperature and completion budget.
-        if local_profile == "compare":
-            return self._generate_comparison(
-                prompt,
-                system_prompt,
-            )
-
         started_at = time.monotonic()
         # SOPHYANE_LOCAL_GGUF_GENERATION_BUDGET_V2
         #
@@ -220,33 +165,12 @@ class LocalGgufProvider(Provider):
         # budget. Do not silently clamp real on-device generation to
         # 90 seconds: 7B GGUF coding turns can legitimately require
         # several minutes on mobile hardware.
-        # SOPHYANE_LOCAL_GGUF_PRIVATE_SHORT_TIMEOUT_V4
-        #
-        # Normal/authorized local generations retain the historical
-        # >=20-second minimum so real coding turns are never accidentally
-        # downgraded.
-        #
-        # Only a private speculation clone created by
-        # global_txq_speculation may explicitly opt into the short 3-8
-        # second Global-TXQ budget.
-        short_speculation = bool(
-            getattr(
-                self,
-                "_sophyane_allow_short_speculative_timeout",
-                False,
-            )
-        )
-
         total_budget = max(
-            (
-                2.0
-                if short_speculation
-                else 20.0
-            ),
-            float(
-                self.timeout
-            ),
+            20.0,
+            float(self.timeout),
         )
+        system_prompt = (system_prompt or "")[:800]
+        prompt = (prompt or "")[:4000]
         # SOPHYANE_LOCAL_GGUF_SINGLE_REAL_GENERATION_V1
         #
         # Readiness recovery and real inference are separate phases.
@@ -266,32 +190,14 @@ class LocalGgufProvider(Provider):
         ready = False
         readiness_error = ""
 
-        if local_profile == "spark":
-            from sophyane.local_model_profiles import (
-                ensure_profile_servers,
+        try:
+            ready = wait_until_ready(
+                timeout=3.0,
             )
-
-            ready, readiness_error = (
-                ensure_profile_servers(
-                    "spark"
-                )
+        except Exception as error:  # noqa: BLE001
+            readiness_error = (
+                f"{type(error).__name__}: {error}"
             )
-
-            if not ready:
-                raise ProviderError(
-                    "Spark local server readiness failed. "
-                    + readiness_error
-                )
-
-        else:
-            try:
-                ready = wait_until_ready(
-                    timeout=3.0,
-                )
-            except Exception as error:  # noqa: BLE001
-                readiness_error = (
-                    f"{type(error).__name__}: {error}"
-                )
 
         if not ready:
             if cancelled():
@@ -304,15 +210,22 @@ class LocalGgufProvider(Provider):
                     ensure_server_background()
                 )
 
-                # SOPHYANE_LOCAL_GGUF_STARTUP_WAIT_AUTHORITY_V1
-                #
-                # ensure_server_background() already owns lifecycle
-                # classification.  True means the configured server is ready,
-                # loading, or a verified startup is in progress.  Do not
-                # downgrade that authoritative state to the short failure
-                # window by parsing human-readable message wording.
-                server_loading = bool(
+                normalized = (
+                    startup_message.lower()
+                )
+
+                server_loading = (
                     server_started
+                    and any(
+                        marker
+                        in normalized
+                        for marker in (
+                            "loading",
+                            "starting",
+                            "startup already",
+                            "still starting",
+                        )
+                    )
                 )
 
                 remaining = (
@@ -402,38 +315,15 @@ class LocalGgufProvider(Provider):
         # This is the one and only model generation owned by this
         # LocalGgufProvider.generate() call.
         try:
-            # SOPHYANE_LOCAL_GGUF_SPECULATIVE_HTTP_BUDGET_V5
-            #
-            # int(remaining) rounds a nominal 3-second speculative budget
-            # down to 2 seconds as soon as any setup time has elapsed.
-            #
-            # Only the explicitly marked private speculative clone rounds the
-            # residual window upward. Normal/authorized Mode-3 keeps the
-            # historical timeout conversion unchanged.
-            if short_speculation:
-                import math as _speculation_math
-
-                request_timeout = max(
-                    2,
-                    int(
-                        _speculation_math.ceil(
-                            remaining
-                        )
-                    ),
-                )
-
-            else:
-                request_timeout = max(
+            return self._generate_via_server(
+                prompt,
+                system_prompt,
+                request_timeout=max(
                     2,
                     int(
                         remaining
                     ),
-                )
-
-            return self._generate_via_server(
-                prompt,
-                system_prompt,
-                request_timeout=request_timeout,
+                ),
             )
 
         except Exception:
@@ -448,26 +338,8 @@ class LocalGgufProvider(Provider):
                     wait_until_idle,
                 )
 
-                # SOPHYANE_LOCAL_GGUF_SHORT_BUDGET_QUIESCENCE_V3
-                #
-                # Normal authorized Mode-3 generations retain the historical
-                # 20-second post-error quiescence gate.
-                #
-                # A deliberately short <=20-second speculative provider clone
-                # must not add another unconditional 20 seconds after its
-                # inference deadline. Five seconds is enough to give the local
-                # server a bounded slot-release window before the caller's
-                # drain gate decides whether authorized generation may proceed.
-                cleanup_timeout = (
-                    5.0
-                    if float(
-                        self.timeout
-                    ) <= 20.0
-                    else 20.0
-                )
-
                 wait_until_idle(
-                    timeout=cleanup_timeout,
+                    timeout=20.0,
                 )
 
             except Exception:
@@ -476,353 +348,6 @@ class LocalGgufProvider(Provider):
                 pass
 
             raise
-
-
-    def _generate_comparison(
-        self,
-        prompt: str,
-        system_prompt: str,
-    ) -> str:
-        """Run the exact same local request through Qwen and Spark."""
-
-        from sophyane.local_model_profiles import (
-            ensure_profile_servers,
-            qwen_profile,
-            spark_profile,
-        )
-
-        ok, message = ensure_profile_servers(
-            "compare"
-        )
-
-        if not ok:
-            raise ProviderError(
-                "local comparison servers unavailable: "
-                + message
-            )
-
-        # Use the smaller active context so both models receive an identical
-        # mathematically safe completion request.
-        comparison_context = min(
-            int(
-                qwen_profile().get(
-                    "context"
-                )
-                or 4096
-            ),
-            int(
-                spark_profile().get(
-                    "context"
-                )
-                or 4096
-            ),
-        )
-
-        previous_context = os.environ.get(
-            "SOPHYANE_LLAMA_CONTEXT"
-        )
-
-        os.environ[
-            "SOPHYANE_LLAMA_CONTEXT"
-        ] = str(
-            comparison_context
-        )
-
-        try:
-            completion_budget = (
-                _safe_completion_budget(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    configured_max_tokens=self.max_tokens,
-                )
-            )
-        finally:
-            if previous_context is None:
-                os.environ.pop(
-                    "SOPHYANE_LLAMA_CONTEXT",
-                    None,
-                )
-            else:
-                os.environ[
-                    "SOPHYANE_LLAMA_CONTEXT"
-                ] = previous_context
-
-        # SOPHYANE_MODE3_COMPARE_BOUNDED_OUTPUT_V2
-        #
-        # Comparison is a benchmark rather than an unrestricted coding turn.
-        # Keep the same total completion allowance for both models while
-        # preventing long reasoning traces from consuming the entire mobile
-        # wall-clock budget.
-        completion_budget = min(
-            completion_budget,
-            512,
-        )
-
-        if completion_budget < 256:
-            raise ProviderError(
-                "Local comparison requires decomposition: "
-                f"safe_completion_tokens={completion_budget}"
-            )
-
-        def run_one(
-            *,
-            label: str,
-            endpoint: str,
-            model: str,
-        ) -> dict:
-            started = time.monotonic()
-
-            request_payload = {
-                "model": model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": system_prompt,
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    },
-                ],
-                "temperature": self.temperature,
-                "max_tokens": completion_budget,
-                "stream": False,
-            }
-
-            # Spark-X2.5 is a reasoning model.  Its unrestricted thinking can
-            # consume hundreds of tokens before emitting visible content,
-            # making a sequential phone benchmark take several minutes.
-            # The XHToken llama.cpp server supports this per-request field, so
-            # standalone Spark behavior remains completely unchanged.
-            if "spark" in model.lower():
-                request_payload[
-                    "reasoning_budget_tokens"
-                ] = 128
-
-            response = post_json(
-                endpoint.rstrip("/")
-                + "/v1/chat/completions",
-                request_payload,
-                headers={
-                    "Authorization": "Bearer local"
-                },
-                timeout=self.timeout,
-            )
-
-            elapsed = max(
-                0.000001,
-                time.monotonic()
-                - started,
-            )
-
-            try:
-                content = (
-                    response["choices"][0]
-                    ["message"]["content"]
-                )
-            except (
-                KeyError,
-                IndexError,
-                TypeError,
-            ) as error:
-                raise ProviderError(
-                    f"{label} returned an unexpected "
-                    "llama-server response: "
-                    + json.dumps(
-                        response
-                    )[:1000]
-                ) from error
-
-            if not isinstance(
-                content,
-                str,
-            ) or not content.strip():
-                raise ProviderError(
-                    f"{label} returned no text"
-                )
-
-            usage = (
-                response.get("usage")
-                if isinstance(
-                    response,
-                    dict,
-                )
-                else {}
-            )
-
-            if not isinstance(
-                usage,
-                dict,
-            ):
-                usage = {}
-
-            completion_tokens = int(
-                usage.get(
-                    "completion_tokens"
-                )
-                or 0
-            )
-
-            tokens_per_second = (
-                completion_tokens
-                / elapsed
-                if completion_tokens
-                else 0.0
-            )
-
-            timings = (
-                response.get("timings")
-                if isinstance(
-                    response,
-                    dict,
-                )
-                else {}
-            )
-
-            if not isinstance(
-                timings,
-                dict,
-            ):
-                timings = {}
-
-            predicted_per_second = float(
-                timings.get(
-                    "predicted_per_second"
-                )
-                or 0.0
-            )
-
-            if predicted_per_second > 0:
-                tokens_per_second = (
-                    predicted_per_second
-                )
-
-            return {
-                "label": label,
-                "content": content.strip(),
-                "elapsed": elapsed,
-                "completion_tokens": completion_tokens,
-                "tokens_per_second": tokens_per_second,
-                "characters": len(
-                    content.strip()
-                ),
-            }
-
-        qwen = qwen_profile()
-        spark = spark_profile()
-
-        # Sequential execution is intentional for a fair mobile benchmark.
-        qwen_result = run_one(
-            label="Qwen2.5-1.5B",
-            endpoint=str(
-                qwen["endpoint"]
-            ),
-            model=str(
-                qwen["model"]
-            ),
-        )
-
-        if cancelled():
-            raise ProviderError(
-                "local comparison cancelled"
-            )
-
-        spark_result = run_one(
-            label="Spark-X2.5-4B",
-            endpoint=str(
-                spark["endpoint"]
-            ),
-            model=str(
-                spark["model"]
-            ),
-        )
-
-        faster = min(
-            (
-                qwen_result,
-                spark_result,
-            ),
-            key=lambda item: float(
-                item["elapsed"]
-            ),
-        )
-
-        longer = max(
-            (
-                qwen_result,
-                spark_result,
-            ),
-            key=lambda item: int(
-                item["characters"]
-            ),
-        )
-
-        def metric(
-            result: dict,
-        ) -> str:
-            tps = float(
-                result[
-                    "tokens_per_second"
-                ]
-            )
-
-            token_text = (
-                str(
-                    result[
-                        "completion_tokens"
-                    ]
-                )
-                if int(
-                    result[
-                        "completion_tokens"
-                    ]
-                )
-                else "n/a"
-            )
-
-            tps_text = (
-                f"{tps:.2f}"
-                if tps > 0
-                else "n/a"
-            )
-
-            return (
-                f"elapsed={result['elapsed']:.3f}s, "
-                f"completion_tokens={token_text}, "
-                f"tokens/sec={tps_text}, "
-                f"characters={result['characters']}"
-            )
-
-        return (
-            "LOCAL MODEL COMPARISON\n\n"
-            "=== Qwen2.5-1.5B ===\n"
-            + metric(
-                qwen_result
-            )
-            + "\n\n"
-            + str(
-                qwen_result[
-                    "content"
-                ]
-            )
-            + "\n\n"
-            "=== Spark-X2.5-4B ===\n"
-            + metric(
-                spark_result
-            )
-            + "\n\n"
-            + str(
-                spark_result[
-                    "content"
-                ]
-            )
-            + "\n\n"
-            "=== Comparison ===\n"
-            f"Faster: {faster['label']}\n"
-            f"Longer output: {longer['label']}\n"
-            "Execution: sequential; identical prompt/system/"
-            "temperature/max_tokens; Spark reasoning budget=128 tokens."
-        )
 
 
     def _generate_via_server(
@@ -840,32 +365,10 @@ class LocalGgufProvider(Provider):
             )
         )
 
-        # SOPHYANE_LOCAL_GGUF_SPECULATIVE_EVIDENCE_FLOOR_V5
-        #
-        # The historical 256-token floor protects candidate/file
-        # materialization from predictably truncated implementation output.
-        #
-        # A private Global-TXQ speculative clone has no implementation or
-        # mutation authority and returns only a compact repository observation.
-        # It may therefore use a much smaller evidence-only completion window.
-        #
-        # Authorized/local coding providers retain the original 256-token
-        # decomposition threshold unchanged.
-        minimum_completion_tokens = (
-            64
-            if bool(
-                getattr(
-                    self,
-                    "_sophyane_allow_short_speculative_timeout",
-                    False,
-                )
-            )
-            else 256
-        )
-
-        # A tiny remaining output window means the requested operation no
-        # longer belongs in one local generation turn.
-        if completion_budget < minimum_completion_tokens:
+        # A tiny remaining output window means the requested implementation
+        # no longer belongs in one local generation turn. Do not start llama
+        # only to hit the context boundary with a predictably truncated file.
+        if completion_budget < 256:
             raise ProviderError(
                 "Local generation requires decomposition: "
                 f"context={_configured_context_size()}, "

@@ -2,9 +2,11 @@
 from dataclasses import dataclass, field
 import math
 
-OPERATIONAL = ('observations', 'deduplicated_weaknesses', 'qwen_calls', 'spark_calls',
+OPERATIONAL = ('observations', 'deduplicated_weaknesses', 'qwen_calls', 'spark_calls', 'frontier_calls',
+    'proposal_attempts', 'proposal_accepts', 'proposal_rejections', 'proposal_latency_ms_total',
+    'proposal_latency_ms_max',
     'sli_calls', 'experiments', 'confirmed_reds', 'locally_rejected_candidates',
-    'cloud_reviews', 'codex_reviews', 'nifdu_reviews', 'accepted_candidates',
+    'cloud_reviews', 'local_reviews', 'codex_reviews', 'nifdu_reviews', 'accepted_candidates',
     'regressions_prevented')
 CAPABILITY = ('benchmark_success', 'confirmed_weakness_resolution', 'regression_rate', 'accepted_candidate_quality')
 META = ('diagnosis_success', 'genuine_red_rate', 'red_green_conversion',
@@ -16,6 +18,16 @@ META = ('diagnosis_success', 'genuine_red_rate', 'red_green_conversion',
 class RSIMetrics:
     counters: dict = field(default_factory=lambda: dict.fromkeys(OPERATIONAL, 0))
     measurements: list = field(default_factory=list)
+
+    def record_proposal(self, provider: str, accepted: bool, latency_ms: float) -> None:
+        """Record host-observed proposal throughput and latency."""
+        if not isinstance(latency_ms, (int, float)) or not math.isfinite(latency_ms) or latency_ms < 0:
+            raise ValueError("proposal latency must be finite and non-negative")
+        self.increment("proposal_attempts")
+        self.increment("proposal_accepts" if accepted else "proposal_rejections")
+        self.increment(f"{provider}_proposal_attempts")
+        self.counters['proposal_latency_ms_total'] += latency_ms
+        self.counters['proposal_latency_ms_max'] = max(self.counters['proposal_latency_ms_max'], latency_ms)
 
     def increment(self, name, amount=1):
         if amount < 0:

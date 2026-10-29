@@ -5,6 +5,7 @@ import os
 import select
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Mapping
@@ -47,6 +48,21 @@ class LocalPeerProcessAdapter:
             path=os.environ.get("PATH", os.defpath),
         ) is not None
 
+    @staticmethod
+    def _resolved_argv(argv: tuple[str, ...]) -> tuple[str, ...]:
+        executable = Path(argv[0]).name.casefold()
+        resolved = list(argv)
+        if executable in {"python", "python3"} and tuple(argv[1:3]) == ("-m", "pytest"):
+            if shutil.which("pytest", path=os.path.dirname(sys.executable)):
+                resolved[0] = sys.executable
+        elif executable == "npm":
+            node = shutil.which("node", path=os.environ.get("PATH", os.defpath))
+            npm = shutil.which("npm", path=os.environ.get("PATH", os.defpath))
+            if node and npm:
+                npm_path = str(Path(npm).resolve())
+                resolved = [node, npm_path, *argv[1:]]
+        return tuple(resolved)
+
     def invoke(
         self,
         capability: str,
@@ -66,12 +82,14 @@ class LocalPeerProcessAdapter:
                 evidence={"reason": "PEER_CAPABILITY_UNSUPPORTED"},
             )
 
+        resolved_argv = self._resolved_argv(operation.argv)
         base_evidence = {
             "repository": self.repository,
             "capability": normalized,
             "argv": list(operation.argv),
             "executable": os.path.basename(operation.argv[0]),
             "shell": False,
+            "resolved_argv": list(resolved_argv),
         }
         if not self.root.is_dir():
             return PeerCapabilityResult(
@@ -93,9 +111,21 @@ class LocalPeerProcessAdapter:
             )
 
         started = time.monotonic()
+        if self.repository == "veyron" and normalized == "build":
+            try:
+                (self.root / "build").mkdir(parents=True, exist_ok=True)
+            except OSError as error:
+                return PeerCapabilityResult(
+                    handled=True,
+                    ok=False,
+                    repository=self.repository,
+                    capability=normalized,
+                    output=str(error),
+                    evidence={**base_evidence, "reason": "PEER_BUILD_DIRECTORY_FAILED"},
+                )
         try:
             process = subprocess.Popen(
-                list(operation.argv),
+                list(resolved_argv),
                 cwd=self.root,
                 env=self._environment(),
                 shell=False,

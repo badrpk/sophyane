@@ -7,6 +7,7 @@ from dataclasses import asdict, replace
 import json
 import hashlib
 import os
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -18,12 +19,14 @@ from urllib.parse import urlparse
 from .autonomous import AutonomousRSIController
 from .candidate_workspace import CandidateWorkspace
 from .cloud_review import CloudReviewer, LocalArtifactReviewer, provider_reviewer
+from .codex_candidate_generation import CodexCandidateGenerator
 from .experiment import ExperimentPlan
 from .local_intelligence import LocalIntelligenceRouter
 from .observation_bus import autonomous_bus
 from .research import TargetedSLIResearch
 from .resource_governor import ResourceGovernor, ResourceDecision, ResourcePolicy
 from .weakness_ledger import WeaknessLedger
+from sophyane.providers.base import ProviderError
 
 
 def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
@@ -46,12 +49,12 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
 
     root = Path(state_dir)
     policy = CurriculumPolicy(
-        max_iterations=max(1, int(os.environ.get("SOPHYANE_RSI_MAX_ITERATIONS", "100"))),
-        max_wall_seconds=max(1.0, float(os.environ.get("SOPHYANE_RSI_MAX_WALL_SECONDS", "86400"))),
+        max_iterations=min(10_000_000, max(1, int(os.environ.get("SOPHYANE_RSI_MAX_ITERATIONS", "1000000")))),
+        max_wall_seconds=min(31_536_000.0, max(1.0, float(os.environ.get("SOPHYANE_RSI_MAX_WALL_SECONDS", "31536000")))),
         cooldown_seconds=max(0.0, float(os.environ.get("SOPHYANE_RSI_COOLDOWN_SECONDS", "30"))),
-        max_queue_length=max(1, int(os.environ.get("SOPHYANE_RSI_MAX_QUEUE", "32"))),
-        max_follow_ups=max(0, int(os.environ.get("SOPHYANE_RSI_MAX_FOLLOW_UPS", "1"))),
-        max_task_attempts=max(1, int(os.environ.get("SOPHYANE_RSI_MAX_TASK_ATTEMPTS", "3"))),
+        max_queue_length=min(128, max(1, int(os.environ.get("SOPHYANE_RSI_MAX_QUEUE", "64")))),
+        max_follow_ups=min(32, max(0, int(os.environ.get("SOPHYANE_RSI_MAX_FOLLOW_UPS", "8")))),
+        max_task_attempts=min(16, max(1, int(os.environ.get("SOPHYANE_RSI_MAX_TASK_ATTEMPTS", "8")))),
     )
     enabled = os.environ.get("SOPHYANE_CONTINUOUS_RSI", "1").strip() == "1"
     repository = Path(__file__).resolve().parents[3]
@@ -62,7 +65,7 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
         proposal_provider = os.environ.get("SOPHYANE_RSI_PROPOSAL_PROVIDER", "codex_cli").strip()
         if proposal_provider == "codex_cli":
             proposal_adapter = CurriculumProposalAdapter(
-                lambda prompt: _curriculum_proposal_with_codex(
+                lambda prompt: _curriculum_proposal_with_cascade(
                     prompt, LocalRole.TINY_PROPOSAL, repository
                 ),
                 generator="codex_cli",
@@ -115,6 +118,18 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
         if ability is None:
             from .curriculum import AbilityRecord
             ability = AbilityRecord("seed", "initial bounded RSI ability", ("host policy",))
+        if ("demo_score" in getattr(controller, "plans", {})
+                and hasattr(controller.plans["demo_score"], "expected_failure")):
+            from .curriculum import AbilityRecord
+            marker = str(getattr(controller.plans["demo_score"], "expected_failure", "RSI_WEAKNESS_demo_score_v3"))
+            match = re.search(r"_v(\d+)$", marker)
+            target = int(match.group(1)) if match else 1
+            frontier = max(0, target - 1)
+            ability = AbilityRecord(
+                f"demo-score-frontier-v{target}",
+                f"Improve the bounded demo score from the accepted frontier {frontier} to exactly {target}.",
+                (f"accepted frontier benchmark_success={frontier}",),
+            )
         selected = inventory.next_repository() if inventory.roots else None
         allowed = tuple(sorted({path for plan in getattr(controller, "plans", {}).values()
                                 for path in getattr(plan, "allowed_paths", ())})[:8])
@@ -126,15 +141,30 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
                                                  else (Path(selected.path) / rule,))
                                     if path.is_file() and not path.is_symlink()
                                     and path.resolve().is_relative_to(Path(selected.path))})[:8])
+        if not allowed and (repository / "src/sophyane/rsi_demo_target.py").is_file():
+            # Keep curriculum generation alive when an inventory/plan refresh
+            # temporarily yields no controller plans. This is still bounded
+            # by the host-owned experiment policy and an exact existing file.
+            allowed = ("src/sophyane/rsi_demo_target.py",)
         if not allowed:
             return None
+        recent_objectives = tuple(
+            task.objective for task in state.queue
+            if getattr(task, "status", "") in {"verified", "rejected", "rolled_back"}
+        )[-8:]
         capability_summary = "request one bounded, measurable RSI follow-up"
+        if recent_objectives:
+            capability_summary += "; do not repeat these completed or rejected objectives: " + " | ".join(recent_objectives)
         if "demo_score" in getattr(controller, "plans", {}):
+            marker = str(getattr(controller.plans["demo_score"], "expected_failure", "RSI_WEAKNESS_demo_score_v3"))
+            match = re.search(r"_v(\d+)$", marker)
+            target = int(match.group(1)) if match else 1
+            frontier = max(0, target - 1)
             capability_summary += (
                 "; preserve src/sophyane/rsi_demo_target.py: define score() -> int and return an int; "
-                "the improvement contract requires score() == 3, while holdout and regression require score() >= 3; "
+                f"the improvement contract requires score() == {target}, while holdout and regression require score() >= {target}; "
                 "use complete replacement text in files; the concrete implementation must retain def score() -> int "
-                "and return 3"
+                f"and return {target}"
             )
         return ProposalContext(
             ability=ability,
@@ -153,7 +183,12 @@ def build_curriculum_runtime(state_dir, controller, *, proposal_adapter=None):
     runtime.task_source_name = os.environ.get("SOPHYANE_RSI_TASK_SOURCE", "qwen").strip() or "qwen"
     generator = getattr(proposal_adapter, "generate", None)
     runtime.task_source = (
-        CurriculumTaskSource(generator, proposal_adapter, intelligence=intelligence)
+        CurriculumTaskSource(
+            generator,
+            proposal_adapter,
+            intelligence=intelligence,
+            metrics=getattr(controller, "metrics", None),
+        )
         if callable(generator) else None
     )
     runtime.intelligence = intelligence
@@ -166,17 +201,35 @@ def build_qemu_runner(state_dir):
     if os.environ.get("SOPHYANE_RSI_EXECUTION_BACKEND", "").strip().lower() != "qemu":
         return None
     from .qemu_runner import QemuRunnerConfig, QemuRsiRunner
+    from .lifecycle import LifecycleConfig
 
     root = Path(state_dir)
-    image = Path(os.environ.get("SOPHYANE_RSI_QEMU_IMAGE", ""))
+    asset_root = Path(os.environ.get(
+        "SOPHYANE_RSI_QEMU_ASSET_DIR",
+        str(Path.home() / ".local/state/sophyane/continuous-rsi/qemu"),
+    ))
+    image_override = os.environ.get("SOPHYANE_RSI_QEMU_IMAGE", "").strip()
+    lightweight_default = not image_override
+    image = Path(image_override) if image_override else asset_root / "alpine-rsi-guest.raw"
     executable = os.environ.get("SOPHYANE_RSI_QEMU_EXECUTABLE", "qemu-system-aarch64")
-    firmware_text = os.environ.get(
-        "SOPHYANE_RSI_QEMU_FIRMWARE",
-        "/data/data/com.termux/files/usr/share/qemu/edk2-aarch64-code.fd",
-    ).strip()
+    kernel_default = str(asset_root / "alpine/vmlinuz-virt") if lightweight_default else ""
+    initrd_default = str(asset_root / "alpine/initramfs-sophyane-minimal-vda") if lightweight_default else ""
+    kernel_text = os.environ.get("SOPHYANE_RSI_QEMU_KERNEL", kernel_default).strip()
+    initrd_text = os.environ.get("SOPHYANE_RSI_QEMU_INITRD", initrd_default).strip()
+    firmware_default = (
+        "" if kernel_text and initrd_text
+        else "/data/data/com.termux/files/usr/share/qemu/edk2-aarch64-code.fd"
+    )
+    firmware_text = os.environ.get("SOPHYANE_RSI_QEMU_FIRMWARE", firmware_default).strip()
     scratch = Path(os.environ.get("SOPHYANE_RSI_QEMU_SCRATCH", str(root / "qemu-scratch")))
-    kernel_text = os.environ.get("SOPHYANE_RSI_QEMU_KERNEL", "").strip()
-    initrd_text = os.environ.get("SOPHYANE_RSI_QEMU_INITRD", "").strip()
+    max_guests = max(1, int(os.environ.get("SOPHYANE_RSI_MAX_GUESTS", "1")))
+    memory_default = "512" if lightweight_default else "1024"
+    memory_mb = max(256, int(os.environ.get("SOPHYANE_RSI_QEMU_MEMORY_MB", memory_default)))
+    memory_budget_mb = max(
+        1, int(os.environ.get("SOPHYANE_RSI_QEMU_MEMORY_BUDGET_MB", str(memory_mb)))
+    )
+    init_default = "" if lightweight_default else "/usr/local/lib/sophyane/sophyane-init.sh"
+    init_text = os.environ.get("SOPHYANE_RSI_QEMU_INIT", init_default).strip()
     config = QemuRunnerConfig(
         executable=executable,
         guest_image=image,
@@ -186,11 +239,12 @@ def build_qemu_runner(state_dir):
         max_output_bytes=max(1024, int(os.environ.get("SOPHYANE_RSI_QEMU_OUTPUT_LIMIT", "1048576"))),
         enabled=True,
         firmware=Path(firmware_text) if firmware_text else None,
-        memory_mb=max(256, int(os.environ.get("SOPHYANE_RSI_QEMU_MEMORY_MB", "1024"))),
+        memory_mb=memory_mb,
         kernel=Path(kernel_text) if kernel_text else None,
         initrd=Path(initrd_text) if initrd_text else None,
         root_device=os.environ.get("SOPHYANE_RSI_QEMU_ROOT_DEVICE", "/dev/vda1"),
-        init_path=os.environ.get("SOPHYANE_RSI_QEMU_INIT", "/usr/local/lib/sophyane/sophyane-init.sh"),
+        init_path=init_text or None,
+        lifecycle=LifecycleConfig(root, max_guests=max_guests, memory_budget_mb=memory_budget_mb),
     )
     return QemuRsiRunner(config)
 
@@ -234,6 +288,19 @@ def _deterministic_curriculum_proposal(prompt: str) -> str:
     while task_id in existing:
         task_id = f"autonomous-fallback-{digest}-retry{retry}"
         retry += 1
+    target_match = re.search(r"score\(\)\s*==\s*(\d+)", str(payload.get("capability_summary", "")))
+    if path.endswith("rsi_demo_target.py") and target_match and ability_id.startswith("demo-score-frontier"):
+        target = int(target_match.group(1))
+        component = "demo_score"
+        return json.dumps({
+            "task_id": task_id,
+            "parent_ability_id": parent_id,
+            "objective": f"Replace the bounded RSI target with score() returning exactly {target}, then verify RED, GREEN, holdout, regression, and meta checks.",
+            "editable_paths": [path],
+            "verification": ["RED fails before the candidate", "GREEN, holdout, regression, and meta checks pass"],
+            "component": component,
+            "files": {path: f"def score() -> int:\n    return {target}\n"},
+        })
     return json.dumps({
         "task_id": task_id,
         "parent_ability_id": parent_id,
@@ -278,6 +345,53 @@ def _curriculum_proposal_with_codex(prompt: str, role, workspace: Path) -> str:
     return raw
 
 
+def _curriculum_proposal_with_cascade(prompt: str, role, workspace: Path) -> str:
+    """Use frontier Codex first, then a bounded local/deterministic proposer."""
+    try:
+        return _curriculum_proposal_with_codex(prompt, role, workspace)
+    except Exception:
+        return _curriculum_proposal_with_fallback(prompt, role)
+
+
+def _frontier_hypothesis(context, role, workspace: Path):
+    """Ask the configured frontier provider for a read-only hypothesis.
+
+    The provider may propose a bounded change, but it cannot execute tools or
+    approve/publish the proposal. Those decisions remain in the host RSI gate.
+    """
+    from .authority import Operation
+    from .coding_provider import create_provider
+
+    provider_name = os.environ.get("SOPHYANE_RSI_HYPOTHESIS_PROVIDER", "codex_cli").strip()
+    provider_name = provider_name or "codex_cli"
+    provider = create_provider(
+        provider_name,
+        workspace,
+        180,
+        operation=Operation.READ_ONLY_OPERATION,
+    )
+    bounded_context = json.dumps(
+        {"role": getattr(role, "value", str(role)), "context": context},
+        default=str,
+        sort_keys=True,
+    )[:12000]
+    instruction = (
+        "Return JSON with a non-empty hypothesis string and optional files object. "
+        "You are proposing only: do not execute tools, edit files, approve actions, "
+        "or claim verification or promotion."
+    )
+    try:
+        return provider.generate(bounded_context, instruction)
+    except Exception:
+        try:
+            return local_request("qwen", bounded_context, role)
+        except (ProviderError, TimeoutError, OSError):
+            return json.dumps({
+                "hypothesis": "Run the host-approved bounded experiment and preserve every independent verification gate.",
+                "files": {},
+            })
+
+
 def _reachable(endpoint):
     value = urlparse(endpoint)
     try:
@@ -287,13 +401,22 @@ def _reachable(endpoint):
         return False
 
 
-def build_controller(state_dir, *, active=lambda: True):
+def build_controller(state_dir, *, active=lambda: True, repository=None):
     state_dir = Path(state_dir)
-    repository = Path(__file__).resolve().parents[3]
+    repository = Path(repository or Path(__file__).resolve().parents[3]).resolve()
     qemu_runner = build_qemu_runner(state_dir)
     execute_command = qemu_runner.run_command if qemu_runner is not None else None
     specs = {}
     policy_file = state_dir / 'experiments.json'
+    # Older daemon invocations used the repository root as their durable
+    # state directory, while the host-owned experiment policy lives in the
+    # repository's dedicated RSI state directory.  Preserve an explicit
+    # state-dir policy when present, but bridge that layout mismatch without
+    # accepting model-provided policy or paths.
+    if not policy_file.is_file():
+        repository_policy = repository / '.sophyane-rsi-state' / 'experiments.json'
+        if repository_policy.is_file():
+            policy_file = repository_policy
     if policy_file.exists():
         specs = json.loads(policy_file.read_text())
     plans = {}
@@ -358,13 +481,39 @@ def build_controller(state_dir, *, active=lambda: True):
             raise
 
     def prepare(candidate, plan, hypotheses):
-        spec = next(s for s in specs.values() if s['identifier'] == plan.identifier)
-        # Host-authored deterministic replacement fixture, not parsed model output.
+        from .coding_provider import create_provider
+        generator = CodexCandidateGenerator(
+            provider_factory=lambda workspace, timeout: create_provider(
+                'codex_cli', workspace, timeout,
+            ),
+            timeout=min(300, plan.timeout),
+        )
+        try:
+            generated = generator.generate(
+                workspace=candidate.path,
+                request=(
+                    'Repair the host-recorded weakness using only the frozen experiment policy. '
+                    'Inspect the candidate workspace and return a complete replacement for the '
+                    'smallest allowed file set. Return only the required JSON files mapping.'
+                ),
+                allowed_paths=plan.allowed_paths,
+            )
+            candidate.preview(generated.files, plan.allowed_paths)
+            controller.generation_evidence = {
+                'provider': generated.provider,
+                'elapsed_seconds': generated.elapsed_seconds,
+                'files': tuple(sorted(generated.files)),
+            }
+            return
+        except Exception:
+            # Provider unavailability may defer to an already-authorized local
+            # proposal; no provider response is ever applied without preview.
+            pass
         task = getattr(controller, "active_curriculum_task", None)
         proposals = getattr(task, "proposal_files", {}) if task is not None else {}
         proposals = proposals or next((h.files for h in hypotheses if h.files), {})
         if not proposals:
-            raise ValueError('No concrete local proposal; retain weakness for later analysis')
+            raise ValueError('No concrete Codex or local proposal; retain weakness for later analysis')
         candidate.preview(proposals, plan.allowed_paths)
 
     def measure(path):
@@ -398,7 +547,11 @@ def build_controller(state_dir, *, active=lambda: True):
             if temporary_snapshot is not None:
                 temporary_snapshot.cleanup()
         if result.exit_code:
-            raise ValueError('Capability benchmark failed')
+            detail = str(getattr(result, 'output', '') or '').strip()
+            if len(detail) > 2000:
+                detail = detail[-2000:]
+            suffix = f": {detail}" if detail else ''
+            raise ValueError(f'Capability benchmark failed{suffix}')
         return json.loads(result.output)
 
     def context(record):
@@ -421,15 +574,25 @@ def build_controller(state_dir, *, active=lambda: True):
     reviewer = (LocalArtifactReviewer() if review_provider == 'local_artifact' else
                 CloudReviewer({name: lambda package, name=name: review(name, package)
                                for name in ('codex_cli', 'nifdu_browser')}))
+    candidate_root = state_dir / 'candidates'
+    if candidate_root.resolve().is_relative_to(repository.resolve()):
+        # The repository root is also supported as a daemon state directory.
+        # Keep isolated candidate snapshots outside it so containment remains
+        # enforceable instead of weakening CandidateWorkspace's boundary.
+        candidate_root = state_dir.parent / f'.{state_dir.name}-rsi-candidates'
+    from .candidate_workspace import reconcile_stale_runtime_artifacts
+    reconcile_stale_runtime_artifacts(candidate_root)
     controller = AutonomousRSIController(autonomous_bus, WeaknessLedger(state_dir / 'weaknesses.json'),
         ResourceGovernor(policy=ResourcePolicy(maximum_load_per_cpu=maximum_load), sampler=sample),
         local=LocalIntelligenceRouter({name: lambda context, role, name=name: local_request(name, context, role)
                                        for name in ('qwen', 'spark')}),
+        frontier=lambda context, role: _frontier_hypothesis(context, role, repository),
         research=TargetedSLIResearch(),
         cloud=reviewer,
         execution_backend='qemu' if qemu_runner is not None else 'native',
         plans=plans, runner=experiment_runner,
-        workspace_factory=lambda: CandidateWorkspace(repository, state_dir / 'candidates').create(),
+        repository=repository,
+        workspace_factory=lambda: CandidateWorkspace(repository, candidate_root).create(),
         prepare=prepare, measure=measure, context=context)
     # No meta benchmark is invented from operational counters. A policy must
     # supply a frozen external command before promotion can be admitted.

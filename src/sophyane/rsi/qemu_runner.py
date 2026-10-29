@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -12,8 +13,10 @@ import time
 import uuid
 
 from .coding_provider import CodingCancelled
+from .candidate_workspace import snapshot
 from .guest_protocol import GuestProtocolError, validate_manifest, validate_result
 from .models import CommandResult
+from .lifecycle import ExperimentLease, LifecycleConfig, LifecycleError
 
 
 class QemuRunnerConfigurationError(PermissionError):
@@ -35,6 +38,7 @@ class QemuRunnerConfig:
     initrd: Path | None = None
     root_device: str = "/dev/vda1"
     init_path: str | None = None
+    lifecycle: LifecycleConfig | None = None
 
     def __post_init__(self) -> None:
         if self.architecture != "aarch64":
@@ -143,9 +147,49 @@ def build_qemu_command(
 
 
 class QemuRsiRunner:
+    _RESULT_VISIBILITY_GRACE_SECONDS = 2.0
+
     def __init__(self, config: QemuRunnerConfig, *, popen_factory=None):
         self.config = config
         self._popen_factory = popen_factory or subprocess.Popen
+
+    @staticmethod
+    def _stop_process(process, *, force=False):
+        if process is None or getattr(process, "poll", lambda: 0)() is not None:
+            return
+        pid = getattr(process, "pid", None)
+        if pid and hasattr(os, "killpg"):
+            try:
+                os.killpg(os.getpgid(pid), 9 if force else 15)
+            except (OSError, ProcessLookupError):
+                pass
+        try:
+            (process.kill if force else process.terminate)()
+        except (OSError, ProcessLookupError):
+            pass
+
+    @staticmethod
+    def _detached_pids(run_root: Path) -> tuple[int, ...]:
+        """Find only QEMU processes carrying this run's unique scratch path."""
+        needle = str(run_root.resolve()).encode()
+        found = []
+        for entry in Path("/proc").glob("[0-9]*"):
+            try:
+                pid = int(entry.name)
+                command = (entry / "cmdline").read_bytes()
+            except (OSError, ValueError):
+                continue
+            if b"qemu-system-aarch64" in command and needle in command:
+                found.append(pid)
+        return tuple(found)
+
+    @classmethod
+    def _stop_detached(cls, run_root: Path) -> None:
+        for pid in cls._detached_pids(run_root):
+            try:
+                os.kill(pid, 9)
+            except (OSError, ProcessLookupError):
+                pass
 
     def validate(self) -> None:
         if not self.config.enabled:
@@ -176,7 +220,11 @@ class QemuRsiRunner:
         if not candidate.is_dir():
             raise QemuRunnerConfigurationError("QEMU candidate workspace must be a directory")
         for path in candidate.rglob("*"):
-            if path.is_symlink():
+            # The browser fixture is a generated host-only link and is
+            # intentionally omitted by candidate_workspace.snapshot(). Other
+            # links remain fail-closed because they could escape the guest
+            # exchange boundary.
+            if path.is_symlink() and path.relative_to(candidate).as_posix() != "website/browser-home":
                 raise QemuRunnerConfigurationError("QEMU candidate workspace cannot contain symlinks")
 
         run_root = self.config.scratch_root.resolve() / self.new_run_id()
@@ -184,7 +232,15 @@ class QemuRsiRunner:
         output_dir = run_root / "output"
         input_dir.mkdir(parents=True)
         output_dir.mkdir()
-        shutil.copytree(candidate, input_dir / "candidate")
+        # Materialize a single immutable byte snapshot before the guest sees
+        # the workspace. This prevents cleanup/restart races from producing a
+        # partially copied candidate tree.
+        candidate_snapshot = snapshot(candidate)
+        candidate_root = input_dir / "candidate"
+        for relative, content in candidate_snapshot.files.items():
+            target = candidate_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
         (input_dir / "task.json").write_text(
             json.dumps(
                 {
@@ -253,12 +309,35 @@ class QemuRsiRunner:
             result,
         )
 
+    @staticmethod
+    def _result_file_ready(exchange: ExchangePaths) -> bool:
+        """Wait for a complete 9P result instead of trusting file existence.
+
+        A guest publishes result.json by atomic rename.  With QEMU's 9P share,
+        the host can observe the renamed inode before its bytes are visible.
+        Validate the complete protocol payload before stopping the guest.
+        """
+        try:
+            payload = json.loads(exchange.result_path.read_bytes())
+            result = validate_result(payload)
+        except (OSError, ValueError, json.JSONDecodeError, GuestProtocolError):
+            return False
+        return exchange.task_id is None or result.task_id == exchange.task_id
+
     def run(self, candidate_dir: Path, manifest: dict[str, Any]) -> QemuRunResult:
         self.validate()
         exchange = self.prepare_exchange(candidate_dir, manifest)
         run_id = exchange.output_dir.parent.name
         process = None
+        lease = None
         try:
+            if self.config.lifecycle is not None:
+                lease = ExperimentLease.acquire(
+                    self.config.lifecycle,
+                    run_id,
+                    exchange.output_dir.parent,
+                    self.config.memory_mb,
+                )
             command = build_qemu_command(self.config, exchange.input_dir, exchange.output_dir, manifest)
             process = self._popen_factory(
                 command,
@@ -267,29 +346,54 @@ class QemuRsiRunner:
                 stderr=subprocess.PIPE,
                 text=True,
                 shell=False,
+                start_new_session=True,
             )
+            if lease is not None:
+                lease.attach_pid(process.pid)
             deadline = time.monotonic() + self.config.timeout_seconds
+            parent_stdout = parent_stderr = ""
+            result_first_seen = None
             while True:
                 returncode = process.poll()
                 if returncode is not None:
-                    stdout, stderr = process.communicate()
-                    return self.parse_result(exchange, stdout, stderr, returncode, False)
+                    parent_stdout, parent_stderr = process.communicate()
+                    if not self._detached_pids(exchange.output_dir.parent):
+                        if returncode != 0 or not exchange.result_path.exists():
+                            return self.parse_result(exchange, parent_stdout, parent_stderr, returncode, False)
+                        if self._result_file_ready(exchange):
+                            return self.parse_result(exchange, parent_stdout, parent_stderr, returncode, False)
                 if exchange.result_path.exists():
-                    process.terminate()
-                    try:
-                        stdout, stderr = process.communicate(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        stdout, stderr = process.communicate()
-                    return self.parse_result(exchange, stdout, stderr, 0, False)
+                    if result_first_seen is None:
+                        result_first_seen = time.monotonic()
+                    ready = self._result_file_ready(exchange)
+                    expired = time.monotonic() - result_first_seen >= self._RESULT_VISIBILITY_GRACE_SECONDS
+                    if ready or expired:
+                        self._stop_detached(exchange.output_dir.parent)
+                        if process.poll() is None:
+                            process.terminate()
+                            try:
+                                stdout, stderr = process.communicate(timeout=5)
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                                stdout, stderr = process.communicate()
+                        else:
+                            stdout, stderr = parent_stdout, parent_stderr
+                        return self.parse_result(exchange, stdout, stderr, 0, False)
                 if time.monotonic() >= deadline:
-                    process.kill()
+                    self._stop_process(process, force=True)
+                    self._stop_detached(exchange.output_dir.parent)
                     stdout, stderr = process.communicate()
-                    return QemuRunResult(run_id, getattr(process, "returncode", None), stdout, stderr, True, "timeout")
+                    return QemuRunResult(run_id, getattr(process, "returncode", None), stdout or parent_stdout, stderr or parent_stderr, True, "timeout")
                 time.sleep(0.1)
         except OSError as error:
             return QemuRunResult(run_id, None, "", str(error), False, "failed")
+        except LifecycleError as error:
+            return QemuRunResult(run_id, None, "", str(error), False, "failed")
         finally:
+            self._stop_process(process, force=True)
+            self._stop_detached(exchange.output_dir.parent)
+            if lease is not None:
+                lease.release()
             shutil.rmtree(exchange.output_dir.parent, ignore_errors=True)
 
     def run_command(self, command, cwd, *, timeout=300, cancelled=lambda: False) -> CommandResult:
@@ -305,7 +409,7 @@ class QemuRsiRunner:
                 timeout_seconds=bounded_timeout, max_output_bytes=config.max_output_bytes,
                 enabled=config.enabled, firmware=config.firmware, memory_mb=config.memory_mb,
                 kernel=config.kernel, initrd=config.initrd, root_device=config.root_device,
-                init_path=config.init_path,
+                init_path=config.init_path, lifecycle=config.lifecycle,
             )
         result = QemuRsiRunner(config, popen_factory=self._popen_factory).run(
             cwd, {"schema_version": 1, "task_id": self.new_run_id(), "command": list(command), "cwd": "/mnt/sophyane-input/candidate"}

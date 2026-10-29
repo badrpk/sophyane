@@ -10,7 +10,7 @@ from pathlib import Path
 
 from sophyane.agent import SophyaneAgent
 from sophyane.autonomy import AUTONOMOUS_WORKER_POLICY
-from sophyane.config import ensure_directories, load_config
+from sophyane.config import ensure_directories
 from sophyane.diagnostics import run_diagnostics
 from sophyane.live_coding_doer import LiveProgressReporter
 from sophyane.logging_config import configure_logging
@@ -26,46 +26,6 @@ from sophyane.memory import MemoryStore
 from sophyane.multiagent import MultiAgentRuntime, MultiAgentStore
 from sophyane.setup_wizard import run_setup_wizard
 from sophyane.strict_interactive_doer import StrictInteractiveCodingDoerRuntime
-
-
-def request_looks_like_execution(prompt: str) -> bool:
-    """Return whether a prompt asks Sophyane to perform workspace work."""
-    lower_prompt = str(prompt or "").lower()
-    execution_intent = re.search(
-        r"^\s*(?:\d+[.)]\s+)?"
-        r"(?:build|make|create|design|develop|implement|write|fix|repair|"
-        r"patch|compile|run|test|deploy|open|continue|resume|convert|"
-        r"install|integrate|optimi[sz]e|audit|profile|monitor|simulate|"
-        r"demonstrate|execute|add|remove|change|update|improve|style|"
-        r"reopen|replace|modify)\b",
-        lower_prompt,
-    )
-    coding_markers = (
-        "implement",
-        "refactor",
-        "apply patch",
-        "write a function",
-        "write a class",
-        "create a file",
-        "create files",
-        "edit the file",
-        "write the file",
-        "build and run",
-        "run the tests",
-        "execute the tests",
-        "python project",
-        "pytest",
-        "unit test",
-        "test suite",
-        "debug this",
-        "repository",
-        "codebase",
-        "pull request",
-        "git commit",
-    )
-    return bool(execution_intent) or any(
-        marker in lower_prompt for marker in coding_markers
-    )
 from sophyane.structured_output import (
     StructuredOutputError,
     render_strict_json,
@@ -85,19 +45,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("prompt", nargs="*", help="prompt to process")
     parser.add_argument("--setup", action="store_true")
     parser.add_argument("--status", action="store_true")
-    parser.add_argument(
-        "--rsi-curriculum",
-        choices=("start", "pause", "stop", "status"),
-        help="control the opt-in continuous RSI curriculum",
-    )
-    parser.add_argument(
-        "--rsi-state-dir",
-        default="",
-        help="state directory for continuous RSI curriculum",
-    )
-    parser.add_argument("--rsi-max-iterations", type=int, default=100)
-    parser.add_argument("--rsi-max-wall-seconds", type=float, default=86400.0)
-    parser.add_argument("--rsi-cooldown-seconds", type=float, default=30.0)
     parser.add_argument("--providers", action="store_true")
     parser.add_argument("--doctor", action="store_true")
     parser.add_argument(
@@ -400,7 +347,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-steps", type=int, default=16, help="maximum planner-executor-verifier cycles")
     parser.add_argument(
         "--workspace",
-        default=os.environ.get("SOPHYANE_LAUNCH_DIR", "."),
+        default=".",
         help="repository or directory in which approved edits and commands execute",
     )
     parser.add_argument(
@@ -433,83 +380,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
     return parser
-
-
-def run_curriculum_command(
-    command: str,
-    state_dir,
-    *,
-    max_iterations: int = 100,
-    max_wall_seconds: float = 86400.0,
-    cooldown_seconds: float = 30.0,
-    heartbeat_interval: float = 5.0,
-    stale_seconds: float = 30.0,
-    now: float | None = None,
-) -> dict[str, object]:
-    """Apply one durable RSI curriculum lifecycle command."""
-    from pathlib import Path
-    import time
-    from sophyane.rsi.curriculum import CurriculumPolicy, CurriculumScheduler, CurriculumStore
-    from sophyane.rsi.heartbeat import HeartbeatStore
-
-    if max_iterations < 1:
-        raise ValueError("max_iterations must be positive")
-    if max_wall_seconds <= 0:
-        raise ValueError("max_wall_seconds must be positive")
-    if cooldown_seconds < 0:
-        raise ValueError("cooldown_seconds must be non-negative")
-    if heartbeat_interval <= 0:
-        raise ValueError("heartbeat_interval must be positive")
-    if stale_seconds <= heartbeat_interval:
-        raise ValueError("stale_seconds must be greater than heartbeat_interval")
-    scheduler = CurriculumScheduler(
-        CurriculumStore(Path(state_dir) / "curriculum.json"),
-        CurriculumPolicy(
-            max_iterations=max_iterations,
-            max_wall_seconds=max_wall_seconds,
-            cooldown_seconds=cooldown_seconds,
-        ),
-    )
-    def result_with_heartbeat():
-        result = scheduler.status()
-        promotion_path = Path(state_dir) / "promotion.json"
-        if promotion_path.exists():
-            try:
-                result["promotion"] = json.loads(promotion_path.read_text(encoding="utf-8"))
-            except (OSError, TypeError, ValueError, json.JSONDecodeError):
-                result["promotion"] = {"error": "promotion state unreadable"}
-        else:
-            result["promotion"] = {}
-        heartbeat_path = Path(state_dir) / "heartbeat.json"
-        if heartbeat_path.exists():
-            record = HeartbeatStore(heartbeat_path).load()
-            current = time.time() if now is None else float(now)
-            result["heartbeat"] = {
-                "worker_id": record.worker_id,
-                "pid": record.pid,
-                "state": record.state,
-                "current_task_id": record.current_task_id,
-                "age_seconds": max(0.0, current - record.last_tick_at),
-                "stale": record.is_stale(current, stale_seconds),
-                "restart_count": record.restart_count,
-                "last_error": record.last_error,
-            }
-        else:
-            result["heartbeat"] = None
-        return result
-
-    if command == "start":
-        scheduler.resume()
-        return {"status": "started", **result_with_heartbeat()}
-    if command == "pause":
-        scheduler.pause("operator requested pause")
-        return {"status": "paused", **result_with_heartbeat()}
-    if command == "stop":
-        scheduler.stop("operator requested stop")
-        return {"status": "stopped", **result_with_heartbeat()}
-    if command == "status":
-        return result_with_heartbeat()
-    raise ValueError(f"unknown curriculum command: {command}")
 
 
 def _execution_policy(timeout: float, enabled: bool) -> str:
@@ -596,29 +466,16 @@ def _execution_session_mode() -> str:
     ).strip().lower()
 
     aliases = {
-        "1": "race",
+        "1": "sli_graph",
         "sli": "sli_graph",
         "sli_chunks": "sli_graph",
-        "mode2.5": "sli_local_hybrid",
-        "mode2_5": "sli_local_hybrid",
-        "sli_local_hybrid": "sli_local_hybrid",
 
-        "2": "sli_graph",
+        "2": "local_llm",
         "local": "local_llm",
 
-        "3": "local_llm",
-        "4": "cloud_llm",
+        "3": "cloud_llm",
         "cloud": "cloud_llm",
         "gemini": "cloud_llm",
-
-        "nifdu": "nifdu_llm",
-        "nifdu_browser": "nifdu_llm",
-        "browser_llm": "nifdu_llm",
-
-        "codex": "codex_cli",
-        "codex_cli": "codex_cli",
-
-        "agy": "agy",
 
         "0": "race",
         "adaptive": "race",
@@ -635,9 +492,6 @@ def _execution_session_mode() -> str:
         "sli_graph",
         "local_llm",
         "cloud_llm",
-        "nifdu_llm",
-        "codex_cli",
-        "agy",
         "race",
     }:
         return mode
@@ -742,7 +596,6 @@ def _run_adaptive_race_request(
     if _auto_request_requires_execution(request):
         from sophyane.race_execution import (
             _semantic_completion_judgement,
-            race_strategy_for,
             run_race_apply_verify,
         )
 
@@ -751,9 +604,7 @@ def _run_adaptive_race_request(
             workspace=workspace,
             config=config,
             progress=progress,
-            # Preserve request-specific limits (for example, static websites
-            # use at most two rounds) while keeping the bridge explicit.
-            max_rounds=race_strategy_for(request).max_rounds,
+            max_rounds=3,
             race_timeout=timeout,
             semantic_judge=(
                 _semantic_completion_judgement
@@ -818,27 +669,6 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     logger = configure_logging(args.verbose)
-
-    if args.rsi_curriculum:
-        try:
-            result = run_curriculum_command(
-                args.rsi_curriculum,
-                args.rsi_state_dir or (Path.home() / ".local/state/sophyane/continuous-rsi"),
-                max_iterations=args.rsi_max_iterations,
-                max_wall_seconds=args.rsi_max_wall_seconds,
-                cooldown_seconds=args.rsi_cooldown_seconds,
-            )
-        except ValueError as error:
-            print(json.dumps({"status": "error", "error": str(error)}))
-            return 2
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-        return 0
-
-    # One-shot/non-progress invocations must not inherit a stale persistent
-    # Codex thread. A dead thread can block the planner indefinitely; forcing
-    # a fresh CLI context keeps automated runs bounded and reproducible.
-    if args.no_progress and os.environ.get("SOPHYANE_SESSION_MODE") == "codex_cli":
-        os.environ["SOPHYANE_CODEX_FRESH"] = "1"
 
     if args.single_agent and args.multi_agent:
         parser.error("--single-agent and --multi-agent cannot be used together")
@@ -1150,41 +980,6 @@ def main() -> int:
         return 0
 
     if args.ask:
-        # Explicit Mode-2 requests must enter the SLI graph front door. The
-        # generic expert answer path is LLM-backed and bypasses SLI retrieval.
-        if os.environ.get("SOPHYANE_SESSION_MODE") == "sli_local_hybrid":
-            # Mode 2.5 is SLI + the on-device model; never construct a
-            # cloud-capable fallback chain for this session.
-            os.environ["SOPHYANE_SESSION_PROVIDER"] = "local_gguf"
-            os.environ["SOPHYANE_DISABLE_CLOUD_FALLBACK"] = "1"
-            os.environ["SOPHYANE_DISABLE_LOCAL_FALLBACK"] = "1"
-            from sophyane.sli_graph import run_sli_graph
-            import logging
-
-            previous_sli_local_only = os.environ.get("SOPHYANE_SLI_LOCAL_ONLY")
-            os.environ["SOPHYANE_SLI_LOCAL_ONLY"] = "1"
-            try:
-                state = run_sli_graph(str(args.ask))
-            finally:
-                if previous_sli_local_only is None:
-                    os.environ.pop("SOPHYANE_SLI_LOCAL_ONLY", None)
-                else:
-                    os.environ["SOPHYANE_SLI_LOCAL_ONLY"] = previous_sli_local_only
-            evidence = state.report if state.success else "No grounded SLI evidence was found."
-            provider = create_provider({**load_config(), "provider": "local_gguf"})
-            answer = SophyaneAgent(provider, MemoryStore(), logging.getLogger("sophyane")).ask(
-                f"Answer the user request using this grounded SLI evidence.\n\nREQUEST: {args.ask}\n\nSLI EVIDENCE:\n{evidence}"
-            )
-            print(answer.text)
-            return 0
-
-        if os.environ.get("SOPHYANE_SLI_GRAPH") == "1":
-            from sophyane.sli_graph import run_sli_graph
-
-            state = run_sli_graph(str(args.ask))
-            print(state.report)
-            return 0 if state.success else 1
-
         from collections.abc import Callable
 
         from sophyane.expert.answer import answer_tough_question
@@ -1207,18 +1002,13 @@ def main() -> int:
         except Exception:  # noqa: BLE001
             generate_callback = None
 
-        session_mode = str(os.environ.get("SOPHYANE_SESSION_MODE") or "").strip().lower()
-        direct_model_session = session_mode in {"local_llm", "cloud_llm", "codex_cli", "agy", "nifdu_llm"}
         result = answer_tough_question(
             str(args.ask),
             generate=generate_callback,
-            # External providers receive the user request directly. Injecting
-            # the generic expert notes can steer harnesses toward policy text
-            # instead of answering the actual question.
             mode=(
-                "llm"
-                if generate_callback is not None and direct_model_session
-                else ("hybrid" if generate_callback is not None else "expert")
+                "hybrid"
+                if generate_callback is not None
+                else "expert"
             ),
         )
         print(result["answer"])
@@ -1504,31 +1294,10 @@ def main() -> int:
         "git commit",
     )
 
-    looks_like_coding = request_looks_like_execution(original_prompt)
-
-    # SOPHYANE_MODE3_COMPARE_DIRECT_BENCHMARK_V1
-    #
-    # Compare mode is a direct model benchmark, not a repository execution
-    # workflow. A prompt such as "write a Python function" must therefore be
-    # sent exactly once to the comparison provider instead of entering the
-    # strict coding planner/repair/verifier pipeline, which can multiply one
-    # benchmark turn into several expensive local generations.
-    local_profile = str(
-        os.environ.get("SOPHYANE_LOCAL_PROFILE") or ""
-    ).strip().lower()
-
-    compare_benchmark = (
-        provider_id == "local_gguf"
-        and local_profile == "compare"
+    looks_like_coding = bool(execution_intent) or any(
+        token in lower_prompt for token in coding_markers
     )
-
-    force_chat = (
-        compare_benchmark
-        or (
-            provider_id == "local_gguf"
-            and not looks_like_coding
-        )
-    )
+    force_chat = provider_id == "local_gguf" and not looks_like_coding
     if not force_chat and len(original_prompt) < 240:
         stripped = lower_prompt.strip()
         if stripped.endswith("?") or stripped.startswith(
@@ -1540,23 +1309,6 @@ def main() -> int:
         response = agent.ask(original_prompt)
         print(response.text)
         return 0 if response.text else 2
-
-    # SOPHYANE_CODING_CUMULATIVE_LOCAL_RESCUE_BUDGET_V1
-    #
-    # A strict coding step may invoke the backend repeatedly for planner
-    # schema repair and generic artifact recovery. Without shared state,
-    # every call receives a fresh local-rescue timeout and one nominal
-    # 60-second rescue can multiply into several minutes.
-    #
-    # Ninety seconds is the total cloud->local rescue allowance for this
-    # repository-coding run. Each individual local attempt remains capped
-    # at sixty seconds.
-    from sophyane.providers.fallback import LocalRescueBudget
-
-    coding_local_rescue_budget = LocalRescueBudget(
-        remaining_seconds=90.0,
-        per_attempt_seconds=60.0,
-    )
 
     def backend(prompt: str, system: str) -> str:
         """Generate with a compact budget for structured planner calls.
@@ -1620,103 +1372,7 @@ def main() -> int:
                         original_max_tokens
                     )
 
-        # SOPHYANE_CODING_LOCAL_RESCUE_TIMEOUT_V1
-        #
-        # Repository coding uses a bounded local rescue only after a hard
-        # cloud quota/auth/billing failure. This does not lower the normal
-        # local-primary coding timeout.
-        if str(config.get("provider") or "").lower() != "local_gguf":
-            try:
-                return provider.generate(
-                    prompt,
-                    system,
-                    local_rescue_timeout=60,
-                    local_rescue_budget=(
-                        coding_local_rescue_budget
-                    ),
-                )
-            except TypeError as error:
-                # Single-provider/bootstrap providers retain the canonical
-                # two-argument Provider.generate contract.
-                message = str(error)
-                if (
-                    "local_rescue_timeout" not in message
-                    and "local_rescue_budget" not in message
-                ):
-                    raise
-
         return provider.generate(prompt, system)
-
-    # SOPHYANE_CODING_BACKEND_CAPABILITY_RENDERER_V1
-    def backend_for_capabilities(
-        renderer,
-        system: str,
-    ) -> str:
-        generate_for_capabilities = getattr(
-            provider,
-            "generate_for_capabilities",
-            None,
-        )
-
-        if callable(generate_for_capabilities):
-            return generate_for_capabilities(
-                renderer,
-                system,
-                local_rescue_timeout=60,
-                local_rescue_budget=coding_local_rescue_budget,
-            )
-
-        getter = getattr(
-            provider,
-            "get_capabilities",
-            None,
-        )
-        try:
-            capabilities = getter() if callable(getter) else None
-        except Exception:
-            capabilities = None
-
-        from sophyane.providers.base import ProviderCapabilities
-
-        if not isinstance(
-            capabilities,
-            ProviderCapabilities,
-        ):
-            capabilities = ProviderCapabilities()
-
-        return backend(
-            renderer(capabilities),
-            system,
-        )
-
-    setattr(
-        backend,
-        "generate_for_capabilities",
-        backend_for_capabilities,
-    )
-
-    # Handle narrowly specified local tasks before orchestration shortcuts.
-    # This keeps --single-agent from turning an objectively executable task
-    # into an answer-only worker response.
-    if str(config.get("provider") or "").lower() == "local_gguf":
-        from sophyane.fast_local_coding import run_deterministic_python_task
-
-        deterministic_result = run_deterministic_python_task(
-            original_prompt,
-            Path(args.workspace),
-        )
-        if deterministic_result is not None:
-            if deterministic_result.success:
-                print(
-                    "Objective completed with verified deterministic "
-                    "Python execution evidence."
-                )
-                return 0
-            print(
-                "Objective failed deterministic Python verification: "
-                + deterministic_result.reason
-            )
-            return 2
 
     if args.single_agent or args.multi_agent:
         mode = "multi" if args.multi_agent else "single"
@@ -1742,50 +1398,6 @@ def main() -> int:
         enabled=not args.no_progress,
         heartbeat_seconds=args.progress_heartbeat,
     )
-
-    # SOPHYANE_FAST_LOCAL_CODING_TIER1_V1
-    #
-    # Small local models should not pay strict planner/schema/verifier
-    # overhead for a bounded single-Python-file task when objective pytest
-    # evidence is already present.  Try one direct candidate and at most one
-    # compact evidence repair.  Failure is transactional: the original file
-    # is restored and the canonical strict runtime remains authoritative.
-    if (
-        str(config.get("provider") or "").lower() == "local_gguf"
-        and not args.single_agent
-        and not args.multi_agent
-    ):
-        try:
-            from sophyane.fast_local_coding import (
-                try_fast_local_python_coding,
-            )
-
-            fast_result = try_fast_local_python_coding(
-                request=original_prompt,
-                workspace=Path(args.workspace),
-                backend=backend,
-                max_model_calls=2,
-            )
-        except Exception as fast_error:  # noqa: BLE001
-            logger.warning(
-                "Tier-1 local coding fast path unavailable: %s",
-                fast_error,
-            )
-            fast_result = None
-
-        if fast_result is not None and fast_result.attempted:
-            if fast_result.success:
-                print(
-                    "Objective completed with verified Tier-1 "
-                    "local execution evidence."
-                )
-                return 0
-
-            logger.info(
-                "Tier-1 local coding declined after verification: %s",
-                fast_result.reason,
-            )
-
     runtime = StrictInteractiveCodingDoerRuntime(
         backend=backend,
         memory=memory,
@@ -1793,8 +1405,6 @@ def main() -> int:
         max_steps=args.max_steps,
         protocol_attempts=args.protocol_attempts,
         progress=progress,
-        # SOPHYANE_CODING_PROVIDER_CAPABILITY_WIRING_V1
-        capabilities=getattr(provider, "get_capabilities", None),
     )
     run_started = time.perf_counter()
     result = runtime.run(original_prompt)

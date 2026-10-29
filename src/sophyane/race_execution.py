@@ -2,8 +2,6 @@ from __future__ import annotations
 import json
 import re
 import os
-import hashlib
-import time
 
 # SOPHYANE_RACE_APPLY_VERIFY_LOOP_V1
 
@@ -44,8 +42,6 @@ class AppliedAction:
 @dataclass
 class RaceExecutionResult:
     ok: bool
-    original_objective: str = ""
-    original_objective_hash: str = ""
     winner: str | None = None
     applied: list[AppliedAction] = field(
         default_factory=list
@@ -55,123 +51,6 @@ class RaceExecutionResult:
     )
     attempts: int = 0
     error: str = ""
-    learning_event: dict[str, Any] | None = None
-
-
-def _capability_class(worker: str) -> str | None:
-    value = str(worker or "").strip().lower()
-    if value == "local":
-        return "local_gguf"
-    if value == "sli" or value.startswith("sli:"):
-        return "sli_graph"
-    if value.startswith("api:"):
-        return "external_api"
-    if value.startswith("browser:"):
-        return "external_browser"
-    if value.startswith("harness:"):
-        return "external_harness"
-    return None
-
-
-def _record_verified_learning(
-    *,
-    request: str,
-    workspace: Path,
-    result: RaceExecutionResult,
-    winner: object,
-    workspace_before: dict[str, str],
-) -> None:
-    """Persist exactly one structured event after deterministic acceptance."""
-    changed_paths = tuple(
-        path
-        for action in result.applied
-        for path in action.changed_paths
-    )
-    artifact_paths = tuple(
-        path
-        for path in changed_paths
-        if (workspace / path).is_file()
-    )
-    evidence = [
-        {
-            "ok": bool(item.ok),
-            "command": list(item.command),
-            "returncode": int(item.returncode),
-            "output": str(item.output),
-        }
-        for item in result.verifications
-    ]
-    if not evidence:
-        evidence = [{
-            "ok": True,
-            "command": ["deterministic-exact-write"],
-            "returncode": 0,
-            "output": "byte-for-byte verified",
-        }]
-    repository_identity = None
-    try:
-        from sophyane.sli_graph import _repository_memory_target
-        repository_identity = _repository_memory_target(request)
-    except Exception:
-        repository_identity = None
-    event = {
-        "objective_hash": result.original_objective_hash,
-        "original_objective": result.original_objective,
-        "status": "succeeded",
-        "verification_state": "verified",
-        "verification_evidence": evidence,
-        "accepted": True,
-        "workspace": str(workspace),
-        "changed_paths": list(changed_paths),
-        "artifact_paths": list(artifact_paths),
-        "repository_identity": repository_identity,
-        "provider_identity": str(getattr(winner, "worker", "") or ""),
-        "capability_class": _capability_class(getattr(winner, "worker", "")),
-        "result": "verified adaptive race execution",
-        "reward": 1.0,
-        "created_at": time.time(),
-    }
-    try:
-        from sophyane.runtime_orchestration_patch import _snapshot
-        before = workspace_before
-        after = _snapshot(workspace)
-    except Exception:
-        before = {}
-        after = {}
-    try:
-        from sophyane.sli_learner import learn_execution
-        event["trace_id"] = "race-verified-" + hashlib.sha256(
-            json.dumps(
-                {
-                    "objective_hash": event["objective_hash"],
-                    "workspace_after": after,
-                    "status": event["status"],
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()[:32]
-        result.learning_event = event
-        learning = learn_execution(
-            trace_id=event["trace_id"],
-            request=request,
-            workspace_before=before,
-            workspace_after=after,
-            status="succeeded",
-            reward=1.0,
-            result=event["result"],
-            elapsed_seconds=0.0,
-            provenance=event,
-        )
-        try:
-            from sophyane.durable_memory import remember_verified_execution
-            remember_verified_execution(
-                learning.get("provenance") or event
-            )
-        except Exception as exc:
-            _emit(None, f"durable episodic memory skipped safely: {type(exc).__name__}: {exc}")
-    except Exception as exc:
-        _emit(None, f"verified learning skipped safely: {type(exc).__name__}: {exc}")
 
 
 def _emit(
@@ -429,24 +308,6 @@ def _apply_action(
         "message",
     }:
         pass
-
-    elif kind in {
-        "open_browser",
-        "browser",
-    }:
-        from .execution_runtime import execute_action
-
-        ok, output = execute_action(
-            normalized,
-            workspace,
-            lambda _message: None,
-        )
-
-        if not ok:
-            raise RuntimeError(
-                "browser action failed: "
-                + str(output)
-            )
 
     else:
         raise ValueError(
@@ -735,66 +596,17 @@ class RaceStrategy:
     max_rounds: int = 3
     require_executable_action: bool = True
     success_mode: str = "pytest"  # pytest | applied | plan_ok
-
-
-def _requires_browser_delivery(request: str) -> bool:
-    """Require an explicit successful browser-open step for browser objectives."""
-    text = " ".join(str(request or "").lower().split())
-    return "browser" in text and any(
-        marker in text
-        for marker in ("open", "launch", "preview", "test", "run")
-    )
-
-
-def _browser_delivery_completed(applied: list[AppliedAction]) -> bool:
-    return any(
-        str(item.action.get("type") or "").strip().lower()
-        in {"open_browser", "browser"}
-        for item in applied
-    )
-
-
-def _is_complex_storefront(request: str) -> bool:
-    text = " ".join(str(request or "").casefold().split())
-    return any(marker in text for marker in (
-        "ecommerce", "e-commerce", "online store", "shop", "shein",
-        "checkout", "cart", "marketplace", "alibaba", "amazon", "daraz",
-        "ebay", "e-bay", "etsy", "temu", "walmart", "shopify",
-    )) and any(marker in text for marker in ("website", "web site", "webpage", "store", "shop"))
-
-
-def _is_complex_web_app(request: str) -> bool:
-    text = " ".join(str(request or "").casefold().split())
-    web_or_product = any(marker in text for marker in ("website", "web site", "webpage", "web app", "email service", "online service", "dashboard", "api service"))
-    if not web_or_product:
-        return False
-    return _is_complex_storefront(request) or any(
-        marker in text for marker in (
-            "email service", "authentication", "login", "dashboard",
-            "payment", "api", "database", "messaging", "subscription",
-            "multi page", "dynamic",
-        )
-    )
+    prefer_sli_only: bool = False
 
 
 def race_strategy_for(request: str) -> RaceStrategy:
     """Derive race strategy from request class."""
-    text = " ".join(str(request or "").lower().split())
-    if _is_complex_web_app(request) and not any(marker in text for marker in ("website", "web site", "webpage", "landing page")):
-        return RaceStrategy(max_rounds=4, require_executable_action=True, success_mode="pytest")
-    if any(marker in text for marker in ("website", "web site", "webpage", "landing page")):
-        # Static web artifacts are verified by material output, not the
-        # parent repository's unrelated full test suite.
-        return RaceStrategy(
-            max_rounds=4 if _is_complex_web_app(request) else 2,
-            require_executable_action=True,
-            success_mode="applied",
-        )
     if _is_indexing_or_daemon_request(request):
         return RaceStrategy(
             max_rounds=2,
             require_executable_action=False,
             success_mode="plan_ok",
+            prefer_sli_only=True,
         )
     return RaceStrategy()
 
@@ -1046,21 +858,11 @@ def run_race_apply_verify(
         workspace_path
     )
 
-    original_objective = str(request)
-    try:
-        from sophyane.runtime_orchestration_patch import _snapshot
-        learning_before = _snapshot(workspace_path)
-    except Exception:
-        learning_before = {}
     result = RaceExecutionResult(
-        ok=False,
-        original_objective=original_objective,
-        original_objective_hash=hashlib.sha256(
-            original_objective.encode("utf-8")
-        ).hexdigest(),
+        ok=False
     )
 
-    current_request = original_objective
+    current_request = request
 
     # SOPHYANE_RACE_BASELINE_DIFFERENTIAL_VERIFICATION_V2
     #
@@ -1072,10 +874,8 @@ def run_race_apply_verify(
     # When production uses verify_workspace as its verifier, baseline and
     # post-action results are directly comparable. Custom verifiers retain
     # their original post-action-only contract.
-    baseline_verification = (
-        []
-        if strategy.success_mode == "applied"
-        else verify_workspace(workspace_path)
+    baseline_verification = verify_workspace(
+        workspace_path
     )
 
     def _verification_failure_signature(item):
@@ -1451,63 +1251,12 @@ def run_race_apply_verify(
         )
 
         if _trusted_exact_write:
-            # A trusted exact write is already deterministically verified and
-            # must retain its isolation from unrelated repository verification.
-            # Browser-delivery objectives, however, are multi-step and cannot
-            # complete until their explicit browser-open action succeeds.
-            if (
-                _requires_browser_delivery(request)
-                and race_runner is run_adaptive_race
-                and applied.changed_paths
-                and not _browser_delivery_completed(result.applied)
-            ):
-                # Browser delivery is a deterministic post-write operation;
-                # do not spend another LLM round asking a provider to invent
-                # an open_browser action.
-                try:
-                    if lease.acquire(winner.worker):
-                        opened = _apply_action(
-                            engine=winner.worker,
-                            action={"type": "open_browser"},
-                            workspace=workspace_path,
-                            lease=lease,
-                        )
-                        result.applied.append(opened)
-                        result.ok = True
-                        result.error = ""
-                        return result
-                except Exception as browser_error:
-                    _emit(progress, f"Browser delivery failed: {_brief_route_reason(browser_error)}")
-                finally:
-                    if lease.owner == winner.worker:
-                        lease.release(winner.worker)
-                if race_runner is not run_adaptive_race:
-                    current_request = request + "\n\nThe artifact write completed, but browser delivery has not. Open the produced artifact in the browser."
-                    continue
-            if (
-                _requires_browser_delivery(request)
-                and race_runner is not run_adaptive_race
-                and applied.changed_paths
-                and not _browser_delivery_completed(result.applied)
-            ):
-                current_request = request + "\n\nThe artifact write completed, but browser delivery has not. Open the produced artifact in the browser."
-                continue
-
-            _record_verified_learning(
-                request=original_objective,
-                workspace=workspace_path,
-                result=result,
-                winner=winner,
-                workspace_before=learning_before,
-            )
             result.ok = True
             result.error = ""
             return result
 
-        verification = (
-            []
-            if strategy.success_mode == "applied"
-            else verifier(workspace_path)
+        verification = verifier(
+            workspace_path
         )
         result.verifications.extend(
             verification
@@ -1520,10 +1269,6 @@ def run_race_apply_verify(
         # only for complex construction requests.
         if (
             semantic_judge is not None
-            and (
-                strategy.success_mode not in {"applied", "plan_ok"}
-                or _is_complex_web_app(request)
-            )
             and _requires_semantic_completion_judge(
                 request
             )
@@ -1589,43 +1334,6 @@ def run_race_apply_verify(
                 # fabricating a negative Gemini judgement.
                 pass
 
-        # Browser-delivery objectives are multi-step: a verified write is
-        # not overall success until an explicit browser-open action succeeds.
-        if (
-            _requires_browser_delivery(request)
-            and race_runner is run_adaptive_race
-            and applied.changed_paths
-            and not _browser_delivery_completed(result.applied)
-        ):
-            try:
-                if lease.acquire(winner.worker):
-                    opened = _apply_action(
-                        engine=winner.worker,
-                        action={"type": "open_browser"},
-                        workspace=workspace_path,
-                        lease=lease,
-                    )
-                    result.applied.append(opened)
-                    result.ok = True
-                    result.error = ""
-                    return result
-            except Exception as browser_error:
-                _emit(progress, f"Browser delivery failed: {_brief_route_reason(browser_error)}")
-            finally:
-                if lease.owner == winner.worker:
-                    lease.release(winner.worker)
-            if race_runner is not run_adaptive_race:
-                current_request = request + "\n\nThe artifact write completed, but browser delivery has not. Open the produced artifact in the browser."
-                continue
-        if (
-            _requires_browser_delivery(request)
-            and race_runner is not run_adaptive_race
-            and applied.changed_paths
-            and not _browser_delivery_completed(result.applied)
-        ):
-            current_request = request + "\n\nThe artifact write completed, but browser delivery has not. Open the produced artifact in the browser."
-            continue
-
         # applied / plan_ok strategies: a successfully applied action
         # is enough progress (no pytest gate).
         if strategy.success_mode in {"applied", "plan_ok"}:
@@ -1640,13 +1348,6 @@ def run_race_apply_verify(
                 for item in verification
             )
         ):
-            _record_verified_learning(
-                request=original_objective,
-                workspace=workspace_path,
-                result=result,
-                winner=winner,
-                workspace_before=learning_before,
-            )
             result.ok = True
             result.error = ""
             return result

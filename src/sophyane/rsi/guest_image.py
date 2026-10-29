@@ -39,7 +39,11 @@ class GuestImageBuilder:
             raise GuestImageError(f"output image already exists: {self.output_image}")
         if not self.tool.is_file() or not self.tool.stat().st_mode & 0o111:
             raise GuestImageError(f"image tool is unavailable or not executable: {self.tool}")
-        for name in ("sophyane-bootstrap.sh", "sophyane-bootstrap.service", "sophyane-fstab"):
+        for name in (
+            "sophyane-bootstrap.sh", "sophyane-bootstrap.service", "sophyane-fstab",
+            "sophyane-init.sh",
+            "mnt-sophyane\\x2dinput.mount", "mnt-sophyane\\x2doutput.mount",
+        ):
             if not (self.asset_root / name).is_file():
                 raise GuestImageError(f"guest asset is missing: {name}")
 
@@ -60,11 +64,16 @@ class GuestImageBuilder:
                 "--mkdir", "/usr/local/lib/sophyane",
                 "--mkdir", "/etc/fstab.d",
                 "--upload", f"{self.asset_root / 'sophyane-bootstrap.sh'}:/usr/local/lib/sophyane/sophyane-bootstrap.sh",
+                "--upload", f"{self.asset_root / 'sophyane-init.sh'}:/usr/local/lib/sophyane/sophyane-init.sh",
                 "--upload", f"{self.asset_root / 'sophyane-bootstrap.service'}:/etc/systemd/system/sophyane-bootstrap.service",
                 "--upload", f"{self.asset_root / 'sophyane-fstab'}:/etc/fstab.d/sophyane.conf",
+                "--upload", f"{self.asset_root / 'mnt-sophyane\\x2dinput.mount'}:/etc/systemd/system/mnt-sophyane\\x2dinput.mount",
+                "--upload", f"{self.asset_root / 'mnt-sophyane\\x2doutput.mount'}:/etc/systemd/system/mnt-sophyane\\x2doutput.mount",
                 "--run-command", "chmod 0755 /usr/local/lib/sophyane/sophyane-bootstrap.sh",
+                "--run-command", "chmod 0755 /usr/local/lib/sophyane/sophyane-init.sh",
                 "--run-command", "mkdir -p /mnt/sophyane-input /mnt/sophyane-output",
-                "--run-command", "systemctl enable sophyane-bootstrap.service",
+                "--run-command", "sed -i '/[[:space:]]\\/boot\\/efi[[:space:]]/s/^/#/' /etc/fstab",
+                "--run-command", "systemctl enable mnt-sophyane\\\\x2dinput.mount mnt-sophyane\\\\x2doutput.mount sophyane-bootstrap.service",
             )
             subprocess.run(self.last_command, check=True, capture_output=True, text=True)
         except (OSError, subprocess.CalledProcessError) as error:

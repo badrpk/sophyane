@@ -29,7 +29,6 @@ class PluginLoader:
             "http",
             "openai_compatible",
             "fallback",  # composite wrapper, not a leaf plugin
-            "human_conversation",  # Mode-6 policy, not a selectable leaf plugin
         }
 
         for module_info in pkgutil.iter_modules(
@@ -49,10 +48,9 @@ class PluginLoader:
                 module = importlib.import_module(qualified_name)
             except Exception as error:
                 self.errors[module_name] = str(error)
-                LOGGER.debug(
+                LOGGER.exception(
                     "Provider plugin import failed: %s",
                     qualified_name,
-                    exc_info=True,
                 )
                 continue
 
@@ -90,9 +88,6 @@ class PluginLoader:
         provider_id: str,
         **kwargs: object,
     ) -> Provider:
-        from sophyane.intelligence_authority import require_active_provider
-
-        require_active_provider(provider_id)
         provider_class = self.providers.get(provider_id)
 
         if provider_class is None:

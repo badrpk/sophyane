@@ -3,20 +3,41 @@
 from __future__ import annotations
 
 import os
+import json
+from pathlib import Path
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 from .heartbeat import HeartbeatRecord, HeartbeatStore
+from .autonomy_policy import FailureClass, classify_failure
 
 
 class ContinuousRSIWorker:
-    def __init__(self, runtime, heartbeat: HeartbeatStore, source=None, *, context_factory: Callable[[], object] | None = None, clock=time.time):
+    def __init__(self, runtime, heartbeat: HeartbeatStore, source=None, *, context_factory: Callable[[], object] | None = None,
+                 clock=time.time, proposal_workers: int | None = None):
         self.runtime = runtime
         self.heartbeat = heartbeat
         self.source = source
         self.context_factory = context_factory
         self.clock = clock
+        configured = proposal_workers if proposal_workers is not None else os.environ.get("SOPHYANE_RSI_PROPOSAL_WORKERS", "3")
+        self.proposal_workers = max(1, min(8, int(configured)))
+        self.safety_halt_path = heartbeat.path.with_name("safety-halt.json")
+
+    def _safety_halt(self):
+        try:
+            return json.loads(self.safety_halt_path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+    def _record_safety_halt(self, reason: str):
+        payload = {"state": "safety_halt", "reason": str(reason)[:1000], "recorded_at": self.clock()}
+        self.safety_halt_path.parent.mkdir(parents=True, exist_ok=True)
+        self.safety_halt_path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+        self._touch(state="safety_halt", last_error=payload["reason"])
+        return {"status": "safety_halt", "reason": payload["reason"]}
 
     def _touch(self, **updates):
         try:
@@ -37,6 +58,14 @@ class ContinuousRSIWorker:
             return record
 
     def run_once(self) -> dict[str, object]:
+        halt = self._safety_halt()
+        if halt:
+            reason = str(halt.get("reason") or "durable safety halt")
+            try:
+                self._touch(state="safety_halt", last_error=reason)
+            except Exception:
+                pass
+            return {"status": "safety_halt", "reason": reason}
         status = self.runtime.status()
         if status.get("stopped") or status.get("paused"):
             state = "stopped" if status.get("stopped") else "paused"
@@ -54,8 +83,19 @@ class ContinuousRSIWorker:
                     cycle_warning = "no frozen experiment plan configured"
                     self._touch(state="waiting", last_error=cycle_warning)
                 else:
-                    proposal = self.source.propose(context)
-                    if proposal.accepted and proposal.task is not None:
+                    if self.proposal_workers == 1:
+                        proposals = [self.source.propose(context)]
+                    else:
+                        with ThreadPoolExecutor(max_workers=self.proposal_workers, thread_name_prefix="sophyane-proposal") as pool:
+                            proposals = list(pool.map(self.source.propose, [context] * self.proposal_workers))
+                    accepted = set()
+                    for proposal in proposals:
+                        if not proposal.accepted or proposal.task is None:
+                            continue
+                        objective_key = " ".join(str(proposal.task.objective).split()).casefold()
+                        if not objective_key or objective_key in accepted:
+                            continue
+                        accepted.add(objective_key)
                         proposal.task.review_status = (
                             "approved" if proposal.review_outcome == "approved" else "pending"
                         )
@@ -73,8 +113,10 @@ class ContinuousRSIWorker:
                                     "reviewers": list(proposal.reviewers),
                                     "review_outcome": proposal.review_outcome or "unreviewed",
                                 })
-                    elif not proposal.accepted:
-                        cycle_warning = f"task proposal rejected: {proposal.reason}"
+                    if not accepted and proposals:
+                        rejected = next((item for item in proposals if not item.accepted), None)
+                        if rejected is not None:
+                            cycle_warning = f"task proposal rejected: {rejected.reason}"
                         self._touch(state="waiting", last_error=cycle_warning)
             result = self.runtime.tick()
             result_status = str(result.get("status", "")).lower()
@@ -85,8 +127,11 @@ class ContinuousRSIWorker:
             self._touch(state="waiting", current_task_id=result.get("task_id"), last_error=current_error)
             return result
         except Exception as error:
-            self._touch(state="error", last_error=str(error)[:1000])
-            return {"status": "paused", "reason": str(error)}
+            decision = classify_failure(error, phase="execution")
+            if decision.category is FailureClass.SAFETY_HALT:
+                return self._record_safety_halt(decision.reason)
+            self._touch(state="waiting", last_error=decision.reason)
+            return {"status": "retrying", "reason": decision.reason}
 
 
 class RSIWatchdog:

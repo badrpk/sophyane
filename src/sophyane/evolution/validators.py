@@ -216,7 +216,7 @@ def _shell(
         ),
         "exit_seven_observed": bool(
             re.search(
-                r"exit(?:_code\"\s*:\s*| code\s*[:=]\s*|\s*=\s*)7",
+                r"exit(?:_code| code|=|\":)\s*7",
                 output,
                 flags=re.I,
             )

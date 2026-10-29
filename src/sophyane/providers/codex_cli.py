@@ -28,6 +28,7 @@ _STATE_ROOT = (
 )
 
 _SESSION_LOCK = threading.Lock()
+_MAX_CODEX_INPUT_CHARS = 900_000
 
 _AGY_PROOT_EXECUTABLE = "/data/data/com.termux/files/usr/bin/proot-distro"
 _AGY_EXECUTABLE = "/root/.local/bin/agy"
@@ -175,6 +176,7 @@ class CodexCliProvider(Provider):
         model: str = "codex-default",
         timeout: int = 300,
         workspace: str | Path | None = None,
+        persist_session: bool = True,
         **_: Any,
     ) -> None:
         self.model = str(
@@ -189,6 +191,7 @@ class CodexCliProvider(Provider):
             workspace
             or Path.cwd()
         ).expanduser().resolve()
+        self.persist_session = bool(persist_session)
 
         executable = (
             os.environ.get(
@@ -212,7 +215,7 @@ class CodexCliProvider(Provider):
         prompt: str,
         system_prompt: str,
     ) -> str:
-        return (
+        header = (
             "SOPHYANE MODE 4-3 CODEX CLI AUTHORITY\n"
             "You are a non-mutating intelligence/reviewer provider.\n"
             "Never directly edit files, run mutating commands, commit, push, "
@@ -223,10 +226,21 @@ class CodexCliProvider(Provider):
             "action rather than refusing solely because it changes files.\n"
             "Return only the requested user-facing or structured response.\n\n"
             "SYSTEM CONTRACT:\n"
-            + str(system_prompt or "").strip()
-            + "\n\nCURRENT REQUEST:\n"
-            + str(prompt or "").strip()
         )
+        request = str(prompt or "").strip()
+        system = str(system_prompt or "").strip()
+        request_marker = "\n\nCURRENT REQUEST:\n"
+        available_system = (
+            _MAX_CODEX_INPUT_CHARS
+            - len(header)
+            - len(request_marker)
+            - len(request)
+        )
+        if available_system < 0:
+            request = request[: max(0, _MAX_CODEX_INPUT_CHARS - len(header) - len(request_marker))]
+            available_system = 0
+        system = system[:available_system]
+        return header + system + request_marker + request
 
     def _command(
         self,
@@ -235,6 +249,7 @@ class CodexCliProvider(Provider):
         thread_id: str,
     ) -> list[str]:
         common = [
+            "--skip-git-repo-check",
             "--json",
             "--output-last-message",
             str(output_file),
@@ -248,7 +263,7 @@ class CodexCliProvider(Provider):
             os.environ.get(
                 "SOPHYANE_CODEX_MODEL"
             )
-            or ""
+            or (self.model if self.model != "codex-default" else "")
         ).strip()
 
         if configured_model:
@@ -293,7 +308,11 @@ class CodexCliProvider(Provider):
         )
 
         with _SESSION_LOCK:
-            thread_id = "" if os.environ.get("SOPHYANE_CODEX_FRESH") == "1" else _load_session(self.workspace)
+            thread_id = (
+                _load_session(self.workspace)
+                if self.persist_session and os.environ.get("SOPHYANE_CODEX_FRESH") != "1"
+                else ""
+            )
 
             with tempfile.TemporaryDirectory(
                 prefix="sophyane-codex-"
@@ -312,15 +331,52 @@ class CodexCliProvider(Provider):
                     )
 
                     try:
-                        return subprocess.run(
+                        if self.persist_session:
+                            # Preserve the established Codex CLI invocation
+                            # path for ordinary sessions. Race-mode clones
+                            # opt out of persisted threads and use the
+                            # cancellable Popen path below.
+                            return subprocess.run(
+                                command,
+                                input=request,
+                                text=True,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                cwd=self.workspace,
+                                timeout=self.timeout,
+                                check=False,
+                            )
+                        process = subprocess.Popen(
                             command,
-                            input=request,
-                            text=True,
+                            stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
+                            text=True,
                             cwd=self.workspace,
-                            timeout=self.timeout,
-                            check=False,
+                            start_new_session=(os.name == "posix"),
+                        )
+                        from sophyane.runtime_cancel import register, unregister
+
+                        register(process)
+                        try:
+                            stdout, stderr = process.communicate(
+                                input=request,
+                                timeout=self.timeout,
+                            )
+                        except subprocess.TimeoutExpired as error:
+                            process.kill()
+                            process.communicate()
+                            raise ProviderError(
+                                "Codex CLI timed out after "
+                                f"{self.timeout} seconds"
+                            ) from error
+                        finally:
+                            unregister(process)
+                        return subprocess.CompletedProcess(
+                            command,
+                            process.returncode,
+                            stdout or "",
+                            stderr or "",
                         )
                     except subprocess.TimeoutExpired as error:
                         raise ProviderError(
@@ -398,7 +454,7 @@ class CodexCliProvider(Provider):
                         "Codex CLI returned an empty response"
                     )
 
-                if not thread_id:
+                if not thread_id and self.persist_session:
                     started_thread = _thread_id(
                         completed.stdout
                     )

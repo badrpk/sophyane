@@ -253,12 +253,15 @@ class CurriculumScheduler:
     def choose_next(self, candidates: list[CurriculumTask]) -> CurriculumTask | None:
         queued = [
             task for task in candidates
-            if task.status is TaskStatus.QUEUED
-            and task.review_status in {"not_required", "approved"}
-            or (
-                task.status is TaskStatus.PAUSED
-                and task.failure_reason == "paused after process restart"
-                and task.review_status in {"not_required", "approved"}
+            if task.attempts < self.policy.max_task_attempts
+            and (
+                (task.status is TaskStatus.QUEUED
+                 and task.review_status in {"not_required", "approved"})
+                or (
+                    task.status is TaskStatus.PAUSED
+                    and task.failure_reason == "paused after process restart"
+                    and task.review_status in {"not_required", "approved"}
+                )
             )
         ]
         if not queued:
@@ -268,7 +271,7 @@ class CurriculumScheduler:
     def enqueue(self, task: CurriculumTask) -> bool:
         state = self._state()
         active_tasks = sum(
-            item.status in {TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.PAUSED}
+            item.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}
             for item in state.queue
         )
         if active_tasks >= self.policy.max_queue_length:
@@ -430,9 +433,9 @@ class CurriculumScheduler:
         state.stop_reason = str(reason)
         self._save(state, {"event": "stopped", "reason": str(reason)})
 
-    def status(self) -> dict[str, object]:
+    def status(self, *, enforce_budget: bool = True) -> dict[str, object]:
         state = self._state()
-        if self._budget_exhausted(state) and not state.paused:
+        if enforce_budget and self._budget_exhausted(state) and not state.paused:
             state.paused = True
             self._save(state, {"event": "budget_paused"})
         return {

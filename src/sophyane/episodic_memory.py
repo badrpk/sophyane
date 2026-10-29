@@ -33,6 +33,9 @@ _MAX_OBJECTIVE_CHARS = 12000
 _MAX_RESULT_CHARS = 6000
 _MAX_EVIDENCE_CHARS = 12000
 
+_NEURON_INDEX = None
+_NEURON_REPLAY_LIMIT = 32
+
 
 def _json_text(
     value: object,
@@ -387,6 +390,76 @@ def xerus_status() -> dict[str, Any]:
         }
 
 
+def _neuron_index():
+    global _NEURON_INDEX
+    if _NEURON_INDEX is None:
+        from sophyane.neuron_episodic import NeuronEpisodicIndex
+
+        _NEURON_INDEX = NeuronEpisodicIndex()
+        try:
+            _, recall, _ = _xerus_api()
+            rows = recall(
+                "sophyane execution",
+                namespace=EPISODE_NAMESPACE,
+                limit=_NEURON_REPLAY_LIMIT,
+            )
+            replay_episodes = []
+            for row in rows if isinstance(rows, list) else []:
+                if not isinstance(row, dict):
+                    continue
+                try:
+                    payload = json.loads(str(row.get("content", "")))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                if not isinstance(payload, dict) or payload.get("schema") != EPISODE_SCHEMA:
+                    continue
+                replay_episodes.append({
+                    **payload,
+                    "episode_key": row.get("memory_key") or _episode_key(payload),
+                    "namespace": EPISODE_NAMESPACE,
+                })
+            if replay_episodes:
+                batch_index = getattr(_NEURON_INDEX, "index_episodes", None)
+                if callable(batch_index):
+                    batch_index(replay_episodes)
+                else:
+                    for episode in replay_episodes:
+                        _NEURON_INDEX.index_episode(episode)
+        except Exception:
+            # Replay is advisory; a fresh Neuron process remains usable.
+            pass
+    return _NEURON_INDEX
+
+
+def _neuron_episode_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return advisory Neuron data without changing episode authority."""
+
+    try:
+        score = _neuron_index().index_episode(
+            {
+                **payload,
+                "episode_key": _episode_key(payload),
+                "namespace": EPISODE_NAMESPACE,
+            }
+        )
+        return {
+            "backend": str(getattr(score, "backend", "fallback"))[:32],
+            "score": max(0.0, min(1.0, float(getattr(score, "score", 0.0)))),
+            "novelty": max(0.0, min(1.0, float(getattr(score, "novelty", 0.0)))),
+            "activation": max(0.0, min(1.0, float(getattr(score, "activation", 0.0)))),
+            "authoritative": bool(getattr(score, "authoritative", False)),
+        }
+    except Exception as exc:
+        return {
+            "backend": "unavailable",
+            "score": 0.0,
+            "novelty": 0.0,
+            "activation": 0.0,
+            "authoritative": False,
+            "error": f"{type(exc).__name__}: {exc}"[:500],
+        }
+
+
 def persist_execution_episode(
     event: dict[str, Any],
 ) -> dict[str, Any]:
@@ -414,6 +487,8 @@ def persist_execution_episode(
         payload = _episode_payload(
             event
         )
+
+        neuron = _neuron_episode_metadata(payload)
 
         content = json.dumps(
             payload,
@@ -470,6 +545,7 @@ def persist_execution_episode(
                 ),
                 "permission": "READ",
                 "instruction_authority": False,
+                "neuron": neuron,
             },
         )
 
@@ -497,6 +573,7 @@ def persist_execution_episode(
                 )
             ),
             "namespace": EPISODE_NAMESPACE,
+            "neuron": neuron,
         }
 
     except Exception as exc:
@@ -515,6 +592,7 @@ def recall_execution_episodes(
     *,
     limit: int = 8,
     trusted_only: bool = False,
+    neuron_ranked: bool = False,
 ) -> list[dict[str, Any]]:
     """Recall bounded execution episodes from Xerus.
 
@@ -663,7 +741,38 @@ def recall_execution_episodes(
         ) >= requested:
             break
 
-    return result
+    if not neuron_ranked or not result:
+        return result
+
+    try:
+        index = _neuron_index()
+        for row in result:
+            index.index_episode(
+                {
+                    **row,
+                    "episode_key": row.get("memory_key", ""),
+                    "namespace": EPISODE_NAMESPACE,
+                }
+            )
+        ranked = index.recall(
+            text,
+            namespace=EPISODE_NAMESPACE,
+            limit=requested,
+        )
+        by_key = {
+            str(row.get("memory_key")): row
+            for row in result
+        }
+        ordered = [
+            by_key[item.episode_key]
+            for item in ranked
+            if item.episode_key in by_key
+        ]
+        seen = {id(item) for item in ordered}
+        ordered.extend(item for item in result if id(item) not in seen)
+        return ordered[:requested]
+    except Exception:
+        return result
 
 
 __all__ = [

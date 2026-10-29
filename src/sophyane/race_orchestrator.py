@@ -3,21 +3,12 @@ from __future__ import annotations
 # SOPHYANE_REAL_THREE_WORKER_RACE_V1
 
 import json
-import hashlib
 import os
-import queue
 import shutil
 import tempfile
-import threading
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
-
-from sophyane.intelligence_authority import (
-    ACTIVE_INTELLIGENCE_PROVIDERS, require_active_provider,
-    provider_allowed_for_operational_intelligence,
-)
 
 from sophyane.execution_runtime import (
     _normalize_action,
@@ -28,75 +19,8 @@ from sophyane.race_adapters import (
     proposal_worker,
 )
 
-_MODE1_RECOVERABLE_MARKERS = ("quota", "rate limit", "429", "timeout", "timed out", "temporar", "unavailable", "transport", "connection", "network", "credentials unavailable", "token exhausted", "authentication exhausted")
-_MODE1_NON_RECOVERABLE_MARKERS = ("approval", "safety", "permission denied", "forbidden", "unauthorized", "invalid_api_key", "incorrect api key", "authentication_error", "billing")
-
-def _mode1_recoverable_provider_error(error: BaseException) -> bool:
-    text = str(error).strip().lower()
-    return bool(text) and not any(marker in text for marker in _MODE1_NON_RECOVERABLE_MARKERS) and any(marker in text for marker in _MODE1_RECOVERABLE_MARKERS)
-
-def _mode1_penalize_route(scores: dict[str, float], route: str, error: BaseException) -> None:
-    """Record a request-local TXQ capability penalty for a failed route."""
-    scores[route] = scores.get(route, 1.0) - 1.0
-
-
-def _brief_route_reason(value: object) -> str:
-    """Collapse provider failures into a compact actionable explanation."""
-    text = " ".join(str(value or "").split())
-    lower = text.casefold()
-    if "429" in lower or "quota" in lower or "resource_exhausted" in lower:
-        return "rate limit/quota exceeded"
-    if "timeout" in lower or "timed out" in lower:
-        return "provider timed out"
-    if "unavailable" in lower or "not found" in lower:
-        return "provider unavailable"
-    if "authentication" in lower or "api key" in lower:
-        return "authentication/configuration error"
-    if "canceled after stronger winner" in lower:
-        return "canceled after stronger winner"
-    return text[:180] or "route unavailable"
-
-
-def _mode1_provider_order(primary: str, config: dict[str, Any]) -> tuple[str, ...]:
-    """Resolve eligible intelligence routes without reading mutable global state."""
-    primary = str(primary or "").strip().lower()
-    order: list[str] = []
-    def add(value: Any) -> None:
-        name = str(value or "").strip().lower()
-        if provider_allowed_for_operational_intelligence(name) and name not in order:
-            order.append(name)
-    add(primary)
-    explicit_present = "provider_fallback_order" in config or "fallback_order" in config
-    explicit = config.get("provider_fallback_order", config.get("fallback_order", ()))
-    for value in explicit or ():
-        add(value)
-    # An explicitly supplied lane is authoritative: independent workers must
-    # not collapse into a cross-class fallback chain.
-    if not explicit_present and (primary not in {"local", "local_gguf"} or bool(config.get("allow_local_fallbacks"))):
-        for value in ACTIVE_INTELLIGENCE_PROVIDERS:
-            add(value)
-    return tuple(order)
-
 
 Progress = Callable[[str], None]
-
-
-class _NativeRaceProvider:
-    """Adapter exposing an installed NIFDU/Neuron binary to the race."""
-
-    def __init__(self, provider_id: str):
-        self.provider_id = provider_id
-
-    def generate(self, prompt: str, system_prompt: str = "") -> str:
-        from sophyane.native_worker_pool import run_worker
-        result = run_worker(
-            self.provider_id,
-            args=[],
-            timeout=40.0,
-        )
-        if not result.get("ok"):
-            raise RuntimeError(str(result.get("error") or f"{self.provider_id} failed"))
-        return str(result.get("stdout") or result.get("output") or "")
 
 
 @dataclass(frozen=True)
@@ -435,13 +359,11 @@ def _race_system_prompt(
         "that files were modified. Analyze the objective and return "
         "the single best NEXT ACTION as strict JSON. "
         "Preferred schema: "
-        '{"action":{"type":"run|write_file|append_file|mkdir|open_browser|respond",'
+        '{"action":{"type":"run|write_file|append_file|mkdir|respond",'
         '"path":"optional relative path",'
         '"command":"optional command",'
         '"content":"optional content",'
         '"message":"optional response"}}. '
-        "For objectives that both create an artifact and preview it, return the "
-        "write action first; a later repair step may return open_browser. "
         "Return one action only."
     )
 
@@ -467,173 +389,12 @@ def _race_user_prompt(
         "Do not execute it."
     )
 
-# SOPHYANE_RACE_LOCAL_HARD_DEADLINE_V1
-_LOCAL_RACE_APPLICATION_DEADLINE_SECONDS = 6.0
-_RACE_PROVIDER_TIMEOUT_SECONDS = 45
-_RACE_COORDINATOR_TIMEOUT_SECONDS = 50.0
-
-
-def _generate_provider_for_race(
-    *,
-    provider: Any,
-    provider_id: str,
-    prompt: str,
-    system_prompt: str,
-) -> Any:
-    """Generate one race proposal with a hard local application deadline.
-
-    Local GGUF generation runs behind an external deadline because the
-    provider itself intentionally permits longer on-device generations.
-    A local result reaching this boundary is cancelled and can never cross
-    back into race proposal validation or winner selection.
-
-    Non-local providers retain their existing synchronous behaviour.
-    """
-    normalized = str(
-        provider_id
-        or ""
-    ).strip().lower()
-
-    if normalized != "local_gguf":
-        return provider.generate(
-            prompt,
-            system_prompt,
-        )
-
-    from sophyane.runtime_cancel import (
-        bind_generation,
-        cancel_generation,
-        new_generation,
-        release_generation,
-    )
-
-    generation = new_generation()
-
-    result_queue: queue.Queue[
-        tuple[str, Any]
-    ] = queue.Queue(
-        maxsize=1
-    )
-
-    started = time.monotonic()
-    deadline = (
-        started
-        + _LOCAL_RACE_APPLICATION_DEADLINE_SECONDS
-    )
-
-    def worker() -> None:
-        bind_generation(
-            generation
-        )
-
-        try:
-            value = provider.generate(
-                prompt,
-                system_prompt,
-            )
-
-            item = (
-                "ok",
-                value,
-            )
-
-        except BaseException as error:  # noqa: BLE001
-            item = (
-                "error",
-                error,
-            )
-
-        finally:
-            release_generation(
-                generation
-            )
-
-        try:
-            result_queue.put_nowait(
-                item
-            )
-        except queue.Full:
-            # The parent may already have timed out and abandoned the queue.
-            pass
-
-    thread = threading.Thread(
-        target=worker,
-        daemon=True,
-        name="sophyane-race-local-provider",
-    )
-
-    thread.start()
-
-    while True:
-        remaining = (
-            deadline
-            - time.monotonic()
-        )
-
-        if remaining <= 0:
-            cancel_generation(
-                generation
-            )
-
-            # Never wait for the late provider thread. Its queue is private
-            # to this invocation and nothing after this point can be applied.
-            try:
-                while True:
-                    result_queue.get_nowait()
-            except queue.Empty:
-                pass
-
-            raise TimeoutError(
-                "race local_gguf response exceeded "
-                f"{_LOCAL_RACE_APPLICATION_DEADLINE_SECONDS:g}s "
-                "and was discarded"
-            )
-
-        try:
-            status, value = (
-                result_queue.get(
-                    timeout=min(
-                        0.05,
-                        remaining,
-                    )
-                )
-            )
-        except queue.Empty:
-            continue
-
-        completed_at = (
-            time.monotonic()
-        )
-
-        # Completion at the deadline is late. Do this check after dequeueing
-        # so a scheduling race cannot smuggle an over-budget result through.
-        if completed_at >= deadline:
-            cancel_generation(
-                generation
-            )
-
-            raise TimeoutError(
-                "race local_gguf response exceeded "
-                f"{_LOCAL_RACE_APPLICATION_DEADLINE_SECONDS:g}s "
-                "and was discarded"
-            )
-
-        if status == "error":
-            raise value
-
-        return value
-
-
 def _single_provider(
     *,
     provider_id: str,
     config: dict[str, Any],
 ):
     """Create exactly one provider without a fallback chain."""
-    require_active_provider(provider_id)
-    if str(provider_id).strip().lower() in {"nifdu", "neuron"}:
-        return _NativeRaceProvider(str(provider_id).strip().lower())
-
     # Import through main because the current production tree already
     # centralizes PluginLoader/get_secret there.
     from sophyane.main import (
@@ -740,10 +501,6 @@ def _single_provider(
         )
     )
 
-    # Speculative workers must never inherit long interactive-provider
-    # timeouts. A race needs a quick proposal, not a full provider session.
-    timeout = min(timeout, _RACE_PROVIDER_TIMEOUT_SECONDS)
-
     max_tokens = int(
         config.get("max_tokens")
         or 4096
@@ -794,36 +551,12 @@ def _state_value(
     )
 
 
-# SOPHYANE_SLI_STATE_ACCESS_V1
-def _state_value(
-    state: Any,
-    key: str,
-    default: Any = None,
-) -> Any:
-    """Read SLI results whether represented as mappings or objects."""
-    if isinstance(
-        state,
-        dict,
-    ):
-        return state.get(
-            key,
-            default,
-        )
-
-    return getattr(
-        state,
-        key,
-        default,
-    )
-
-
 def make_sli_producer(
     *,
     request: str,
     workspace: Path,
     progress: Progress | None = None,
     shadow_registry: dict[str, Path] | None = None,
-    authority_context=None,
 ):
     """Build the real SLI worker against an isolated workspace."""
 
@@ -1037,7 +770,6 @@ def make_sli_producer(
                     workspace=shadow,
                     progress=progress,
                     max_retries=1,
-                    context=authority_context,
                 )
 
         report = str(
@@ -1185,8 +917,6 @@ def make_sli_producer(
         )
 
     return produce
-
-
 
 
 # SOPHYANE_RACE_SEMANTIC_PROPOSAL_RELEVANCE_V1
@@ -1528,7 +1258,39 @@ def make_provider_producer(
 ):
     """Build one local/cloud speculative provider worker."""
 
-    def prepare_proposal(raw: object) -> ProgressProposal[Any]:
+    def produce():
+        _emit(
+            progress,
+            (
+                f"Race {engine} worker: "
+                "creating isolated provider"
+            ),
+        )
+
+        provider = _single_provider(
+            provider_id=provider_id,
+            config=config,
+        )
+
+        _emit(
+            progress,
+            (
+                f"Race {engine} worker: "
+                "requesting proposal"
+            ),
+        )
+
+        raw = provider.generate(
+            _race_user_prompt(
+                request,
+                workspace,
+                mode=mode,
+            ),
+            _race_system_prompt(
+                mode=mode,
+            ),
+        )
+
         proposal = _llm_proposal(
             engine=engine,
             text=str(
@@ -1560,6 +1322,7 @@ def make_provider_producer(
             evidence = list(
                 proposal.evidence
             )
+
             evidence.extend(
                 judgement["evidence"]
             )
@@ -1607,24 +1370,6 @@ def make_provider_producer(
                     or 0.0
                 )
 
-                action = proposal.payload["action"]
-                action_type = str(action.get("type") or "").strip().lower()
-                action_path = str(action.get("path") or "").strip().lower()
-                request_text = " ".join(str(request or "").lower().split())
-                web_request = any(
-                    token in request_text
-                    for token in ("website", "web site", "webpage", "landing page")
-                )
-                web_artifact = action_type in {"write_file", "append_file"} and (
-                    action_path.endswith((".html", ".htm", ".css", ".js", ".jsx", ".tsx"))
-                    or action_path in {"index", "index.html"}
-                )
-                if web_request and web_artifact and semantic_score >= 0.40:
-                    semantic_score = max(semantic_score, 0.72)
-                    judgement["relevant"] = True
-                    evidence_note = "deterministic web-artifact relevance rescue"
-                else:
-                    evidence_note = ""
                 reason = str(
                     judgement["reason"]
                     or ""
@@ -1633,6 +1378,7 @@ def make_provider_producer(
                 evidence = list(
                     proposal.evidence
                 )
+
                 evidence.append(
                     "semantic proposal relevance="
                     + (
@@ -1641,9 +1387,6 @@ def make_provider_producer(
                         else "irrelevant"
                     )
                 )
-
-                if evidence_note:
-                    evidence.append(evidence_note)
 
                 if reason:
                     evidence.append(
@@ -1660,423 +1403,9 @@ def make_provider_producer(
                     requires_write=proposal.requires_write,
                 )
 
-        # A valid local JSON response is not evidence of equal quality. When
-        # the semantic judge is unavailable, keep Local GGUF eligible but do
-        # not let its speed beat stronger external routes on a 0.820 tie.
-        # Semantic scores (including web-artifact rescue) and TXQ/history
-        # bonuses are left untouched.
-        if (
-            provider_id == "local_gguf"
-            and proposal.kind == "action"
-            and proposal.confidence >= 0.82
-            and not any("semantic proposal relevance=" in item for item in proposal.evidence)
-        ):
-            request_text = " ".join(str(request or "").casefold().split())
-            web_request = any(marker in request_text for marker in ("website", "web site", "webpage", "landing page"))
-            complex_storefront = any(
-                marker in request_text
-                for marker in ("ecommerce", "e-commerce", "online store", "shop", "shein", "checkout", "cart")
-            )
-            prior = 0.52 if complex_storefront else (0.54 if web_request else 0.68)
-            prior_note = (
-                "complex storefront quality floor applied; awaiting stronger route"
-                if complex_storefront
-                else (
-                    "website quality floor applied; external routes preferred"
-                    if web_request
-                    else "local quality prior applied; awaiting semantic validation"
-                )
-            )
-            proposal = ProgressProposal(
-                engine=proposal.engine,
-                payload=proposal.payload,
-                kind=proposal.kind,
-                confidence=prior,
-                evidence=tuple(proposal.evidence) + (prior_note,),
-                requires_write=proposal.requires_write,
-            )
-
         return proposal
-
-    def usable_for_mode(
-        proposal: ProgressProposal[Any],
-    ) -> bool:
-        normalized_mode = str(mode).strip().lower()
-
-        if normalized_mode == "answer":
-            # Answer workers may fall through to another intelligence
-            # source when deterministic completion evidence leaves the
-            # proposal below the race acceptance threshold. The proposal
-            # is still retained as best_proposal so exhausting all routes
-            # returns evidence to the race instead of converting a
-            # semantic shortfall into a provider failure.
-            return (
-                proposal.kind == "answer"
-                and isinstance(proposal.payload, dict)
-                and bool(
-                    str(
-                        proposal.payload.get("answer")
-                        or ""
-                    ).strip()
-                )
-                and float(proposal.confidence) >= 0.55
-            )
-
-        # Execution-mode semantic confidence belongs to the race layer.
-        # Any structurally valid normalized action remains a legitimate
-        # proposal even when semantic relevance scores it below 0.55.
-        return (
-            proposal.kind == "action"
-            and isinstance(proposal.payload, dict)
-            and isinstance(
-                proposal.payload.get("action"),
-                dict,
-            )
-        )
-
-    def produce():
-        _emit(
-            progress,
-            (
-                f"Race {engine} worker: "
-                "creating isolated provider"
-            ),
-        )
-
-        prompt = _race_user_prompt(
-            request,
-            workspace,
-            mode=mode,
-        )
-        system_prompt = _race_system_prompt(
-            mode=mode,
-        )
-
-        last_error: Exception | None = None
-        best_proposal: ProgressProposal[Any] | None = None
-        route_scores: dict[str, float] = {}
-
-        for route in _mode1_provider_order(
-            provider_id,
-            config,
-        ):
-            try:
-                provider = _single_provider(
-                    provider_id=route,
-                    config=config,
-                )
-
-                _emit(
-                    progress,
-                    (
-                        f"Race {engine} worker: "
-                        f"requesting proposal via {route}"
-                    ),
-                )
-
-                raw = _generate_provider_for_race(
-                    provider=provider,
-                    provider_id=route,
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                )
-
-                usage_getter = getattr(
-                    provider,
-                    "get_token_usage",
-                    None,
-                )
-                usage = (
-                    usage_getter()
-                    if callable(usage_getter)
-                    else {}
-                )
-
-                if isinstance(usage, dict) and usage:
-                    compact = ", ".join(
-                        f"{key}={value}"
-                        for key, value
-                        in sorted(usage.items())
-                    )
-                    _emit(
-                        progress,
-                        (
-                            f"Race {engine}: route "
-                            f"{route} complete · "
-                            f"tokens {compact}"
-                        ),
-                    )
-                else:
-                    _emit(
-                        progress,
-                        (
-                            f"Race {engine}: route "
-                            f"{route} complete · tokens n/a"
-                        ),
-                    )
-
-                proposal = prepare_proposal(raw)
-
-                if (
-                    best_proposal is None
-                    or float(proposal.confidence)
-                    > float(best_proposal.confidence)
-                ):
-                    best_proposal = proposal
-
-                if usable_for_mode(proposal):
-                    return proposal
-
-                # A provider call may succeed transport-wise while still
-                # producing something unusable for this race mode. Treat that
-                # as a request-local capability miss, not as terminal success.
-                # The original request/prompt and authority remain unchanged.
-                _mode1_penalize_route(
-                    route_scores,
-                    route,
-                    RuntimeError(
-                        "provider proposal unusable "
-                        f"for {str(mode).strip().lower()} mode"
-                    ),
-                )
-
-                _emit(
-                    progress,
-                    (
-                        f"Race {engine} provider {route} "
-                        "proposal unusable for this request; "
-                        "trying next eligible intelligence route"
-                    ),
-                )
-                _emit(
-                    progress,
-                    (
-                        f"Race {engine} provider {route} reason: "
-                        "returned no executable action"
-                    ),
-                )
-
-            except Exception as error:
-                last_error = error
-
-                if not _mode1_recoverable_provider_error(
-                    error
-                ):
-                    raise
-
-                # Feed transport/availability failure into request-local TXQ
-                # capability scoring. The objective is retained byte-for-byte.
-                _mode1_penalize_route(
-                    route_scores,
-                    route,
-                    error,
-                )
-
-                _emit(
-                    progress,
-                    (
-                        f"Race {engine} provider {route} "
-                        "penalised for this request"
-                    ),
-                )
-                reason = " ".join(str(error).split())[:180] or "provider unavailable"
-                _emit(
-                    progress,
-                    f"Race {engine} provider {route} reason: {reason}",
-                )
-
-        if best_proposal is not None:
-            return best_proposal
-
-        if last_error is not None:
-            raise last_error
-
-        raise RuntimeError(
-            "no eligible intelligence provider produced "
-            "any proposal"
-        )
 
     return produce
-
-
-def _mode1_sli_applies(request: str) -> bool:
-    text = " ".join(str(request or "").lower().split())
-    if any(token in text for token in ("memory", "internet", "research", "ground", "source", "index", "graph", "latest")):
-        return True
-    # Complex web apps benefit from graph-backed requirements/context.
-    if any(marker in text for marker in ("ecommerce", "e-commerce", "online store", "marketplace", "checkout", "cart", "shein", "alibaba", "amazon", "daraz", "ebay", "etsy", "temu", "walmart", "shopify")) and any(marker in text for marker in ("website", "web site", "store", "shop")):
-        return True
-    return any(marker in text for marker in ("email service", "authentication", "login", "dashboard", "payment", "api", "database", "messaging", "subscription", "multi page", "dynamic")) and any(marker in text for marker in ("website", "web site", "web app"))
-
-
-def _mode1_capability_class(provider_id: str) -> str:
-    provider = str(provider_id or "").strip().lower()
-    if provider in {"nifdu_browser", "browser", "chatgpt_browser"}:
-        return "external_browser"
-    if provider in {"codex_cli", "agy", "claude_code", "harness"}:
-        return "external_harness"
-    if provider in {"local_gguf", "local"}:
-        return "local_gguf"
-    return "external_api"
-
-
-def _mode1_provider_available(provider_id: str, config: dict[str, Any]) -> bool:
-    """Use startup's readiness inventory; explicit test inventories remain supported."""
-    provider = str(provider_id).strip().lower()
-    if not provider_allowed_for_operational_intelligence(provider):
-        return False
-    if provider in {"nifdu", "neuron"}:
-        try:
-            from sophyane.native_backends import probe_nifdu, probe_neuron
-            return (probe_nifdu() if provider == "nifdu" else probe_neuron()).available
-        except Exception:
-            return False
-    advertised = config.get("available_providers")
-    if isinstance(advertised, (list, tuple, set)):
-        return provider in {str(item).strip().lower() for item in advertised}
-    try:
-        from sophyane.startup_policy import intelligence_provider_inventory
-        return provider in intelligence_provider_inventory(config)
-    except Exception:
-        return provider in {"local", "local_gguf"}
-
-
-# Eligibility is decided before this point; history only breaks ties between
-# proposals that already clear the normal race threshold.
-_MODE1_HISTORY_BONUS_CAP = 0.10
-_MODE1_HISTORY_MIN_SCORE = 0.55
-
-
-def _mode1_history_capability(worker_id: str, provider_id: str) -> str:
-    if str(worker_id).strip().lower() == "sli":
-        return "sli_graph"
-    return _mode1_capability_class(provider_id)
-
-
-def _mode1_verified_history_bonus(*, request: str, worker_id: str, provider_id: str, repository_identity: str | None = None) -> float:
-    """Return a bounded advisory bonus from canonical trusted history."""
-    try:
-        from sophyane.sli_learner import read_verified_history
-        records = read_verified_history(request=request, capability_class=_mode1_history_capability(worker_id, provider_id), limit=16)
-    except Exception:
-        return 0.0
-    unique: dict[str, dict[str, Any]] = {}
-    for record in records or ():
-        if not isinstance(record, dict):
-            continue
-        identity = (str(record.get("event_key") or "").strip() or str(record.get("trace_id") or "").strip() or "|".join(str(record.get(key) or "").strip() for key in ("objective_hash", "provider_identity", "created_at")))
-        if identity and identity not in unique:
-            unique[identity] = record
-    if not unique:
-        return 0.0
-    provider = str(provider_id or "").strip().casefold()
-    repository = str(repository_identity or "").strip().casefold()
-    provider_hits = sum(str(record.get("provider_identity") or "").strip().casefold() == provider for record in unique.values() if provider)
-    repository_hits = sum(str(record.get("repository_identity") or "").strip().casefold() == repository for record in unique.values() if repository)
-    bonus = min(0.06, 0.02 * len(unique))
-    if provider_hits:
-        bonus += 0.02
-    if repository_hits:
-        bonus += 0.02
-    return min(_MODE1_HISTORY_BONUS_CAP, bonus)
-
-
-def _mode1_verified_quality_adjustment(*, request: str, worker_id: str, provider_id: str, repository_identity: str | None = None) -> float:
-    """Translate verified reward magnitude into a bounded TXQ adjustment."""
-    try:
-        from sophyane.sli_learner import read_verified_history
-        records = read_verified_history(
-            request=request,
-            capability_class=_mode1_history_capability(worker_id, provider_id),
-            limit=16,
-        )
-    except Exception:
-        return 0.0
-    provider = str(provider_id or "").strip().casefold()
-    repository = str(repository_identity or "").strip().casefold()
-    scoped = [
-        record for record in records or ()
-        if isinstance(record, dict)
-        and (
-            (provider and str(record.get("provider_identity") or "").strip().casefold() == provider)
-            or (repository and str(record.get("repository_identity") or "").strip().casefold() == repository)
-        )
-    ]
-    if not scoped:
-        return 0.0
-    rewards = []
-    for record in scoped:
-        try:
-            rewards.append(float(record.get("quality_reward")))
-        except (TypeError, ValueError):
-            continue
-    if not rewards:
-        return 0.0
-    # Center at a neutral 0.65 and cap the influence to avoid TXQ domination.
-    average = sum(rewards) / len(rewards)
-    return max(-0.10, min(0.10, (average - 0.65) * 0.20))
-
-
-def _mode1_recurrent_principle_bonus(*, worker_id: str, provider_id: str, repository_identity: str | None, principles_root: str | Path | None) -> float:
-    """Return a small scope-checked bonus from canonical recurrent principles."""
-    if principles_root is None:
-        return 0.0
-    try:
-        from sophyane.evolution.principles import PrincipleStore
-        principles = PrincipleStore.read_recurrent_principles(principles_root, limit=32)
-    except Exception:
-        return 0.0
-    capability = _mode1_history_capability(worker_id, provider_id).casefold()
-    repository = str(repository_identity or "").strip().casefold()
-    matched: set[str] = set()
-    for principle in principles:
-        if str(principle.get("origin") or "").casefold() != "verified_execution":
-            continue
-        scoped = {str(principle.get("component") or "").strip().casefold()}
-        scoped.update(str(value).strip().casefold() for value in (principle.get("capabilities") or ()))
-        if capability not in scoped:
-            continue
-        principle_repository = str(principle.get("repository_identity") or "").strip().casefold()
-        if principle_repository and principle_repository != repository:
-            continue
-        identity = str(principle.get("id") or principle.get("principle") or "").strip()
-        if identity:
-            matched.add(identity)
-    return min(0.04, 0.02 * len(matched))
-
-
-def _mode1_apply_history_preference(proposal: ProgressProposal[Any], *, request: str, worker_id: str, provider_id: str, repository_identity: str | None = None, principles_root: str | Path | None = None) -> ProgressProposal[Any]:
-    """Apply history only after the normal proposal has cleared the gate."""
-    base = float(proposal.confidence)
-    if base < _MODE1_HISTORY_MIN_SCORE:
-        return proposal
-    history_bonus = _mode1_verified_history_bonus(request=request, worker_id=worker_id, provider_id=provider_id, repository_identity=repository_identity)
-    principle_bonus = _mode1_recurrent_principle_bonus(worker_id=worker_id, provider_id=provider_id, repository_identity=repository_identity, principles_root=principles_root)
-    bonus = min(_MODE1_HISTORY_BONUS_CAP, history_bonus + principle_bonus)
-    quality_adjustment = _mode1_verified_quality_adjustment(
-        request=request, worker_id=worker_id, provider_id=provider_id,
-        repository_identity=repository_identity,
-    )
-    total_adjustment = bonus + quality_adjustment
-    if total_adjustment == 0.0:
-        return proposal
-    evidence = tuple(proposal.evidence) + (
-        f"verified history TXQ adjustment={total_adjustment:+.3f}",
-    )
-    return ProgressProposal(
-        engine=proposal.engine, payload=proposal.payload, kind=proposal.kind,
-        confidence=max(0.0, min(1.0, base + total_adjustment)),
-        evidence=evidence, requires_write=proposal.requires_write,
-    )
-
-
-def _mode1_history_worker(worker_id: str, producer: Callable[[], ProgressProposal[Any]], *, request: str, provider_id: str, repository_identity: str | None = None, principles_root: str | Path | None = None):
-    """Adapt one already-eligible worker with the shared advisory signal."""
-    base_worker = proposal_worker(worker_id, producer)
-    def worker(stop, report):
-        proposal = base_worker(stop, report)
-        return _mode1_apply_history_preference(proposal, request=request, worker_id=worker_id, provider_id=provider_id, repository_identity=repository_identity, principles_root=principles_root)
-    return worker
 
 
 def build_real_workers(
@@ -2087,54 +1416,68 @@ def build_real_workers(
     progress: Progress | None = None,
     shadow_registry: dict[str, Path] | None = None,
     mode: str = "execution",
-    authority_context=None,
+    prefer_sli_only: bool = False,
 ):
-    """Return independently raced, capability-classed intelligence workers."""
-    workspace = Path(workspace).expanduser().resolve()
-    workers = {}
-    repository_identity = getattr(authority_context, "target_identity", None)
-    if repository_identity is None:
-        try:
-            from sophyane.sli_graph import _repository_memory_target
-            repository_identity = _repository_memory_target(request)
-        except Exception:
-            repository_identity = None
-    workers["local"] = _mode1_history_worker(
-        "local",
-        make_provider_producer(engine="local", provider_id="local_gguf",
-                               request=request, workspace=workspace, config=config,
-                               progress=progress, mode=mode),
-        request=request, provider_id="local_gguf", repository_identity=repository_identity, principles_root=workspace,
+    """Return independent race workers.
+
+    When prefer_sli_only is True (indexing/daemon strategy), only the
+    SLI worker is registered — no local GGUF or cloud round-trips.
+    """
+    workspace = (
+        Path(workspace)
+        .expanduser()
+        .resolve()
     )
 
-    primary = str(config.get("provider") or ACTIVE_INTELLIGENCE_PROVIDERS[0]).strip().lower()
-    candidates = [primary, *ACTIVE_INTELLIGENCE_PROVIDERS]
-    explicit = config.get("provider_workers") or config.get("available_providers") or ()
-    candidates.extend(str(item).strip().lower() for item in explicit)
-    try:
-        from sophyane.startup_policy import intelligence_provider_inventory
-        candidates.extend(intelligence_provider_inventory(config).keys())
-    except Exception:
-        pass
-    seen = set()
-    for provider in candidates:
-        if provider in seen or provider in {"", "local", "local_gguf"}:
-            continue
-        seen.add(provider)
-        if not _mode1_provider_available(provider, config):
-            continue
-        capability = _mode1_capability_class(provider)
-        prefix = {"external_api": "api", "external_browser": "browser", "external_harness": "harness"}[capability]
-        worker_id = f"{prefix}:{provider}"
-        lane_config = dict(config)
-        lane_config["provider_fallback_order"] = ()
-        workers[worker_id] = _mode1_history_worker(
-            worker_id,
-            make_provider_producer(engine=worker_id, provider_id=provider,
-                                   request=request, workspace=workspace,
-                                   config=lane_config, progress=progress, mode=mode),
-            request=request, provider_id=provider, repository_identity=repository_identity, principles_root=workspace,
-        )
+    workers = {
+        "sli": proposal_worker(
+            "sli",
+            make_sli_producer(
+                request=request,
+                workspace=workspace,
+                progress=progress,
+                shadow_registry=(
+                    shadow_registry
+                ),
+            ),
+        ),
+    }
+
+    if prefer_sli_only:
+        return workers
+
+    # Local GGUF is available when its runtime can be constructed.
+    workers[
+        "local"
+    ] = proposal_worker(
+        "local",
+        make_provider_producer(
+            engine="local",
+            provider_id="local_gguf",
+            request=request,
+            workspace=workspace,
+            config=config,
+            progress=progress,
+            mode=mode,
+        ),
+    )
+
+    # Cloud failure/quota is intentionally isolated to this worker.
+    workers[
+        "cloud"
+    ] = proposal_worker(
+        "cloud",
+        make_provider_producer(
+            engine="cloud",
+            provider_id="gemini",
+            request=request,
+            workspace=workspace,
+            config=config,
+            progress=progress,
+            mode=mode,
+        ),
+    )
+
     return workers
 
 
@@ -2149,45 +1492,17 @@ def run_adaptive_race(
     winner_grace_seconds: float = 0.25,
     workers=None,
     mode: str = "execution",
-    authority_context=None,
 ) -> RealRaceResult:
     """Run SLI/local/cloud concurrently and return the best valid proposal.
 
     This function does NOT apply a winning action to the authoritative
     workspace. Application is deliberately a separate lease-controlled stage.
     """
-    # Each repair round owns its progress stream. Providers may finish late
-    # after the coordinator has returned; suppress those stale callbacks so
-    # a completed round cannot repaint the next round or final summary.
-    _raw_progress = progress
-    _progress_active = {"value": True}
-
-    def _guarded_progress(event):
-        if not _progress_active["value"] or not callable(_raw_progress):
-            return
-        try:
-            _raw_progress(event)
-        except Exception:
-            return
-
-    progress = _guarded_progress
     workspace_path = (
         Path(workspace)
         .expanduser()
         .resolve()
     )
-    if authority_context is None:
-        try:
-            from sophyane.sli_graph import RequestAuthorityContext, _txq_capability, _repository_memory_target
-            original = str(request or "")
-            authority_context = RequestAuthorityContext(
-                original_objective=original,
-                original_objective_hash=hashlib.sha256(original.encode("utf-8")).hexdigest(),
-                target_identity=_repository_memory_target(original),
-                txq_capability=_txq_capability(original),
-            )
-        except Exception:
-            authority_context = None
 
     shadows: dict[
         str,
@@ -2219,7 +1534,6 @@ def run_adaptive_race(
                     shadows
                 ),
                 mode=mode,
-                authority_context=authority_context,
             )
         )
 
@@ -2231,71 +1545,18 @@ def run_adaptive_race(
         ),
     )
 
-    source_classes = {}
-    for name in workers:
-        if name == "sli":
-            source_classes[name] = "sli_graph"
-        elif name == "local":
-            source_classes[name] = "local_gguf"
-        elif ":" in name:
-            source_classes[name] = name.split(":", 1)[0].replace("api", "external_api").replace("browser", "external_browser").replace("harness", "external_harness")
-        else:
-            source_classes[name] = "external_api"
-    objective = (getattr(authority_context, "original_objective", None) or str(request))
-    objective_hash = hashlib.sha256(objective.encode("utf-8")).hexdigest()
-    _emit(progress, "ORIGINAL_OBJECTIVE_HASH=" + objective_hash)
-    _emit(progress, "ELIGIBLE_SOURCES=" + ",".join(f"{name}:{source_classes[name]}" for name in sorted(source_classes)))
-    _emit(progress, "STARTED_SOURCES=" + ",".join(f"{name}:{source_classes[name]}" for name in sorted(workers)))
-
-    requested_timeout = (
-        _RACE_COORDINATOR_TIMEOUT_SECONDS
-        if timeout is None
-        else max(0.0, float(timeout))
-    )
-    effective_timeout = min(
-        requested_timeout,
-        _RACE_COORDINATOR_TIMEOUT_SECONDS,
-    )
-    heartbeat_stop = threading.Event()
-    heartbeat_started = time.monotonic()
-
-    def heartbeat() -> None:
-        while not heartbeat_stop.wait(10.0):
-            elapsed_seconds = int(time.monotonic() - heartbeat_started)
-            remaining_seconds = max(0, int(effective_timeout - elapsed_seconds))
-            _emit(
-                progress,
-                "RACE_WAITING_SECONDS="
-                f"{elapsed_seconds};REMAINING_SECONDS={remaining_seconds}",
-            )
-
-    threading.Thread(
-        target=heartbeat,
-        daemon=True,
-        name="sophyane-race-heartbeat",
-    ).start()
-    try:
-        race_result = coordinator.run(
+    race_result = (
+        coordinator.run(
             workers,
-            timeout=effective_timeout,
+            timeout=timeout,
         )
-    finally:
-        heartbeat_stop.set()
-
-    completed = sorted({candidate.worker for candidate in race_result.candidates})
-    rejected = sorted(set(race_result.errors) - set(completed))
-    _emit(progress, "COMPLETED_SOURCES=" + ",".join(f"{name}:{source_classes.get(name, 'unknown')}" for name in completed))
-    _emit(progress, "REJECTED_UNUSABLE_SOURCES=" + ",".join(rejected))
-    for name in rejected:
-        _emit(progress, f"RACE_ROUTE_REASON={name};{_brief_route_reason(race_result.errors.get(name, 'route unavailable'))}")
+    )
 
     winner = (
         race_result.winner
     )
 
     if winner is not None:
-        _emit(progress, "WINNER=" + str(winner.worker))
-        _emit(progress, "WINNER_CAPABILITY_CLASS=" + source_classes.get(winner.worker, "unknown"))
         _emit(
             progress,
             (
@@ -2312,7 +1573,6 @@ def run_adaptive_race(
             "Sophyane adaptive race: no valid winner",
         )
 
-    _progress_active["value"] = False
     return RealRaceResult(
         race_result=race_result,
         workspace=workspace_path,

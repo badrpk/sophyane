@@ -213,6 +213,18 @@ def ensure_curriculum_task(runtime) -> dict[str, object]:
     if not proposal.accepted or proposal.task is None:
         reason = str(proposal.reason or "proposal rejected")
         return {"status": "waiting", "reason": reason}
+    prior_objectives = {
+        task.objective.strip().casefold()
+        for task in runtime.scheduler.store.load().queue
+        if task.objective.strip()
+    }
+    if proposal.task.objective.strip().casefold() in prior_objectives:
+        reason = "proposal duplicates an existing curriculum objective"
+        runtime.scheduler.store.append_event({
+            "event": "proposal_rejected_duplicate_objective",
+            "task_id": proposal.task.task_id,
+        })
+        return {"status": "waiting", "reason": reason}
     if not runtime.scheduler.enqueue(proposal.task):
         return {"status": "waiting", "reason": "scheduler rejected proposed task"}
     runtime.scheduler.store.append_event({
@@ -257,9 +269,26 @@ def _run_multi_repo_cycle(runtime, mode: str, *, max_files: int) -> dict[str, ob
             runtime.scheduler.pause(reason)
             return {"status": "paused", "reason": reason}
         task = runtime.scheduler.choose_next(runtime.scheduler.store.load().queue)
+        if task is None:
+            reason = "queued task unavailable"
+            runtime.scheduler.pause(reason)
+            return {"status": "paused", "reason": reason}
+        if not task.repository_id:
+            if os.environ.get("SOPHYANE_RSI_ALLOW_HOST_LOCAL_EXECUTION", "0").strip() != "1":
+                reason = "queued host-local task requires explicit execution opt-in"
+                runtime.scheduler.pause(reason)
+                return {"status": "paused", "reason": reason}
+            if len(task.editable_paths) > max_files:
+                reason = "queued task exceeds file budget"
+                runtime.scheduler.pause(reason)
+                return {"status": "paused", "reason": reason}
+            result = runtime.tick()
+            if result.get("status") == "paused":
+                runtime.scheduler.pause(str(result.get("reason", "unsafe task state")))
+            return result
         inventory.refresh()
-        record = next((item for item in inventory.records if task is not None and item.repo_id == task.repository_id), None)
-        if task is None or record is None or not task.base_commit or task.base_commit != record.commit:
+        record = next((item for item in inventory.records if item.repo_id == task.repository_id), None)
+        if record is None or not task.base_commit or task.base_commit != record.commit:
             reason = "queued task repository unavailable or stale"
             runtime.scheduler.pause(reason)
             return {"status": "paused", "reason": reason}

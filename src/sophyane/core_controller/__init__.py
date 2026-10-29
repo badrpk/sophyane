@@ -14,6 +14,18 @@ from .models import (
     ReadinessResult,
 )
 from .audit import AuditStore
+from .research_portfolio import (
+    ProblemState,
+    ResearchArtifact,
+    ResearchInput,
+    ResearchPortfolioCoordinator,
+    ResearchPortfolioResult,
+    ResearchRole,
+    ResearchStatus,
+    MathematicalProgressReport,
+    VerificationReport,
+)
+from .research_roles import ResearchRoleBundle, build_research_roles
 
 __all__ = [
     "AuditEvent",
@@ -28,4 +40,15 @@ __all__ = [
     "ProviderPolicy",
     "ReadinessResult",
     "AuditStore",
+    "ProblemState",
+    "ResearchArtifact",
+    "ResearchInput",
+    "ResearchPortfolioCoordinator",
+    "ResearchPortfolioResult",
+    "ResearchRole",
+    "ResearchStatus",
+    "MathematicalProgressReport",
+    "VerificationReport",
+    "ResearchRoleBundle",
+    "build_research_roles",
 ]

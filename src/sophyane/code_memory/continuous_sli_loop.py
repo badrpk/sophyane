@@ -856,18 +856,6 @@ def run_continuous_sli_loop() -> int:
             )
             continue
 
-        if command.startswith("/ask "):
-            # Explicit read-only harness access to learned episodic context.
-            from sophyane.durable_memory import recall
-
-            question = request[5:].strip()
-            hits = recall(question, limit=3) if question else []
-            if hits:
-                print("\n".join(str(item.get("content") or "") for item in hits))
-            else:
-                print("No learned context matched this question.")
-            continue
-
         if command == "/preview":
             events = _latest_events(
                 limit=1,
@@ -901,7 +889,6 @@ def run_continuous_sli_loop() -> int:
                 "/status    memory and latest run\n"
                 "/history   recent learning runs\n"
                 "/workspace latest workspace\n"
-                "/ask       query learned episodic context\n"
                 "/preview   preview latest index.html\n"
                 "/quit      stop the loop\n"
             )

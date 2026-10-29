@@ -101,7 +101,8 @@ def restore_checkpoint(evidence):
 
 
 def promote(baseline, candidate, weakness, verification, metrics, journal, iteration_id,
-            *, smoke, failovers=(), parent_iteration=None, cancelled=lambda: False, timeout=300):
+            *, smoke, failovers=(), parent_iteration=None, cancelled=lambda: False, timeout=300,
+            command_runner=None):
     provider = candidate.record.provider_used
     decision = compare(weakness, baseline.metrics, metrics)
     mandatory = gates(verification)
@@ -137,8 +138,9 @@ def promote(baseline, candidate, weakness, verification, metrics, journal, itera
             git(repository, "read-tree", "-m", "-u", baseline.commit, commit)
             git(repository, "update-ref", "HEAD", commit, baseline.commit)
             journal.append(provider, iteration_id, "PROMOTED", {"candidate_commit": commit})
-            results = tuple(run_command(command, repository, timeout=timeout,
-                                        cancelled=cancelled) for command in smoke)
+            execute = command_runner or run_command
+            results = tuple(execute(command, repository, timeout=timeout,
+                                    cancelled=cancelled) for command in smoke)
             if not passed(results) or cancelled():
                 raise CodingCancelled("Post-promotion smoke failed or cancelled")
             assert_baseline(repository, commit)

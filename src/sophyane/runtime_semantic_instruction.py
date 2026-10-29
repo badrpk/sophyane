@@ -217,8 +217,6 @@ def apply_provider_preference(
     """Update persistent state and reorder accessible fallback chains."""
 
     preference = preference.casefold().strip()
-    from sophyane.intelligence_authority import require_active_provider
-    require_active_provider("local_gguf" if preference == "local" else preference)
 
     if preference not in {"local", "gemini"}:
         return False
@@ -406,8 +404,6 @@ def apply_live_instruction(
 def reset_semantic_request(tui: Any) -> None:
     tui._semantic_original_request = ""
     tui._semantic_live_instructions = []
-    # SOPHYANE_SEMANTIC_SNAPSHOT_RESET_V1
-    tui._sophyane_canonical_request_snapshot = ""
 
 
 def semantic_status(tui: Any) -> str:

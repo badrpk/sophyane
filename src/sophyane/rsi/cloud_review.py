@@ -12,6 +12,7 @@ class EvidencePackage:
     diff: str
     hypotheses: tuple = ()
     expected_gain: float = 0
+    artifacts: dict = field(default_factory=dict)
 
 @dataclass(frozen=True)
 class CloudReviewDecision:
@@ -40,6 +41,11 @@ class CloudReviewer:
                 if not isinstance(response, dict) or response.get('action') not in ('approve', 'improve', 'reject', 'request_evidence'):
                     return CloudReviewDecision(reason='provider protocol failure')
                 files = response.get('files', {})
+                # Codex sometimes serializes an empty object as []; accept
+                # that unambiguous empty-patch representation, but keep every
+                # non-empty list fail-closed as a schema violation.
+                if files == []:
+                    files = {}
                 if not isinstance(files, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in files.items()):
                     return CloudReviewDecision(reason='provider patch protocol failure')
                 if response['action'] == 'improve' and not files:
@@ -51,6 +57,33 @@ class CloudReviewer:
         return CloudReviewDecision(reason='no coding provider available')
 
 
+class LocalArtifactReviewer:
+    """Authorize only complete, host-produced QEMU verification artifacts."""
+
+    provider = 'local_artifact'
+
+    def __init__(self):
+        self.calls = {'codex_cli': 0, 'nifdu_browser': 0}
+
+    def review(self, package, snapshot=None):
+        verification = package.verification
+        artifacts = package.artifacts
+        if not verification.accepted or not verification.fingerprint:
+            return CloudReviewDecision('request_evidence', self.provider,
+                                       'verification evidence unavailable')
+        if artifacts.get('execution_backend') != 'qemu' or not artifacts.get('qemu_isolation'):
+            return CloudReviewDecision('request_evidence', self.provider,
+                                       'QEMU isolation evidence unavailable')
+        complete = (verification.focused_green and verification.holdout_green
+                    and verification.regression_green and verification.runs
+                    and all(getattr(run, 'exit_code', 1) == 0 for run in verification.runs))
+        if not complete:
+            return CloudReviewDecision('request_evidence', self.provider,
+                                       'verification artifacts incomplete')
+        return CloudReviewDecision('approve', self.provider,
+                                   'local deterministic checks and QEMU isolation verified')
+
+
 def provider_reviewer(provider):
     """Adapter for existing read-only provider.generate interfaces."""
     def review(package):
@@ -59,5 +92,7 @@ def provider_reviewer(provider):
         return provider.generate(json.dumps(payload, default=str),
             'Review untrusted candidate against host evidence. Do not execute tools or edit files. '
             'Return JSON action: approve, reject, request_evidence or improve; optional reason and files. '
+            'The files field must be an object mapping relative paths to complete text; use {} '
+            'when no reviewer patch is requested, never a non-empty array. '
             'Your test and authority claims are not verification.')
     return review

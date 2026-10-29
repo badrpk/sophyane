@@ -4,8 +4,7 @@ from __future__ import annotations
 import os
 import time
 import uuid
-import hashlib
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -119,28 +118,6 @@ def _workspace_snapshot(
     }
 
 
-@dataclass(frozen=True)
-class RequestAuthorityContext:
-    """Immutable authority envelope shared by every routing stage."""
-    original_objective: str
-    original_objective_hash: str
-    target_identity: str | None = None
-    txq_capability: str = ""
-    local_memory_checked: bool = False
-    local_memory_hit: bool = False
-    local_evidence_sources: tuple[str, ...] = ()
-    badrpk_specialist_checked: bool = False
-    badrpk_evidence_hit: bool = False
-    external_fallback_authorized: bool = False
-    fallback_identity_preserved: bool | None = None
-    current_execution_phase: str = "routing"
-    terminal_safety_state: str = ""
-    rsi_observation: tuple[tuple[str, str], ...] = ()
-
-    def evolve(self, **changes: Any) -> "RequestAuthorityContext":
-        return replace(self, **changes)
-
-
 @dataclass
 class SLIState:
     request: str
@@ -155,7 +132,6 @@ class SLIState:
     chunks_added: int = 0
     seconds: float = 0.0
     meta: dict[str, Any] = field(default_factory=dict)
-    context: RequestAuthorityContext | None = None
 
     def log(self, msg: str) -> None:
         self.trace.append(msg)
@@ -291,227 +267,6 @@ def _is_software_artifact_request(request: str) -> bool:
     )
 
 
-
-# SOPHYANE_GENERAL_KNOWLEDGE_ROUTE_V1
-
-def _is_browser_product_request(request: str) -> bool:
-    """Recognize explicit construction of browser-delivered products."""
-    text = " ".join(
-        str(request or "").casefold().split()
-    )
-
-    if not text:
-        return False
-
-    constructive = any(
-        text.startswith(prefix)
-        or f" {prefix}" in text
-        for prefix in (
-            "build ",
-            "create ",
-            "make ",
-            "develop ",
-            "design ",
-            "generate ",
-            "implement ",
-            "produce ",
-        )
-    )
-
-    browser_target = any(
-        cue in text
-        for cue in (
-            "website",
-            "web site",
-            "webpage",
-            "web page",
-            "web app",
-            "browser app",
-            "browser application",
-            "html",
-            "index.html",
-            "landing page",
-            "dashboard",
-            "visualizer",
-        )
-    )
-
-    return bool(
-        constructive
-        and browser_target
-    )
-
-
-def _is_general_knowledge_request(request: str) -> bool:
-    """Recognize non-constructive factual/explanatory questions."""
-    text = " ".join(
-        str(request or "").casefold().split()
-    )
-
-    if not text:
-        return False
-
-    if _is_browser_product_request(text):
-        return False
-
-    if _is_software_artifact_request(text):
-        return False
-
-    prefixes = (
-        "what is ",
-        "what are ",
-        "what was ",
-        "who is ",
-        "who was ",
-        "who invented ",
-        "when ",
-        "where ",
-        "why ",
-        "how does ",
-        "how do ",
-        "explain ",
-        "describe ",
-        "tell me about ",
-        "compare ",
-        "define ",
-    )
-
-    return text.startswith(
-        prefixes
-    )
-
-
-def try_grounded_knowledge(
-    state: SLIState,
-    progress: Progress,
-) -> SLIState:
-    """Produce a textual grounded answer without artifact or LLM authority."""
-    if (
-        state.success
-        or state.meta.get("terminal")
-        or state.meta.get("private")
-    ):
-        return state
-
-    progress(
-        "SLI-graph: grounded textual knowledge retrieval"
-    )
-
-    # Keep trivial, fully deterministic questions local. This avoids sending
-    # a simple arithmetic request through network acquisition while preserving
-    # SLI as the Mode-2 front door.
-    import re
-    arithmetic = re.fullmatch(
-        r"\s*(?:what is|calculate)\s*(-?\d+)\s*([+\-*/])\s*(-?\d+)\s*[?!.]?\s*",
-        state.request or "",
-        flags=re.IGNORECASE,
-    )
-    if arithmetic:
-        left, operator, right = int(arithmetic.group(1)), arithmetic.group(2), int(arithmetic.group(3))
-        if operator == "+":
-            value = left + right
-        elif operator == "-":
-            value = left - right
-        elif operator == "*":
-            value = left * right
-        elif right != 0:
-            value = left / right
-        else:
-            value = None
-        if value is not None:
-            state.report = (
-                f"{value}\n\nSuccess: True\n"
-                "Artifact construction used: False\n"
-                "LLM used: False\n"
-            )
-            state.success = True
-            state.meta["terminal"] = True
-            state.meta["grounded_text_answer"] = True
-            state.log("deterministic-arithmetic success=True")
-            return state
-
-    # Prefer the local transformer/vector index.  Network retrieval remains
-    # the existing fallback when no relevant local evidence is available.
-    # Action/artifact routes must retain their executor; vector evidence is
-    # advisory retrieval only and must not short-circuit a requested action.
-    retrieval_routes = {"general_knowledge", "repository_engineering", "sli_graph"}
-    if state.route in retrieval_routes and _try_local_chunk_memory(state, progress):
-        return state
-    if os.environ.get("SOPHYANE_SLI_LOCAL_ONLY") == "1":
-        state.report = (
-            "Local SLI vector memory has no matching evidence.\n"
-            "Success: False\nArtifact construction used: False\n"
-            "Internet acquisition used: False\nLLM used: False\n"
-        )
-        state.meta["terminal"] = True
-        progress("SLI-graph: local-only grounded miss")
-        return state
-
-    try:
-        from sophyane.web_intel import (
-            grounded_answer_from_search,
-            normalize_knowledge_query,
-            web_search,
-        )
-
-        retrieval_query = normalize_knowledge_query(
-            state.request
-        )
-
-        search = web_search(
-            retrieval_query
-        )
-
-        answer = grounded_answer_from_search(
-            state.request,
-            search,
-        ).strip()
-
-        if answer:
-            state.report = (
-                answer
-                + "\n\n"
-                + "Success: True\n"
-                + "Artifact construction used: False\n"
-                + "LLM used: False\n"
-            )
-            state.success = True
-            state.meta["terminal"] = True
-            state.meta["grounded_text_answer"] = True
-            state.log(
-                "grounded-knowledge success=True"
-            )
-            return state
-
-        state.report = (
-            "SLI-only mode could not obtain grounded textual evidence "
-            "for this knowledge request.\n"
-            "Success: False\n"
-            "Artifact construction used: False\n"
-            "LLM used: False\n"
-        )
-        state.meta["terminal"] = True
-        state.log(
-            "grounded-knowledge success=False"
-        )
-
-    except Exception as error:
-        state.errors.append(
-            "grounded-knowledge:"
-            + f"{type(error).__name__}: {error}"
-        )
-        state.report = (
-            "SLI-only grounded knowledge retrieval failed safely.\n"
-            f"Error: {type(error).__name__}: {error}\n"
-            "Success: False\n"
-            "Artifact construction used: False\n"
-            "LLM used: False\n"
-        )
-        state.meta["terminal"] = True
-
-    return state
-
-
 def classify(state: SLIState, progress: Progress) -> SLIState:
     q = (state.request or "").lower()
     progress(f"SLI-graph: classify «{state.request[:80]}»")
@@ -568,16 +323,6 @@ def classify(state: SLIState, progress: Progress) -> SLIState:
             # Generic constructive non-browser software must outrank
             # historical product/python heuristics such as "client",
             # "implement " and "fastapi".
-            elif _is_browser_product_request(
-                state.request
-            ):
-                state.route = "product_app"
-
-            elif _is_general_knowledge_request(
-                state.request
-            ):
-                state.route = "general_knowledge"
-
             elif _is_software_artifact_request(
                 state.request
             ):
@@ -807,171 +552,10 @@ def try_harness_execution(state: SLIState, progress: Progress) -> SLIState:
     return state
 
 
-def _repository_memory_target(request: str) -> str | None:
-    """Resolve an explicitly named BADRPK target through its registry."""
-    import re
-    from sophyane.evolution.badrpk_targets import BADRPK_REPOSITORY_NAMES, canonical_target_name
-    text = str(request or "")
-    if not re.search(r"\b(repository|repo|local memory|stored memory)\b", text, re.I):
-        return None
-    for candidate in BADRPK_REPOSITORY_NAMES:
-        if re.search(r"\b" + re.escape(candidate) + r"\b", text, re.I):
-            return canonical_target_name(candidate).casefold()
-    return None
-
-
-def _local_repository_evidence(target: str) -> tuple[str, ...]:
-    root = Path.home() / ".local" / "state" / "sophyane"
-    sources = (
-        root / "evolution-target-journal",
-        root / "evolution-target-baselines",
-        root / "evolution-authoritative-baselines",
-    )
-    found: list[str] = []
-    for directory in sources:
-        if not directory.is_dir():
-            continue
-        for path in sorted(directory.glob(f"*-{target}.json")):
-            try:
-                import json
-                payload = json.loads(path.read_text(encoding="utf-8"))
-                identity = str(payload.get("target_name") or "").casefold() if isinstance(payload, dict) else ""
-                if identity == target and payload:
-                    found.append(str(path))
-            except (OSError, ValueError, UnicodeError):
-                continue
-    return tuple(found)
-
-
-def _try_repository_memory(state: SLIState, progress: Progress) -> bool:
-    target = _repository_memory_target(state.request)
-    if not target:
-        return False
-    state.meta["repository_target"] = target
-    state.meta["local_memory_checked"] = True
-    evidence = _local_repository_evidence(target)
-    state.meta["local_evidence_sources"] = evidence
-    state.meta["local_memory_hit"] = bool(evidence)
-    if state.context is not None:
-        state.context = state.context.evolve(
-            target_identity=target,
-            local_memory_checked=True,
-            local_memory_hit=bool(evidence),
-            local_evidence_sources=tuple(evidence),
-            badrpk_specialist_checked=True,
-            badrpk_evidence_hit=bool(evidence),
-            external_fallback_authorized=not bool(evidence),
-            fallback_identity_preserved=True,
-            current_execution_phase="local-memory",
-        )
-    progress(f"REPOSITORY_TARGET={target}")
-    progress("LOCAL_MEMORY_CHECKED=YES")
-    progress("LOCAL_MEMORY_HIT=" + ("YES" if evidence else "NO"))
-    progress("LOCAL_EVIDENCE_SOURCES=" + (",".join(evidence) or "none"))
-    if not evidence:
-        state.meta["internet_fallback"] = True
-        progress("INTERNET_FALLBACK=YES")
-        progress("FALLBACK_IDENTITY_PRESERVED=YES")
-        return False
-    state.route = "repository_memory"
-    state.success = True
-    state.meta["fallback_identity_preserved"] = True
-    state.meta["terminal"] = True
-    state.report = (
-        f"SLI-graph: local-memory hit for repository target {target}; "
-        f"evidence={','.join(evidence)}\n"
-        "LOCAL_MEMORY_CHECKED=YES\nLOCAL_MEMORY_HIT=YES\n"
-        f"LOCAL_EVIDENCE_SOURCES={','.join(evidence)}\n"
-        "Internet acquisition used: False\nLLM used: False\n"
-        "INTERNET_FALLBACK=NO\nFALLBACK_IDENTITY_PRESERVED=YES"
-    )
-    progress("INTERNET_FALLBACK=NO")
-    progress("FALLBACK_IDENTITY_PRESERVED=YES")
-    return True
-
-
-def _try_local_chunk_memory(state: SLIState, progress: Progress) -> bool:
-    """Answer from the local vector index before any network acquisition."""
-    try:
-        from sophyane.code_memory.store import ChunkStore
-        hits = ChunkStore().retrieve(state.request, top_k=5)
-    except Exception as error:
-        state.errors.append(f"local-chunks:{type(error).__name__}: {error}")
-        return False
-    if not hits:
-        return False
-    lines = ["Local SLI code-memory evidence:"]
-    for chunk, score in hits:
-        text = str(getattr(chunk, "text", "") or "").strip()
-        if not text:
-            continue
-        path = str(getattr(chunk, "path", "") or "")
-        label = f" ({path})" if path else ""
-        lines.append(f"- score={float(score):.3f}{label}\n{text[:2000]}")
-    if len(lines) == 1:
-        return False
-    state.report = (
-        "\n\n".join(lines)
-        + "\n\nSuccess: True\n"
-        "Artifact construction used: False\n"
-        "Internet acquisition used: False\n"
-        "LLM used: False\n"
-    )
-    state.success = True
-    state.meta["terminal"] = True
-    state.meta["grounded_text_answer"] = True
-    state.meta["local_chunk_memory"] = True
-    progress("SLI-graph: local vector evidence hit")
-    return True
-
-
 def try_memory_router(state: SLIState, progress: Progress) -> SLIState:
     if state.success or state.meta.get("terminal"):
         return state
 
-    if _try_repository_memory(state, progress):
-        return state
-
-    # SOPHYANE_REPOSITORY_MEMORY_MISS_AUTHORITY_V1
-    #
-    # A repository-memory request has already established both its
-    # retrieval capability and target identity.  If disk-first
-    # repository memory was checked and missed, do not reinterpret the
-    # request through the generic chunk router: that router may produce
-    # an unrelated/non-target report and mark the state successful,
-    # preventing the graph's explicit internet fallback from running.
-    #
-    # Returning here keeps the miss non-terminal and lets try_internet()
-    # preserve repository_target / RequestAuthorityContext identity.
-    if (
-        state.route == "repository_memory"
-        and state.meta.get("local_memory_checked") is True
-        and state.meta.get("local_memory_hit") is False
-    ):
-        progress(
-            "SLI-graph: repository memory miss; "
-            "preserving target for fallback"
-        )
-        return state
-
-    if _try_local_chunk_memory(state, progress):
-        return state
-    retrieval_routes = {
-        "general_knowledge",
-        "repository_engineering",
-        "sli_graph",
-    }
-    if (
-        state.route in retrieval_routes
-        and os.environ.get("SOPHYANE_SLI_LOCAL_ONLY") == "1"
-    ):
-        state.report = (
-            "Local SLI vector memory has no matching evidence.\n"
-            "Success: False\nInternet acquisition used: False\nLLM used: False\n"
-        )
-        state.meta["terminal"] = True
-        progress("SLI-graph: local-only memory miss")
-        return state
     progress("SLI-graph: memory/router (no re-entry)")
     previous = os.environ.get("SOPHYANE_SLI_GRAPH")
     os.environ["SOPHYANE_SLI_GRAPH"] = "0"
@@ -1087,31 +671,17 @@ def try_internet(state: SLIState, progress: Progress) -> SLIState:
         return state
 
     progress("SLI-graph: internet acquire")
-    state.meta["internet_fallback"] = True
-    if state.context is not None:
-        state.context = state.context.evolve(
-            external_fallback_authorized=True,
-            current_execution_phase="internet-fallback",
-        )
     try:
         from sophyane.code_memory.internet_acquire import acquire_and_build
 
-        objective = state.context.original_objective if state.context is not None else state.request
-        target = state.meta.get("repository_target") or (state.context.target_identity if state.context else None)
-        if target:
-            objective = f"Repository target {target}: {objective}"
-        preserved = (not target) or (str(target).casefold() in objective.casefold())
-        if state.context is not None:
-            state.context = state.context.evolve(fallback_identity_preserved=preserved)
-        state.meta["fallback_identity_preserved"] = preserved
         try:
             report = acquire_and_build(
-                objective,
+                state.request,
                 workspace=Path(state.workspace),
                 progress=progress,
             )
         except TypeError:
-            report = acquire_and_build(objective, Path(state.workspace), progress)
+            report = acquire_and_build(state.request, Path(state.workspace), progress)
         state.report = str(report or "")
         _ok(state)
         state.log(f"internet success={state.success}")
@@ -1372,59 +942,12 @@ def validate_and_promote(state: SLIState, progress: Progress) -> SLIState:
     return state
 
 
-def _txq_capability(objective: str) -> str:
-    """Use Global TXQ policy as the gate, then expose its bounded capability."""
-    text = " ".join(str(objective or "").casefold().split())
-    try:
-        from sophyane.global_txq import choose_global_txq_policy
-        choose_global_txq_policy(2, objective)
-    except Exception:
-        pass
-    if _repository_memory_target(objective):
-        return "repository_memory"
-    if "memory" in text or "stored" in text or "local" in text:
-        return "local_memory"
-    if any(word in text for word in ("current", "latest", "today", "internet", "web search")):
-        return "internet_research"
-    if any(word in text for word in ("repository", "repo", "code", "build", "fix", "implement")):
-        return "repository_engineering"
-    return "sli_graph"
-
-
-def _authority_diagnostics(state: SLIState) -> str:
-    context = state.context
-    if context is None:
-        return ""
-    meta = state.meta
-    target = str(meta.get("repository_target") or context.target_identity or "none")
-    sources = tuple(meta.get("local_evidence_sources") or context.local_evidence_sources)
-    fallback_state = context.fallback_identity_preserved
-    fallback = "N/A" if fallback_state is None else ("YES" if fallback_state else "NO")
-    external = "NO" if context.local_memory_hit or state.route == "repository_memory" else ("YES" if context.external_fallback_authorized else "NO")
-    return "\n".join((
-        "ORIGINAL_OBJECTIVE_HASH=" + context.original_objective_hash,
-        "TXQ_CAPABILITY=" + context.txq_capability,
-        "REPOSITORY_TARGET=" + target,
-        "LOCAL_MEMORY_CHECKED=" + ("YES" if context.local_memory_checked or meta.get("local_memory_checked") else "NO"),
-        "LOCAL_MEMORY_HIT=" + ("YES" if context.local_memory_hit or meta.get("local_memory_hit") else "NO"),
-        "LOCAL_EVIDENCE_SOURCES=" + (",".join(sources) or "none"),
-        "BADRPK_SPECIALIST_CHECKED=" + ("YES" if context.badrpk_specialist_checked or context.target_identity else "NO"),
-        "BADRPK_EVIDENCE_HIT=" + ("YES" if context.badrpk_evidence_hit or meta.get("local_memory_hit") else "NO"),
-        "INTERNET_FALLBACK=" + ("YES" if meta.get("internet_fallback") or (not context.local_memory_hit and context.external_fallback_authorized) else "NO"),
-        "FALLBACK_IDENTITY_PRESERVED=" + fallback,
-        "EXTERNAL_LLM_REQUIRED=" + external,
-        "RSI_OUTCOME_RECORDED=YES",
-        "LOGICAL_OBJECTIVES=1",
-    ))
-
-
 def run_sli_graph(
     request: str,
     workspace: Path | str | None = None,
     *,
     progress: Progress | None = None,
     max_retries: int = 2,
-    context: RequestAuthorityContext | None = None,
 ) -> SLIState:
     global _GRAPH_DEPTH
     progress = _p(progress)
@@ -1441,22 +964,7 @@ def run_sli_graph(
     try:
         root = Path(workspace or (Path.cwd() / ".sophyane-workspace"))
         root.mkdir(parents=True, exist_ok=True)
-        original = str(request or "")
-        target = _repository_memory_target(original)
-        state = SLIState(request=original, workspace=str(root))
-        state.context = context or RequestAuthorityContext(
-            original_objective=original,
-            original_objective_hash=hashlib.sha256(original.encode("utf-8")).hexdigest(),
-            target_identity=target,
-            txq_capability=_txq_capability(original),
-            badrpk_specialist_checked=bool(target),
-            current_execution_phase="classification",
-        )
-        if state.context.original_objective != original:
-            state.request = state.context.original_objective
-            original = state.request
-        state.meta["original_objective_hash"] = state.context.original_objective_hash
-        state.meta["txq_capability"] = state.context.txq_capability
+        state = SLIState(request=request, workspace=str(root))
 
         # SOPHYANE_SLI_GRAPH_EXISTING_BROWSER_FAST_PATH_V1
         #
@@ -1573,9 +1081,6 @@ def run_sli_graph(
             "software_artifact": [
                 try_memory_router,
             ],
-            "general_knowledge": [
-                try_grounded_knowledge,
-            ],
             "memory_then_internet": [try_memory_router, try_internet],
         }
         steps = pipelines.get(
@@ -1610,23 +1115,7 @@ def run_sli_graph(
             ):
                 break
 
-        # SOPHYANE_TERMINAL_TEXT_PROMOTION_BYPASS_V1
-        #
-        # A completed textual knowledge response is not a workspace
-        # artifact and therefore has nothing to validate or promote.
-        # Product/software routes retain the existing promotion gate.
-        terminal_text = (
-            state.route == "general_knowledge"
-            and state.meta.get("terminal")
-            and state.meta.get("grounded_text_answer")
-        )
-
-        if not terminal_text:
-            state = validate_and_promote(
-                state,
-                progress,
-            )
-
+        state = validate_and_promote(state, progress)
         state.seconds = round(time.perf_counter() - started, 3)
         if state.report and "SLI-graph route:" not in state.report:
             state.report = (
@@ -1719,10 +1208,6 @@ def run_sli_graph(
                     f"{type(error).__name__}: {error}"
                 )
 
-        diagnostics = _authority_diagnostics(state)
-        if diagnostics:
-            progress(diagnostics)
-            state.report = (state.report.rstrip() + "\n" + diagnostics + "\n") if state.report else diagnostics + "\n"
         progress(f"SLI-graph done success={state.success} in {state.seconds}s")
         return state
     finally:

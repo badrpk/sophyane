@@ -11,20 +11,14 @@ except Exception:
 
 
 import logging
-import os
 from dataclasses import dataclass
 
 from sophyane.autonomous_builder import (
     run_inventory_workflow,
     supports_request as supports_autonomous_build,
 )
-from sophyane.context_builder import ContextBuilder, ContextPacket
 from sophyane.memory import MemoryStore
-from sophyane.providers.base import (
-    Provider,
-    ProviderCapabilities,
-    ProviderError,
-)
+from sophyane.providers.base import Provider, ProviderError
 from sophyane.router import Route, route
 from sophyane.tools import (
     list_directory,
@@ -70,91 +64,6 @@ class AgentResponse:
     should_exit: bool = False
 
 
-def _needs_local_graph(request: str) -> bool:
-    text = " ".join(str(request or "").lower().split())
-    return len(text) >= 180 or sum(
-        marker in text
-        for marker in ("design", "debug", "architecture", "implement", "code", "review", "multiple", "requirements")
-    ) >= 2
-
-
-def _local_graph_answer(provider: Provider, request: str) -> str | None:
-    """Decompose difficult local work under the existing Mode-3 TXQ policy."""
-    from sophyane.mode3_meta_rsi import choose_txq_policy
-    from sophyane.readonly_task_graph import ReadonlyGraphNode, execute_readonly_task_graph
-
-    policy = choose_txq_policy(request)
-    roles = [
-        ("analyst", "Extract concrete requirements and constraints"),
-        ("solver", "Develop a technically correct solution"),
-        ("critic", "Identify edge cases, failure modes, and tests"),
-    ]
-    if policy.decomposition_depth >= 2:
-        roles.extend([
-            ("security", "Review security, safety, and permission concerns"),
-            ("performance", "Review complexity, resource limits, and scalability"),
-        ])
-    if policy.decomposition_depth >= 3:
-        roles.extend([
-            ("integration", "Review integration boundaries and operational behavior"),
-            ("verification", "Define deterministic checks that would prove correctness"),
-        ])
-
-    outputs: dict[str, str] = {}
-    prompt_limit = max(1200, min(policy.context_budget_chars // max(1, len(roles)), 5000))
-
-    def worker(name: str, instruction: str):
-        def run():
-            text = provider.generate(
-                f"{instruction}. Return concise evidence; do not edit files.\n\nREQUEST:\n{request[:policy.context_budget_chars]}",
-                LOCAL_CHAT_SYSTEM_PROMPT,
-            )
-            outputs[name] = str(text).strip()[:prompt_limit]
-            return {"ok": bool(outputs[name]), "text": outputs[name]}
-        return run
-
-    nodes = [ReadonlyGraphNode(name, worker(name, instruction)) for name, instruction in roles]
-
-    def aggregate():
-        evidence = "\n\n".join(f"{name.upper()}:\n{outputs.get(name, '')}" for name, _ in roles)
-        text = provider.generate(
-            "Synthesize a direct answer to the original request from the verified substep evidence. "
-            "Resolve contradictions conservatively, include correct code when requested, and do not mention orchestration. "
-            "Do not edit files.\n\n"
-            f"ORIGINAL REQUEST:\n{request}\n\n{evidence}",
-            LOCAL_CHAT_SYSTEM_PROMPT,
-        )
-        answer = str(text).strip()[:policy.context_budget_chars]
-        outputs["aggregate"] = answer
-        return {"ok": bool(answer), "text": answer}
-
-    nodes.append(ReadonlyGraphNode("aggregate", aggregate, tuple(name for name, _ in roles)))
-
-    def verify():
-        draft = outputs.get("aggregate", "")
-        text = provider.generate(
-            "Verify and correct this draft answer against the original request. Return only the final user-facing answer; "
-            "preserve correct details, remove unsupported claims, and do not edit files.\n\n"
-            f"REQUEST:\n{request}\n\nDRAFT:\n{draft}",
-            LOCAL_CHAT_SYSTEM_PROMPT,
-        )
-        answer = str(text).strip()[:policy.context_budget_chars]
-        return {"ok": bool(answer), "text": answer}
-
-    nodes.append(ReadonlyGraphNode("verify", verify, ("aggregate",)))
-    result = execute_readonly_task_graph(
-        nodes,
-        max_workers=min(5, max(2, policy.decomposition_depth + 2)),
-        deadline_seconds=float(max(60, min(180, policy.wall_time_budget_sec))),
-    )
-    if not result.get("ok"):
-        return None
-    for node in result.get("nodes", []):
-        if node.get("node_id") == "verify":
-            return str(node.get("text") or "").strip() or None
-    return None
-
-
 class SophyaneAgent:
     def __init__(
         self,
@@ -166,63 +75,34 @@ class SophyaneAgent:
         self.memory = memory
         self.logger = logger
 
-    from sophyane.rsi.supervisor import foreground as _rsi_foreground
-
-    @_rsi_foreground
     def ask(self, message: str) -> AgentResponse:
-        # Mode 2.5 already has an SLI-grounded request envelope. Do not let
-        # broad connector heuristics reinterpret that envelope as an action
-        # (for example, treating a test-plan phrase as a calendar request).
-        hybrid_mode = os.environ.get("SOPHYANE_SESSION_MODE") == "sli_local_hybrid"
-        if not hybrid_mode:
-            try:
-                from sophyane.capability_executors import try_connector_fast_path
-                _cr = try_connector_fast_path(message)
-                if _cr:
-                    return AgentResponse(_cr)
-            except Exception:
-                pass
+        try:
+            from sophyane.capability_executors import try_connector_fast_path
+            _cr = try_connector_fast_path(message)
+            if _cr:
+                return AgentResponse(_cr)
+        except Exception:
+            pass
         message = message.strip()
 
         if not message:
             return AgentResponse("Please enter a request.")
-        if hybrid_mode:
-            try:
-                graph_answer = _local_graph_answer(self.provider, message)
-                if graph_answer:
-                    return AgentResponse(graph_answer)
-            except Exception:
-                pass
-        if not hybrid_mode:
-            try:
-                from sophyane.native_capability import try_any_native_reply
-                _native = try_any_native_reply(message)
-            except Exception:
-                _native = None
+        try:
+            from sophyane.native_capability import try_any_native_reply
+            _native = try_any_native_reply(message)
             if _native:
-                # SOPHYANE_NATIVE_CONVERSATION_CONTINUITY_V1
-                #
-                # A successful native answer is still a conversational turn.
-                # Persist both sides before returning so the next provider-backed
-                # request receives the same recent context as any LLM response.
-                self.memory.record_message(
-                    "user",
-                    message,
-                )
-                self.memory.record_message(
-                    "assistant",
-                    str(_native),
-                )
                 return AgentResponse(_native)
+        except Exception:
+            pass
 
-        if not hybrid_mode:
-            try:
-                from sophyane.capability_gap_messages import capability_gap_reply
-                gap = capability_gap_reply(message)
-                if gap:
-                    return AgentResponse(gap)
-            except Exception:
-                pass
+
+        try:
+            from sophyane.capability_gap_messages import capability_gap_reply
+            gap = capability_gap_reply(message)
+            if gap:
+                return AgentResponse(gap)
+        except Exception:
+            pass
 
         # SOPHYANE_UNIFIED_EXECUTION_KERNEL_V1
         # One typed execution kernel owns deterministic local actions before
@@ -233,18 +113,6 @@ class SophyaneAgent:
 
             kernel_reply = execute_text(message)
             if kernel_reply is not None:
-                # SOPHYANE_KERNEL_CONVERSATION_CONTINUITY_V1
-                #
-                # Deterministic kernel answers participate in the same
-                # conversation as later provider-backed turns.
-                self.memory.record_message(
-                    "user",
-                    message,
-                )
-                self.memory.record_message(
-                    "assistant",
-                    str(kernel_reply),
-                )
                 return AgentResponse(kernel_reply)
         except Exception:
             # Preserve existing routing if a kernel capability fails to load.
@@ -402,7 +270,6 @@ class SophyaneAgent:
             or provider_id(self.provider)
         )
         local_mode = active_provider == "local_gguf"
-        context_packet: ContextPacket | None = None
 
         if local_mode:
             # Skip bulky memory dumps — they drown 0.5B–1B models.
@@ -410,146 +277,41 @@ class SophyaneAgent:
             prompt = "\n".join(sections)
             system = LOCAL_CHAT_SYSTEM_PROMPT
         else:
-            memory_context = self.memory.format_relevant(
-                original_message
-            )
-            recent = self.memory.recent_messages(
-                limit=4
-            )
-
-            history_lines: list[str] = []
-
+            memory_context = self.memory.format_relevant(original_message)
+            if len(memory_context) > 1200:
+                memory_context = memory_context[:1200] + "\n…"
+            recent = self.memory.recent_messages(limit=4)
+            history_lines = []
             for item in recent[:-1]:
-                role = str(
-                    item.get(
-                        "role",
-                        "",
-                    )
-                )
-                content = str(
-                    item.get(
-                        "content",
-                        "",
-                    )
-                    or ""
-                )
+                content = str(item.get("content") or "")
+                if len(content) > 400:
+                    content = content[:400] + "…"
+                history_lines.append(f"{item['role']}: {content}")
 
-                history_lines.append(
-                    f"{role}: {content}"
-                )
-
-            # SOPHYANE_AGENT_PROVIDER_AWARE_CHAT_CONTEXT_V1
-            #
-            # Keep semantic context units separate until provider admission.
-            # The current user request is immutable and pinned. Optional memory
-            # and conversation history may be omitted for genuinely bounded
-            # providers, but are not pre-truncated by arbitrary cloud limits.
-            packet = ContextPacket()
-
+            sections = []
             if memory_context:
-                packet.add(
-                    "Relevant memory:",
-                    memory_context,
-                    priority=50,
-                )
-
+                sections.append(memory_context)
             if history_lines:
-                packet.add(
-                    "Recent conversation:",
-                    "\n".join(
-                        history_lines
-                    ),
-                    priority=30,
+                sections.append(
+                    "Recent conversation:\n" + "\n".join(history_lines)
                 )
-
-            packet.add(
-                "Current user request:",
-                original_message,
-                priority=100,
-                pinned=True,
-            )
-
+            sections.append(f"Current user request:\n{original_message}")
             if captured:
-                packet.add(
-                    "New memories saved during this request:",
-                    "\n".join(
-                        f"- {item}"
-                        for item in captured
-                    ),
-                    priority=80,
+                sections.append(
+                    "New memories saved during this request:\n"
+                    + "\n".join(f"- {item}" for item in captured)
                 )
-
-            get_capabilities = getattr(
-                self.provider,
-                "get_capabilities",
-                None,
-            )
-
-            if callable(get_capabilities):
-                try:
-                    capabilities = get_capabilities()
-                except Exception:
-                    capabilities = ProviderCapabilities()
-            else:
-                capabilities = ProviderCapabilities()
-
-            if not isinstance(
-                capabilities,
-                ProviderCapabilities,
-            ):
-                capabilities = ProviderCapabilities()
-
-            context_packet = packet
-
-            # Keep a legacy rendering for providers that do not implement the
-            # structured-context entry point. FallbackProvider instead renders
-            # this packet independently for every attempted child.
-            prompt = ContextBuilder(
-                capabilities
-            ).build(packet).text
-
-            # SOPHYANE_PRESERVE_COMPLETE_CLOUD_REQUEST_CONTEXT_V1
-            #
-            # No fixed 1200/400/6000 character slices are applied to cloud
-            # conversation context. Provider-aware admission owns any omission,
-            # while the immutable request remains pinned.
+            prompt = "\n\n".join(sections)
+            if len(prompt) > 6000:
+                prompt = prompt[-6000:]
             system = (
                 SYSTEM_PROMPT
                 + "\n\nSOPHYANE_RESPONSE_MODE: CHAT"
                 + "\nReturn a direct user-facing answer."
                 + "\nDo not return planner JSON or executable action JSON."
             )
-        if local_mode and _needs_local_graph(original_message):
-            try:
-                graph_answer = _local_graph_answer(self.provider, original_message)
-                if graph_answer:
-                    return AgentResponse(graph_answer)
-            except Exception:
-                # Graph assistance is advisory; preserve the normal local path.
-                pass
-
         try:
-            # SOPHYANE_AGENT_STRUCTURED_FALLBACK_CONTEXT_V1
-            generate_context = getattr(
-                self.provider,
-                "generate_context",
-                None,
-            )
-
-            if (
-                not local_mode
-                and context_packet is not None
-                and callable(generate_context)
-            ):
-                text = generate_context(
-                    context_packet,
-                    system,
-                )
-            else:
-                text = self.provider.generate(
-                    prompt,
-                    system,
-                )
+            text = self.provider.generate(prompt, system)
         except ProviderError as error:
             message = str(error).strip().lower()
             expected_cancellation = (
@@ -576,38 +338,6 @@ class SophyaneAgent:
                 "then run /doctor."
             )
         return AgentResponse(text)
-
-
-    def _summarize_tool(
-        self,
-        request: str,
-        output: str,
-        tool_name: str,
-    ) -> AgentResponse:
-        # Bound potentially enormous local tool/project dumps before model summarization or fallback propagation.
-        output = _bounded_tool_context(output)
-        prompt = f"""The user requested:
-
-{request}
-
-Sophyane executed the local tool named "{tool_name}".
-
-Analyze the real output below. Do not say you lack access.
-Do not invent facts. Highlight errors and practical next steps.
-Do not claim completion unless the output proves every requested criterion.
-
-LOCAL TOOL OUTPUT:
-{output}
-"""
-        try:
-            answer = self.provider.generate(prompt, SYSTEM_PROMPT)
-        except ProviderError as error:
-            self.logger.exception("Tool summarization failed")
-            return AgentResponse(
-                "Local tool completed, but summarization failed: "
-                f"{error}\n\n{output}"
-            )
-        return AgentResponse(answer)
 
 
 # SOPHYANE_TOOL_SUMMARY_BOUND_V1
@@ -652,3 +382,35 @@ def _bounded_tool_context(
         + "\n\n"
         + text[-tail:]
     )
+
+
+    def _summarize_tool(
+        self,
+        request: str,
+        output: str,
+        tool_name: str,
+    ) -> AgentResponse:
+        # Bound potentially enormous local tool/project dumps before model summarization or fallback propagation.
+        output = _bounded_tool_context(output)
+        prompt = f"""The user requested:
+
+{request}
+
+Sophyane executed the local tool named "{tool_name}".
+
+Analyze the real output below. Do not say you lack access.
+Do not invent facts. Highlight errors and practical next steps.
+Do not claim completion unless the output proves every requested criterion.
+
+LOCAL TOOL OUTPUT:
+{output}
+"""
+        try:
+            answer = self.provider.generate(prompt, SYSTEM_PROMPT)
+        except ProviderError as error:
+            self.logger.exception("Tool summarization failed")
+            return AgentResponse(
+                "Local tool completed, but summarization failed: "
+                f"{error}\n\n{output}"
+            )
+        return AgentResponse(answer)

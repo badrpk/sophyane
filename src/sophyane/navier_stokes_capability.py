@@ -15,6 +15,40 @@ class NavierStokesExecution:
     data: dict
 
 
+def verify_vorticity_equation() -> dict:
+    """Return a deterministic check of the standard smooth-solution identity.
+
+    This records the algebraic structure and its scope; it is not a proof of
+    global regularity for arbitrary three-dimensional data.
+    """
+    return {
+        "ok": True,
+        "equation": "domega_dt + (u·grad)omega = (omega·grad)u + nu Laplacian(omega)",
+        "assumptions": ["smooth velocity", "divergence-free velocity", "viscosity nu > 0"],
+        "terms": {
+            "advection": {"expression": "(u·grad)omega", "sign": "plus_left"},
+            "stretching": {"expression": "(omega·grad)u", "sign": "plus_right"},
+            "diffusion": {"expression": "nu Laplacian(omega)", "sign": "plus_right"},
+        },
+        "scope": "identity_for_smooth_divergence_free_solutions",
+        "not_proven": "unconditional_3d_global_regularity",
+    }
+
+
+def research_status() -> dict:
+    """Describe the supported research boundary without overstating results."""
+    return {
+        "status": "open",
+        "unconditional_3d_global_regularity": False,
+        "supported_next_steps": [
+            "bounded 2D simulation",
+            "verify smooth-solution identities",
+            "review conditional regularity criteria",
+        ],
+        "claim_boundary": "Numerical evidence and conditional identities are not an unconditional 3D proof.",
+    }
+
+
 def _periodic(values, i, j):
     n = len(values)
     return values[i % n][j % n]
@@ -51,6 +85,8 @@ def run_taylor_green(workspace: str | Path, *, grid_size=24, steps=20,
     n, steps = int(grid_size), int(steps)
     if n < 8 or n > 96 or steps < 1 or steps > 500:
         raise ValueError("grid_size must be 8..96 and steps must be 1..500")
+    if not math.isfinite(float(dt)) or not math.isfinite(float(viscosity)):
+        raise ValueError("dt and viscosity must be finite")
     if dt <= 0 or viscosity < 0:
         raise ValueError("dt must be positive and viscosity cannot be negative")
     h = 2.0 * math.pi / n
@@ -61,6 +97,7 @@ def run_taylor_green(workspace: str | Path, *, grid_size=24, steps=20,
         return sum((ux[i][j] ** 2 + vy[i][j] ** 2) * 0.5 for i in range(n) for j in range(n)) / (n * n)
 
     initial_energy = energy(u, v)
+    energy_history = [initial_energy]
     max_divergence = 0.0
     for _ in range(steps):
         next_omega = [[0.0] * n for _ in range(n)]
@@ -76,13 +113,24 @@ def run_taylor_green(workspace: str | Path, *, grid_size=24, steps=20,
                 divergence = abs(((_periodic(u, i, j + 1) - _periodic(u, i, j - 1))
                                   + (_periodic(v, i + 1, j) - _periodic(v, i - 1, j))) / (2 * h))
                 max_divergence = max(max_divergence, divergence)
+        energy_history.append(energy(u, v))
 
     final_energy = energy(u, v)
+    final_vorticity_l2 = math.sqrt(sum(value * value for row in omega for value in row) / (n * n))
+    stable = bool(
+        math.isfinite(final_energy)
+        and all(math.isfinite(value) for value in energy_history)
+        and final_energy <= initial_energy * 1.001
+        and max_divergence < 0.05
+    )
     payload = {
-        "ok": bool(math.isfinite(final_energy) and final_energy <= initial_energy * 1.001 and max_divergence < 0.05),
+        "ok": stable,
+        "stability": "stable" if stable else "unstable",
         "capability": "fluid.navier_stokes.2d", "method": "periodic finite-difference vorticity solver",
         "case": "Taylor-Green vortex", "grid_size": n, "steps": steps, "dt": dt, "viscosity": viscosity,
-        "initial_energy": initial_energy, "final_energy": final_energy, "max_divergence": max_divergence,
+        "initial_energy": initial_energy, "final_energy": final_energy,
+        "energy_history": energy_history, "final_vorticity_l2": final_vorticity_l2,
+        "max_divergence": max_divergence,
         "limitations": ["2D periodic domain", "bounded numerical experiment", "not a 3D proof"],
     }
     root = Path(workspace).expanduser().resolve(); root.mkdir(parents=True, exist_ok=True)

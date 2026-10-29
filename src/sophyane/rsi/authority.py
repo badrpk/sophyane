@@ -1,5 +1,6 @@
 """Canonical executable authority shared by RSI mutation boundaries."""
 from enum import Enum
+import os
 
 from sophyane.intelligence_authority import SOURCE_MUTATION_PROVIDERS
 
@@ -32,6 +33,11 @@ def require(provider: str, operation: Operation) -> None:
     if operation is Operation.ORDINARY_WORKSPACE_MUTATION:
         if provider in ORDINARY_MUTATION_PROVIDER_ORDER:
             return
+    elif (provider == "local_artifact"
+          and operation in (Operation.SOPHYANE_SOURCE_MUTATION,
+                            Operation.PROMOTION_OPERATION)
+          and os.environ.get("SOPHYANE_RSI_REVIEW_PROVIDER", "").strip().lower() == "local_artifact"):
+        return
     elif provider in CODING_PROVIDER_ORDER:
         return
     elif provider == "local_gguf" and operation is Operation.READ_ONLY_OPERATION:

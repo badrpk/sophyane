@@ -16,6 +16,7 @@ import threading
 import time
 
 from .observation_bus import autonomous_bus, ImprovementObservation, ImprovementSource
+from .lifecycle import LifecycleConfig, LifecycleError, SingletonLease, recover_abandoned_runs
 
 _lock = threading.RLock()
 _instance = None
@@ -50,6 +51,16 @@ class ExternalWatchdogConfig:
             raise ValueError("heartbeat intervals must be positive")
         if self.restart_backoff <= 0 or self.max_restart_backoff < self.restart_backoff:
             raise ValueError("invalid restart backoff")
+
+
+def _discover_neuron_binary() -> str | None:
+    """Find the locally built episodic bridge for daemon child processes."""
+    if os.environ.get("SOPHYANE_NEURON_BIN", "").strip():
+        return None
+    candidate = Path.home() / "badrpk-repos" / "neuron" / "build" / "neuron_episodic_cli"
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return str(candidate)
+    return None
 
 
 def parse_external_args(argv=None):
@@ -98,7 +109,14 @@ def status_external_watchdog(args) -> dict[str, object]:
         "child_pid": child_pid,
         "child_alive": bool(child_pid and alive(child_pid)),
         "heartbeat": None,
+        "safety_halt": None,
     }
+    try:
+        result["safety_halt"] = json.loads(
+            (state_dir / "safety-halt.json").read_text(encoding="utf-8")
+        )
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        pass
     try:
         heartbeat = json.loads((state_dir / "heartbeat.json").read_text(encoding="utf-8"))
         result["heartbeat"] = {
@@ -191,6 +209,8 @@ class ExternalWatchdog:
         (self.config.state_dir / "rsi-child.pid").unlink(missing_ok=True)
 
     def heartbeat_healthy(self) -> bool:
+        if self.safety_halted():
+            return False
         try:
             raw = json.loads((self.config.state_dir / "heartbeat.json").read_text(encoding="utf-8"))
             pid = int(raw["pid"])
@@ -206,6 +226,13 @@ class ExternalWatchdog:
             and self.clock() - last_tick < self.config.heartbeat_stale_after
         )
 
+    def safety_halted(self) -> bool:
+        try:
+            payload = json.loads((self.config.state_dir / "safety-halt.json").read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return False
+        return str(payload.get("state", "")) == "safety_halt"
+
     def restart_delay(self, failures: int) -> float:
         return min(self.config.max_restart_backoff, self.config.restart_backoff * (2 ** max(0, int(failures))))
 
@@ -217,6 +244,13 @@ class ExternalWatchdog:
         environment.setdefault("SOPHYANE_RSI_MAX_ITERATIONS", "1000000")
         environment.setdefault("SOPHYANE_RSI_MAX_WALL_SECONDS", "31536000")
         environment.setdefault("SOPHYANE_RSI_MAX_REPOSITORIES", "1000000")
+        environment.setdefault("SOPHYANE_RSI_MAX_QUEUE", "64")
+        environment.setdefault("SOPHYANE_RSI_MAX_FOLLOW_UPS", "8")
+        environment.setdefault("SOPHYANE_RSI_MAX_TASK_ATTEMPTS", "8")
+        environment.setdefault("SOPHYANE_RSI_PROPOSAL_WORKERS", "3")
+        neuron_binary = _discover_neuron_binary()
+        if neuron_binary:
+            environment["SOPHYANE_NEURON_BIN"] = neuron_binary
         log_path = self.config.state_dir / "rsi.log"
         log = log_path.open("a", encoding="utf-8")
         try:
@@ -309,6 +343,19 @@ def default_controller(state_dir):
             return bool(_active) or time.monotonic() - _last_activity < 30
     return build_controller(state_dir, active=active)
 
+
+def _run_continuous_cycle(selected, curriculum, worker, watchdog):
+    """Run one observation tick and, when enabled, one curriculum tick."""
+    observe = getattr(selected, 'observe_benchmarks', None)
+    if callable(observe) and getattr(selected.state, 'stage', 'OBSERVE') == 'OBSERVE':
+        observe()
+    selected.tick()
+    if curriculum is None:
+        return None
+    if watchdog is not None and watchdog.check().get('status') == 'error':
+        return worker.run_once()
+    return worker.run_once()
+
 def start_supervisor(*, controller=None, state_dir=None):
     global _instance
     if os.environ.get('SOPHYANE_AUTONOMOUS_RSI', '1').strip() == '0':
@@ -318,6 +365,18 @@ def start_supervisor(*, controller=None, state_dir=None):
             return _instance
         root = Path(state_dir or os.environ.get('SOPHYANE_AUTONOMOUS_RSI_STATE',
                     Path.home() / '.local/state/sophyane/autonomous-rsi'))
+        lifecycle = LifecycleConfig(
+            root,
+            max_guests=max(1, int(os.environ.get("SOPHYANE_RSI_MAX_GUESTS", "1"))),
+            memory_budget_mb=max(1, int(os.environ.get("SOPHYANE_RSI_QEMU_MEMORY_BUDGET_MB", "1024"))),
+        )
+        lifecycle_lease = SingletonLease(lifecycle)
+        try:
+            lifecycle_lease.acquire()
+            recover_abandoned_runs(lifecycle)
+        except (LifecycleError, ValueError):
+            lifecycle_lease.release()
+            return None
         try:
             import fcntl
             root.mkdir(parents=True, exist_ok=True)
@@ -326,8 +385,10 @@ def start_supervisor(*, controller=None, state_dir=None):
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
                 handle.close()
+                lifecycle_lease.release()
                 return None
         except (ImportError, OSError):
+            lifecycle_lease.release()
             return None  # Cannot prove singleton ownership on this platform.
         stop, wake = threading.Event(), threading.Event()
         def run():
@@ -357,12 +418,7 @@ def start_supervisor(*, controller=None, state_dir=None):
                     while not stop.is_set():
                         started = time.monotonic()
                         try:
-                            if curriculum is None:
-                                selected.tick()
-                            elif watchdog is not None and watchdog.check().get('status') == 'error':
-                                worker.run_once()
-                            elif worker.run_once().get('status') == 'idle':
-                                selected.tick()
+                            _run_continuous_cycle(selected, curriculum, worker if curriculum else None, watchdog)
                         except Exception:
                             pass  # Background diagnostics must not crash foreground runtime.
                         interval = getattr(curriculum, 'heartbeat_interval', 30) if curriculum else 30
@@ -375,6 +431,7 @@ def start_supervisor(*, controller=None, state_dir=None):
                     selected.candidate.close()
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
                 handle.close()
+                lifecycle_lease.release()
         thread = threading.Thread(target=run, name='sophyane-autonomous-rsi', daemon=True)
         _instance = Supervisor(thread, stop, wake)
         autonomous_bus.wake = wake.set

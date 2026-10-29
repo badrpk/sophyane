@@ -7,7 +7,6 @@ from sophyane.environment_constraints import (
     learn_constraints_from_result,
 )
 
-import os
 import hashlib
 import time
 import uuid
@@ -35,60 +34,46 @@ _SNAPSHOT_EXCLUDED_SUFFIXES = (
     ".pyo",
 )
 
-_SNAPSHOT_MAX_HASHED_BYTES = 128 * 1024 * 1024
-_SNAPSHOT_MAX_FILE_BYTES = 16 * 1024 * 1024
-_SNAPSHOT_READ_CHUNK_BYTES = 1024 * 1024
-
 
 def _snapshot(root: Path) -> dict[str, str]:
-    """Return bounded hashes for durable workspace files only.
+    """Return hashes for durable workspace files only.
 
-    Directory pruning happens before traversal. File contents are streamed,
-    and large/over-budget files receive stable metadata fingerprints so the
-    learner can still detect changes without freezing the interactive UI.
+    The learner consumes this as ``dict[relative_path, sha256_hex]``.
+    Runtime metadata, dependency trees, VCS internals, and interpreter
+    caches are excluded because they are not user-created workspace
+    artifacts and can change independently of an execution request.
     """
     output: dict[str, str] = {}
-    root = Path(root).expanduser().resolve()
+
     if not root.exists():
         return output
 
-    hashed_bytes = 0
-    for directory, dirnames, filenames in os.walk(root, topdown=True):
-        dirnames[:] = sorted(
-            name for name in dirnames if name not in _SNAPSHOT_EXCLUDED_PARTS
-        )
-        filenames.sort()
-        directory_path = Path(directory)
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
 
-        for filename in filenames:
-            if filename.endswith(_SNAPSHOT_EXCLUDED_SUFFIXES):
-                continue
-            path = directory_path / filename
-            try:
-                if path.is_symlink() or not path.is_file():
-                    continue
-                relative = path.relative_to(root).as_posix()
-                stat = path.stat()
-            except (OSError, ValueError):
-                continue
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            continue
 
-            if (
-                stat.st_size > _SNAPSHOT_MAX_FILE_BYTES
-                or hashed_bytes + stat.st_size > _SNAPSHOT_MAX_HASHED_BYTES
-            ):
-                marker = f"large:{stat.st_size}:{stat.st_mtime_ns}".encode()
-                output[relative] = hashlib.sha256(marker).hexdigest()
-                continue
+        if any(
+            part in _SNAPSHOT_EXCLUDED_PARTS
+            for part in relative.parts
+        ):
+            continue
 
-            digest = hashlib.sha256()
-            try:
-                with path.open("rb") as handle:
-                    while chunk := handle.read(_SNAPSHOT_READ_CHUNK_BYTES):
-                        digest.update(chunk)
-            except OSError:
-                continue
-            output[relative] = digest.hexdigest()
-            hashed_bytes += stat.st_size
+        if relative.name.endswith(
+            _SNAPSHOT_EXCLUDED_SUFFIXES
+        ):
+            continue
+
+        try:
+            output[relative.as_posix()] = hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
+        except OSError:
+            continue
 
     return output
 
@@ -108,32 +93,6 @@ def install_orchestration_patch() -> None:
         original_execution_requested = tui_v2._execution_requested
 
         def execution_requested(message: str) -> bool:
-            # SOPHYANE_ORCHESTRATION_MAKE_USE_OF_CHAT_GUARD_V1
-            #
-            # The base TUI classifier intentionally treats conversational
-            # "make use of ..." as chat. Preserve that decision here before
-            # orchestration's broader execution heuristics are considered.
-            _orchestration_guard_text = " ".join(
-                str(message or "").casefold().split()
-            )
-
-            if (
-                "make use of"
-                in _orchestration_guard_text
-                and not _orchestration_guard_text.startswith(
-                    (
-                        "make a ",
-                        "make an ",
-                        "make the ",
-                        "make file ",
-                        "make website ",
-                        "make app ",
-                        "make game ",
-                    )
-                )
-            ):
-                return False
-
             # Explicit imperative requests take precedence over a mistaken native
             # chat classification. This keeps requests such as "Create index.html"
             # inside the validated execution runtime.

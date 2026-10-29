@@ -161,6 +161,7 @@ class HumanConversationProvider(Provider):
                          min(MODE6_PROVIDER_TIMEOUT, max(1, configured_timeout)),
                          float(config.get('temperature', 0.3)),
                          int(config.get('max_tokens', 4096)))
+        self.research_isolated = bool(config.get('research_isolated', False))
         self.last_provider = ''
         self.last_errors: list[str] = []
         # Sanitized per-request provider route. Entries contain only
@@ -199,7 +200,11 @@ class HumanConversationProvider(Provider):
         options = dict(timeout=self.timeout, temperature=self.temperature,
                        max_tokens=self.max_tokens)
         if name == 'codex_cli':
-            return CodexCliProvider(model='codex-default', **options)
+            return CodexCliProvider(
+                model='codex-default',
+                persist_session=not self.research_isolated,
+                **options,
+            )
         if name == 'nifdu_browser':
             return NifduBrowserProvider(model='chatgpt-browser', **options)
         raise PermissionError(f'Mode-6 provider is not authorized: {name}')
@@ -216,6 +221,9 @@ class HumanConversationProvider(Provider):
             return self._run_mutation_request(request, operation, image_path)
         order = CODING_PROVIDER_ORDER if mutation else MODE6_PROVIDER_ORDER
         for name in order:
+            if self.research_isolated and name == 'nifdu_browser':
+                errors.append('nifdu_browser: skipped because its existing conversation is not isolated')
+                continue
             require(name, operation)
             if cancelled():
                 raise ProviderError('Mode-6 request cancelled')

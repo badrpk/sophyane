@@ -31,7 +31,6 @@ class Style:
 
 
 import json
-import os
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -106,6 +105,7 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     """Launch the observable TUI through the canonical execution kernel."""
     from sophyane.adaptive_execution import install, run_adaptive_loop
     from sophyane.incremental_browser_edit import install_incremental_browser_edit
+    from sophyane.game_validation import install_game_validation
     from sophyane.html_repair_policy import install_html_repair_policy
     from sophyane.browser_partial_recovery import install_browser_partial_recovery
     from sophyane.browser_failure_gate import install_browser_failure_gate
@@ -124,6 +124,7 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
     install()
     install_self_contained_html_patch()
     install_incremental_browser_edit()
+    install_game_validation()
     install_html_repair_policy()
     install_browser_partial_recovery()
     install_browser_failure_gate()
@@ -184,22 +185,7 @@ def run_grok_style_tui(*, config: dict[str, Any], verbose: bool) -> int:
                 workspace,
             )
         ):
-            # Keep the execution/RSI pipeline non-blocking. HITL actions are
-            # opt-in: only requests that explicitly ask to publish/package
-            # open the interactive action menu. Normal builds return to the
-            # Sophyane prompt so the user can inject follow-ups at any time.
-            request_text = original_request.casefold()
-            explicit_handoff = any(
-                marker in request_text
-                for marker in ("publish", "deploy", "package", "export", "app icon")
-            )
-            if explicit_handoff or os.environ.get("SOPHYANE_AUTO_POST_BUILD_MENU") == "1":
-                PostBuildMenu(workspace).run()
-            else:
-                print(
-                    "\nProject verified. Continue with another instruction, or ask \"publish website\", \"open the website\", or \"show project files\".",
-                    flush=True,
-                )
+            PostBuildMenu(workspace).run()
         elif (
             show_project_menu
             and workspace.is_dir()

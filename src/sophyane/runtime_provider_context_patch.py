@@ -29,41 +29,8 @@ def _walk_provider(value: Any, seen: set[int] | None = None, depth: int = 0) -> 
     if marker in seen:
         return None
     seen.add(marker)
-    if _looks_like_provider(value):
-        # A concrete provider is authoritative even when it is not a
-        # fallback/dispatcher object. Historically this walker only
-        # accepted providers exposing ``_providers`` or ``primary``;
-        # that discarded dedicated leaf providers such as
-        # NifduBrowserProvider and caused the TUI to fall back to stale
-        # saved configuration when reporting provider identity.
-        if (
-            hasattr(value, "_providers")
-            or hasattr(value, "primary")
-        ):
-            return value
-
-        metadata = getattr(
-            value,
-            "metadata",
-            None,
-        )
-
-        provider_id = str(
-            getattr(
-                metadata,
-                "provider_id",
-                "",
-            )
-            or getattr(
-                value,
-                "provider_id",
-                "",
-            )
-            or ""
-        ).strip()
-
-        if provider_id:
-            return value
+    if _looks_like_provider(value) and (hasattr(value, "_providers") or hasattr(value, "primary")):
+        return value
     owner = getattr(value, "__self__", None)
     found = _walk_provider(owner, seen, depth + 1)
     if found is not None:
@@ -107,51 +74,10 @@ def _active_name(tui: Any) -> str:
             value = str(getattr(provider, attr, "") or "").strip().lower()
             if value:
                 return value
-        primary = str(
-            getattr(
-                provider,
-                "primary",
-                "",
-            )
-            or ""
-        ).strip().lower()
-
+        primary = str(getattr(provider, "primary", "") or "").strip().lower()
         if primary:
             return primary
-
-        metadata = getattr(
-            provider,
-            "metadata",
-            None,
-        )
-
-        provider_id = str(
-            getattr(
-                metadata,
-                "provider_id",
-                "",
-            )
-            or getattr(
-                provider,
-                "provider_id",
-                "",
-            )
-            or ""
-        ).strip().lower()
-
-        if provider_id:
-            return provider_id
-
-    return str(
-        getattr(
-            tui,
-            "config",
-            {},
-        ).get(
-            "provider"
-        )
-        or "provider"
-    ).lower()
+    return str(getattr(tui, "config", {}).get("provider") or "provider").lower()
 
 
 def install_provider_context_patch() -> None:
@@ -182,46 +108,14 @@ def install_provider_context_patch() -> None:
         )
 
         provider = _provider_from_tui(self)
-        metadata = getattr(
-            provider,
-            "metadata",
-            None,
-        )
-
         primary = str(
-            getattr(
-                provider,
-                "primary",
-                "",
-            )
-            or getattr(
-                metadata,
-                "provider_id",
-                "",
-            )
-            or getattr(
-                provider,
-                "provider_id",
-                "",
-            )
-            or self.config.get(
-                "provider"
-            )
+            getattr(provider, "primary", "")
+            or self.config.get("provider")
             or ""
         ).lower()
 
-        # Normalize the caller-owned timeout without imposing a separate
-        # short local-inference deadline at the provider-context layer.
         if primary in {"local_gguf"}:
-            # The provider-context wrapper is the live TUI timeout
-            # authority. Do not silently reduce the caller/configured provider
-            # budget to a short UI deadline. Local GGUF inference and coding
-            # requests can legitimately require minutes on CPU/mobile hosts.
-            #
-            # Explicit call_provider(..., timeout=N) remains authoritative.
-            # The normal call path still supplies the TUI/provider timeout
-            # chosen by its caller.
-            timeout = max(1.0, float(timeout))
+            timeout = max(timeout, 180)
 
         original_message = message
         live_instructions: list[str] = []
@@ -285,139 +179,14 @@ def install_provider_context_patch() -> None:
                 results: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
                 worker_done = threading.Event()
                 started = time.monotonic()
-                deadline = started + float(timeout)
 
                 def worker() -> None:
                     bind_generation(generation)
-
                     try:
-                        # SOPHYANE_NIFDU_LEAF_PROVIDER_CALL_AUTHORITY_V1
-                        #
-                        # In NIFDU Browser mode the provider discovered above
-                        # is the authoritative ChatGPT/CDP intelligence leaf.
-                        #
-                        # self.ask may be a higher-level Sophyane dispatcher
-                        # that enters the unified execution kernel and task
-                        # compiler. Feeding NIFDU action-schema prompts through
-                        # that wrapper can transform them into a Sophyane
-                        # compiled work packet instead of returning the model's
-                        # requested executable action.
-                        #
-                        # Keep every other provider/session on the historical
-                        # self.ask path. Only the dedicated nifdu_llm +
-                        # nifdu_browser leaf bypasses that contaminated wrapper.
-                        _session_mode = str(
-                            os.environ.get(
-                                "SOPHYANE_SESSION_MODE",
-                                "",
-                            )
-                            or ""
-                        ).strip().lower()
-
-                        _resolved_provider_id = str(
-                            getattr(
-                                getattr(
-                                    provider,
-                                    "metadata",
-                                    None,
-                                ),
-                                "provider_id",
-                                "",
-                            )
-                            or getattr(
-                                provider,
-                                "provider_id",
-                                "",
-                            )
-                            or ""
-                        ).strip().lower()
-
-                        _nifdu_leaf_authoritative = (
-                            _session_mode == "nifdu_llm"
-                            and _resolved_provider_id
-                            == "nifdu_browser"
-                            and callable(
-                                getattr(
-                                    provider,
-                                    "generate",
-                                    None,
-                                )
-                            )
-                        )
-
-                        # SOPHYANE_CODEX_LEAF_PROVIDER_CALL_AUTHORITY_V1
-                        #
-                        # An explicitly selected Mode-4.3 Codex session is a
-                        # dedicated read-only project provider. Routing its
-                        # response through self.ask() re-enters Sophyane's task
-                        # compiler and can replace the real Codex answer with a
-                        # compiled work packet.
-                        _codex_leaf_authoritative = (
-                            _session_mode == "codex_cli"
-                            and _resolved_provider_id
-                            == "codex_cli"
-                            and callable(
-                                getattr(
-                                    provider,
-                                    "generate",
-                                    None,
-                                )
-                            )
-                        )
-
-                        _local_compare_authoritative = (
-                            _session_mode == "local_llm"
-                            and str(
-                                os.environ.get(
-                                    "SOPHYANE_LOCAL_PROFILE"
-                                )
-                                or ""
-                            ).strip().lower()
-                            == "compare"
-                            and primary == "local_gguf"
-                            and callable(
-                                getattr(
-                                    provider,
-                                    "generate",
-                                    None,
-                                )
-                            )
-                        )
-
-                        _direct_leaf_authoritative = (
-                            _nifdu_leaf_authoritative
-                            or _codex_leaf_authoritative
-                        )
-
-                        # SOPHYANE_MODE3_COMPARE_LEAF_AUTHORITY_V1
-                        #
-                        # Mode-3 comparison is itself the complete inference
-                        # operation. Do not route it back through self.ask(),
-                        # which re-enters Sophyane orchestration and can turn
-                        # one benchmark into several local generations.
-                        if _local_compare_authoritative:
-                            from sophyane.agent import (
-                                LOCAL_CHAT_SYSTEM_PROMPT,
-                            )
-
-                            value = provider.generate(
-                                active_message,
-                                LOCAL_CHAT_SYSTEM_PROMPT,
-                            )
-                        elif _direct_leaf_authoritative:
-                            value = provider.generate(
-                                active_message
-                            )
-                        else:
-                            value = self.ask(
-                                active_message
-                            )
-
+                        value = self.ask(active_message)
                         item = ("ok", value)
-
                     except BaseException as error:  # noqa: BLE001
                         item = ("error", error)
-
                     finally:
                         worker_done.set()
                         release_generation(generation)
@@ -675,69 +444,17 @@ def install_provider_context_patch() -> None:
                         restart_requested = True
                         break
 
-                    active = _active_name(self)
-
-                    # Enforce the deadline before inspecting the result queue.
-                    # Therefore a reply that becomes visible after the local
-                    # 10s boundary can never be accepted/applied.
-                    if not steering and time.monotonic() >= deadline:
-                        cancel_generation(generation)
-
-                        # Do not wait for the provider worker here. The hard
-                        # deadline also bounds how quickly control returns.
-                        # The daemon worker may unwind asynchronously, but its
-                        # result queue is discarded and can never be applied.
-
-                        # Explicitly discard a result racing with cancellation.
-                        try:
-                            while True:
-                                results.get_nowait()
-                        except queue.Empty:
-                            pass
-
-                        self.last_elapsed = time.monotonic() - started
-                        publish(
-                            primary=primary,
-                            active=active,
-                            mode="timeout",
-                        )
-                        raise TimeoutError(
-                            f"{active} did not respond within "
-                            f"{float(timeout):g}s."
-                        )
-
                     if not steering:
-                        remaining = max(
-                            0.0,
-                            deadline - time.monotonic(),
-                        )
                         try:
-                            status, value = results.get(
-                                timeout=min(0.10, remaining)
-                            )
+                            status, value = results.get(timeout=0.10)
                         except queue.Empty:
                             status = ""
                             value = None
 
-                        # Check the deadline again after blocking on the queue.
-                        # A result crossing the boundary is late and unusable.
-                        completed_at = time.monotonic()
-                        if status and completed_at >= deadline:
-                            cancel_generation(generation)
-                            # Never block past the application deadline.
-                            self.last_elapsed = completed_at - started
-                            publish(
-                                primary=primary,
-                                active=active,
-                                mode="timeout",
-                            )
-                            raise TimeoutError(
-                                f"{active} response exceeded "
-                                f"{float(timeout):g}s and was discarded."
-                            )
-
                         if status:
-                            self.last_elapsed = completed_at - started
+                            self.last_elapsed = (
+                                time.monotonic() - started
+                            )
 
                             if status == "error":
                                 raise value
@@ -783,6 +500,19 @@ def install_provider_context_patch() -> None:
                                 "Ctrl+C cancels."
                             )
                             next_update += 5
+
+                        if elapsed >= timeout:
+                            cancel_generation(generation)
+                            worker_done.wait(timeout=2.0)
+                            publish(
+                                primary=primary,
+                                active=active,
+                                mode="timeout",
+                            )
+                            raise TimeoutError(
+                                f"{active} did not respond "
+                                f"within {timeout}s."
+                            )
 
                     time.sleep(0.02)
 

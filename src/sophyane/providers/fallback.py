@@ -5,18 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from sophyane.config import CONFIG_DIR, get_secret
-from sophyane.context_builder import ContextBuilder, ContextPacket
-from sophyane.decision_visibility import is_fatal_provider_error
-from sophyane.providers.base import (
-    Provider,
-    ProviderCapabilities,
-    ProviderError,
-    ProviderMetadata,
-)
+from sophyane.providers.base import Provider, ProviderError, ProviderMetadata
 from sophyane.runtime_cancel import cancelled
 
 
@@ -25,53 +17,16 @@ LLM_CONFIG_FILE = CONFIG_DIR / "llm.json"
 LOCAL_PROVIDER_IDS = {"local_gguf"}
 
 # Canonical default order when llm.json is missing or incomplete.
-from sophyane.intelligence_authority import (
-    ACTIVE_INTELLIGENCE_PROVIDERS, provider_allowed_for_operational_intelligence,
-    require_active_provider,
+DEFAULT_FALLBACK_ORDER = (
+    "gemini",
+    "xai",
+    "openai",
+    "anthropic",
+    "groq",
+    "openrouter",
+    "deepseek",
+    "local_gguf",
 )
-
-DEFAULT_FALLBACK_ORDER = ACTIVE_INTELLIGENCE_PROVIDERS
-
-
-@dataclass
-class LocalRescueBudget:
-    """Shared wall-clock budget for cloud-to-local rescue generations."""
-
-    remaining_seconds: float
-    per_attempt_seconds: float = 60.0
-
-    def available_timeout(
-        self,
-        configured_timeout: float,
-    ) -> int:
-        if self.remaining_seconds <= 0:
-            return 0
-
-        ceiling = min(
-            float(configured_timeout),
-            float(self.per_attempt_seconds),
-            float(self.remaining_seconds),
-        )
-
-        # LocalGgufProvider itself requires a useful positive generation
-        # window. A final fractional remainder is therefore unavailable.
-        if ceiling < 1.0:
-            return 0
-
-        return max(
-            1,
-            int(ceiling),
-        )
-
-    def consume(
-        self,
-        elapsed_seconds: float,
-    ) -> None:
-        self.remaining_seconds = max(
-            0.0,
-            float(self.remaining_seconds)
-            - max(0.0, float(elapsed_seconds)),
-        )
 
 
 class FallbackProvider(Provider):
@@ -90,7 +45,6 @@ class FallbackProvider(Provider):
         providers: list[tuple[str, Provider]],
         *,
         primary: str = "",
-        observer: Any | None = None,
     ) -> None:
         if not providers:
             raise ValueError("FallbackProvider requires at least one provider")
@@ -106,70 +60,10 @@ class FallbackProvider(Provider):
         self.primary = primary or first_name
         self.last_provider = ""
         self.last_errors: list[str] = []
-        self.observer = observer
-
-    def _observe(self, **row: Any) -> None:
-        observer = self.observer
-        if observer is None:
-            return
-        try:
-            observer.record_attempt(**row)
-        except Exception:
-            LOGGER.debug("Intelligence observer failed", exc_info=True)
 
     @property
     def chain(self) -> tuple[str, ...]:
         return tuple(name for name, _ in self._providers)
-
-    # SOPHYANE_FALLBACK_EFFECTIVE_CAPABILITIES_V1
-    def _provider_for_capabilities(self) -> Provider | None:
-        """Return the provider whose capacity is currently authoritative.
-
-        A heterogeneous fallback chain has no truthful aggregate context or
-        output limit. Before generation, the configured primary is
-        authoritative. After successful generation, last_provider is
-        authoritative for that completed call.
-        """
-        preferred = str(
-            self.last_provider
-            or self.primary
-            or ""
-        ).strip().lower()
-
-        if preferred:
-            for name, provider in self._providers:
-                if str(name).strip().lower() == preferred:
-                    return provider
-
-        return None
-
-    def get_capabilities(self) -> ProviderCapabilities:
-        provider = self._provider_for_capabilities()
-
-        if provider is None:
-            return ProviderCapabilities()
-
-        getter = getattr(
-            provider,
-            "get_capabilities",
-            None,
-        )
-
-        if not callable(getter):
-            return ProviderCapabilities()
-
-        try:
-            capabilities = getter()
-        except Exception:
-            return ProviderCapabilities()
-
-        if not isinstance(
-            capabilities,
-            ProviderCapabilities,
-        ):
-            return ProviderCapabilities()
-
-        return capabilities
 
     def get_token_usage(self) -> dict[str, int]:
         totals = {
@@ -292,100 +186,8 @@ class FallbackProvider(Provider):
                     original,
                 )
 
-    # SOPHYANE_FALLBACK_CAPABILITY_RENDERER_V1
-    def generate_for_capabilities(
-        self,
-        renderer: Callable[[ProviderCapabilities], str],
-        system_prompt: str,
-        *,
-        local_rescue_timeout: int | None = None,
-        local_rescue_budget: LocalRescueBudget | None = None,
-    ) -> str:
-        """Render a provider-specific prompt independently for each child."""
-
-        def prompt_for(
-            _name: str,
-            provider: Provider,
-        ) -> str:
-            getter = getattr(
-                provider,
-                "get_capabilities",
-                None,
-            )
-
-            if callable(getter):
-                try:
-                    capabilities = getter()
-                except Exception:
-                    capabilities = ProviderCapabilities()
-            else:
-                capabilities = ProviderCapabilities()
-
-            if not isinstance(
-                capabilities,
-                ProviderCapabilities,
-            ):
-                capabilities = ProviderCapabilities()
-
-            return renderer(capabilities)
-
-        return self.generate(
-            "",
-            system_prompt,
-            local_rescue_timeout=local_rescue_timeout,
-            local_rescue_budget=local_rescue_budget,
-            _prompt_factory=prompt_for,
-        )
-
-    # SOPHYANE_FALLBACK_PER_CHILD_CONTEXT_RENDERING_V1
-    def generate_context(
-        self,
-        packet: ContextPacket,
-        system_prompt: str,
-        *,
-        local_rescue_timeout: int | None = None,
-        local_rescue_budget: LocalRescueBudget | None = None,
-    ) -> str:
-        """Render the same structured context independently for each child."""
-
-        return self.generate_for_capabilities(
-            lambda capabilities: ContextBuilder(
-                capabilities
-            ).build(packet).text,
-            system_prompt,
-            local_rescue_timeout=local_rescue_timeout,
-            local_rescue_budget=local_rescue_budget,
-        )
-
-    def generate(
-        self,
-        prompt: str,
-        system_prompt: str,
-        *,
-        local_rescue_timeout: int | None = None,
-        local_rescue_budget: LocalRescueBudget | None = None,
-        _prompt_factory: Callable[[str, Provider], str] | None = None,
-    ) -> str:
-        """Generate through the configured provider chain.
-
-        ``local_rescue_timeout`` is an optional per-call ceiling used only
-        when a non-local primary has already failed with a permanent
-        quota/auth/billing-style error and the next provider is local_gguf.
-
-        Normal local-primary generation keeps its configured timeout.
-        Transient cloud failures also keep the normal fallback timeout.
-
-        ``local_rescue_budget`` is shared by all repository-coding backend
-        calls in one run. Only real local rescue wall time consumes it.
-        Once exhausted, cloud providers remain callable but another local
-        rescue is skipped.
-        """
+    def generate(self, prompt: str, system_prompt: str) -> str:
         errors: list[str] = []
-        hard_cloud_failure_seen = False
-
-        # These fields describe this generate() call, not a previous call.
-        self.last_provider = ""
-        self.last_errors = []
 
         if cancelled():
             raise ProviderError("provider generation cancelled")
@@ -395,70 +197,8 @@ class FallbackProvider(Provider):
                 raise ProviderError("provider generation cancelled")
 
             started = time.perf_counter()
-
-            original_timeout = getattr(provider, "timeout", None)
-
-            local_rescue_candidate = (
-                name in LOCAL_PROVIDER_IDS
-                and self.primary not in LOCAL_PROVIDER_IDS
-                and hard_cloud_failure_seen
-                and original_timeout is not None
-            )
-
-            rescue_timeout = 0
-
-            if local_rescue_candidate:
-                if local_rescue_budget is not None:
-                    rescue_timeout = (
-                        local_rescue_budget.available_timeout(
-                            float(original_timeout)
-                        )
-                    )
-                elif local_rescue_timeout is not None:
-                    requested = int(local_rescue_timeout)
-
-                    if requested > 0:
-                        rescue_timeout = min(
-                            int(original_timeout),
-                            max(20, requested),
-                        )
-                else:
-                    rescue_timeout = int(original_timeout)
-
-                if rescue_timeout <= 0:
-                    errors.append(
-                        f"{name}: local rescue skipped: "
-                        "shared coding rescue budget exhausted"
-                    )
-                    continue
-
-            bounded_local_rescue = (
-                local_rescue_candidate
-                and (
-                    local_rescue_budget is not None
-                    or local_rescue_timeout is not None
-                )
-            )
-
-            if bounded_local_rescue:
-                provider.timeout = rescue_timeout
-
-            local_started = (
-                time.perf_counter()
-                if local_rescue_candidate
-                else None
-            )
-
             try:
-                provider_prompt = (
-                    _prompt_factory(name, provider)
-                    if _prompt_factory is not None
-                    else prompt
-                )
-                text = provider.generate(
-                    provider_prompt,
-                    system_prompt,
-                )
+                text = provider.generate(prompt, system_prompt)
             except Exception as error:  # noqa: BLE001
                 if cancelled():
                     raise ProviderError(
@@ -468,60 +208,14 @@ class FallbackProvider(Provider):
                 latency_ms = (time.perf_counter() - started) * 1000
                 message = f"{name}: {type(error).__name__}: {error}"
                 errors.append(message)
-                self._observe(
-                    provider=name,
-                    transport=name,
-                    model=str(getattr(provider, "model", "") or ""),
-                    operation="generate",
-                    outcome="failure",
-                    latency_seconds=max(0.0, latency_ms / 1000.0),
-                    failure_category=type(error).__name__,
-                    diagnostic=str(error),
-                )
                 LOGGER.warning(
                     "Provider %s failed in %.0fms: %s",
                     name,
                     latency_ms,
                     error,
                 )
-
-                if (
-                    name not in LOCAL_PROVIDER_IDS
-                    and is_fatal_provider_error(error)
-                ):
-                    hard_cloud_failure_seen = True
-
                 continue
 
-            finally:
-                attempt_finished = None
-                if (
-                    local_started is not None
-                    and local_rescue_budget is not None
-                ):
-                    attempt_finished = time.perf_counter()
-                    local_rescue_budget.consume(
-                        attempt_finished
-                        - local_started
-                    )
-
-                if bounded_local_rescue:
-                    provider.timeout = original_timeout
-
-            if attempt_finished is None:
-                attempt_finished = time.perf_counter()
-
-            self._observe(
-                provider=name,
-                transport=name,
-                model=str(getattr(provider, "model", "") or ""),
-                operation="generate",
-                outcome="success",
-                latency_seconds=max(
-                    0.0,
-                    attempt_finished - started,
-                ),
-            )
             self.last_provider = name
             self.last_errors = errors
             self.model = provider.model
@@ -559,48 +253,10 @@ class FallbackProvider(Provider):
             allow_cloud_local_rescue = bool(
                 cfg.get("allow_cloud_local_rescue", False)
             )
-            # SOPHYANE_STRICT_CLOUD_BOOTSTRAP_BOUNDARY_V2
-            # Explicit cloud mode is terminal provider authority. Persisted
-            # allow_cloud_local_rescue must not override the selected session.
-            import os as _cloud_rescue_policy_os
-
-            session_mode = str(
-                _cloud_rescue_policy_os.environ.get(
-                    "SOPHYANE_SESSION_MODE"
-                )
-                or ""
-            ).strip().lower()
-
-            disable_local_fallback = (
-                str(
-                    _cloud_rescue_policy_os.environ.get(
-                        "SOPHYANE_DISABLE_LOCAL_FALLBACK"
-                    )
-                    or ""
-                ).strip().lower()
-                in {"1", "true", "yes", "on"}
-            )
-
-            strict_cloud = (
-                session_mode
-                in {
-                    "cloud_llm",
-                    "nifdu_llm",
-                }
-                or disable_local_fallback
-            )
-
-
-            shared_rescue_available = (
-                local_rescue_budget is None
-                or local_rescue_budget.remaining_seconds >= 1.0
-            )
 
             if (
                 is_credit_or_auth_failure(joined)
                 and allow_cloud_local_rescue
-                and not strict_cloud
-                and shared_rescue_available
             ):
                 LOGGER.warning(
                     "Configured cloud providers failed; explicit local rescue "
@@ -612,36 +268,10 @@ class FallbackProvider(Provider):
 
                     loader = PluginLoader()
                     provider_id = result.provider or "local_gguf"
-                    bootstrap_timeout = max(
-                        self.timeout,
-                        300,
-                    )
-
-                    if local_rescue_budget is not None:
-                        bootstrap_timeout = (
-                            local_rescue_budget.available_timeout(
-                                float(bootstrap_timeout)
-                            )
-                        )
-
-                    elif local_rescue_timeout is not None:
-                        bootstrap_timeout = min(
-                            bootstrap_timeout,
-                            max(
-                                20,
-                                int(local_rescue_timeout),
-                            ),
-                        )
-
-                    if bootstrap_timeout <= 0:
-                        raise ProviderError(
-                            "shared coding rescue budget exhausted"
-                        )
-
                     kwargs: dict[str, Any] = {
                         "api_key": "",
                         "model": result.model,
-                        "timeout": bootstrap_timeout,
+                        "timeout": max(self.timeout, 300),
                         "temperature": self.temperature,
                         "max_tokens": self.max_tokens,
                     }
@@ -670,35 +300,7 @@ class FallbackProvider(Provider):
                             "provider generation cancelled"
                         )
 
-                    bootstrap_local_started = (
-                        time.perf_counter()
-                        if provider_id in LOCAL_PROVIDER_IDS
-                        else None
-                    )
-
-                    try:
-                        provider_prompt = (
-                            _prompt_factory(
-                                provider_id,
-                                local,
-                            )
-                            if _prompt_factory is not None
-                            else prompt
-                        )
-                        text = local.generate(
-                            provider_prompt,
-                            system_prompt,
-                        )
-                    finally:
-                        if (
-                            bootstrap_local_started is not None
-                            and local_rescue_budget is not None
-                        ):
-                            local_rescue_budget.consume(
-                                time.perf_counter()
-                                - bootstrap_local_started
-                            )
-
+                    text = local.generate(prompt, system_prompt)
                     self.last_provider = provider_id
                     self.model = result.model
                     self._providers = [(provider_id, local)] + [
@@ -802,70 +404,13 @@ def build_fallback_provider(
 ) -> FallbackProvider:
     from sophyane.plugin_loader import PluginLoader
 
-    primary = str(config.get("provider", "")).strip().lower()
-    require_active_provider(primary)
-
     if not isinstance(loader, PluginLoader):
         loader = PluginLoader()
 
     discovered = loader.discover()
     llm_config = load_llm_config()
-    order = resolve_provider_order(
-        primary,
-        llm_config=llm_config,
-    )
-
-    # SOPHYANE_STRICT_CLOUD_PROVIDER_CHAIN_V1
-    #
-    # Session mode is stronger authority than a persisted fallback_order.
-    # Explicit cloud_llm means exactly the selected cloud provider: stale
-    # llm.json entries must not silently append local_gguf or another backend.
-    import os as _provider_policy_os
-
-    session_mode = str(
-        _provider_policy_os.environ.get(
-            "SOPHYANE_SESSION_MODE"
-        )
-        or ""
-    ).strip().lower()
-
-    disable_local_fallback = (
-        str(
-            _provider_policy_os.environ.get(
-                "SOPHYANE_DISABLE_LOCAL_FALLBACK"
-            )
-            or ""
-        ).strip().lower()
-        in {"1", "true", "yes", "on"}
-    )
-
-    if session_mode == "local_llm":
-        # SOPHYANE_STRICT_LOCAL_PROVIDER_CHAIN_V1
-        #
-        # Explicit Mode-3 local authority is terminal: persisted fallback
-        # configuration must not append cloud, browser, CLI, or harness
-        # providers behind local_gguf.
-        order = [primary] if primary else []
-    elif session_mode in {
-        "cloud_llm",
-        "nifdu_llm",
-    }:
-        # Keep an explicitly selected external-LLM session under its
-        # fixed provider authority. Persisted fallback configuration must
-        # not silently append local or alternate reasoning providers.
-        # Explicit Mode-4 failover remains opt-in below.
-        external_failover = str(
-            _provider_policy_os.environ.get("SOPHYANE_MODE4_EXTERNAL_FAILOVER") or ""
-        ).strip().lower() in {"1", "true", "yes", "on"}
-        if external_failover:
-            # Explicit Mode-4 uses one deterministic cross-backend order.
-            # Unavailable providers are skipped by the normal discovery/key
-            # gates below; no provider is revived by this preference.
-            order = list(DEFAULT_FALLBACK_ORDER)
-        else:
-            order = [primary] if primary else []
-    elif disable_local_fallback:
-        order = [primary] if primary else []
+    primary = str(config.get("provider", "")).strip().lower()
+    order = resolve_provider_order(primary, llm_config=llm_config)
 
     providers_cfg = llm_config.get("providers") or {}
     timeout = int(config.get("timeout", 180))
@@ -875,8 +420,6 @@ def build_fallback_provider(
 
     chain: list[tuple[str, Provider]] = []
     for provider_id in order:
-        if not provider_allowed_for_operational_intelligence(provider_id):
-            continue
         provider_class = discovered.get(provider_id)
         if provider_class is None:
             continue
@@ -935,20 +478,4 @@ def build_fallback_provider(
             "No usable LLM providers are configured. Run `sophyane --setup` or `sophyane /local`."
         )
 
-    observer = None
-    try:
-        from sophyane.intelligence_observer import (
-            default_intelligence_observer,
-        )
-        observer = default_intelligence_observer()
-    except Exception:
-        LOGGER.debug(
-            "Intelligence observer construction failed",
-            exc_info=True,
-        )
-
-    return FallbackProvider(
-        chain,
-        primary=primary or chain[0][0],
-        observer=observer,
-    )
+    return FallbackProvider(chain, primary=primary or chain[0][0])

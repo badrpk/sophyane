@@ -5,6 +5,7 @@ from .resource_governor import ResourceDecision
 from .opportunity_scheduler import OpportunityScheduler
 from .local_intelligence import LocalIntelligenceRouter, LocalRole
 from .experiment import DeterministicExperimentRunner
+from .experiment import ExperimentPlan
 from .pre_verifier import DeterministicPreVerifier
 from .cloud_review import CloudReviewer, EvidencePackage
 from .campaign import RedStatus
@@ -14,12 +15,14 @@ import inspect
 import json
 import math
 from .metrics import RSIMetrics
+from .observation_bus import ImprovementObservation, ImprovementSource
 
 
 @dataclass(frozen=True)
 class AutonomousRSIConfig:
     observation_batch: int = 16
     interval_seconds: float = 30
+    metric_noise_tolerance: float = 0.05
 
 @dataclass
 class AutonomousRSIState:
@@ -33,12 +36,14 @@ class AutonomousRSIController:
         self.state = AutonomousRSIState()
         self.config = services.get("config", AutonomousRSIConfig())
         self.local = services.get('local', LocalIntelligenceRouter())
+        self.frontier = services.get('frontier')
         self.plans = services.get('plans', {})
         self.workspace_factory = services.get('workspace_factory')
         self.prepare = services.get('prepare')
         self.runner = services.get('runner', DeterministicExperimentRunner())
         self.verifier = DeterministicPreVerifier(self.runner)
         self.cloud = services.get('cloud', CloudReviewer())
+        self.execution_backend = services.get('execution_backend', 'native')
         self.scheduler = OpportunityScheduler(ledger, governor)
         self.current = None
         self.candidate = None
@@ -52,11 +57,143 @@ class AutonomousRSIController:
         self.meta_measure = services.get('meta_measure')
         self.context = services.get("context", asdict)
         self.evidence_sink = services.get('evidence_sink')
+        self.repository = services.get('repository')
+        self.metric_noise_tolerance = services.get(
+            'metric_noise_tolerance', self.config.metric_noise_tolerance
+        )
+        if (isinstance(self.metric_noise_tolerance, bool)
+                or not isinstance(self.metric_noise_tolerance, (int, float))
+                or not math.isfinite(self.metric_noise_tolerance)
+                or self.metric_noise_tolerance < 0
+                or self.metric_noise_tolerance >= 1):
+            raise ValueError('metric noise tolerance must be finite and in [0, 1)')
+
+    @staticmethod
+    def _metric_direction(name):
+        normalized = str(name).casefold().replace('-', '_').replace(' ', '_')
+        if 'throughput' in normalized or normalized in {
+            'benchmark_success', 'benchmark_success_rate', 'success_rate',
+        }:
+            return 'higher'
+        if 'latency' in normalized or 'memory' in normalized:
+            return 'lower'
+        return None
+
+    @staticmethod
+    def _valid_metric(value):
+        return (not isinstance(value, bool) and isinstance(value, (int, float))
+                and math.isfinite(value))
+
+    def _observe_metric_regressions(self):
+        baseline = self.metrics.accepted_baseline
+        if not baseline or self.repository is None or not callable(self.measure):
+            return ()
+        try:
+            current = self.measure(self.repository)
+            if not isinstance(current, dict):
+                return ()
+            current_values = dict(current)
+            if callable(self.meta_measure):
+                meta = self._meta(self.repository)
+                if not isinstance(meta, dict):
+                    return ()
+                current_values.update(meta)
+        except Exception:
+            return ()
+
+        baseline_values = {}
+        for section in ('capability', 'meta'):
+            values = baseline.get(section, {})
+            if not isinstance(values, dict):
+                return ()
+            baseline_values.update(values)
+
+        submitted = []
+        for name, before in baseline_values.items():
+            direction = self._metric_direction(name)
+            after = current_values.get(name)
+            if (direction is None or not self._valid_metric(before)
+                    or not self._valid_metric(after)):
+                continue
+            scale = max(abs(float(before)), 1.0)
+            change = ((float(before) - float(after)) / scale
+                      if direction == 'higher'
+                      else (float(after) - float(before)) / scale)
+            if change <= self.metric_noise_tolerance:
+                continue
+            component = next(iter(sorted(self.plans)), 'benchmark')
+            observation = ImprovementObservation(
+                ImprovementSource.BENCHMARK,
+                f"Metric regression detected: {name}",
+                component,
+                (f"baseline={before}", f"current={after}",
+                 f"relative_regression={change:.6f}",
+                 f"noise_tolerance={self.metric_noise_tolerance:.6f}"),
+                f"Restore {name} without weakening the frozen verification policy",
+            )
+            if self.bus.submit(observation):
+                submitted.append(observation)
+        return tuple(submitted)
+
+    def observe_benchmarks(self):
+        """Submit only independently verified frozen-RED benchmark failures."""
+        if self.repository is None:
+            return ()
+        submitted = list(self._observe_metric_regressions())
+        for component, plan in sorted(self.plans.items()):
+            try:
+                result = self.runner.red(plan, self.repository)
+            except Exception:
+                continue
+            if result.red_status is not RedStatus.RED_CONFIRMED:
+                continue
+            evidence = tuple(
+                str(getattr(run, 'output', ''))[-2000:]
+                for run in result.runs
+            )
+            observation = ImprovementObservation(
+                ImprovementSource.BENCHMARK,
+                f"Frozen benchmark RED confirmed for {component}: {plan.expected_failure}",
+                component,
+                evidence or (plan.expected_failure,),
+            )
+            if self.bus.submit(observation):
+                submitted.append(observation)
+        return tuple(submitted)
 
     def _meta(self, path):
         if inspect.signature(self.meta_measure).parameters:
             return self.meta_measure(path)
         return self.meta_measure()
+
+    def _active_experiment_plan(self, base_plan, task):
+        """Derive a bounded task plan from a preverified curriculum contract.
+
+        The task may select its own RED/GREEN contract only after the
+        repository-bound curriculum preverification has accepted it.  The
+        host-owned holdout, regression, allowed-path, and timeout policy stays
+        in force; a task cannot replace those gates.
+        """
+        red_command = tuple(getattr(task, "red_command", ()) or ()) if task else ()
+        green_commands = tuple(
+            tuple(command) for command in (getattr(task, "green_commands", ()) or ())
+        ) if task else ()
+        marker = str(getattr(task, "red_failure_marker", "") or "").strip() if task else ""
+        if not (red_command and green_commands and marker):
+            return base_plan
+        task_paths = frozenset(getattr(task, "editable_paths", ()) or ())
+        if not task_paths.issubset(base_plan.allowed_paths):
+            raise ValueError("curriculum task paths exceed frozen experiment policy")
+        return ExperimentPlan(
+            identifier=f"{base_plan.identifier}:curriculum:{task.task_id}",
+            focused=(red_command,),
+            holdout=green_commands + base_plan.holdout,
+            regression=base_plan.regression,
+            expected_failure=marker,
+            allowed_paths=base_plan.allowed_paths,
+            version=base_plan.version,
+            timeout=min(base_plan.timeout, 300),
+        )
 
     @staticmethod
     def _degraded(before, after):
@@ -70,7 +207,14 @@ class AutonomousRSIController:
             if (not isinstance(new, (float, int)) or not isinstance(value, (float, int))
                 or not math.isfinite(new) or not math.isfinite(value)):
                 return True
-            if (new > value if key in lower_is_better else new < value):
+            direction = AutonomousRSIController._metric_direction(key)
+            if direction == 'lower':
+                degraded = new > value
+            elif direction == 'higher':
+                degraded = new < value
+            else:
+                degraded = new > value if key in lower_is_better else new < value
+            if degraded:
                 return True
         return False
 
@@ -106,6 +250,7 @@ class AutonomousRSIController:
         if decision is ResourceDecision.OBSERVE_ONLY:
             return self._emit('OBSERVE', decision=decision.value)
         stage = self.state.stage
+        active_task = getattr(self, 'active_curriculum_task', None)
         try:
             if stage == 'OBSERVE':
                 self.state.stage = 'PRIORITIZE'
@@ -117,34 +262,61 @@ class AutonomousRSIController:
                 else:
                     self.state.stage = 'OBSERVE'
             elif stage == 'LOCAL_ANALYSIS':
-                route = ('qwen_then_spark' if decision is ResourceDecision.LOCAL_DEEP and resources.qwen_available
-                         else 'spark' if decision is ResourceDecision.LOCAL_DEEP
-                         else 'qwen' if resources.qwen_available else 'skip_local')
-                counts = dict(self.local.calls)
-                self.hypotheses = self.local.analyze(self.context(self.current), route=route)
-                for name in ('qwen', 'spark'):
-                    self.metrics.increment(name + '_calls', self.local.calls[name] - counts[name])
-                if not self.hypotheses:
-                    self._reject('local analysis unavailable or uncertain')
-                else:
+                if getattr(active_task, 'proposal_files', {}):
+                    self.hypotheses = ()
                     self.state.stage = 'EXPERIMENT'
+                else:
+                    route = ('qwen_then_spark' if decision is ResourceDecision.LOCAL_DEEP and resources.qwen_available
+                             else 'spark' if decision is ResourceDecision.LOCAL_DEEP
+                             else 'qwen' if resources.qwen_available else 'skip_local')
+                    self.hypotheses = ()
+                    if callable(self.frontier):
+                        frontier_router = LocalIntelligenceRouter({'frontier': self.frontier})
+                        self.hypotheses = frontier_router.analyze(
+                            self.context(self.current), route='frontier', role=LocalRole.HYPOTHESIS
+                        )
+                        self.metrics.increment('frontier_calls', frontier_router.calls['frontier'])
+                    if not self.hypotheses:
+                        counts = dict(self.local.calls)
+                        self.hypotheses = self.local.analyze(self.context(self.current), route=route)
+                        for name in ('qwen', 'spark'):
+                            self.metrics.increment(name + '_calls', self.local.calls[name] - counts[name])
+                    if not self.hypotheses:
+                        self._reject('frontier and local analysis unavailable or uncertain')
+                    else:
+                        self.state.stage = 'EXPERIMENT'
             elif stage == 'EXPERIMENT':
-                if self.research and self.governor.decide(resources, research=True) is ResourceDecision.INTERNET_RESEARCH:
+                if (not (active_task and getattr(active_task, 'proposal_files', {}))
+                        and self.research
+                        and self.governor.decide(resources, research=True) is ResourceDecision.INTERNET_RESEARCH):
                     self.claims = self.research.discover(self.current, resources)
                     self.metrics.increment('sli_calls')
                     self._emit('RESEARCH', claims=tuple(asdict(c) for c in self.claims))
                     if self.claims:
                         counts = dict(self.local.calls)
-                        researched = self.local.analyze({'weakness': self.context(self.current),
-                            'untrusted_research_claims': [asdict(c) for c in self.claims]},
-                            route='qwen' if resources.qwen_available else 'spark',
-                            role=LocalRole.EXPERIMENT_DESIGN)
-                        self.hypotheses = self.hypotheses + researched
+                        try:
+                            researched = self.local.analyze({'weakness': self.context(self.current),
+                                'untrusted_research_claims': [asdict(c) for c in self.claims]},
+                                route='qwen' if resources.qwen_available else 'spark',
+                                role=LocalRole.EXPERIMENT_DESIGN)
+                            self.hypotheses = self.hypotheses + researched
+                        except RuntimeError as error:
+                            # Research enrichment is advisory. A provider
+                            # timeout must not discard an already bounded
+                            # frontier hypothesis or candidate proposal.
+                            self._emit('RESEARCH_ANALYSIS_SKIPPED', reason=type(error).__name__)
                         for name in ('qwen', 'spark'):
                             self.metrics.increment(name + '_calls', self.local.calls[name] - counts[name])
-                self.plan = self.plans.get(self.current.component)
+                base_plan = self.plans.get(self.current.component)
+                active_task = getattr(self, 'active_curriculum_task', None)
+                try:
+                    self.plan = self._active_experiment_plan(base_plan, active_task) if base_plan else None
+                except ValueError as error:
+                    self._reject(str(error))
+                    self.plan = None
                 if self.plan is None or not self.workspace_factory or not self.prepare:
-                    self._reject('host experiment unavailable')
+                    if self.current is not None:
+                        self._reject('host experiment unavailable')
                 else:
                     self.candidate = self.workspace_factory()
                     self.baseline_metrics = self.measure(self.candidate.path) if self.measure else None
@@ -184,12 +356,17 @@ class AutonomousRSIController:
                     self.state.stage = 'CLOUD_REVIEW'
             elif stage == 'CLOUD_REVIEW':
                 package = EvidencePackage(asdict(self.current), self.verified,
-                    self.candidate.diff().text, tuple(asdict(h) for h in self.hypotheses), self.current.expected_gain)
+                    self.candidate.diff().text, tuple(asdict(h) for h in self.hypotheses), self.current.expected_gain,
+                    {'execution_backend': self.execution_backend,
+                     'qemu_isolation': self.execution_backend == 'qemu'})
                 counts = dict(self.cloud.calls)
                 self.review = self.cloud.review(package, resources)
                 for name, metric in (('codex_cli', 'codex_reviews'), ('nifdu_browser', 'nifdu_reviews')):
                     self.metrics.increment(metric, self.cloud.calls[name] - counts[name])
-                self.metrics.increment('cloud_reviews', sum(self.cloud.calls.values()) - sum(counts.values()))
+                if self.review.provider == 'local_artifact':
+                    self.metrics.increment('local_reviews')
+                else:
+                    self.metrics.increment('cloud_reviews', sum(self.cloud.calls.values()) - sum(counts.values()))
                 if self.review.action not in ('approve', 'improve'):
                     self._reject('cloud: ' + self.review.reason)
                 else:
@@ -218,6 +395,9 @@ class AutonomousRSIController:
                         if (not isinstance(before, (float, int)) or not isinstance(after, (float, int))
                             or not math.isfinite(before) or not math.isfinite(after) or after <= before):
                             self._reject('no measured capability gain')
+                        elif (self.metrics.accepted_baseline is not None
+                              and after <= self.metrics.accepted_baseline['capability'].get('benchmark_success', float('-inf'))):
+                            self._reject('no gain over accepted capability frontier')
                         elif self._degraded(self.baseline_metrics, self.candidate_metrics):
                             self._reject('protected capability metric degradation')
                         elif self._degraded(self.baseline_meta, self._meta(self.candidate.path)):
@@ -255,6 +435,8 @@ class AutonomousRSIController:
             evidence = {}
             if stage == 'LOCAL_ANALYSIS':
                 evidence['hypotheses'] = tuple(asdict(h) for h in self.hypotheses)
+            if stage == 'CANDIDATE' and hasattr(self, 'generation_evidence'):
+                evidence['candidate_generation'] = dict(self.generation_evidence)
             if stage == 'RED' and hasattr(self, 'red'):
                 evidence['red'] = asdict(self.red)
             if stage in ('PREVERIFY', 'REVERIFY') and hasattr(self, 'verified'):

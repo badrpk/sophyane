@@ -8,6 +8,7 @@ from typing import Any
 
 from .curriculum import CurriculumTask
 from .curriculum_redgreen import RedGreenResult
+from .autonomy_policy import FailureClass, classify_failure
 from .weakness_ledger import WeaknessRecord, WeaknessStatus
 
 
@@ -175,11 +176,24 @@ class AutonomousCurriculumTaskAdapter:
                 try:
                     tick()
                 except Exception as error:
+                    decision = classify_failure(error, phase="execution")
+                    if decision.category is FailureClass.SAFETY_HALT:
+                        return {"status": "safety_halt", "reason": decision.reason}
                     return {"status": "paused", "reason": f"RSI task execution failed: {error}"}
+                red = getattr(self.controller, "red", None)
+                if getattr(getattr(red, "red_status", None), "value", "") == "RED_ALREADY_GREEN":
+                    return {"status": "already_green", "reason": "frozen RED test is already green"}
                 if record.status == WeaknessStatus.ACCEPTED.value:
                     return {"status": "verified", "evidence": (*redgreen_evidence, *record.evidence), "ability": task.task_id}
                 if record.status == WeaknessStatus.REJECTED.value:
-                    return {"status": "rejected", "reason": record.rejection_history[-1] if record.rejection_history else "RSI rejected task"}
+                    reason = record.rejection_history[-1] if record.rejection_history else "RSI rejected task"
+                    isolation_failure = any(marker in reason.casefold() for marker in (
+                        "sandboxunavailable", "bubblewrap", "user namespaces", "unrestricted execution"
+                    ))
+                    decision = classify_failure(PermissionError(reason), phase="execution")
+                    if isolation_failure and decision.category is FailureClass.SAFETY_HALT:
+                        return {"status": "safety_halt", "reason": reason}
+                    return {"status": "rejected", "reason": reason}
             return {"status": "paused", "reason": f"RSI task exceeded {self.max_cycles} cycles"}
         finally:
             self.controller.active_curriculum_task = None

@@ -11,7 +11,7 @@ MAX_ARGUMENTS = 64
 MAX_ARGUMENT_LENGTH = 4096
 MAX_OUTPUT_LENGTH = 65536
 ALLOWED_EXECUTABLES = frozenset({"python", "python3", "pytest", "/usr/bin/python3", "/usr/bin/pytest"})
-ALLOWED_CWD = "/sophyane-input/candidate"
+ALLOWED_CWD = "/mnt/sophyane-input/candidate"
 RESULT_KEYS = frozenset({"schema_version", "task_id", "status", "exit_code", "stdout", "stderr"})
 
 

@@ -50,8 +50,7 @@ def install_html_repair_policy() -> None:
                 f"Fix this functional problem: {problem}. Preserve the UI and working features. "
                 "Output raw HTML only, beginning <!doctype html> and ending </html>. "
                 "Do not append a fragment and do not use markdown.\n"
-                # SOPHYANE_FULL_SEMANTIC_REPAIR_CONTEXT_V1
-                f"CURRENT HTML:\n{partial}"
+                f"CURRENT HTML:\n{partial[:7000]}"
             )
         return original_prompt(partial, problem)
 

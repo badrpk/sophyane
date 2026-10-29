@@ -18,19 +18,6 @@
         "what was my last email"
       ]
     },
-    "first": {
-      "match_hints": [
-        "first email",
-        "first mail",
-        "first message",
-        "earliest email",
-        "earliest mail",
-        "oldest email",
-        "oldest inbox message",
-        "first email i received",
-        "earliest email i received"
-      ]
-    },
     "search": {
       "match_hints": [
         "in my email",
@@ -58,34 +45,6 @@
         "my last sent",
         "latest outgoing email",
         "most recent email i sent"
-      ]
-    },
-    "analyze": {
-      "match_hints": [
-        "analyze my email",
-        "analyze my emails",
-        "inspect my inbox",
-        "search inbox and sent",
-        "inbox and sent mail",
-        "conversation thread",
-        "reconstruct the thread",
-        "emails containing attachments",
-        "email attachments",
-        "most frequently by email",
-        "received count",
-        "sent count",
-        "classify my emails",
-        "last 200 received emails",
-        "invoice or payment",
-        "invoices receipts",
-        "payment confirmations",
-        "api keys credentials",
-        "authentication oauth",
-        "access tokens",
-        "unresolved email",
-        "require action from me",
-        "subsequently replied",
-        "cannot find a later sent reply"
       ]
     }
   },

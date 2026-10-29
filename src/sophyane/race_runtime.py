@@ -192,15 +192,6 @@ class AdaptiveRace(Generic[T]):
                     None,
                 )
 
-            except SystemExit as exc:
-                # A worker-local SystemExit is a worker failure,
-                # not authority to terminate the race host.
-                return (
-                    worker,
-                    None,
-                    exc,
-                )
-
             except Exception as exc:
                 return (
                     worker,
@@ -540,14 +531,8 @@ class AdaptiveRace(Generic[T]):
         finally:
             stop.set()
 
-            # Make speculative cancellation observable: a fast, strong
-            # winner should terminate slower routes with an explicit reason.
-            if winner is not None:
-                for future in pending:
-                    worker = futures.get(future)
-                    if worker:
-                        errors.setdefault(worker, "canceled after stronger winner")
-                    future.cancel()
+            for future in pending:
+                future.cancel()
 
             executor.shutdown(
                 wait=False,

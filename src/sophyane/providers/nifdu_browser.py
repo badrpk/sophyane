@@ -13,6 +13,10 @@ import inspect
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import threading
 from typing import Any
 
 from sophyane.providers.base import (
@@ -79,6 +83,34 @@ def _default_selection() -> dict[str, Any]:
         "async": False,
         "score": 1000,
     }
+
+
+_BRIDGE_LOAD_LOCK = threading.RLock()
+
+
+def _site_selection_for_model(
+    model: str,
+    *,
+    bridge_path: str | Path | None = None,
+) -> dict[str, str] | None:
+    """Resolve an explicit NIFDU site identity against its installed profiles."""
+    value = str(model or "").strip().casefold()
+    prefix = "nifdu-site:"
+    if not value.startswith(prefix):
+        return None
+    site = value[len(prefix):].strip()
+    bridge = Path(
+        bridge_path
+        or os.environ.get("SOPHYANE_NIFDU_BROWSER_BRIDGE")
+        or (Path.home() / "nifdu" / "tools" / "nifdu_browser_bridge.py")
+    ).expanduser()
+    if not bridge.is_file():
+        raise ProviderError("Installed NIFDU browser bridge is unavailable")
+    from sophyane.multimodel_registry import _nifdu_bridge_profiles
+
+    if site not in _nifdu_bridge_profiles(bridge):
+        raise ProviderError(f"NIFDU browser site is not registered: {site}")
+    return {"site": site, "bridge": str(bridge)}
 
 
 def _load_module(
@@ -195,6 +227,28 @@ def _normalise_response(
     return text
 
 
+def _bridge_failure_category(detail: str) -> str:
+    """Map bridge stderr to a safe category without persisting its contents."""
+    value = str(detail or "").casefold()
+    if "timeout" in value or "timed out" in value:
+        return "timeout"
+    if any(token in value for token in ("signed out", "sign in", "authentication", "login")):
+        return "authentication"
+    if any(token in value for token in ("challenge", "captcha", "human interaction")):
+        return "provider_restriction"
+    if any(token in value for token in ("cdp", "chromium tab", "browser endpoint")):
+        return "browser_readiness"
+    if any(token in value for token in ("prompt box", "composer", "textbox", "selector")):
+        return "selector_readiness"
+    if any(token in value for token in ("extract", "response text", "empty response")):
+        return "response_extraction"
+    if any(token in value for token in ("navigation", "navigating", "page load")):
+        return "navigation"
+    if any(token in value for token in ("websocket", "connection refused", "transport")):
+        return "transport"
+    return "provider_error"
+
+
 class NifduBrowserProvider(
     Provider
 ):
@@ -233,6 +287,73 @@ class NifduBrowserProvider(
             timeout
         )
 
+    def _generate_nifdu_site(
+        self,
+        *,
+        prompt: str,
+        system_prompt: str,
+        site: str,
+        bridge: Path,
+    ) -> str:
+        """Invoke NIFDU's supported `ask(prompt, site)` bridge in isolation."""
+        user_prompt = (
+            system_prompt.strip() + "\n\n" + prompt
+            if system_prompt
+            else prompt
+        )
+        prefix = str(os.environ.get("PREFIX") or "").strip()
+        temp_root = Path(
+            os.environ.get("TMPDIR")
+            or (Path(prefix) / "tmp" if prefix else tempfile.gettempdir())
+        )
+        temp_root.mkdir(parents=True, exist_ok=True)
+        handle, prompt_path = tempfile.mkstemp(
+            prefix="sophyane-nifdu-", suffix=".txt", dir=str(temp_root)
+        )
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8") as target:
+                target.write(user_prompt)
+            environment = dict(os.environ)
+            environment["NIFDU_BROWSER_TIMEOUT"] = str(max(1, self.timeout))
+            if environment.get("SOPHYANE_CDP_HOST"):
+                environment.setdefault("NIFDU_CDP_HOST", environment["SOPHYANE_CDP_HOST"])
+            if environment.get("SOPHYANE_CDP_PORT"):
+                environment.setdefault("NIFDU_CDP_PORT", environment["SOPHYANE_CDP_PORT"])
+            process = subprocess.Popen(
+                [sys.executable, str(bridge), "ask", prompt_path, site],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=environment,
+                start_new_session=(os.name == "posix"),
+            )
+            from sophyane.runtime_cancel import register, unregister
+
+            register(process)
+            try:
+                stdout, stderr = process.communicate(timeout=max(1, self.timeout))
+            except subprocess.TimeoutExpired as error:
+                process.kill()
+                process.communicate()
+                raise ProviderError(f"NIFDU browser site {site} timed out") from error
+            finally:
+                unregister(process)
+            if process.returncode != 0:
+                category = _bridge_failure_category(stderr)
+                raise ProviderError(
+                    f"NIFDU browser site {site} failed: {category} "
+                    f"(exit {process.returncode})"
+                )
+            return _normalise_response(stdout)
+        except OSError as error:
+            raise ProviderError(f"Unable to invoke NIFDU browser site {site}") from error
+        finally:
+            try:
+                Path(prompt_path).unlink()
+            except OSError:
+                pass
+
     def generate(
         self,
         prompt: str,
@@ -263,6 +384,7 @@ class NifduBrowserProvider(
                 )
             )
         else:
+            site_selection = _site_selection_for_model(self.model)
             selection = _default_selection()
 
             # SOPHYANE_NIFDU_PROVIDER_BROWSER_BOOTSTRAP_AUTHORITY_V1
@@ -297,6 +419,14 @@ class NifduBrowserProvider(
                     + detail
                 )
 
+            if site_selection is not None:
+                return self._generate_nifdu_site(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    site=site_selection["site"],
+                    bridge=Path(site_selection["bridge"]),
+                )
+
         module_path = Path(
             selection["module"]
         )
@@ -328,9 +458,8 @@ class NifduBrowserProvider(
         )
 
         try:
-            module = _load_module(
-                module_path
-            )
+            with _BRIDGE_LOAD_LOCK:
+                module = _load_module(module_path)
         finally:
             if _previous_bridge_timeout is None:
                 os.environ.pop(

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import re
 import subprocess
 from typing import Any
 
 from .curriculum import AbilityRecord, CurriculumScheduler, CurriculumStore, TaskStatus
 from .curriculum_proposals import ProposalContext, ProposalResult
+from .autonomy_policy import FailureClass, classify_failure
 
 
 class ContinuousCurriculumRuntime:
@@ -31,6 +33,7 @@ class ContinuousCurriculumRuntime:
         if self.scheduler.status()["stopped"]:
             return False
         self._reconcile_promoted_tasks()
+        self._reconcile_demo_frontier()
         self.scheduler.resume()
         self.started = True
         return True
@@ -105,6 +108,20 @@ class ContinuousCurriculumRuntime:
                 reconciled += 1
         return reconciled
 
+    def _reconcile_demo_frontier(self) -> bool:
+        """Recover a missed frontier transition after a verified promotion.
+
+        The worker can be killed between recording ``task_verified`` and
+        advancing the host-owned challenge.  On the next start, reconcile the
+        newest verified demo task so progress does not depend on one callback
+        completing in one process lifetime.
+        """
+        state = self.store.load()
+        verified = [task for task in state.queue if task.status is TaskStatus.VERIFIED]
+        if not verified:
+            return False
+        return self._advance_demo_frontier(verified[-1])
+
     def pause(self, reason: str = "operator requested pause") -> bool:
         self.scheduler.pause(reason)
         self.started = False
@@ -129,6 +146,55 @@ class ContinuousCurriculumRuntime:
         self.store.save(state)
         self.store.append_event({"event": "ability_recorded", "ability_id": ability_id, "task_id": task.task_id})
         return record
+
+    def _advance_demo_frontier(self, task) -> bool:
+        """Prepare the next host-owned frozen challenge after a verified step.
+
+        This changes only the deterministic demo fixture's challenge marker and
+        checks.  It never accepts model output as policy, commands, or an
+        editable path; the next candidate must still pass the full RED/GREEN
+        and promotion gates.
+        """
+        owner = getattr(self.controller, "controller", self.controller)
+        if "demo_score" not in getattr(owner, "plans", {}):
+            return False
+        marker = str(owner.plans["demo_score"].expected_failure)
+        match = re.search(r"_v(\d+)$", marker)
+        if not match:
+            return False
+        current = int(match.group(1))
+        target_match = re.search(r"returning exactly (\d+)", str(task.objective))
+        if not target_match or int(target_match.group(1)) != current:
+            return False
+        target = current + 1
+        root = self.state_dir / "live-worktree"
+        scripts = {
+            "tools/rsi_demo_red.py": [(r"score\(\) == \d+", f"score() == {target}"),
+                                      (r"demo_score_v\d+", f"demo_score_v{target}")],
+            "tools/rsi_demo_holdout.py": [(r"score\(\) >= \d+", f"score() >= {target}"),],
+            "tools/rsi_demo_regression.py": [(r"score\(\) >= \d+", f"score() >= {target}"),],
+            "tools/rsi_demo_meta.py": [(r"score\(\) == \d+", f"score() == {target}"),],
+        }
+        replacements = {}
+        for relative, substitutions in scripts.items():
+            path = root / relative
+            text = path.read_text(encoding="utf-8")
+            for pattern, replacement in substitutions:
+                text = re.sub(pattern, replacement, text)
+            replacements[path] = text
+        policy_path = self.state_dir / "experiments.json"
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+        policy["demo_score"]["expected_failure"] = f"RSI_WEAKNESS_demo_score_v{target}"
+        for path, text in replacements.items():
+            path.write_text(text, encoding="utf-8")
+        policy_path.write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
+        from dataclasses import replace
+        owner.plans["demo_score"] = replace(
+            owner.plans["demo_score"],
+            expected_failure=f"RSI_WEAKNESS_demo_score_v{target}",
+        )
+        self.store.append_event({"event": "frontier_advanced", "component": "demo_score", "target": target})
+        return True
 
     def _enqueue_follow_up(self, ability: AbilityRecord) -> None:
         if self.proposal_adapter is None or not self.scheduler.can_enqueue_follow_up():
@@ -207,13 +273,37 @@ class ContinuousCurriculumRuntime:
             raw = runner(task)
             result = dict(raw) if isinstance(raw, dict) else {"status": str(raw)}
         except Exception as error:  # scheduler remains durable on controller failure
+            decision = classify_failure(error, phase="execution")
+            if decision.category is FailureClass.SAFETY_HALT:
+                self.scheduler.pause(decision.reason)
+                halt_path = self.state_dir / "safety-halt.json"
+                halt_path.write_text(
+                    json.dumps({
+                        "state": "safety_halt",
+                        "reason": decision.reason[:1000],
+                    }, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                return {"status": "safety_halt", "reason": decision.reason, "task_id": task.task_id}
             self.scheduler.record_failure(task.task_id, TaskStatus.PAUSED, str(error))
             return {"status": "paused", "reason": str(error), "task_id": task.task_id}
 
         status = str(result.get("status", "")).lower()
+        reason = str(result.get("reason", ""))
+        if status in {"rejected", "paused"} and any(marker in reason.casefold() for marker in (
+            "sandboxunavailable", "bubblewrap", "user namespaces", "unrestricted execution"
+        )):
+            self.scheduler.pause(reason)
+            halt_path = self.state_dir / "safety-halt.json"
+            halt_path.write_text(
+                json.dumps({"state": "safety_halt", "reason": reason[:1000]}, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            return {"status": "safety_halt", "reason": reason, "task_id": task.task_id}
         if status == "verified":
             evidence = tuple(str(item) for item in result.get("evidence", ()))
             self.scheduler.record_verified(task.task_id, evidence)
+            self._advance_demo_frontier(task)
             ability = self._record_ability(task, result)
             self._enqueue_follow_up(ability)
             return {"status": "verified", "task_id": task.task_id, "ability_id": ability.ability_id}
@@ -226,7 +316,7 @@ class ContinuousCurriculumRuntime:
             "rolled_back": TaskStatus.ROLLED_BACK,
             "paused": TaskStatus.PAUSED,
         }.get(status, TaskStatus.REJECTED)
-        reason = str(result.get("reason", "task did not verify"))
+        reason = reason or "task did not verify"
         self.scheduler.record_failure(task.task_id, failure_status, reason)
         if self.scheduler.retry(task.task_id, reason):
             return {"status": "retrying", "task_id": task.task_id, "reason": reason}

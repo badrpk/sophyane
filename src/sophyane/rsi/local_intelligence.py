@@ -31,9 +31,9 @@ class LocalIntelligenceRouter:
     def __init__(self, models=None):
         self.models = models or {}
         self.profiles = {name: LocalModelProfile(name) for name in self.models}
-        self.calls = {'qwen': 0, 'spark': 0}
+        self.calls = {'qwen': 0, 'spark': 0, 'frontier': 0}
     def analyze(self, context, route='qwen_then_spark', role=LocalRole.HYPOTHESIS):
-        routes = {'qwen': ('qwen',), 'spark': ('spark',),
+        routes = {'qwen': ('qwen',), 'spark': ('spark',), 'frontier': ('frontier',),
                   'qwen_then_spark': ('qwen', 'spark'), 'spark_then_qwen': ('spark', 'qwen'),
                   'both': ('qwen', 'spark'), 'skip_local': (), 'escalate': ()}
         if route not in routes:
@@ -82,7 +82,8 @@ class LocalIntelligenceRouter:
 
     def record_result(self, name, role, *, success):
         # Called by host measurement, never parsed from model output.
-        values = self.profiles[name].competence.setdefault(role.value, [0, 0])
+        profile = self.profiles.setdefault(name, LocalModelProfile(name))
+        values = profile.competence.setdefault(role.value, [0, 0])
         values[0] += int(success is True)
         values[1] += 1
 

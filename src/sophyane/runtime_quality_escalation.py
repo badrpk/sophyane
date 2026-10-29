@@ -6,9 +6,6 @@ import re
 import time
 from typing import Any
 
-from sophyane.intelligence_authority import (
-    provider_allowed_for_source_mutation, provider_allowed_for_operational_intelligence,
-)
 from sophyane.provider_state import publish
 from sophyane.sli_provider_controller import get_sli_provider_controller
 
@@ -70,7 +67,7 @@ def install_quality_escalation() -> None:
         candidates = [cfg.get("quality_rescue_provider"), *(cfg.get("fallback_order", []) or []), *fallback.DEFAULT_FALLBACK_ORDER]
         for candidate in candidates:
             value = str(candidate or "").strip().lower()
-            if provider_allowed_for_source_mutation(value) and value not in order:
+            if value and value not in order and value not in {"fallback", *LOCAL_PROVIDER_IDS}:
                 order.append(value)
         return order
 
@@ -81,7 +78,7 @@ def install_quality_escalation() -> None:
         publish(primary=primary, active=active, mode=mode)
 
     def cloud_candidates(self: Any, preferred: str = "", active_rescue: str = "") -> list[tuple[str, Any]]:
-        cloud = [(name, provider) for name, provider in getattr(self, "_providers", []) if provider_allowed_for_source_mutation(name)]
+        cloud = [(name, provider) for name, provider in getattr(self, "_providers", []) if name not in LOCAL_PROVIDER_IDS]
         target = active_rescue or preferred
         if target:
             cloud.sort(key=lambda item: item[0] != target)
@@ -125,158 +122,15 @@ def install_quality_escalation() -> None:
         set_active(self, primary, primary, "repair")
         return None
 
-    # SOPHYANE_FIXED_SESSION_PROVIDER_AUTHORITY_V1
-    def generate(
-        self: Any,
-        prompt: str,
-        system_prompt: str,
-        *generate_args: Any,
-        **generate_kwargs: Any,
-    ) -> str:
-        primary = str(
-            getattr(
-                self,
-                "primary",
-                "",
-            )
-            or ""
-        ).strip().lower()
-
-        set_active(
-            self,
-            primary,
-            primary,
-            "request",
-        )
-
-        # Fixed session modes select WHO provides intelligence once.
-        # Quality escalation and fallback are not allowed to silently
-        # replace that provider. Race/unset sessions retain historical
-        # fallback behaviour.
-        strict_authority = False
-
-        try:
-            from sophyane.intelligence_authority import (
-                assert_provider_allowed,
-                current_intelligence_authority,
-            )
-
-            authority = (
-                current_intelligence_authority()
-            )
-
-            strict_authority = not bool(
-                authority.provider_switching_allowed
-            )
-        except Exception:
-            authority = None
-
-        if strict_authority:
-            assert_provider_allowed(
-                primary
-            )
-
-            selected = None
-
-            for name, provider in getattr(
-                self,
-                "_providers",
-                [],
-            ):
-                if str(
-                    name
-                ).strip().lower() == primary:
-                    selected = provider
-                    break
-
-            if selected is None:
-                raise fallback.ProviderError(
-                    "Selected session provider is unavailable: "
-                    + repr(primary)
-                )
-
-            started = time.perf_counter()
-
-            try:
-                text = selected.generate(
-                    prompt,
-                    system_prompt,
-                )
-            except Exception as error:
-                self.last_provider = primary
-                self.last_errors = [
-                    (
-                        f"{primary}: "
-                        f"{type(error).__name__}: "
-                        f"{error}"
-                    )
-                ]
-
-                set_active(
-                    self,
-                    primary,
-                    primary,
-                    "idle",
-                )
-
-                raise
-
-            self.last_provider = primary
-            self.last_errors = []
-            self.model = getattr(
-                selected,
-                "model",
-                getattr(
-                    self,
-                    "model",
-                    "",
-                ),
-            )
-
-            LOGGER.info(
-                "Fixed session authority %s completed in %.0fms",
-                primary,
-                (
-                    time.perf_counter()
-                    - started
-                )
-                * 1000,
-            )
-
-            set_active(
-                self,
-                primary,
-                primary,
-                "idle",
-            )
-
-            return text
-
+    def generate(self: Any, prompt: str, system_prompt: str) -> str:
+        primary = str(getattr(self, "primary", "") or "").strip().lower()
+        set_active(self, primary, primary, "request")
         if primary not in LOCAL_PROVIDER_IDS:
             try:
-                return original_generate(
-                    self,
-                    prompt,
-                    system_prompt,
-                    *generate_args,
-                    **generate_kwargs,
-                )
+                return original_generate(self, prompt, system_prompt)
             finally:
-                used = str(
-                    getattr(
-                        self,
-                        "last_provider",
-                        "",
-                    )
-                    or primary
-                ).lower()
-
-                set_active(
-                    self,
-                    primary,
-                    used,
-                    "idle",
-                )
+                used = str(getattr(self, "last_provider", "") or primary).lower()
+                set_active(self, primary, used, "idle")
 
         controller = get_sli_provider_controller()
         repair = _is_repair_prompt(prompt)
@@ -335,13 +189,7 @@ def install_quality_escalation() -> None:
 
         started = time.perf_counter()
         set_active(self, primary, primary, "request")
-        local_text = original_generate(
-            self,
-            prompt,
-            system_prompt,
-            *generate_args,
-            **generate_kwargs,
-        )
+        local_text = original_generate(self, prompt, system_prompt)
         latency = time.perf_counter() - started
         decision = controller.observe(
             prompt=prompt,

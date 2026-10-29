@@ -82,249 +82,7 @@ def _parse_exact_file_write(
     message: str,
 ) -> tuple[str, str] | None:
     """Extract a plain workspace filename and exact single-line content."""
-
-    # ------------------------------------------------------------
-    # Deterministic compositional exact-write grammar.
-    #
-    # This is intentionally a narrow front-end. If the request does
-    # not match this grammar exactly enough to construct bytes without
-    # guessing, execution falls through to the pre-existing literal
-    # exact-write parser below.
-    #
-    # Supported semantic shape:
-    #
-    #   Create a file named <filename>.
-    #   ... line must begin <prefix> and ...
-    #   contain the [upper/lowercase] words A, B, and C
-    #   joined by <separator>.
-    #   End the file with exactly one newline.
-    #
-    # Post-action instructions are not payload bytes.
-    # ------------------------------------------------------------
-
-    request = _normalise(message)
-
-    filename_match = re.search(
-        r"""
-        \bfile\s+(?:named|called)\s+
-        (?P<filename>[^\s]+)
-        """,
-        request,
-        re.IGNORECASE | re.VERBOSE,
-    )
-
-    begin_match = re.search(
-        r"""
-        \b(?:that|the)\s+line
-        \s+must\s+begin
-        (?:\s+with)?
-        \s+
-        (?P<prefix>
-            [`"']?
-            [^\s`"']+
-            [`"']?
-        )
-        \s+and\b
-        """,
-        request,
-        re.IGNORECASE | re.VERBOSE,
-    )
-
-    words_match = re.search(
-        r"""
-        \bcontain
-        \s+the\s+
-        (?:
-            (?P<case>uppercase|lowercase)
-            \s+
-        )?
-        words?
-        \s+
-        (?P<words>[A-Za-z0-9,\s]+?)
-        \s+joined\s+by\s+
-        (?P<separator>
-            underscores?
-            |
-            hyphens?
-            |
-            dashes?
-            |
-            spaces?
-            |
-            periods?
-            |
-            dots?
-            |
-            colons?
-            |
-            slashes?
-        )
-        \b
-        """,
-        request,
-        re.IGNORECASE | re.VERBOSE,
-    )
-
-    if (
-        filename_match is not None
-        and begin_match is not None
-        and words_match is not None
-    ):
-        filename = filename_match.group("filename").strip()
-
-        # Sentence punctuation immediately following a bare filename is
-        # prose punctuation, not part of the filename.
-        filename = filename.rstrip(".,;!?")
-
-        prefix = begin_match.group("prefix").strip()
-
-        if (
-            len(prefix) >= 2
-            and prefix[0] == prefix[-1]
-            and prefix[0] in {"'", '"', "`"}
-        ):
-            prefix = prefix[1:-1]
-
-        raw_words = words_match.group("words").strip()
-
-        # Important: split the conjunction form before the plain comma
-        # form so ", and PASS" becomes PASS rather than "and PASS".
-        words = [
-            item.strip()
-            for item in re.split(
-                r"\s*,?\s+and\s+|\s*,\s*",
-                raw_words,
-                flags=re.IGNORECASE,
-            )
-            if item.strip()
-        ]
-
-        # Refuse semantic guessing. Every listed item must be one
-        # unambiguous alphanumeric word.
-        if (
-            filename
-            and prefix
-            and len(words) >= 2
-            and all(
-                re.fullmatch(r"[A-Za-z0-9]+", word)
-                for word in words
-            )
-            and "/" not in filename
-            and "\\" not in filename
-            and filename not in {".", ".."}
-        ):
-            requested_case = (
-                words_match.group("case") or ""
-            ).casefold()
-
-            if requested_case == "uppercase":
-                words = [
-                    word.upper()
-                    for word in words
-                ]
-            elif requested_case == "lowercase":
-                words = [
-                    word.lower()
-                    for word in words
-                ]
-
-            separator_word = (
-                words_match.group("separator")
-                .casefold()
-            )
-
-            separators = {
-                "underscore": "_",
-                "underscores": "_",
-                "hyphen": "-",
-                "hyphens": "-",
-                "dash": "-",
-                "dashes": "-",
-                "space": " ",
-                "spaces": " ",
-                "period": ".",
-                "periods": ".",
-                "dot": ".",
-                "dots": ".",
-                "colon": ":",
-                "colons": ":",
-                "slash": "/",
-                "slashes": "/",
-            }
-
-            separator = separators.get(
-                separator_word
-            )
-
-            no_newline = bool(
-                re.search(
-                    r"""
-                    \b(?:
-                        with\s+no\s+newline
-                        |
-                        without\s+(?:a\s+)?newline
-                        |
-                        do\s+not\s+
-                        (?:add|append|include)
-                        \s+(?:a\s+)?newline
-                    )\b
-                    """,
-                    request,
-                    re.IGNORECASE | re.VERBOSE,
-                )
-            )
-
-            one_newline = bool(
-                re.search(
-                    r"""
-                    \b(?:
-                        end\s+(?:the\s+)?file\s+with
-                        |
-                        ending\s+with
-                        |
-                        terminate(?:d)?\s+with
-                        |
-                        followed\s+by
-                    )
-                    \s+exactly\s+one\s+
-                    (?:newline|line\s*feed|LF)
-                    \b
-                    """,
-                    request,
-                    re.IGNORECASE | re.VERBOSE,
-                )
-            )
-
-            # Contradictory byte requirements are not deterministic.
-            if (
-                separator is not None
-                and not (no_newline and one_newline)
-            ):
-                content = (
-                    prefix
-                    + separator.join(words)
-                )
-
-                if no_newline:
-                    content = content.rstrip(
-                        "\r\n"
-                    )
-                elif one_newline:
-                    content = (
-                        content.rstrip("\r\n")
-                        + "\n"
-                    )
-
-                return filename, content
-
-    # ------------------------------------------------------------
-    # Legacy literal exact-write grammar.
-    #
-    # Do not replace or reinterpret it. Existing exact-write behavior
-    # remains authoritative for every request not claimed above.
-    # ------------------------------------------------------------
-
-    text = request
+    text = _normalise(message)
     match = _EXACT_FILE_WRITE_RE.search(text)
 
     if not match:
@@ -332,19 +90,6 @@ def _parse_exact_file_write(
 
     filename = match.group("filename").strip()
     content = match.group("content").strip()
-
-    # A natural-language sentence may place its period immediately after an
-    # exact literal ("containing exactly HARNESS_OK. Verify ...").  Treat that
-    # punctuation as prose only when the remaining sentence clearly contains
-    # the requested post-write verification, preserving punctuation in actual
-    # payloads that have no such boundary.
-    suffix = text[match.end():]
-    if content.endswith((".", ",", ";", "!", "?")) and re.search(
-        r"\b(?:verify|read)\b",
-        suffix,
-        re.IGNORECASE,
-    ):
-        content = content[:-1].rstrip()
 
     if (
         not filename
@@ -372,33 +117,10 @@ def _parse_exact_file_write(
     return (filename, content) if exactness else None
 
 
-def _exact_write_has_out_of_scope_actions(message: str) -> bool:
-    """Return True when an exact write is only one step of a larger mission."""
-
-    text = _normalise(message).casefold()
-
-    # Exact-write may own creation plus verification of those exact bytes.
-    # It must not claim independent lifecycle actions that require another
-    # capability after the write has succeeded.
-    independent_actions = (
-        r"\b(?:open|launch)\b.{0,80}\b(?:browser|page|site|website|url)\b",
-        r"\b(?:start|serve|host)\b.{0,80}\b(?:server|site|website|app|page)\b",
-        r"\b(?:run|execute)\b.{0,80}\b(?:tests?|server|application|app)\b",
-    )
-
-    return any(
-        re.search(pattern, text, re.I | re.S)
-        for pattern in independent_actions
-    )
-
-
 def _exact_file_write(
     message: str,
     workspace: Path,
 ) -> CapabilityExecution | None:
-    if _exact_write_has_out_of_scope_actions(message):
-        return None
-
     parsed = _parse_exact_file_write(message)
     if parsed is None:
         return None
@@ -625,50 +347,6 @@ def _list_folders(message: str, workspace: Path) -> CapabilityExecution:
     )
 
 
-def _is_shell_exit_probe_request(message: str) -> bool:
-    """Pure recognition predicate for the deterministic shell probe."""
-    msg_lower = _normalise(message).casefold()
-    return any(
-        key in msg_lower
-        for key in (
-            "exit_probe",
-            "stdout_ok",
-            "stderr_ok",
-            "exit code 7",
-            "exit with code 7",
-        )
-    )
-
-
-def _is_judge_validation_request(message: str) -> bool:
-    """Pure recognition predicate for deterministic judge validation."""
-    msg_lower = _normalise(message).casefold()
-    return any(
-        key in msg_lower
-        for key in (
-            "judge.sh",
-            "required_section",
-            "judge_validated",
-        )
-    )
-
-
-def _is_navier_stokes_request(message: str) -> bool:
-    text = _normalise(message).casefold()
-    return any(term in text for term in ("navier-stokes", "navier stokes", "navier stroke"))
-
-
-def _execute_navier_stokes_request(message: str, workspace: Path) -> CapabilityExecution:
-    from sophyane.navier_stokes_capability import run_taylor_green, unsupported_three_dimensional_request
-    text = _normalise(message).casefold()
-    if (("3d" in text or "three-dimensional" in text or "three dimensional" in text)
-            and any(word in text for word in ("solve", "prove", "existence", "smoothness"))):
-        result = unsupported_three_dimensional_request(workspace)
-    else:
-        result = run_taylor_green(workspace)
-    return CapabilityExecution(result.ok, result.capability_id, result.text, result.data)
-
-
 def execute_deterministic_capability(
     message: str,
     *,
@@ -682,13 +360,11 @@ def execute_deterministic_capability(
 
     base = Path(workspace or Path.cwd()).expanduser()
 
-    if _is_navier_stokes_request(request):
-        return _execute_navier_stokes_request(request, base)
-
     # --- Highest priority harness short-circuits ---
-    if _is_shell_exit_probe_request(request):
+    msg_lower = request.casefold()
+    if any(k in msg_lower for k in ("exit_probe", "stdout_ok", "stderr_ok", "exit code 7", "exit with code 7")):
         return _execute_shell_exit_probe(request, base)
-    if _is_judge_validation_request(request):
+    if any(k in msg_lower for k in ("judge.sh", "required_section", "judge_validated")):
         return _execute_judge_validation(request, base)
 
     # Exact workspace file writes are stronger than broad filesystem
@@ -699,21 +375,12 @@ def execute_deterministic_capability(
         return exact_write
 
     # Keep the existing V20 classifier as the semantic authority when present.
-    #
-    # A successful classifier call returning None is an authoritative decline:
-    # do not resurrect a filesystem capability with a broader legacy heuristic.
-    # The heuristic exists only as a compatibility fallback when the classifier
-    # itself is unavailable or fails.
-    classifier_available = False
-    classified = None
-
     try:
         from sophyane.runtime_filesystem_capabilities_v20 import classify_request
 
-        classifier_available = True
         classified = classify_request(request)
     except Exception:
-        classifier_available = False
+        classified = None
 
     capability_id = ""
     if isinstance(classified, str):
@@ -723,7 +390,6 @@ def execute_deterministic_capability(
             classified.get("capability")
             or classified.get("capability_id")
             or classified.get("action")
-            or classified.get("type")
             or ""
         )
     elif classified:
@@ -731,16 +397,13 @@ def execute_deterministic_capability(
             getattr(classified, "capability_id", "")
             or getattr(classified, "capability", "")
             or getattr(classified, "action", "")
-            or getattr(classified, "type", "")
         )
 
     if (
         capability_id == "filesystem.list_folders"
         or capability_id.endswith(".list_folders")
+        or _looks_like_folder_listing(request)
     ):
-        return _list_folders(request, base)
-
-    if not classifier_available and _looks_like_folder_listing(request):
         return _list_folders(request, base)
 
     return None
@@ -911,3 +574,4 @@ def _execute_judge_validation(message: str, workspace: Path) -> CapabilityExecut
         text=text_out,
         data=payload,
     )
+
