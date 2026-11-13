@@ -118,3 +118,4 @@ executable patches into `main`.
 - 2026-11-10: 1 proposals · merkle `b74d91f777e95287…` · device `runnervm7aw5e-81f1308e`
 - 2026-11-11: 1 proposals · merkle `fb8b224bf01f5a38…` · device `runnervm7aw5e-81f1308e`
 - 2026-11-12: 1 proposals · merkle `1a1f54d0d8cfd8e7…` · device `runnervm7aw5e-81f1308e`
+- 2026-11-13: 1 proposals · merkle `bdd46450acb7de5b…` · device `runnervm7aw5e-81f1308e`
