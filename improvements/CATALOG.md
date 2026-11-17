@@ -122,3 +122,4 @@ executable patches into `main`.
 - 2026-11-14: 1 proposals · merkle `058d796c4805f3b1…` · device `runnervm8axu0-0138fbdb`
 - 2026-11-15: 1 proposals · merkle `39f89bf80a807a94…` · device `ip-10-0-142-134-dbeec1d9`
 - 2026-11-16: 1 proposals · merkle `51d4ae397d915523…` · device `ip-10-0-131-155-f2aa503f`
+- 2026-11-17: 1 proposals · merkle `10740798ff75c381…` · device `runnervm8axu0-0138fbdb`
