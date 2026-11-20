@@ -29,3 +29,36 @@ def test_lower_target_direction_and_no_measurable_weakness():
                 replace(w, verification_commands=()), replace(w, target_metric='')):
         assert detect(bad) is None
     assert detect(w) == w
+
+
+def test_target_metric_can_also_be_protected():
+    from dataclasses import replace
+    from sophyane.rsi.benchmark import compare
+
+    record = replace(weakness(), protected_metrics={"quality": {"direction": "higher", "tolerance": 0.0}})
+    result = compare(record, {"quality": 1.0}, {"quality": 2.0})
+
+    assert result.promote
+
+
+def test_target_metric_without_protected_metrics():
+    from dataclasses import replace
+    from sophyane.rsi.benchmark import compare
+
+    record = replace(weakness(), protected_metrics={})
+    result = compare(record, {"quality": 1.0}, {"quality": 2.0})
+
+    assert result.promote
+
+
+@pytest.mark.parametrize("bad_metrics", [
+    {"quality": 1.0, "latency": float("nan")},
+    {"quality": 1.0, "latency": float("inf")},
+])
+def test_nonfinite_protected_metric_is_rejected(bad_metrics):
+    from sophyane.rsi.benchmark import compare
+
+    result = compare(weakness(), {"quality": 1.0, "latency": 1.0}, bad_metrics)
+
+    assert not result.promote
+    assert "Missing or invalid metric evidence" in result.reasons

@@ -41,7 +41,8 @@ class RSIMetrics:
                for x in (*capability.values(), *meta.values())):
             raise ValueError('Finite numeric measurements required')
         self.measurements.append(dict(version=version, capability=dict(capability), meta=dict(meta), accepted=accepted is True))
-        self.measurements[:] = self.measurements[-256:]
+        if len(self.measurements) > 256:
+            del self.measurements[:-256]
 
     @property
     def accepted_baseline(self):
@@ -49,12 +50,17 @@ class RSIMetrics:
 
     @property
     def level(self):
-        accepted = [m for m in self.measurements if m['accepted']]
-        if not accepted:
+        recent = []
+        for measurement in reversed(self.measurements):
+            if measurement['accepted']:
+                recent.append(measurement)
+                if len(recent) == 3:
+                    break
+        if not recent:
             return 0
-        if len(accepted) == 1:
+        if len(recent) == 1:
             return 1
-        recent = accepted[-3:]
+        recent.reverse()
         if len(recent) < 3 or len({m['version'] for m in recent}) != 1:
             return 2
         cap = [m['capability'].get('benchmark_success') for m in recent]

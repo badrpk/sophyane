@@ -56,8 +56,12 @@ class CommandResult:
 
     @property
     def digest(self):
-        import hashlib
-        return hashlib.sha256(self.output.encode()).hexdigest()
+        cached = self.__dict__.get('_digest_cache')
+        if cached is None:
+            import hashlib
+            cached = hashlib.sha256(self.output.encode()).hexdigest()
+            object.__setattr__(self, '_digest_cache', cached)
+        return cached
 
 
 @dataclass(frozen=True)

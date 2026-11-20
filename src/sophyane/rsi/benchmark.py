@@ -9,9 +9,12 @@ def compare(weakness, baseline_metrics, candidate_metrics):
     if detect(weakness) is None:
         return PromotionDecision(False, ('No measurable weakness',))
     try:
-        names = {weakness.target_metric, *weakness.protected_metrics}
-        if any(not isfinite(values[name]) for values in (baseline_metrics, candidate_metrics) for name in names):
+        target = weakness.target_metric
+        if not isfinite(baseline_metrics[target]) or not isfinite(candidate_metrics[target]):
             raise ValueError('Nonfinite measurement')
+        for name in weakness.protected_metrics:
+            if name != target and (not isfinite(baseline_metrics[name]) or not isfinite(candidate_metrics[name])):
+                raise ValueError('Nonfinite measurement')
         sign = 1 if weakness.direction == 'higher' else -1
         improvement = sign * (candidate_metrics[weakness.target_metric] - baseline_metrics[weakness.target_metric])
         if improvement < weakness.required_improvement:
