@@ -10,6 +10,10 @@ class ProviderError(RuntimeError):
     """Raised for provider request or configuration failures."""
 
 
+class ProviderCandidateRejected(ProviderError):
+    """A provider returned a response that the caller rejected semantically."""
+
+
 @dataclass(frozen=True)
 class ProviderMetadata:
     provider_id: str
