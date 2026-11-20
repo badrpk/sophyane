@@ -1,0 +1,24 @@
+[Unit]
+Description=Sophyane isolated QEMU FastAPI deployment verification
+After=systemd-tmpfiles-setup.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/libexec/sophyane-remote-fastapi-start.sh
+Restart=no
+TimeoutStartSec=1800
+KillMode=mixed
+MemoryMax=2300M
+CPUQuota=200%
+TasksMax=256
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/mnt /opt/sophyane /opt/sophyane-venv /home/sophyane /run
+NoNewPrivileges=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
